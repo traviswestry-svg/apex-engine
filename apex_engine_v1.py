@@ -216,53 +216,49 @@ def polygon_options_snapshot(ticker: str, dte_min: int, dte_max: int, limit: int
 # =============================
 # BENZINGA DATA
 # =============================
-def benzinga_headers() -> Dict[str, str]:
-    # Benzinga often defaults to XML unless JSON is requested.
-    return {
-        "Accept": "application/json",
-        "Authorization": f"token {BENZINGA_API_KEY}" if BENZINGA_API_KEY else "",
-    }
+import xml.etree.ElementTree as ET
 
+def parse_benzinga_response(r):
+    try:
+        return r.json()
+    except:
+        try:
+            root = ET.fromstring(r.text)
+            data = []
+            for item in root.findall(".//item"):
+                entry = {}
+                for child in item:
+                    entry[child.tag] = child.text
+                data.append(entry)
+            return data
+        except:
+            return []
 
-def benzinga_news(ticker: str) -> List[Dict[str, Any]]:
-    if not BENZINGA_API_KEY:
-        return []
+# Benzinga News
+def get_benzinga_news():
     url = "https://api.benzinga.com/api/v2/news"
-    params = {
-        "token": BENZINGA_API_KEY,
-        "tickers": ticker,
-        "displayOutput": "full",
-        "pageSize": 5,
-    }
-    data = safe_get(url, params=params, headers=benzinga_headers())
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        # Some accounts wrap output differently.
-        for key in ("news", "result", "data"):
-            if isinstance(data.get(key), list):
-                return data[key]
-    return []
+    headers = {"Accept": "application/json"}
+    params = {"token": BENZINGA_API_KEY}
 
-
-def benzinga_option_activity(ticker: str) -> List[Dict[str, Any]]:
-    if not BENZINGA_API_KEY:
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        return parse_benzinga_response(r)
+    except Exception as e:
+        print(f"Benzinga news error: {e}")
         return []
-    url = "https://api.benzinga.com/api/v1/signal/option_activity"
-    params = {
-        "token": BENZINGA_API_KEY,
-        "ticker": ticker,
-        "pagesize": 25,
-    }
-    data = safe_get(url, params=params, headers=benzinga_headers())
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in ("option_activity", "result", "data", "signals"):
-            if isinstance(data.get(key), list):
-                return data[key]
-    return []
 
+# Benzinga Option Activity
+def get_benzinga_options_activity():
+    url = "https://api.benzinga.com/api/v1/signal/option_activity"
+    headers = {"Accept": "application/json"}
+    params = {"token": BENZINGA_API_KEY}
+
+    try:
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        return parse_benzinga_response(r)
+    except Exception as e:
+        print(f"Benzinga options error: {e}")
+        return []
 # =============================
 # SCORING
 # =============================
