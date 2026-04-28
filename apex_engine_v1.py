@@ -306,7 +306,7 @@ def load_cache():
     except Exception: return set()
 def save_cache(c): json.dump(sorted(c),open(ALERT_CACHE_FILE,'w'))
 def alert_key(i): return f'{today_key()}:{i.ticker}:{i.trader_type}:{i.direction}:{i.status}:{i.option_contract}'
-def send_telegram(txt):7:09 PM 4/28/2026
+def send_telegram(txt):
     if not SEND_TELEGRAM or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
     r=requests.post(f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage',json={'chat_id':TELEGRAM_CHAT_ID,'text':txt},timeout=10)
     log('Telegram alert sent' if r.status_code<400 else f'Telegram failed HTTP {r.status_code}: {r.text[:120]}')
