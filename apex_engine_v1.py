@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Apex Engine v1.3 - Polygon Only
+Apex Engine v1.4 - Polygon Only Fast Mode
 Render-ready multi-stock scanner for Swing, 0DTE, and LEAP option ideas.
 
 Benzinga is disabled in this version.
@@ -42,7 +42,7 @@ MAX_RISK_PER_TRADE = float(os.getenv("MAX_RISK_PER_TRADE", "750"))
 
 DASHBOARD_FILE = os.getenv("DASHBOARD_FILE", "dashboard_data.json")
 ALERT_CACHE_FILE = os.getenv("ALERT_CACHE_FILE", "sent_alerts.json")
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "20"))
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "8"))
 
 POLYGON_BASE = "https://api.polygon.io"
 
@@ -400,7 +400,7 @@ def extract_option_pick(raw: Dict[str, Any], tech: TechnicalSnapshot) -> Optiona
     )
 
 
-def get_option_candidates(ticker: str, direction: str, expirations: List[str], limit_per_exp: int = 250) -> List[OptionPick]:
+def get_option_candidates(ticker: str, direction: str, expirations: List[str], limit_per_exp: int = 60) -> List[OptionPick]:
     if not POLYGON_API_KEY:
         return []
     contract_type = "call" if direction == "CALL" else "put"
@@ -431,13 +431,15 @@ def select_best_option(ticker: str, tech: TechnicalSnapshot, direction: str, str
         expirations = [dt.date.today().isoformat()]
         target_delta = 0.50
     elif strategy == "LEAP":
-        expirations = monthly_dates(90, 365, limit=5)
+        expirations = monthly_dates(90, 365, limit=2)
         target_delta = 0.70
     else:
-        expirations = friday_dates(7, 30, limit=4)
+        expirations = friday_dates(7, 30, limit=2)
         target_delta = 0.62
 
+    log(f"Fetching options for {ticker} {strategy} {direction}: {chr(44).join(expirations)}")
     candidates = get_option_candidates(ticker, direction, expirations)
+    log(f"Option candidates returned for {ticker}: {len(candidates)}")
     if not candidates:
         log(f"No option candidates for {ticker} {strategy} {direction}")
         return None
@@ -802,7 +804,7 @@ def alert_ideas(ideas: List[TradeIdea]) -> None:
 # MAIN
 # =============================
 def main() -> None:
-    log("Apex Engine v1.3 starting — Polygon-only mode. Benzinga disabled.")
+    log("Apex Engine v1.4 starting — Polygon-only FAST mode. Benzinga disabled.")
     if not POLYGON_API_KEY:
         log("Missing POLYGON_API_KEY. Add it in Render Environment.")
         return
