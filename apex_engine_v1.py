@@ -1,4 +1,3 @@
-print("🔥 FORCE NEW BUILD v2.1 🔥")
 #!/usr/bin/env python3
 """
 APEX ENGINE v1.9 - Polygon-only trading decision engine
@@ -29,7 +28,7 @@ GITHUB_REPO=yourusername/apex-dashboard
 GITHUB_BRANCH=main
 GITHUB_DASHBOARD_PATH=dashboard.json
 """
-
+print("🔥 FORCE NEW BUILD v2.1 🔥")
 from __future__ import annotations
 
 import base64
