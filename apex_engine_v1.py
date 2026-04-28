@@ -28,9 +28,9 @@ GITHUB_REPO=yourusername/apex-dashboard
 GITHUB_BRANCH=main
 GITHUB_DASHBOARD_PATH=dashboard.json
 """
-print("🔥 FORCE NEW BUILD v2.1 🔥")
-from __future__ import annotations
 
+from __future__ import annotations
+print("🔥 FORCE NEW BUILD v2.1 🔥")
 import base64
 import json
 import math
