@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-print("🔥 APEX ENGINE VERSION 2.0 LIVE - SNIPER ENTRY TIMING 🔥")
+print("🔥 APEX ENGINE VERSION 2.1 LIVE - SMART EXIT ENGINE 🔥")
 
 import base64, json, os
 from dataclasses import dataclass, asdict
@@ -44,6 +44,7 @@ class Idea:
     sniper_trigger:str; entry_zone:str; entry_range:str; exit_plan:str; stop_loss:str; targets:List[str]
     option_contract:str; estimated_option_entry:Optional[float]; dte:Optional[int]; max_contracts:int
     max_risk:float; price:float; rsi:float; rel_volume:float; notes:List[str]
+    target_1:str=''; target_2:str=''; runner_rule:str=''; time_stop:str=''; profit_protection:str=''; exit_checklist:Optional[List[str]]=None
 
 def log(x): print(x, flush=True)
 def now_et(): return datetime.now(EASTERN)
@@ -230,6 +231,44 @@ def choose_option(c,ticker,direction,strategy,price):
     risk=m*100*stop; contracts=max(1,int(MAX_RISK_PER_TRADE//risk)) if risk>0 else 1
     return OptionPick(d.get('ticker') or f'{ticker} {strike}{direction[0]}',exp,strike,direction,dte,rp(m),stop,rp(risk),contracts,sp,vi,oi,ok,note)
 
+def smart_exit_engine(strategy, direction):
+    if strategy == '0DTE':
+        return {
+            'stop_loss':'Hard stop: option -25% to -30% OR failed 5-min VWAP/EMA8 hold',
+            'targets':['Target 1: +25% option - trim/protect','Target 2: +50% option - lock most gains','Hard exit: 3:30 PM ET'],
+            'target_1':'+25% option gain - trim/protect',
+            'target_2':'+50% option gain - lock majority of profit',
+            'runner_rule':'Runner only if price holds VWAP/EMA8; trail on 5-min structure',
+            'time_stop':'Exit by 3:30 PM ET; no overnight hold',
+            'profit_protection':'At +25%, move stop to breakeven/tight stop; never let winner turn red',
+            'exit_plan':'Fast scalp management: protect quickly, scale at +25%, lock at +50%, flat by 3:30 PM ET',
+            'exit_checklist':['Exit immediately at -25% to -30%','At +25%, trim/protect and move stop near breakeven','At +50%, lock most gains','Runner only while 5-min candles respect VWAP/EMA8','Flat before 3:30 PM ET']
+        }
+    if strategy == 'LEAP':
+        return {
+            'stop_loss':'Hard stop: option -30% OR stock loses EMA200 / long-term thesis breaks',
+            'targets':['Target 1: +35% to +40% option - protect capital','Target 2: +75% to +80% option - lock majority','Runner: hold while trend remains above EMA21/EMA50'],
+            'target_1':'+35% to +40% option gain - protect capital',
+            'target_2':'+75% to +80% option gain - lock majority',
+            'runner_rule':'Runner only while daily trend holds EMA21/EMA50 and thesis remains intact',
+            'time_stop':'If thesis does not improve within 2-3 weeks, reassess or exit',
+            'profit_protection':'At +35%, protect principal or move stop to breakeven; do not let winner turn negative',
+            'exit_plan':'LEAP management: protect capital at +35%, scale at +75%, trail runner under EMA21/EMA50',
+            'exit_checklist':['Exit/reassess at -30% option loss','At +35%, protect capital or move stop to breakeven','At +75%, lock majority of gains','Runner requires daily trend above EMA21/EMA50','Exit if stock loses EMA200 or thesis breaks']
+        }
+    return {
+        'stop_loss':'Hard stop: option -30% to -35% OR daily close loses EMA21/EMA50 support',
+        'targets':['Target 1: +35% option - trim/protect','Target 2: +70% to +75% option - lock majority','Runner: trail under EMA21'],
+        'target_1':'+35% option gain - trim/protect',
+        'target_2':'+70% to +75% option gain - lock majority',
+        'runner_rule':'Runner only while daily trend holds EMA21; trail stop under EMA21',
+        'time_stop':'If trade does not work within 1-2 sessions, exit or reduce',
+        'profit_protection':'At +35%, move stop to breakeven/tight profit stop; do not let winner turn red',
+        'exit_plan':'Swing management: partial/protect at +35%, scale at +70%, trail runner above EMA21',
+        'exit_checklist':['Exit at -30% to -35% option loss','At +35%, trim/protect and move stop near breakeven','At +70%, lock majority of gains','Hold runner only if price respects EMA21','Exit if setup fails to progress within 1-2 sessions']
+    }
+
+
 def make_idea(c,m,bars,strategy):
     if strategy=='0DTE': score,d,reasons=score_0dte(m,bars); trader='0DTE'; name='SPY/QQQ opening range sniper'
     elif strategy=='LEAP': score,d,reasons=score_leap(m); trader='LEAP'; name='Long-term trend pullback'
@@ -239,11 +278,10 @@ def make_idea(c,m,bars,strategy):
     opt=choose_option(c,m.ticker,d,strategy,m.price)
     if opt and not opt.liquidity_ok and status.startswith('READY'): status='WAIT - OPTION LIQUIDITY WARNING'
     low=m.ema21*.995 if d=='CALL' else m.ema21*.985; high=m.ema21*1.015 if d=='CALL' else m.ema21*1.005
-    if strategy=='0DTE': targets=['+25% option','+50% option','close before 3:30 ET']; stop='Option -40% to -45% or failed 5-min VWAP/EMA8 hold'; exitp='Scale quickly; no overnight hold'
-    elif strategy=='LEAP': targets=['+40% option','+80% option','trend hold for runner']; stop='Option -30% or stock loses EMA200 / thesis breaks'; exitp='Scale over weeks/months; protect capital if thesis breaks'
-    else: targets=['+35% option','+70% option','trail runner above EMA21']; stop='Option -35% or daily close loses EMA21/50 support'; exitp='Take partials at target 1, trail rest'
+    exit_rules=smart_exit_engine(strategy,d)
+    targets=exit_rules['targets']; stop=exit_rules['stop_loss']; exitp=exit_rules['exit_plan']
     notes=reasons+sn+([opt.liquidity_note] if opt else ['option unavailable'])
-    return Idea(m.ticker,grade(score),score,trader,name,d,status,trigger,f'Daily pullback zone near EMA21: {rp(m.ema21)}',f'{rp(min(low,high))} - {rp(max(low,high))}',exitp,stop,targets,opt.contract if opt else f'{m.ticker} {d} contract unavailable',opt.estimated_entry if opt else None,opt.dte if opt else None,opt.max_contracts if opt else 0,rp(opt.risk_per_contract*opt.max_contracts) if opt else 0,rp(m.price),rp(m.rsi),round(m.rel_volume,2),notes)
+    return Idea(m.ticker,grade(score),score,trader,name,d,status,trigger,f'Daily pullback zone near EMA21: {rp(m.ema21)}',f'{rp(min(low,high))} - {rp(max(low,high))}',exitp,stop,targets,opt.contract if opt else f'{m.ticker} {d} contract unavailable',opt.estimated_entry if opt else None,opt.dte if opt else None,opt.max_contracts if opt else 0,rp(opt.risk_per_contract*opt.max_contracts) if opt else 0,rp(m.price),rp(m.rsi),round(m.rel_volume,2),notes,exit_rules['target_1'],exit_rules['target_2'],exit_rules['runner_rule'],exit_rules['time_stop'],exit_rules['profit_protection'],exit_rules['exit_checklist'])
 
 def classify_reentry(idea,m,bars):
     if idea.status.startswith('READY') or not execution_window(idea.trader_type) or len(bars)<12: return idea
@@ -286,7 +324,7 @@ def push_github(payload):
     except Exception as e: log(f'GitHub push error: {e}')
 
 def run_scan():
-    log('Apex Engine v2.0 starting — Sniper Entry Timing Layer active, Polygon-only, Benzinga disabled.')
+    log('Apex Engine v2.1 starting — Smart Exit Engine active, Polygon-only, Benzinga disabled.')
     log(f'Session: {session_name()} | Account size: {ACCOUNT_SIZE} | Max risk/trade: {MAX_RISK_PER_TRADE}')
     c=Polygon(POLYGON_API_KEY); ideas=[]
     for t in TICKERS:
@@ -300,7 +338,7 @@ def run_scan():
         if best:
             ideas.append(best); log(f'{best.grade} {best.ticker} {best.trader_type} {best.direction} {best.status} score={best.score} option={best.option_contract}')
     ideas.sort(key=lambda x:(x.status.startswith('READY') or x.status=='RE-ENTRY READY',x.score),reverse=True)
-    payload={'updated_at':datetime.now(timezone.utc).isoformat(),'mode':'POLYGON_ONLY_BENZINGA_DISABLED_V2_0_SNIPER','session':session_name(),'account_size':ACCOUNT_SIZE,'max_risk_per_trade':MAX_RISK_PER_TRADE,'ideas':[asdict(i) for i in ideas]}
+    payload={'updated_at':datetime.now(timezone.utc).isoformat(),'mode':'POLYGON_ONLY_BENZINGA_DISABLED_V2_1_SMART_EXIT','session':session_name(),'account_size':ACCOUNT_SIZE,'max_risk_per_trade':MAX_RISK_PER_TRADE,'ideas':[asdict(i) for i in ideas]}
     json.dump(payload,open(DASHBOARD_FILE,'w'),indent=2); push_github(payload); send_alerts(ideas)
     log(f'Scan complete. Qualified ideas: {len(ideas)}')
 
