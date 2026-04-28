@@ -1,7 +1,23 @@
 services:
   - type: cron
-    name: apex-engine-scan
-    env: python
-    schedule: "*/30 13-21 * * MON-FRI"
+    name: apex-engine-v1
+    runtime: python
+    plan: starter
+    schedule: "*/30 13-21 * * 1-5"
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python apex_engine_v1.py"
+    envVars:
+      - key: POLYGON_API_KEY
+        sync: false
+      - key: BENZINGA_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: MAX_RISK_PER_TRADE
+        value: "750"
+      - key: MIN_SCORE
+        value: "75"
+      - key: SEND_TELEGRAM
+        value: "true"

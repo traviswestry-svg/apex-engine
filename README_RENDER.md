@@ -1,27 +1,29 @@
-# Apex Engine v1.5 Render Deployment
+# Apex Engine v1 - Render Deployment
 
 ## Files
-- `apex_engine_v1.py`
-- `requirements.txt`
-- `render.yaml`
+- `apex_engine_v1.py` - main scanner
+- `requirements.txt` - Python dependencies
+- `render.yaml` - Render cron job blueprint
 
-## Render Cron Job Settings
-- Runtime/Language: Python 3
-- Build Command: `pip install -r requirements.txt`
-- Start Command: `python apex_engine_v1.py`
-- Schedule: `*/30 13-21 * * MON-FRI`
-
-## Required Environment Variables
+## Required environment variables
 - `POLYGON_API_KEY`
+- `BENZINGA_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 
-## Optional Environment Variables
-- `MAX_RISK_PER_TRADE=750`
-- `ACCOUNT_SIZE=60000`
-- `SEND_TELEGRAM=true`
+## Optional environment variables
+- `SCAN_TICKERS` - comma-separated ticker list
+- `MAX_RISK_PER_TRADE` - default 750
+- `MIN_SCORE` - default 75
+- `SEND_TELEGRAM` - true/false
+- `DASHBOARD_OUTPUT_PATH` - default dashboard_data.json
 
-## Notes
-- Benzinga is disabled in this build.
-- SPX remains in the ticker list but is safely skipped until Polygon Indices entitlement is added.
-- Only A+ actionable ideas are output. No ticker shown means no trade.
+## Render setup
+1. Create a new GitHub repository.
+2. Upload these files.
+3. In Render, create a new Blueprint or Cron Job.
+4. Add environment variables.
+5. Deploy.
+
+## Schedule note
+The included cron schedule runs every 30 minutes from 13:00-21:59 UTC Monday-Friday, which roughly covers U.S. market hours depending on daylight savings.
