@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-print("🔥 APEX ENGINE VERSION 2.1 LIVE - SMART EXIT ENGINE 🔥")
+print("🔥 APEX ENGINE VERSION 2.2 LIVE - ADAPTIVE EXIT ENGINE 🔥")
 
 import base64, json, os
 from dataclasses import dataclass, asdict
@@ -231,43 +231,54 @@ def choose_option(c,ticker,direction,strategy,price):
     risk=m*100*stop; contracts=max(1,int(MAX_RISK_PER_TRADE//risk)) if risk>0 else 1
     return OptionPick(d.get('ticker') or f'{ticker} {strike}{direction[0]}',exp,strike,direction,dte,rp(m),stop,rp(risk),contracts,sp,vi,oi,ok,note)
 
-def smart_exit_engine(strategy, direction):
-    if strategy == '0DTE':
+def smart_exit_engine(strategy, direction, metrics=None, status=""):
+    """Adaptive exit rules based on momentum, volume, and setup type."""
+    rel_volume = getattr(metrics, "rel_volume", 1.0) if metrics else 1.0
+    rsi = getattr(metrics, "rsi", 50.0) if metrics else 50.0
+    price = getattr(metrics, "price", 0.0) if metrics else 0.0
+    ema8 = getattr(metrics, "ema8", 0.0) if metrics else 0.0
+    strong_momentum = (rel_volume >= 1.5 and ((direction == "CALL" and rsi >= 58 and price >= ema8) or (direction == "PUT" and rsi <= 42 and price <= ema8)))
+    if strategy == "0DTE":
+        target2 = "+80% to +100% option gain - only if trend acceleration stays clean" if strong_momentum else "+45% to +55% option gain - lock most gains"
+        runner = "Runner trails 5-min EMA8/VWAP; exit on first strong reversal candle" if strong_momentum else "No runner unless price holds VWAP/EMA8 after Target 2"
         return {
-            'stop_loss':'Hard stop: option -25% to -30% OR failed 5-min VWAP/EMA8 hold',
-            'targets':['Target 1: +25% option - trim/protect','Target 2: +50% option - lock most gains','Hard exit: 3:30 PM ET'],
-            'target_1':'+25% option gain - trim/protect',
-            'target_2':'+50% option gain - lock majority of profit',
-            'runner_rule':'Runner only if price holds VWAP/EMA8; trail on 5-min structure',
-            'time_stop':'Exit by 3:30 PM ET; no overnight hold',
-            'profit_protection':'At +25%, move stop to breakeven/tight stop; never let winner turn red',
-            'exit_plan':'Fast scalp management: protect quickly, scale at +25%, lock at +50%, flat by 3:30 PM ET',
-            'exit_checklist':['Exit immediately at -25% to -30%','At +25%, trim/protect and move stop near breakeven','At +50%, lock most gains','Runner only while 5-min candles respect VWAP/EMA8','Flat before 3:30 PM ET']
+            "stop_loss":"Adaptive stop: early failure -10% to -15%; hard stop option -25% to -30% OR failed 5-min VWAP/EMA8 hold",
+            "targets":["Fast Profit: +20% option within 30-60 min - trim/protect immediately","Target 1: +25% to +30% option - protect capital",f"Target 2: {target2}","Hard exit: 3:30 PM ET"],
+            "target_1":"+25% to +30% option gain - trim/protect",
+            "target_2":target2,
+            "runner_rule":runner,
+            "time_stop":"No follow-through after 2-3 five-minute candles = exit/reduce; hard flat by 3:30 PM ET",
+            "profit_protection":"If +20% hits quickly, trim/protect and move stop near breakeven; never let a green 0DTE winner turn red",
+            "exit_plan":"Adaptive 0DTE exit: take fast money, cut failed entries early, only hold runners during clean momentum.",
+            "exit_checklist":["Fast profit: +20% in 30-60 min = trim/protect","Early failure: no follow-through in 2-3 candles = exit -5% to -10% if possible","Technical failure: two rejections at VWAP/EMA8 = exit","Hard stop: option -25% to -30%","Target 2 expands only when volume and trend remain strong","Flat by 3:30 PM ET"]
         }
-    if strategy == 'LEAP':
+    if strategy == "LEAP":
+        target2 = "+90% to +120% option gain - trend expansion target" if strong_momentum else "+60% to +75% option gain - lock majority"
+        runner = "Trail runner under EMA21 while strong; switch to EMA50 on deeper long-term hold" if strong_momentum else "Runner only while daily trend holds EMA21/EMA50"
         return {
-            'stop_loss':'Hard stop: option -30% OR stock loses EMA200 / long-term thesis breaks',
-            'targets':['Target 1: +35% to +40% option - protect capital','Target 2: +75% to +80% option - lock majority','Runner: hold while trend remains above EMA21/EMA50'],
-            'target_1':'+35% to +40% option gain - protect capital',
-            'target_2':'+75% to +80% option gain - lock majority',
-            'runner_rule':'Runner only while daily trend holds EMA21/EMA50 and thesis remains intact',
-            'time_stop':'If thesis does not improve within 2-3 weeks, reassess or exit',
-            'profit_protection':'At +35%, protect principal or move stop to breakeven; do not let winner turn negative',
-            'exit_plan':'LEAP management: protect capital at +35%, scale at +75%, trail runner under EMA21/EMA50',
-            'exit_checklist':['Exit/reassess at -30% option loss','At +35%, protect capital or move stop to breakeven','At +75%, lock majority of gains','Runner requires daily trend above EMA21/EMA50','Exit if stock loses EMA200 or thesis breaks']
+            "stop_loss":"Adaptive stop: early thesis failure -10% to -15%; hard stop option -30% OR stock loses EMA200 / long-term thesis breaks",
+            "targets":["Fast Profit: +20% option if achieved quickly - protect/trim, especially if market is choppy","Target 1: +35% option - protect capital",f"Target 2: {target2}","Runner: long-term hold only if daily trend remains intact"],
+            "target_1":"+35% option gain - protect capital / reduce risk",
+            "target_2":target2,
+            "runner_rule":runner,
+            "time_stop":"If thesis does not improve within 2-3 weeks, reassess or exit; if entry fails within 2-3 daily candles, reduce early",
+            "profit_protection":"At +35%, protect principal or move stop to breakeven; at fast +20%, consider trimming if the move is news/gap driven",
+            "exit_plan":"Adaptive LEAP exit: protect principal early, expand targets only when trend/volume confirm, cut failed thesis before full stop.",
+            "exit_checklist":["Fast profit: +20% quickly = trim/protect if move is extended","Early failure: 2-3 daily candles fail to hold EMA21/entry zone = reduce/exit early","Technical failure: two clear EMA21/EMA50 rejections = exit/reassess","Hard stop: option -30% or stock loses EMA200","Target 2 expands to +90%-120% only in strong momentum","Runner requires intact daily/weekly trend"]
         }
+    target2 = "+80% to +120% option gain - strong trend target" if strong_momentum else "+60% to +70% option gain - lock majority"
+    runner = "Trail under EMA8 while strong; widen to EMA21 only after Target 2" if strong_momentum else "Runner only while daily trend holds EMA21"
     return {
-        'stop_loss':'Hard stop: option -30% to -35% OR daily close loses EMA21/EMA50 support',
-        'targets':['Target 1: +35% option - trim/protect','Target 2: +70% to +75% option - lock majority','Runner: trail under EMA21'],
-        'target_1':'+35% option gain - trim/protect',
-        'target_2':'+70% to +75% option gain - lock majority',
-        'runner_rule':'Runner only while daily trend holds EMA21; trail stop under EMA21',
-        'time_stop':'If trade does not work within 1-2 sessions, exit or reduce',
-        'profit_protection':'At +35%, move stop to breakeven/tight profit stop; do not let winner turn red',
-        'exit_plan':'Swing management: partial/protect at +35%, scale at +70%, trail runner above EMA21',
-        'exit_checklist':['Exit at -30% to -35% option loss','At +35%, trim/protect and move stop near breakeven','At +70%, lock majority of gains','Hold runner only if price respects EMA21','Exit if setup fails to progress within 1-2 sessions']
+        "stop_loss":"Adaptive stop: early failure -10% to -15%; hard stop option -30% to -35% OR daily close loses EMA21/EMA50 support",
+        "targets":["Fast Profit: +20% option within 30-60 min - trim/protect 25%-50%","Target 1: +35% option - protect capital",f"Target 2: {target2}","Runner: trail only if trend keeps confirming"],
+        "target_1":"+35% option gain - trim/protect and move stop near breakeven",
+        "target_2":target2,
+        "runner_rule":runner,
+        "time_stop":"If trade does not move in 2-3 candles/sessions, exit or reduce before full stop",
+        "profit_protection":"If +20% hits quickly, trim/protect; at +35%, move stop near breakeven; never let winner turn red",
+        "exit_plan":"Adaptive swing exit: take fast profits when offered, cut no-follow-through entries early, expand targets only in strong momentum.",
+        "exit_checklist":["Fast profit: +20% in 30-60 min = trim/protect","No follow-through: 2-3 candles/sessions without progress = exit/reduce","Failure exit: two EMA21 rejections = exit early -10% to -15% if possible","Hard stop: option -30% to -35%","Target 2 expands only with strong volume/trend","Runner trails EMA8/EMA21 depending on strength"]
     }
-
 
 def make_idea(c,m,bars,strategy):
     if strategy=='0DTE': score,d,reasons=score_0dte(m,bars); trader='0DTE'; name='SPY/QQQ opening range sniper'
@@ -278,7 +289,7 @@ def make_idea(c,m,bars,strategy):
     opt=choose_option(c,m.ticker,d,strategy,m.price)
     if opt and not opt.liquidity_ok and status.startswith('READY'): status='WAIT - OPTION LIQUIDITY WARNING'
     low=m.ema21*.995 if d=='CALL' else m.ema21*.985; high=m.ema21*1.015 if d=='CALL' else m.ema21*1.005
-    exit_rules=smart_exit_engine(strategy,d)
+    exit_rules=smart_exit_engine(strategy, d, m, status)
     targets=exit_rules['targets']; stop=exit_rules['stop_loss']; exitp=exit_rules['exit_plan']
     notes=reasons+sn+([opt.liquidity_note] if opt else ['option unavailable'])
     return Idea(m.ticker,grade(score),score,trader,name,d,status,trigger,f'Daily pullback zone near EMA21: {rp(m.ema21)}',f'{rp(min(low,high))} - {rp(max(low,high))}',exitp,stop,targets,opt.contract if opt else f'{m.ticker} {d} contract unavailable',opt.estimated_entry if opt else None,opt.dte if opt else None,opt.max_contracts if opt else 0,rp(opt.risk_per_contract*opt.max_contracts) if opt else 0,rp(m.price),rp(m.rsi),round(m.rel_volume,2),notes,exit_rules['target_1'],exit_rules['target_2'],exit_rules['runner_rule'],exit_rules['time_stop'],exit_rules['profit_protection'],exit_rules['exit_checklist'])
@@ -295,7 +306,7 @@ def load_cache():
     except Exception: return set()
 def save_cache(c): json.dump(sorted(c),open(ALERT_CACHE_FILE,'w'))
 def alert_key(i): return f'{today_key()}:{i.ticker}:{i.trader_type}:{i.direction}:{i.status}:{i.option_contract}'
-def send_telegram(txt):
+def send_telegram(txt):7:09 PM 4/28/2026
     if not SEND_TELEGRAM or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return
     r=requests.post(f'https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage',json={'chat_id':TELEGRAM_CHAT_ID,'text':txt},timeout=10)
     log('Telegram alert sent' if r.status_code<400 else f'Telegram failed HTTP {r.status_code}: {r.text[:120]}')
@@ -324,7 +335,7 @@ def push_github(payload):
     except Exception as e: log(f'GitHub push error: {e}')
 
 def run_scan():
-    log('Apex Engine v2.1 starting — Smart Exit Engine active, Polygon-only, Benzinga disabled.')
+    log('Apex Engine v2.2 starting — Adaptive Exit Engine active, Polygon-only, Benzinga disabled.')
     log(f'Session: {session_name()} | Account size: {ACCOUNT_SIZE} | Max risk/trade: {MAX_RISK_PER_TRADE}')
     c=Polygon(POLYGON_API_KEY); ideas=[]
     for t in TICKERS:
