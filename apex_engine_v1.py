@@ -711,4 +711,121 @@ def scan_ticker(ticker: str) -> List[TradeIdea]:
                 ideas.append(idea)
 
     # Priority 3: LEAP
-    leap_score, leap
+    leap_score, leap_dir, leap_notes = score_leap(tech)
+    if leap_dir and leap_score >= MIN_LEAP_SCORE:
+        idea = make_idea(ticker, tech, "LEAP", leap_score, leap_dir, leap_notes)
+        if idea:
+            ideas.append(idea)
+
+    # Return best idea per ticker to avoid clutter.
+    ideas.sort(key=lambda x: x.score, reverse=True)
+    return ideas[:1]
+
+# =============================
+# ALERTS
+# =============================
+def alert_key(idea: TradeIdea) -> str:
+    raw = f"{dt.date.today().isoformat()}|{idea.ticker}|{idea.trader_type}|{idea.direction}|{idea.option_contract}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def load_alert_cache() -> Dict[str, Any]:
+    return load_json(ALERT_CACHE_FILE, {})
+
+
+def save_alert_cache(cache: Dict[str, Any]) -> None:
+    save_json(ALERT_CACHE_FILE, cache)
+
+
+def format_alert(idea: TradeIdea) -> str:
+    lines = [
+        f"APEX ENGINE {idea.grade} SETUP",
+        f"Ticker: {idea.ticker}",
+        f"Trader Type: {idea.trader_type}",
+        f"Direction: {idea.direction}",
+        f"Score: {idea.score}",
+        f"Strategy: {idea.strategy}",
+        f"Status: {idea.status}",
+        "",
+        "ENTRY:",
+        idea.entry_zone,
+        "",
+        "OPTION:",
+        idea.option_contract,
+        f"DTE: {idea.dte}",
+        f"Estimated Entry: ${idea.estimated_option_entry}",
+        f"Max Contracts: {idea.max_contracts}",
+        f"Estimated Max Risk: ${idea.max_risk}",
+        "",
+        "EXIT:",
+        idea.stop_loss,
+        "Targets: " + ", ".join(idea.targets),
+        "",
+        "Notes:",
+        *[f"- {n}" for n in idea.notes[:6]],
+    ]
+    return "\n".join(lines)
+
+
+def send_telegram(message: str) -> bool:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        log("Telegram not configured. Skipping alert.")
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "disable_web_page_preview": True}
+    try:
+        r = requests.post(url, json=payload, timeout=15)
+        if r.status_code >= 400:
+            log(f"Telegram failed: {r.status_code} {r.text[:200]}")
+            return False
+        return True
+    except Exception as e:
+        log(f"Telegram error: {e}")
+        return False
+
+
+def alert_ideas(ideas: List[TradeIdea]) -> None:
+    cache = load_alert_cache()
+    changed = False
+    for idea in ideas:
+        key = alert_key(idea)
+        if cache.get(key):
+            continue
+        if idea.grade in {"A+", "A", "B+"} and idea.status == "READY":
+            if send_telegram(format_alert(idea)):
+                cache[key] = now_utc_iso()
+                changed = True
+    if changed:
+        save_alert_cache(cache)
+
+# =============================
+# MAIN
+# =============================
+def main() -> None:
+    log("Apex Engine v1.3 starting — Polygon-only mode. Benzinga disabled.")
+    if not POLYGON_API_KEY:
+        log("Missing POLYGON_API_KEY. Add it in Render Environment.")
+        return
+
+    all_ideas: List[TradeIdea] = []
+    for ticker in TICKERS:
+        try:
+            all_ideas.extend(scan_ticker(ticker))
+        except Exception as e:
+            log(f"Error scanning {ticker}: {e}")
+
+    all_ideas.sort(key=lambda x: x.score, reverse=True)
+    dashboard = {
+        "updated_at": now_utc_iso(),
+        "mode": "POLYGON_ONLY_BENZINGA_DISABLED",
+        "account_size": ACCOUNT_SIZE,
+        "max_risk_per_trade": MAX_RISK_PER_TRADE,
+        "ideas": [asdict(i) for i in all_ideas],
+    }
+    save_json(DASHBOARD_FILE, dashboard)
+    alert_ideas(all_ideas)
+    log(f"Scan complete. Qualified ideas: {len(all_ideas)}")
+
+
+if __name__ == "__main__":
+    main()
