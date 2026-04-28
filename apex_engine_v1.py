@@ -1,42 +1,40 @@
 #!/usr/bin/env python3
 """
-APEX ENGINE v1.5 - Polygon-Only Trading Decision Engine
+APEX ENGINE v1.6 - Polygon-only options decision engine + Netlify dashboard sync
 
 Features:
-- Multi-stock swing scanner
-- SPY/QQQ 0DTE sniper mode
-- LEAP candidate mode
+- Multi-stock scanner: swing, 0DTE SPY/QQQ sniper, LEAP candidate mode
 - Re-entry engine
-- Telegram A+ alerts only
-- Duplicate alert protection by ticker/strategy/day
-- Dashboard JSON output for Netlify/static hosting
-- SPX included but safely skipped unless your Polygon account has indices entitlement
+- A+ Telegram alerts only
+- Duplicate alert protection by day
+- Writes dashboard.json locally
+- Optional GitHub push to apex-dashboard repo so Netlify auto-updates
+- Benzinga disabled
+- SPX remains in ticker list but is safely skipped until Polygon Indices is added
 
-Environment variables required:
-- POLYGON_API_KEY
-- TELEGRAM_BOT_TOKEN
-- TELEGRAM_CHAT_ID
-Optional:
-- MAX_RISK_PER_TRADE=750
-- ACCOUNT_SIZE=60000
-- MIN_GRADE=A+
-- SEND_TELEGRAM=true
-- OUTPUT_DIR=.
+Required Render env vars:
+POLYGON_API_KEY
+TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID
+ACCOUNT_SIZE=60000
+MAX_RISK_PER_TRADE=750
 
-Render Cron command:
-python apex_engine_v1.py
+Optional dashboard sync env vars:
+GITHUB_TOKEN=ghp_xxx
+GITHUB_REPO=yourusername/apex-dashboard
+GITHUB_BRANCH=main
+GITHUB_DASHBOARD_PATH=dashboard.json
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import os
-import sys
-import time
+import statistics
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, timezone, date
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -44,143 +42,117 @@ import requests
 # =============================
 # CONFIG
 # =============================
-
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-MAX_RISK_PER_TRADE = float(os.getenv("MAX_RISK_PER_TRADE", "750"))
 ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "60000"))
-SEND_TELEGRAM = os.getenv("SEND_TELEGRAM", "true").lower() in {"1", "true", "yes", "y"}
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "."))
+MAX_RISK_PER_TRADE = float(os.getenv("MAX_RISK_PER_TRADE", "750"))
+SEND_TELEGRAM = os.getenv("SEND_TELEGRAM", "true").lower() == "true"
+MIN_GRADE = os.getenv("MIN_GRADE", "A+").upper()
 
-# Keep SPX in list, but skip safely until Indices entitlement is added.
-TICKERS = [
-    "SPX", "SPY", "QQQ", "NVDA", "TSLA", "META", "MSFT", "AAPL", "AMZN",
-    "COIN", "AMD", "NFLX", "PLTR", "SMH", "QCOM", "NBIS"
-]
+DASHBOARD_FILE = os.getenv("DASHBOARD_FILE", "dashboard.json")
+ALERT_CACHE_FILE = os.getenv("ALERT_CACHE_FILE", "sent_alerts.json")
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "12"))
 
-ZERO_DTE_TICKERS = {"SPY", "QQQ"}  # Add SPX after Polygon Indices entitlement is active.
-LEAP_TICKERS = {"NVDA", "MSFT", "AAPL", "AMZN", "META", "AMD", "PLTR", "SMH", "QCOM"}
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
+GITHUB_REPO = os.getenv("GITHUB_REPO", "").strip()  # username/apex-dashboard
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main").strip()
+GITHUB_DASHBOARD_PATH = os.getenv("GITHUB_DASHBOARD_PATH", "dashboard.json").strip()
 
-# Market hours in ET converted approximate UTC for cron guidance. Engine itself can run anytime.
-REQUEST_TIMEOUT = 12
 POLYGON_BASE = "https://api.polygon.io"
 
-ALERT_STATE_FILE = OUTPUT_DIR / "apex_alert_state.json"
-DASHBOARD_FILE = OUTPUT_DIR / "apex_dashboard.json"
-SCAN_LOG_FILE = OUTPUT_DIR / "apex_last_scan.json"
+TICKERS = [
+    "SPY", "QQQ", "SPX", "NVDA", "TSLA", "META", "MSFT", "AAPL",
+    "AMZN", "COIN", "AMD", "NFLX", "PLTR", "SMH", "QCOM", "NBIS"
+]
+ZERO_DTE_TICKERS = {"SPY", "QQQ"}  # SPX skipped until Polygon Indices entitlement
 
 # =============================
-# DATA MODELS
+# MODELS
 # =============================
-
-@dataclass
-class MarketMetrics:
-    ticker: str
-    price: float
-    prev_close: float
-    day_open: float
-    day_high: float
-    day_low: float
-    volume: float
-    avg_volume_20: float
-    rel_volume: float
-    ema8: float
-    ema21: float
-    ema50: float
-    ema200: float
-    rsi14: float
-    atr14: float
-    vwap: Optional[float]
-    change_pct: float
-
-@dataclass
-class OptionPick:
-    ticker: str
-    option_ticker: str
-    option_type: str
-    strike: float
-    expiration: str
-    dte: int
-    bid: Optional[float]
-    ask: Optional[float]
-    mid: Optional[float]
-    delta: Optional[float]
-    gamma: Optional[float]
-    iv: Optional[float]
-    open_interest: Optional[float]
-    volume: Optional[float]
-    stop_pct: float
-    target1_pct: float
-    target2_pct: float
-    max_contracts: int
-    estimated_risk_per_contract: Optional[float]
-
 @dataclass
 class TradeIdea:
     ticker: str
-    strategy: str  # SWING / 0DTE / LEAP / RE-ENTRY
-    direction: str  # CALL / PUT
     grade: str
-    score: int
-    status: str  # READY / WAIT / RE-ENTRY READY
-    setup: str
+    score: float
+    trader_type: str
+    strategy: str
+    direction: str
+    status: str
     entry_zone: str
-    stop: str
-    target1: str
-    target2: str
-    risk_note: str
-    timestamp_utc: str
-    metrics: Dict[str, Any]
-    option: Optional[Dict[str, Any]]
-    alert_reason: str
+    exit_plan: str
+    stop_loss: str
+    targets: List[str]
+    option_contract: str
+    estimated_option_entry: float
+    dte: int
+    max_contracts: int
+    max_risk: float
+    price: float
+    rsi: float
+    rel_volume: float
+    notes: List[str]
+    timestamp: str
 
 # =============================
-# UTILS
+# UTILITIES
 # =============================
+def now_utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def today_utc() -> date:
+    return datetime.now(timezone.utc).date()
+
 
 def log(msg: str) -> None:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    print(f"[{now}] {msg}", flush=True)
+    print(msg, flush=True)
 
 
-def safe_float(x: Any, default: float = 0.0) -> float:
+def load_json(path: str, default: Any) -> Any:
     try:
-        if x is None:
-            return default
-        return float(x)
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
         return default
 
 
-def round_price(x: Optional[float], ndigits: int = 2) -> Optional[float]:
-    if x is None or not math.isfinite(x):
-        return None
-    return round(float(x), ndigits)
-
-
-def load_json(path: Path, default: Any) -> Any:
+def save_json(path: str, data: Any) -> None:
     try:
-        if path.exists():
-            return json.loads(path.read_text())
-    except Exception:
-        pass
-    return default
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        log(f"Could not save {path}: {e}")
 
 
-def save_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, default=str))
-
-
-def today_key() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def polygon_get(path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    if params is None:
+        params = {}
+    params["apiKey"] = POLYGON_API_KEY
+    url = f"{POLYGON_BASE}{path}"
+    try:
+        r = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        if r.status_code in (401, 403):
+            log(f"Polygon not authorized for {path}. Skipping.")
+            return None
+        if r.status_code == 404:
+            log(f"Polygon 404 for {path}. Skipping.")
+            return None
+        if r.status_code >= 400:
+            log(f"Polygon HTTP {r.status_code} for {path}: {r.text[:160]}")
+            return None
+        return r.json()
+    except requests.exceptions.Timeout:
+        log(f"Polygon timeout for {path}. Skipping.")
+        return None
+    except Exception as e:
+        log(f"Polygon request failed for {path}: {e}")
+        return None
 
 # =============================
 # INDICATORS
 # =============================
-
 def ema(values: List[float], period: int) -> float:
     if not values:
         return 0.0
@@ -188,20 +160,19 @@ def ema(values: List[float], period: int) -> float:
         return sum(values) / len(values)
     k = 2 / (period + 1)
     e = sum(values[:period]) / period
-    for price in values[period:]:
-        e = price * k + e * (1 - k)
+    for v in values[period:]:
+        e = v * k + e * (1 - k)
     return e
 
 
 def rsi(values: List[float], period: int = 14) -> float:
     if len(values) <= period:
         return 50.0
-    gains = []
-    losses = []
+    gains, losses = [], []
     for i in range(1, len(values)):
-        delta = values[i] - values[i - 1]
-        gains.append(max(delta, 0))
-        losses.append(abs(min(delta, 0)))
+        ch = values[i] - values[i - 1]
+        gains.append(max(ch, 0))
+        losses.append(abs(min(ch, 0)))
     avg_gain = sum(gains[-period:]) / period
     avg_loss = sum(losses[-period:]) / period
     if avg_loss == 0:
@@ -210,772 +181,438 @@ def rsi(values: List[float], period: int = 14) -> float:
     return 100 - (100 / (1 + rs))
 
 
-def atr(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> float:
-    if len(closes) < 2:
+def atr(bars: List[Dict[str, Any]], period: int = 14) -> float:
+    if len(bars) < 2:
         return 0.0
     trs = []
-    for i in range(1, len(closes)):
-        tr = max(
-            highs[i] - lows[i],
-            abs(highs[i] - closes[i - 1]),
-            abs(lows[i] - closes[i - 1]),
-        )
-        trs.append(tr)
-    if not trs:
-        return 0.0
-    recent = trs[-period:]
-    return sum(recent) / len(recent)
+    for i in range(1, len(bars)):
+        h, l, pc = float(bars[i]["h"]), float(bars[i]["l"]), float(bars[i-1]["c"])
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    return sum(trs[-period:]) / min(period, len(trs)) if trs else 0.0
 
 # =============================
-# POLYGON CLIENT
+# DATA FETCH
 # =============================
-
-class PolygonClient:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.session = requests.Session()
-
-    def get(self, path: str, params: Optional[Dict[str, Any]] = None, timeout: int = REQUEST_TIMEOUT) -> Optional[Dict[str, Any]]:
-        if not self.api_key:
-            raise RuntimeError("Missing POLYGON_API_KEY")
-        url = f"{POLYGON_BASE}{path}"
-        params = dict(params or {})
-        params["apiKey"] = self.api_key
-        try:
-            r = self.session.get(url, params=params, timeout=timeout)
-            if r.status_code == 403:
-                log(f"Polygon not authorized for endpoint: {path}")
-                return None
-            if r.status_code >= 400:
-                log(f"Polygon HTTP {r.status_code} for {path}: {r.text[:200]}")
-                return None
-            return r.json()
-        except requests.Timeout:
-            log(f"Polygon timeout for {path}")
-            return None
-        except Exception as e:
-            log(f"Polygon error for {path}: {e}")
-            return None
-
-    def daily_aggs(self, ticker: str, days: int = 260) -> Optional[List[Dict[str, Any]]]:
-        end = datetime.now(timezone.utc).date()
-        start = end - timedelta(days=days * 2)
-        path = f"/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
-        data = self.get(path, {"adjusted": "true", "sort": "asc", "limit": 5000})
-        if not data or data.get("status") in {"NOT_AUTHORIZED", "ERROR"}:
-            return None
-        return data.get("results") or []
-
-    def intraday_aggs(self, ticker: str, multiplier: int = 5, timespan: str = "minute", days: int = 2) -> List[Dict[str, Any]]:
-        end = datetime.now(timezone.utc).date()
-        start = end - timedelta(days=days)
-        path = f"/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start}/{end}"
-        data = self.get(path, {"adjusted": "true", "sort": "asc", "limit": 5000}, timeout=10)
-        if not data:
-            return []
-        return data.get("results") or []
-
-    def option_chain_snapshot(
-        self,
-        ticker: str,
-        direction: str,
-        min_dte: int,
-        max_dte: int,
-        target_delta_low: float,
-        target_delta_high: float,
-        price: float,
-        limit: int = 250,
-    ) -> List[Dict[str, Any]]:
-        """Fetch limited option snapshot pages to avoid long Render hangs."""
-        today = datetime.now(timezone.utc).date()
-        exp_gte = today + timedelta(days=min_dte)
-        exp_lte = today + timedelta(days=max_dte)
-        contract_type = "call" if direction.upper() == "CALL" else "put"
-
-        # Limit strike window around price to reduce data load.
-        if direction.upper() == "CALL":
-            strike_gte = max(1, price * 0.85)
-            strike_lte = price * 1.20
-        else:
-            strike_gte = max(1, price * 0.80)
-            strike_lte = price * 1.15
-
-        path = f"/v3/snapshot/options/{ticker}"
-        params = {
-            "contract_type": contract_type,
-            "expiration_date.gte": str(exp_gte),
-            "expiration_date.lte": str(exp_lte),
-            "strike_price.gte": round(strike_gte, 2),
-            "strike_price.lte": round(strike_lte, 2),
-            "limit": limit,
-            "order": "asc",
-            "sort": "expiration_date",
-        }
-        data = self.get(path, params, timeout=15)
-        if not data:
-            return []
-        results = data.get("results") or []
-        # Filter by delta if available; keep if Greeks missing so system still works.
-        filtered = []
-        for c in results:
-            greeks = c.get("greeks") or {}
-            delta = greeks.get("delta")
-            if delta is None:
-                filtered.append(c)
-                continue
-            abs_delta = abs(safe_float(delta))
-            if target_delta_low <= abs_delta <= target_delta_high:
-                filtered.append(c)
-        return filtered[:limit]
-
-# =============================
-# MARKET METRICS
-# =============================
-
-def build_metrics(client: PolygonClient, ticker: str) -> Optional[MarketMetrics]:
-    aggs = client.daily_aggs(ticker)
-    if not aggs or len(aggs) < 50:
-        return None
-
-    closes = [safe_float(a.get("c")) for a in aggs]
-    highs = [safe_float(a.get("h")) for a in aggs]
-    lows = [safe_float(a.get("l")) for a in aggs]
-    volumes = [safe_float(a.get("v")) for a in aggs]
-    opens = [safe_float(a.get("o")) for a in aggs]
-
-    price = closes[-1]
-    prev_close = closes[-2] if len(closes) >= 2 else price
-    day_open = opens[-1]
-    day_high = highs[-1]
-    day_low = lows[-1]
-    volume = volumes[-1]
-    avg_volume_20 = sum(volumes[-21:-1]) / min(20, len(volumes[-21:-1])) if len(volumes) > 21 else max(volume, 1)
-    rel_volume = volume / avg_volume_20 if avg_volume_20 else 1.0
-    change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
-
-    # Intraday VWAP approximation from 5-min bars.
-    vwap = None
-    intraday = client.intraday_aggs(ticker, days=2)
-    if intraday:
-        today_utc = datetime.now(timezone.utc).date()
-        # use all recent bars from latest day present
-        latest_day_ms = intraday[-1].get("t")
-        if latest_day_ms:
-            latest_day = datetime.fromtimestamp(latest_day_ms / 1000, timezone.utc).date()
-            day_bars = [b for b in intraday if datetime.fromtimestamp(b.get("t", 0) / 1000, timezone.utc).date() == latest_day]
-            pv_sum = sum(((safe_float(b.get("h")) + safe_float(b.get("l")) + safe_float(b.get("c"))) / 3) * safe_float(b.get("v")) for b in day_bars)
-            vol_sum = sum(safe_float(b.get("v")) for b in day_bars)
-            if vol_sum:
-                vwap = pv_sum / vol_sum
-
-    return MarketMetrics(
-        ticker=ticker,
-        price=price,
-        prev_close=prev_close,
-        day_open=day_open,
-        day_high=day_high,
-        day_low=day_low,
-        volume=volume,
-        avg_volume_20=avg_volume_20,
-        rel_volume=rel_volume,
-        ema8=ema(closes, 8),
-        ema21=ema(closes, 21),
-        ema50=ema(closes, 50),
-        ema200=ema(closes, 200),
-        rsi14=rsi(closes, 14),
-        atr14=atr(highs, lows, closes, 14),
-        vwap=vwap,
-        change_pct=change_pct,
+def get_daily_bars(ticker: str, days: int = 260) -> List[Dict[str, Any]]:
+    end = today_utc()
+    start = end - timedelta(days=420)
+    data = polygon_get(
+        f"/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}",
+        {"adjusted": "true", "sort": "asc", "limit": 5000},
     )
+    bars = data.get("results", []) if data else []
+    return bars[-days:]
+
+
+def get_intraday_bars(ticker: str) -> List[Dict[str, Any]]:
+    end = today_utc()
+    start = end - timedelta(days=5)
+    data = polygon_get(
+        f"/v2/aggs/ticker/{ticker}/range/5/minute/{start}/{end}",
+        {"adjusted": "true", "sort": "asc", "limit": 5000},
+    )
+    return data.get("results", []) if data else []
+
+
+def next_expiration_for_dte(target_dte: int) -> str:
+    d = today_utc() + timedelta(days=target_dte)
+    return d.isoformat()
+
+
+def contract_type_for_direction(direction: str) -> str:
+    return "call" if direction.upper() == "CALL" else "put"
+
+
+def get_option_snapshot(ticker: str, direction: str, target_dte: int, underlying_price: float) -> Optional[Dict[str, Any]]:
+    """Fetch a small filtered options chain from Polygon and select nearest useful contract."""
+    exp = next_expiration_for_dte(target_dte)
+    contract_type = contract_type_for_direction(direction)
+    params = {
+        "contract_type": contract_type,
+        "expiration_date": exp,
+        "limit": 40,
+        "sort": "details.strike_price",
+    }
+    data = polygon_get(f"/v3/snapshot/options/{ticker}", params)
+    if not data or not data.get("results"):
+        return None
+    options = data["results"]
+    # Choose ATM/near ITM. For calls: nearest strike >= price. For puts: nearest strike <= price.
+    def strike(o: Dict[str, Any]) -> float:
+        return float(o.get("details", {}).get("strike_price") or 0)
+    if direction.upper() == "CALL":
+        candidates = [o for o in options if strike(o) >= underlying_price * 0.98]
+    else:
+        candidates = [o for o in options if strike(o) <= underlying_price * 1.02]
+    candidates = candidates or options
+    return min(candidates, key=lambda o: abs(strike(o) - underlying_price))
+
+
+def option_mid_price(snapshot: Optional[Dict[str, Any]]) -> float:
+    if not snapshot:
+        return 0.0
+    quote = snapshot.get("last_quote") or {}
+    bid = float(quote.get("bid", 0) or 0)
+    ask = float(quote.get("ask", 0) or 0)
+    if bid > 0 and ask > 0:
+        return round((bid + ask) / 2, 2)
+    trade = snapshot.get("last_trade") or {}
+    price = float(trade.get("price", 0) or 0)
+    return round(price, 2)
+
+
+def option_symbol(snapshot: Optional[Dict[str, Any]], ticker: str, direction: str, dte: int, price: float) -> str:
+    if not snapshot:
+        # fallback approximation
+        strike = round(price / 5) * 5
+        return f"{ticker} {strike}{'C' if direction == 'CALL' else 'P'} {dte}DTE"
+    details = snapshot.get("details", {})
+    sym = details.get("ticker") or ""
+    strike = details.get("strike_price", "?")
+    exp = details.get("expiration_date", "?")
+    typ = details.get("contract_type", direction.lower())
+    return f"{sym or ticker} {exp} {strike} {typ.upper()}"
 
 # =============================
-# STRATEGY SCORING
+# SCORING AND STRATEGY
 # =============================
-
-def grade_from_score(score: int) -> str:
-    if score >= 7:
+def grade(score: float) -> str:
+    if score >= 88:
         return "A+"
-    if score >= 6:
+    if score >= 78:
         return "A"
-    if score >= 5:
+    if score >= 70:
         return "B+"
     return "B"
 
 
-def is_uptrend(m: MarketMetrics) -> bool:
-    return m.price > m.ema50 > m.ema200
+def classify_swing(ticker: str, bars: List[Dict[str, Any]]) -> Optional[TradeIdea]:
+    closes = [float(b["c"]) for b in bars]
+    vols = [float(b.get("v", 0)) for b in bars]
+    if len(closes) < 60:
+        return None
+    price = closes[-1]
+    ema8, ema21, ema50, ema200 = ema(closes, 8), ema(closes, 21), ema(closes, 50), ema(closes, 200)
+    rs = rsi(closes)
+    avgv = statistics.mean(vols[-30:-1]) if len(vols) > 31 else max(vols[-1], 1)
+    rv = round(vols[-1] / avgv, 2) if avgv else 1.0
+    at = atr(bars)
 
-
-def is_downtrend(m: MarketMetrics) -> bool:
-    return m.price < m.ema50 < m.ema200
-
-
-def near(value: float, target: float, pct: float) -> bool:
-    if target == 0:
-        return False
-    return abs(value - target) / target <= pct
-
-
-def swing_score(m: MarketMetrics) -> Tuple[int, str, str]:
+    direction = "CALL" if price > ema50 else "PUT"
     score = 0
-    reasons = []
-    direction = "CALL"
+    notes = []
 
-    if is_uptrend(m):
-        score += 2
-        reasons.append("bull trend above EMA50/200")
+    if direction == "CALL" and price > ema21 > ema50:
+        score += 24; notes.append("Bull trend: price above EMA21/EMA50")
+    if direction == "PUT" and price < ema21 < ema50:
+        score += 24; notes.append("Bear trend: price below EMA21/EMA50")
+    if abs(price - ema21) / price <= 0.025:
+        score += 24; notes.append("Entry near EMA21 pullback zone")
+    elif abs(price - ema50) / price <= 0.025:
+        score += 18; notes.append("Entry near EMA50 pullback zone")
+    if 45 <= rs <= 66:
+        score += 16; notes.append("RSI reset / controlled momentum")
+    if rv >= 1.15:
+        score += 14; notes.append("Relative volume expansion")
+    if price > ema8 and direction == "CALL":
+        score += 10; notes.append("Short-term momentum confirmation")
+    if price < ema8 and direction == "PUT":
+        score += 10; notes.append("Short-term bearish confirmation")
+    score = min(score, 100)
+    g = grade(score)
+    if g != "A+":
+        return None
+
+    near_ema21 = abs(price - ema21) / price <= 0.012
+    status = "READY" if near_ema21 else "WAIT"
+    if status != "READY":
+        # dashboard can still show A+ WAIT, but Telegram will not alert
+        notes.append("A+ watchlist only: wait for price to touch entry zone")
+
+    dte = 14
+    snap = get_option_snapshot(ticker, direction, dte, price)
+    opt_price = option_mid_price(snap) or max(round(price * 0.025, 2), 0.5)
+    stop_pct = 0.35
+    risk_per_contract = opt_price * 100 * stop_pct
+    contracts = max(1, math.floor(MAX_RISK_PER_TRADE / risk_per_contract)) if risk_per_contract > 0 else 1
+    max_risk = round(contracts * risk_per_contract, 2)
+    zone_low = round(min(ema21, price) - at * 0.15, 2)
+    zone_high = round(max(ema21, price) + at * 0.15, 2)
+
+    return TradeIdea(
+        ticker=ticker, grade=g, score=score, trader_type="SWING", strategy="EMA21 pullback continuation",
+        direction=direction, status=status, entry_zone=f"{zone_low} - {zone_high}",
+        exit_plan="Scale at +35% / +70%; close if trend fails", stop_loss="Option -35% or stock closes beyond EMA21/EMA50 zone",
+        targets=["+35% option", "+70% option", "trail runner if momentum expands"],
+        option_contract=option_symbol(snap, ticker, direction, dte, price), estimated_option_entry=opt_price,
+        dte=dte, max_contracts=contracts, max_risk=max_risk, price=round(price, 2), rsi=round(rs, 1), rel_volume=rv,
+        notes=notes, timestamp=now_utc_iso()
+    )
+
+
+def classify_zero_dte(ticker: str, daily: List[Dict[str, Any]], intraday: List[Dict[str, Any]]) -> Optional[TradeIdea]:
+    if ticker not in ZERO_DTE_TICKERS or len(intraday) < 10 or len(daily) < 60:
+        return None
+    closes = [float(b["c"]) for b in intraday]
+    price = closes[-1]
+    ema8, ema21 = ema(closes, 8), ema(closes, 21)
+    rs = rsi(closes)
+    vols = [float(b.get("v", 0)) for b in intraday]
+    rv = round(vols[-1] / (statistics.mean(vols[-20:-1]) or 1), 2) if len(vols) > 21 else 1.0
+
+    first3 = intraday[:3]
+    or_high = max(float(b["h"]) for b in first3)
+    or_low = min(float(b["l"]) for b in first3)
+    direction = None
+    if price > or_high and price > ema8 > ema21 and rs > 55 and rv > 1.1:
         direction = "CALL"
-    elif is_downtrend(m):
-        score += 2
-        reasons.append("bear trend below EMA50/200")
+    elif price < or_low and price < ema8 < ema21 and rs < 45 and rv > 1.1:
         direction = "PUT"
     else:
-        return 0, direction, "trend not clean"
+        return None
 
-    if direction == "CALL":
-        if m.ema21 * 0.985 <= m.price <= m.ema21 * 1.035:
-            score += 2
-            reasons.append("near EMA21 pullback zone")
-        elif m.price <= m.ema50 * 1.02:
-            score += 1
-            reasons.append("near EMA50 deeper pullback")
-        if 45 <= m.rsi14 <= 65:
-            score += 1
-            reasons.append("RSI reset bullish")
-        if m.price > m.ema8:
-            score += 1
-            reasons.append("reclaiming EMA8")
-    else:
-        if m.ema21 * 0.965 <= m.price <= m.ema21 * 1.015:
-            score += 2
-            reasons.append("near EMA21 bearish retest")
-        if 35 <= m.rsi14 <= 55:
-            score += 1
-            reasons.append("RSI bearish reset")
-        if m.price < m.ema8:
-            score += 1
-            reasons.append("below EMA8")
+    score = 90
+    notes = ["0DTE sniper: opening range break confirmed", "EMA8/21 trend aligned", "Volume expanding"]
+    if 48 <= rs <= 52:
+        return None
 
-    if m.rel_volume >= 1.2:
-        score += 1
-        reasons.append("relative volume expansion")
-    if abs(m.change_pct) >= 0.7:
-        score += 1
-        reasons.append("meaningful daily move")
+    dte = 0
+    snap = get_option_snapshot(ticker, direction, dte, price)
+    opt_price = option_mid_price(snap) or max(round(price * 0.008, 2), 0.3)
+    stop_pct = 0.50
+    risk_per_contract = opt_price * 100 * stop_pct
+    contracts = max(1, math.floor(MAX_RISK_PER_TRADE / risk_per_contract)) if risk_per_contract > 0 else 1
+    max_risk = round(contracts * risk_per_contract, 2)
 
-    return score, direction, "; ".join(reasons)
+    return TradeIdea(
+        ticker=ticker, grade="A+", score=score, trader_type="0DTE", strategy="Opening range sniper",
+        direction=direction, status="READY", entry_zone=f"Break {'above' if direction=='CALL' else 'below'} OR level: {round(or_high if direction=='CALL' else or_low, 2)}",
+        exit_plan="Take profit fast; no averaging down", stop_loss="Option -50% or failed OR break",
+        targets=["+25% option", "+50% option", "close before EOD"],
+        option_contract=option_symbol(snap, ticker, direction, dte, price), estimated_option_entry=opt_price,
+        dte=dte, max_contracts=contracts, max_risk=max_risk, price=round(price, 2), rsi=round(rs, 1), rel_volume=rv,
+        notes=notes, timestamp=now_utc_iso()
+    )
 
 
-def swing_status(m: MarketMetrics, direction: str) -> Tuple[str, str]:
-    if direction == "CALL":
-        if m.price <= m.ema21 * 1.01 and m.price >= m.ema21 * 0.985:
-            return "READY", f"{round_price(m.ema21*0.985)} - {round_price(m.ema21*1.01)}"
-        if m.price <= m.ema21 * 1.035:
-            return "WAIT", f"wait for {round_price(m.ema21)} area"
-        return "WAIT", "extended - wait for pullback"
-    else:
-        if m.price >= m.ema21 * 0.99 and m.price <= m.ema21 * 1.015:
-            return "READY", f"{round_price(m.ema21*0.99)} - {round_price(m.ema21*1.015)}"
-        return "WAIT", f"wait for retest near {round_price(m.ema21)}"
+def classify_leap(ticker: str, bars: List[Dict[str, Any]]) -> Optional[TradeIdea]:
+    closes = [float(b["c"]) for b in bars]
+    if len(closes) < 220:
+        return None
+    price = closes[-1]
+    ema50, ema200 = ema(closes, 50), ema(closes, 200)
+    high_252 = max(closes[-252:])
+    drawdown = (high_252 - price) / high_252 if high_252 else 0
+    rs = rsi(closes)
 
+    if not (price > ema200 and ema50 > ema200 and 0.08 <= drawdown <= 0.35 and rs < 60):
+        return None
 
-def zero_dte_score(m: MarketMetrics) -> Tuple[int, str, str, str]:
-    score = 0
-    reasons = []
+    score = 88
     direction = "CALL"
-    setup = "0DTE SNIPER"
+    dte = 180
+    snap = get_option_snapshot(ticker, direction, dte, price)
+    opt_price = option_mid_price(snap) or max(round(price * 0.12, 2), 1.0)
+    stop_pct = 0.30
+    risk_per_contract = opt_price * 100 * stop_pct
+    contracts = max(1, math.floor(MAX_RISK_PER_TRADE / risk_per_contract)) if risk_per_contract > 0 else 1
+    max_risk = round(contracts * risk_per_contract, 2)
 
-    # Intraday proxy using daily + VWAP because this runs as cron and may not always have perfect intraday state.
-    if m.vwap:
-        if m.price > m.vwap and m.ema8 > m.ema21:
-            score += 2
-            direction = "CALL"
-            reasons.append("price above VWAP and EMA8>EMA21")
-        elif m.price < m.vwap and m.ema8 < m.ema21:
-            score += 2
-            direction = "PUT"
-            reasons.append("price below VWAP and EMA8<EMA21")
-    else:
-        if m.price > m.day_open and m.ema8 > m.ema21:
-            score += 1
-            direction = "CALL"
-            reasons.append("above day open with EMA8>EMA21")
-        elif m.price < m.day_open and m.ema8 < m.ema21:
-            score += 1
-            direction = "PUT"
-            reasons.append("below day open with EMA8<EMA21")
-
-    # Opening range / day range proxy.
-    day_range = max(m.day_high - m.day_low, 0.01)
-    pos_in_range = (m.price - m.day_low) / day_range
-    if direction == "CALL" and pos_in_range >= 0.70:
-        score += 2
-        reasons.append("near high-of-day breakout zone")
-    elif direction == "PUT" and pos_in_range <= 0.30:
-        score += 2
-        reasons.append("near low-of-day breakdown zone")
-
-    # Avoid chop.
-    if not (45 <= m.rsi14 <= 55):
-        score += 1
-        reasons.append("RSI outside chop zone")
-    if m.rel_volume >= 1.3:
-        score += 1
-        reasons.append("volume expansion")
-    if abs(m.change_pct) >= 0.4:
-        score += 1
-        reasons.append("directional movement")
-
-    # Anti-chase: too far from VWAP or EMA21 gets downgraded.
-    chase = False
-    reference = m.vwap or m.ema21
-    if reference and abs(m.price - reference) / reference > 0.018:
-        chase = True
-        score -= 1
-        reasons.append("anti-chase penalty")
-
-    status = "READY" if score >= 6 and not chase else "WAIT"
-    return score, direction, setup, "; ".join(reasons) + f"; status={status}"
+    return TradeIdea(
+        ticker=ticker, grade="A+", score=score, trader_type="LEAP", strategy="Long-term trend pullback",
+        direction=direction, status="READY", entry_zone=f"Long-term pullback zone near {round(price,2)}",
+        exit_plan="Scale over weeks/months; protect capital if thesis breaks", stop_loss="Option -30% or stock loses EMA200",
+        targets=["+40% option", "+80% option", "trend hold for runner"],
+        option_contract=option_symbol(snap, ticker, direction, dte, price), estimated_option_entry=opt_price,
+        dte=dte, max_contracts=contracts, max_risk=max_risk, price=round(price,2), rsi=round(rs,1), rel_volume=1.0,
+        notes=["LEAP candidate: price above EMA200", "Pullback from 52-week high", "Longer-term trend intact"], timestamp=now_utc_iso()
+    )
 
 
-def zero_dte_status(m: MarketMetrics, direction: str) -> Tuple[str, str]:
-    reference = m.vwap or m.ema21
-    if not reference:
-        return "WAIT", "wait for VWAP/EMA confirmation"
-    dist = abs(m.price - reference) / reference
-    if dist <= 0.012 and m.rel_volume >= 1.2:
-        return "READY", f"near VWAP/EMA trigger {round_price(reference)}"
-    if dist <= 0.02:
-        return "WAIT", f"wait for cleaner touch near {round_price(reference)}"
-    return "WAIT", "extended - do not chase"
-
-
-def reentry_score(m: MarketMetrics) -> Tuple[int, str, str]:
-    score = 0
-    direction = "CALL"
-    reasons = []
-
-    if is_uptrend(m):
-        direction = "CALL"
-        score += 2
-        reasons.append("trend still bullish")
-        if m.price >= m.ema21 * 0.99 and m.price <= m.ema21 * 1.02:
-            score += 3
-            reasons.append("pullback into EMA21 re-entry zone")
-        if 48 <= m.rsi14 <= 62:
-            score += 1
-            reasons.append("RSI reset for re-entry")
-        if m.price > m.ema50:
-            score += 1
-            reasons.append("holds EMA50 support")
-    elif is_downtrend(m):
-        direction = "PUT"
-        score += 2
-        reasons.append("trend still bearish")
-        if m.price <= m.ema21 * 1.01 and m.price >= m.ema21 * 0.98:
-            score += 3
-            reasons.append("retest into EMA21 short zone")
-        if 38 <= m.rsi14 <= 52:
-            score += 1
-            reasons.append("RSI reset bearish")
-        if m.price < m.ema50:
-            score += 1
-            reasons.append("below EMA50 resistance")
-    return score, direction, "; ".join(reasons)
-
-
-def leap_score(m: MarketMetrics) -> Tuple[int, str, str]:
-    score = 0
-    direction = "CALL"
-    reasons = []
-    if is_uptrend(m):
-        score += 3
-        reasons.append("long-term uptrend")
-    else:
-        return 0, direction, "not a long-term uptrend"
-    # LEAP ideal: not overextended, RSI not too hot.
-    if m.price <= m.ema50 * 1.10:
-        score += 2
-        reasons.append("not excessively extended from EMA50")
-    if 45 <= m.rsi14 <= 68:
-        score += 1
-        reasons.append("RSI acceptable for LEAP entry")
-    if m.rel_volume >= 1.0:
-        score += 1
-        reasons.append("normal or stronger participation")
-    return score, direction, "; ".join(reasons)
-
-# =============================
-# OPTION SELECTION
-# =============================
-
-def get_mid(contract: Dict[str, Any]) -> Optional[float]:
-    quote = contract.get("last_quote") or {}
-    bid = quote.get("bid")
-    ask = quote.get("ask")
-    if bid is not None and ask is not None and safe_float(ask) > 0:
-        return (safe_float(bid) + safe_float(ask)) / 2
-    trade = contract.get("last_trade") or {}
-    price = trade.get("price")
-    if price is not None:
-        return safe_float(price)
-    details = contract.get("details") or {}
+def classify_reentry(base: TradeIdea, bars: List[Dict[str, Any]]) -> Optional[TradeIdea]:
+    closes = [float(b["c"]) for b in bars]
+    if len(closes) < 60 or base.status != "WAIT":
+        return None
+    price = closes[-1]
+    ema21 = ema(closes, 21)
+    rs = rsi(closes)
+    if abs(price - ema21) / price <= 0.01 and 45 <= rs <= 62:
+        base.status = "RE-ENTRY READY"
+        base.strategy = base.strategy + " + re-entry trigger"
+        base.notes.append("A+ RE-ENTRY READY: pullback touched EMA21 with RSI reset")
+        return base
     return None
 
 
-def build_option_pick(
-    client: PolygonClient,
-    ticker: str,
-    direction: str,
-    strategy: str,
-    price: float,
-) -> Optional[OptionPick]:
+def scan_ticker(ticker: str) -> List[TradeIdea]:
+    ideas: List[TradeIdea] = []
+    log(f"Scanning {ticker}...")
     if ticker == "SPX":
-        return None
+        log("SPX left in list but skipped until Polygon Indices entitlement is added.")
+        return ideas
+    daily = get_daily_bars(ticker)
+    if len(daily) < 60:
+        return ideas
+    intraday = get_intraday_bars(ticker) if ticker in ZERO_DTE_TICKERS else []
 
-    if strategy == "0DTE":
-        min_dte, max_dte = 0, 1
-        delta_low, delta_high = 0.45, 0.65
-        stop_pct, target1_pct, target2_pct = 0.45, 0.30, 0.60
-    elif strategy == "LEAP":
-        min_dte, max_dte = 90, 365
-        delta_low, delta_high = 0.65, 0.85
-        stop_pct, target1_pct, target2_pct = 0.30, 0.40, 0.100
-    else:  # SWING / RE-ENTRY
-        min_dte, max_dte = 7, 30
-        delta_low, delta_high = 0.55, 0.75
-        stop_pct, target1_pct, target2_pct = 0.35, 0.40, 0.80
+    zdte = classify_zero_dte(ticker, daily, intraday)
+    if zdte:
+        ideas.append(zdte)
 
-    log(f"Fetching options for {ticker} {direction} {strategy} DTE {min_dte}-{max_dte}")
-    contracts = client.option_chain_snapshot(ticker, direction, min_dte, max_dte, delta_low, delta_high, price)
-    if not contracts:
-        return None
+    swing = classify_swing(ticker, daily)
+    if swing:
+        re = classify_reentry(swing, daily)
+        ideas.append(re or swing)
 
-    def contract_rank(c: Dict[str, Any]) -> Tuple[float, float, float]:
-        details = c.get("details") or {}
-        greeks = c.get("greeks") or {}
-        mid = get_mid(c) or 9999
-        delta = abs(safe_float(greeks.get("delta"), 0.60))
-        target_delta = 0.55 if strategy == "0DTE" else (0.72 if strategy == "LEAP" else 0.65)
-        exp = details.get("expiration_date") or "9999-12-31"
-        try:
-            dte = (datetime.strptime(exp, "%Y-%m-%d").date() - datetime.now(timezone.utc).date()).days
-        except Exception:
-            dte = 999
-        return (abs(delta - target_delta), dte, mid)
+    leap = classify_leap(ticker, daily)
+    if leap:
+        ideas.append(leap)
 
-    best = sorted(contracts, key=contract_rank)[0]
-    details = best.get("details") or {}
-    greeks = best.get("greeks") or {}
-    quote = best.get("last_quote") or {}
-    day = best.get("day") or {}
-    oi = best.get("open_interest")
-    mid = get_mid(best)
-    estimated_risk = mid * 100 * stop_pct if mid else None
-    max_contracts = max(1, int(MAX_RISK_PER_TRADE // estimated_risk)) if estimated_risk and estimated_risk > 0 else 1
-    max_contracts = min(max_contracts, 10)  # safety cap
-    exp = details.get("expiration_date") or ""
-    try:
-        dte = (datetime.strptime(exp, "%Y-%m-%d").date() - datetime.now(timezone.utc).date()).days
-    except Exception:
-        dte = -1
-
-    return OptionPick(
-        ticker=ticker,
-        option_ticker=details.get("ticker", ""),
-        option_type=direction,
-        strike=safe_float(details.get("strike_price")),
-        expiration=exp,
-        dte=dte,
-        bid=round_price(safe_float(quote.get("bid")) if quote.get("bid") is not None else None),
-        ask=round_price(safe_float(quote.get("ask")) if quote.get("ask") is not None else None),
-        mid=round_price(mid),
-        delta=round_price(safe_float(greeks.get("delta")) if greeks.get("delta") is not None else None, 3),
-        gamma=round_price(safe_float(greeks.get("gamma")) if greeks.get("gamma") is not None else None, 4),
-        iv=round_price(safe_float(best.get("implied_volatility")) if best.get("implied_volatility") is not None else None, 3),
-        open_interest=safe_float(oi) if oi is not None else None,
-        volume=safe_float(day.get("volume")) if day.get("volume") is not None else None,
-        stop_pct=stop_pct,
-        target1_pct=target1_pct,
-        target2_pct=target2_pct,
-        max_contracts=max_contracts,
-        estimated_risk_per_contract=round_price(estimated_risk),
-    )
+    return ideas
 
 # =============================
-# IDEA BUILDERS
+# TELEGRAM + DASHBOARD SYNC
 # =============================
-
-def metrics_public(m: MarketMetrics) -> Dict[str, Any]:
-    return {
-        "price": round_price(m.price),
-        "change_pct": round_price(m.change_pct),
-        "rel_volume": round_price(m.rel_volume),
-        "rsi14": round_price(m.rsi14),
-        "ema8": round_price(m.ema8),
-        "ema21": round_price(m.ema21),
-        "ema50": round_price(m.ema50),
-        "ema200": round_price(m.ema200),
-        "vwap": round_price(m.vwap),
-        "atr14": round_price(m.atr14),
-    }
+def load_alert_cache() -> Dict[str, Any]:
+    data = load_json(ALERT_CACHE_FILE, {})
+    if data.get("date") != today_utc().isoformat():
+        return {"date": today_utc().isoformat(), "sent": {}}
+    return data
 
 
-def format_stop_target(option: Optional[OptionPick]) -> Tuple[str, str, str]:
-    if not option or not option.mid:
-        return ("Use chart invalidation / $750 max risk", "+40% option or structure target", "+80% option or runner")
-    stop_price = option.mid * (1 - option.stop_pct)
-    t1 = option.mid * (1 + option.target1_pct)
-    t2 = option.mid * (1 + option.target2_pct)
-    return (
-        f"Option stop near {round_price(stop_price)} (-{int(option.stop_pct*100)}%)",
-        f"Target 1 near {round_price(t1)} (+{int(option.target1_pct*100)}%)",
-        f"Target 2 near {round_price(t2)} (+{int(option.target2_pct*100)}%)",
-    )
+def save_alert_cache(cache: Dict[str, Any]) -> None:
+    save_json(ALERT_CACHE_FILE, cache)
 
-
-def make_idea(
-    client: PolygonClient,
-    m: MarketMetrics,
-    strategy: str,
-    direction: str,
-    score: int,
-    status: str,
-    setup: str,
-    entry_zone: str,
-    reason: str,
-) -> Optional[TradeIdea]:
-    grade = grade_from_score(score)
-    # High impact upgrade: only output A+ ideas.
-    if grade != "A+":
-        return None
-    # Alerts only for actionable states.
-    if status not in {"READY", "RE-ENTRY READY"}:
-        # Still output on dashboard? User wanted high-impact A+ only; keep WAIT off to reduce clutter.
-        return None
-
-    option = build_option_pick(client, m.ticker, direction, strategy, m.price)
-    stop, target1, target2 = format_stop_target(option)
-    risk_note = f"Max planned risk ${MAX_RISK_PER_TRADE:.0f}; contracts based on option stop."
-    if option and option.estimated_risk_per_contract:
-        risk_note = (
-            f"Max risk ${MAX_RISK_PER_TRADE:.0f}; estimated risk/contract ${option.estimated_risk_per_contract}; "
-            f"max contracts {option.max_contracts}."
-        )
-
-    return TradeIdea(
-        ticker=m.ticker,
-        strategy=strategy,
-        direction=direction,
-        grade=grade,
-        score=score,
-        status=status,
-        setup=setup,
-        entry_zone=entry_zone,
-        stop=stop,
-        target1=target1,
-        target2=target2,
-        risk_note=risk_note,
-        timestamp_utc=datetime.now(timezone.utc).isoformat(),
-        metrics=metrics_public(m),
-        option=asdict(option) if option else None,
-        alert_reason=reason,
-    )
-
-# =============================
-# TELEGRAM + DUPLICATES
-# =============================
 
 def alert_key(idea: TradeIdea) -> str:
-    return f"{today_key()}::{idea.ticker}::{idea.strategy}::{idea.direction}::{idea.status}"
+    return f"{idea.ticker}:{idea.trader_type}:{idea.direction}:{idea.status}:{idea.option_contract}:{today_utc().isoformat()}"
 
 
-def should_alert(idea: TradeIdea) -> bool:
-    state = load_json(ALERT_STATE_FILE, {})
-    key = alert_key(idea)
-    if state.get(key):
-        return False
-    state[key] = datetime.now(timezone.utc).isoformat()
-    # Keep only recent/current day keys to prevent file growing forever.
-    current = today_key()
-    state = {k: v for k, v in state.items() if k.startswith(current)}
-    save_json(ALERT_STATE_FILE, state)
-    return True
+def format_alert(idea: TradeIdea) -> str:
+    return "\n".join([
+        f"🔥 APEX A+ ALERT: {idea.ticker}",
+        f"Type: {idea.trader_type}",
+        f"Direction: {idea.direction}",
+        f"Status: {idea.status}",
+        f"Score: {idea.score}/100",
+        "",
+        f"Entry Zone: {idea.entry_zone}",
+        f"Option: {idea.option_contract}",
+        f"Est Entry: ${idea.estimated_option_entry}",
+        f"Contracts: {idea.max_contracts}",
+        f"Max Risk: ${idea.max_risk}",
+        "",
+        f"Stop: {idea.stop_loss}",
+        "Targets: " + ", ".join(idea.targets),
+        "",
+        "Notes: " + " | ".join(idea.notes[:4]),
+    ])
 
 
-def telegram_message(idea: TradeIdea) -> str:
-    opt = idea.option or {}
-    option_line = "Option: No contract selected"
-    if opt:
-        option_line = (
-            f"Option: {opt.get('option_ticker') or idea.ticker} | {opt.get('option_type')} "
-            f"{opt.get('strike')} exp {opt.get('expiration')} ({opt.get('dte')} DTE) | "
-            f"mid {opt.get('mid')} | delta {opt.get('delta')} | contracts {opt.get('max_contracts')}"
-        )
-    m = idea.metrics
-    return (
-        f"🔥 APEX A+ ALERT\n"
-        f"Ticker: {idea.ticker}\n"
-        f"Strategy: {idea.strategy}\n"
-        f"Direction: {idea.direction}\n"
-        f"Status: {idea.status}\n"
-        f"Score: {idea.score}/8\n"
-        f"Setup: {idea.setup}\n"
-        f"Entry: {idea.entry_zone}\n"
-        f"{option_line}\n"
-        f"Stop: {idea.stop}\n"
-        f"Target 1: {idea.target1}\n"
-        f"Target 2: {idea.target2}\n"
-        f"Risk: {idea.risk_note}\n"
-        f"Price: {m.get('price')} | RSI: {m.get('rsi14')} | RelVol: {m.get('rel_volume')}x\n"
-        f"Reason: {idea.alert_reason}"
-    )
-
-
-def send_telegram(text: str) -> bool:
+def send_telegram(message: str) -> bool:
     if not SEND_TELEGRAM:
-        log("Telegram disabled by SEND_TELEGRAM=false")
+        log("Telegram disabled by SEND_TELEGRAM=false.")
         return False
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        log("Telegram token/chat id missing; skipping alert")
+        log("Telegram not configured. Skipping alert.")
         return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
     try:
-        r = requests.post(url, json=payload, timeout=10)
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message}, timeout=15)
         if r.status_code >= 400:
-            log(f"Telegram failed HTTP {r.status_code}: {r.text[:200]}")
+            log(f"Telegram failed HTTP {r.status_code}: {r.text[:160]}")
             return False
         return True
     except Exception as e:
         log(f"Telegram error: {e}")
         return False
 
+
+def alert_ideas(ideas: List[TradeIdea]) -> None:
+    cache = load_alert_cache()
+    sent = cache.setdefault("sent", {})
+    changed = False
+    for idea in ideas:
+        if idea.grade != "A+" or idea.status not in {"READY", "RE-ENTRY READY"}:
+            continue
+        key = alert_key(idea)
+        if sent.get(key):
+            continue
+        if send_telegram(format_alert(idea)):
+            sent[key] = now_utc_iso()
+            changed = True
+    if changed:
+        save_alert_cache(cache)
+
+
+def push_dashboard_to_github(data: Dict[str, Any]) -> bool:
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        log("GitHub dashboard sync not configured. Skipping push.")
+        return False
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_DASHBOARD_PATH}"
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        sha = None
+        existing = requests.get(api_url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=15)
+        if existing.status_code == 200:
+            sha = existing.json().get("sha")
+        elif existing.status_code != 404:
+            log(f"GitHub read failed HTTP {existing.status_code}: {existing.text[:200]}")
+            return False
+        content = json.dumps(data, indent=2) + "\n"
+        payload = {
+            "message": f"Update Apex dashboard {now_utc_iso()}",
+            "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+            "branch": GITHUB_BRANCH,
+        }
+        if sha:
+            payload["sha"] = sha
+        resp = requests.put(api_url, headers=headers, json=payload, timeout=20)
+        if resp.status_code in (200, 201):
+            log(f"Dashboard pushed to GitHub: {GITHUB_REPO}/{GITHUB_DASHBOARD_PATH}")
+            return True
+        log(f"GitHub push failed HTTP {resp.status_code}: {resp.text[:250]}")
+        return False
+    except Exception as e:
+        log(f"GitHub push error: {e}")
+        return False
+
 # =============================
-# MAIN SCAN
+# MAIN
 # =============================
-
-def scan_ticker(client: PolygonClient, ticker: str) -> List[TradeIdea]:
-    ideas: List[TradeIdea] = []
-    log(f"Scanning {ticker}...")
-    m = build_metrics(client, ticker)
-    if not m:
-        log(f"Skipping {ticker}: no metrics or not authorized")
-        return ideas
-
-    # 0DTE sniper first for SPY/QQQ.
-    if ticker in ZERO_DTE_TICKERS:
-        score, direction, setup, reason = zero_dte_score(m)
-        status, entry = zero_dte_status(m, direction)
-        idea = make_idea(client, m, "0DTE", direction, score, status, setup, entry, reason)
-        if idea:
-            ideas.append(idea)
-
-    # Re-entry engine before base swing to catch actionable pullbacks.
-    re_score, re_direction, re_reason = reentry_score(m)
-    re_status = "RE-ENTRY READY" if re_score >= 7 else "WAIT"
-    re_entry = f"EMA21/VWAP pullback zone near {round_price(m.ema21)}"
-    re_idea = make_idea(client, m, "RE-ENTRY", re_direction, re_score, re_status, "A+ RE-ENTRY", re_entry, re_reason)
-    if re_idea:
-        ideas.append(re_idea)
-
-    # Swing engine.
-    sw_score, sw_direction, sw_reason = swing_score(m)
-    sw_status, sw_entry = swing_status(m, sw_direction)
-    sw_idea = make_idea(client, m, "SWING", sw_direction, sw_score, sw_status, "Pullback continuation", sw_entry, sw_reason)
-    if sw_idea:
-        ideas.append(sw_idea)
-
-    # LEAP engine only for selected long-term names; lower frequency but still A+ only.
-    if ticker in LEAP_TICKERS:
-        lp_score, lp_direction, lp_reason = leap_score(m)
-        lp_status = "READY" if lp_score >= 7 and m.price <= m.ema50 * 1.08 else "WAIT"
-        lp_entry = f"Long-term entry zone: near EMA50 {round_price(m.ema50)} to current {round_price(m.price)}"
-        lp_idea = make_idea(client, m, "LEAP", lp_direction, lp_score, lp_status, "Long-term accumulation", lp_entry, lp_reason)
-        if lp_idea:
-            ideas.append(lp_idea)
-
-    return ideas
-
-
-def rank_ideas(ideas: List[TradeIdea]) -> List[TradeIdea]:
-    strategy_priority = {"SWING": 0, "RE-ENTRY": 1, "0DTE": 2, "LEAP": 3}
-    return sorted(
-        ideas,
-        key=lambda x: (
-            -x.score,
-            strategy_priority.get(x.strategy, 9),
-            x.ticker,
-        ),
-    )
-
-
-def main() -> int:
-    log("Apex Engine v1.5 starting — Polygon-only mode. Benzinga disabled.")
-    log("High-impact upgrades active: A+ only, 0DTE SPY/QQQ sniper, re-entry engine, Telegram A+ alerts only, dashboard JSON.")
-
+def main() -> None:
+    log("Apex Engine v1.6 starting — Polygon-only. Benzinga disabled. Netlify dashboard sync ready.")
+    log(f"Account size: {ACCOUNT_SIZE} | Max risk/trade: {MAX_RISK_PER_TRADE}")
     if not POLYGON_API_KEY:
-        log("ERROR: Missing POLYGON_API_KEY environment variable")
-        return 1
+        log("Missing POLYGON_API_KEY. Add it in Render Environment.")
+        return
 
-    client = PolygonClient(POLYGON_API_KEY)
     all_ideas: List[TradeIdea] = []
-
     for ticker in TICKERS:
         try:
-            ideas = scan_ticker(client, ticker)
-            all_ideas.extend(ideas)
+            all_ideas.extend(scan_ticker(ticker))
         except Exception as e:
             log(f"Error scanning {ticker}: {e}")
-        time.sleep(0.25)  # gentle API pacing
 
-    ranked = rank_ideas(all_ideas)
-
-    # Save dashboard artifacts.
+    all_ideas.sort(key=lambda x: x.score, reverse=True)
     dashboard = {
-        "engine": "Apex Engine v1.5",
-        "mode": "Polygon-only; Benzinga disabled",
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "updated_at": now_utc_iso(),
+        "mode": "POLYGON_ONLY_BENZINGA_DISABLED_V1_6",
         "account_size": ACCOUNT_SIZE,
         "max_risk_per_trade": MAX_RISK_PER_TRADE,
-        "qualified_count": len(ranked),
-        "best_setup": asdict(ranked[0]) if ranked else None,
-        "ideas": [asdict(i) for i in ranked],
-        "notes": [
-            "Only A+ actionable ideas are shown.",
-            "Tickers not displayed should be treated as no trade.",
-            "SPX is safely skipped until Polygon Indices entitlement is enabled.",
-            "Execution is manual in Power E*TRADE; alerts are not trade instructions.",
-        ],
+        "ideas": [asdict(i) for i in all_ideas],
     }
     save_json(DASHBOARD_FILE, dashboard)
-    save_json(SCAN_LOG_FILE, dashboard)
-
-    log(f"Scan complete. Qualified ideas: {len(ranked)}")
-    if ranked:
-        for idea in ranked[:10]:
-            opt = idea.option or {}
-            log(
-                f"A+ {idea.strategy} {idea.ticker} {idea.direction} {idea.status} | "
-                f"score {idea.score} | option {opt.get('option_ticker', 'N/A')} mid {opt.get('mid', 'N/A')}"
-            )
-
-    # Telegram A+ only + duplicate protection.
-    alerts_sent = 0
-    for idea in ranked:
-        if should_alert(idea):
-            if send_telegram(telegram_message(idea)):
-                alerts_sent += 1
-                log(f"Telegram alert sent: {idea.ticker} {idea.strategy}")
-            else:
-                log(f"Telegram alert skipped/failed: {idea.ticker} {idea.strategy}")
-        else:
-            log(f"Duplicate alert suppressed: {idea.ticker} {idea.strategy}")
-
-    log(f"Alerts sent: {alerts_sent}")
-    log(f"Dashboard saved to {DASHBOARD_FILE.resolve()}")
-    return 0
+    push_dashboard_to_github(dashboard)
+    alert_ideas(all_ideas)
+    log(f"Scan complete. Qualified ideas: {len(all_ideas)}")
+    for idea in all_ideas[:10]:
+        log(f"{idea.grade} {idea.ticker} {idea.trader_type} {idea.direction} {idea.status} score={idea.score} option={idea.option_contract}")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
