@@ -1,4 +1,4 @@
-print("🔥 APEX ENGINE VERSION 2.0 LIVE 🔥")
+print("🔥 FORCE NEW BUILD v2.1 🔥")
 #!/usr/bin/env python3
 """
 APEX ENGINE v1.9 - Polygon-only trading decision engine
