@@ -30,7 +30,7 @@ GITHUB_DASHBOARD_PATH=dashboard.json
 """
 
 from __future__ import annotations
-print("🔥 FORCE NEW BUILD v2.1 🔥")
+
 import base64
 import json
 import math
