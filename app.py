@@ -558,14 +558,13 @@ def dashboard_json():
 @app.route("/health")
 def health():
     return jsonify({"ok": True, "mode": VERSION, "updated_at": STATE.get("updated_at")})
-
+@app.route("/test-telegram")
+def test_telegram():
+    ok = send_telegram("🚨 TEST ALERT: Apex Engine Telegram is working")
+    return {"success": ok}
 if __name__ == "__main__":
     print(f"Starting Apex Engine web dashboard {VERSION}")
     t = threading.Thread(target=scanner_loop, daemon=True)
     t.start()
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
-@app.route("/test-telegram")
-def test_telegram():
-    ok = send_telegram("🚨 TEST ALERT: Apex Engine Telegram is working")
-    return {"success": ok}
