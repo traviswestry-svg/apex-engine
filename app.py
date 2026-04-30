@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from flask import Flask, jsonify, render_template_string
 
-VERSION = "2.4_RENDER_WEB_DASHBOARD"
+VERSION = "2.5_DYNAMIC_TICKER_SCANNER"
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -20,10 +20,27 @@ ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "60000"))
 MAX_RISK_PER_TRADE = float(os.getenv("MAX_RISK_PER_TRADE", "750"))
 SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "300"))
 
-TICKERS = [
+CORE_TICKERS = [
+    # Always scan these first
     "SPY", "QQQ", "SPX",
+
+    # Your core options / swing / LEAP names
     "NVDA", "TSLA", "META", "MSFT", "AAPL", "AMZN",
-    "COIN", "AMD", "NFLX", "PLTR", "SMH", "QCOM", "NBIS"
+    "COIN", "AMD", "NFLX", "PLTR", "SMH", "QCOM", "NBIS",
+
+    # Liquid ETFs / sector context
+    "IWM", "XLF", "XLE", "XLK", "DIA"
+]
+
+DYNAMIC_TICKERS_ENABLED = os.getenv("DYNAMIC_TICKERS_ENABLED", "true").lower() == "true"
+MAX_DYNAMIC_TICKERS = int(os.getenv("MAX_DYNAMIC_TICKERS", "25"))
+
+# Optional comma-separated custom list in Render Environment:
+# STATIC_TICKERS_EXTRA=AVGO,CRM,MU,SHOP,SNOW
+STATIC_TICKERS_EXTRA = [
+    x.strip().upper()
+    for x in os.getenv("STATIC_TICKERS_EXTRA", "").split(",")
+    if x.strip()
 ]
 
 app = Flask(__name__)
@@ -135,6 +152,90 @@ def get_intraday_bars(ticker: str, multiplier: int = 5, limit_days: int = 3) -> 
     url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/{multiplier}/minute/{start}/{end}"
     data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 5000}, timeout=15)
     return data.get("results", []) if data else []
+
+
+
+def last_market_date(max_lookback: int = 7) -> dt.date:
+    """Find a recent weekday to use for Polygon grouped daily data."""
+    d = now_et().date()
+
+    # Before/after hours, use the most recently completed market day.
+    if session_status() in ["PREMARKET", "AFTER_HOURS", "CLOSED"]:
+        d -= dt.timedelta(days=1)
+
+    for _ in range(max_lookback):
+        if d.weekday() < 5:
+            return d
+        d -= dt.timedelta(days=1)
+
+    return now_et().date() - dt.timedelta(days=1)
+
+
+def get_dynamic_tickers() -> List[str]:
+    """
+    Builds the daily scan universe:
+    1. Always includes your core tickers.
+    2. Adds optional manual tickers from STATIC_TICKERS_EXTRA.
+    3. Adds top high-volume movers from Polygon grouped daily data.
+    """
+    base = list(dict.fromkeys(CORE_TICKERS + STATIC_TICKERS_EXTRA))
+
+    if not DYNAMIC_TICKERS_ENABLED:
+        return base
+
+    date_to_use = last_market_date()
+    url = f"https://api.polygon.io/v2/aggs/grouped/locale/us/market/stocks/{date_to_use}"
+    data = safe_get_json(url, params={"adjusted": "true"}, timeout=25)
+
+    if not data or "results" not in data:
+        print("Dynamic ticker scan unavailable; using core ticker list only.")
+        return base
+
+    candidates = []
+    blocked = {"VXX", "UVXY", "SQQQ", "TQQQ", "SOXL", "SOXS", "SPXL", "SPXS"}
+
+    for row in data.get("results", []):
+        ticker = str(row.get("T", "")).upper().strip()
+
+        # Avoid symbols that often represent warrants, units, preferreds, etc.
+        if not ticker or "." in ticker or "-" in ticker or ticker in blocked:
+            continue
+        if len(ticker) > 5:
+            continue
+
+        open_ = float(row.get("o") or 0)
+        close = float(row.get("c") or 0)
+        high = float(row.get("h") or 0)
+        low = float(row.get("l") or 0)
+        volume = float(row.get("v") or 0)
+
+        if close < 20:
+            continue
+        if volume < 3_000_000:
+            continue
+
+        change_pct = abs((close - open_) / open_) if open_ else 0
+        range_pct = (high - low) / close if close else 0
+        dollar_volume = close * volume
+
+        # Require either movement or exceptional liquidity.
+        if change_pct < 0.015 and range_pct < 0.025 and dollar_volume < 2_000_000_000:
+            continue
+
+        rank = (
+            min(dollar_volume / 1_000_000_000, 10) * 2
+            + change_pct * 100
+            + range_pct * 60
+        )
+
+        candidates.append((rank, ticker))
+
+    candidates.sort(reverse=True)
+    dynamic = [t for _, t in candidates[:MAX_DYNAMIC_TICKERS]]
+
+    universe = list(dict.fromkeys(base + dynamic))
+    print(f"Dynamic universe built: {len(universe)} tickers. Added: {dynamic}")
+    return universe
 
 
 def option_expiration_target(trader_type: str) -> Tuple[int, int]:
@@ -470,7 +571,11 @@ def run_scan_once() -> None:
     print(f"🔥 APEX ENGINE VERSION {VERSION} LIVE - RENDER WEB DASHBOARD 🔥")
     print(f"Session: {session_status()} | Account: {ACCOUNT_SIZE} | Max risk: {MAX_RISK_PER_TRADE}")
     ideas = []
-    for ticker in TICKERS:
+    universe = get_dynamic_tickers()
+    STATE["ticker_universe"] = universe
+    STATE["ticker_count"] = len(universe)
+
+    for ticker in universe:
         print(f"Scanning {ticker}...")
         try:
             idea = analyze_ticker(ticker)
@@ -524,7 +629,7 @@ body{margin:0;font-family:Arial,sans-serif;background:#0f172a;color:white}.wrap{
 <body>
 <div class="wrap">
 <h1>Apex Engine Dashboard</h1>
-<div class="meta">Version: {{ data.mode }} | Session: {{ data.session }} | Updated: {{ data.updated_at_et or data.updated_at }} | {{ data.last_scan_status }}</div>
+<div class="meta">Version: {{ data.mode }} | Session: {{ data.session }} | Tickers Scanned: {{ data.ticker_count or 0 }} | Updated: {{ data.updated_at_et or data.updated_at }} | {{ data.last_scan_status }}</div>
 {% if data.ideas|length == 0 %}<div class="empty">No valid A+ tradeable setups right now. No valid contract = hidden.</div>{% endif %}
 <div class="grid">
 {% for idea in data.ideas %}
@@ -558,12 +663,9 @@ def dashboard_json():
 @app.route("/health")
 def health():
     return jsonify({"ok": True, "mode": VERSION, "updated_at": STATE.get("updated_at")})
-@app.route("/test-telegram")
-def test_telegram():
-    ok = send_telegram("🚨 TEST ALERT: Apex Engine Telegram is working")
-    return {"success": ok}
+
 if __name__ == "__main__":
-    print(f"Starting Apex Engine web dashboard {VERSION}")
+    print(f"Starting Apex Engine dynamic web dashboard {VERSION}")
     t = threading.Thread(target=scanner_loop, daemon=True)
     t.start()
     port = int(os.getenv("PORT", "10000"))
