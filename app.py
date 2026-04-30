@@ -565,3 +565,7 @@ if __name__ == "__main__":
     t.start()
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
+@app.route("/test-telegram")
+def test_telegram():
+    ok = send_telegram("🚨 TEST ALERT: Apex Engine Telegram is working")
+    return {"success": ok}
