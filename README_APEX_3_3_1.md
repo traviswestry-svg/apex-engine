@@ -57,3 +57,15 @@ compare `flow_score` / `order_flow_score` / `dark_pool_levels_score` to what
 you were seeing before. If ideas still aren't qualifying, that's now much more
 likely to be genuine market conditions (or `MIN_FINAL_SCORE=78` being a high
 bar) than broken data feeding the model.
+
+---
+
+## 3.3.2 addendum — closest-to-qualifying visibility
+
+`/api/diagnostics` no longer reports `latest_score_breakdown` (which only had
+data when an idea actually qualified, so on a 0-idea scan it was always null
+and told you nothing). It now returns `closest_to_qualifying`: the top 10
+analyzed tickers by `final_score`, sorted descending, with the full score
+breakdown and `excluded_reason` for each, regardless of whether they cleared
+`MIN_FINAL_SCORE`. The dashboard's empty state also now lists these directly
+so you don't have to leave the page to see how close things are getting.

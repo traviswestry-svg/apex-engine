@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3.1_QUANTDATA_SCHEMA_FIXED"
+VERSION = "3.3.2_SCAN_DEBUG_VISIBILITY"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -114,7 +114,8 @@ STATE: Dict[str, Any] = {
     "updated_at_et": None,
     "session": "STARTING",
     "ideas": [],
-    "last_scan_status": "Starting APEX 3.3.1 scanner...",
+    "scan_debug": [],
+    "last_scan_status": "Starting APEX 3.3.2 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -900,12 +901,12 @@ def trade_plan(idea: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     daily = get_daily_bars(ticker)
     intraday = get_intraday_bars(ticker, 5, 3)
     tech = technical_layer(ticker, daily, intraday)
     if not tech or tech["direction"] == "NEUTRAL":
-        return None
+        return None, {"ticker": ticker, "direction": (tech or {}).get("direction", "NEUTRAL"), "excluded_reason": "No directional technical setup (NEUTRAL or insufficient bars)."}
     flow = quantdata_flow_layer(ticker)
     order = quantdata_order_flow_layer(ticker)
     dark = quantdata_dark_pool_layer(ticker)
@@ -934,8 +935,25 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Optional[Dict[str, An
     if regime["market_regime"] == "DEFENSIVE" and tech["direction"] == "CALL":
         final -= 5
     final = round(max(0, min(final, 100)), 1)
+    debug = {
+        "ticker": ticker,
+        "direction": tech["direction"],
+        "final_score": final,
+        "technical_score": tech["technical_score"],
+        "flow_score": round(flow_score, 1),
+        "order_flow_score": round(order_score, 1),
+        "dark_pool_score": dark.get("dark_pool_score"),
+        "dark_pool_levels_score": levels.get("dark_pool_levels_score"),
+        "catalyst_score": cat["catalyst_score"],
+        "relative_strength_score": rs["relative_strength_score"],
+        "accumulation_score": accumulation["accumulation_score"],
+        "buy_zone_status": tech.get("buy_zone_status"),
+        "distance_to_buy_zone_pct": tech.get("distance_to_buy_zone_pct"),
+    }
     if final < MIN_FINAL_SCORE:
-        return None
+        debug["excluded_reason"] = f"final_score {final} below MIN_FINAL_SCORE {MIN_FINAL_SCORE}"
+        return None, debug
+    debug["excluded_reason"] = None
 
     approaching = tech["distance_to_buy_zone_pct"] <= PREBREAKOUT_DISTANCE_PCT and "INSIDE" not in tech["buy_zone_status"] and (final >= MIN_ALERT_SCORE - 5 or accumulation["accumulation_score"] >= MIN_ACCUMULATION_SCORE)
     ready = "INSIDE BUY ZONE" in tech["buy_zone_status"] and final >= MIN_ALERT_SCORE
@@ -956,7 +974,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Optional[Dict[str, An
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3.1 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3.2 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -971,7 +989,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Optional[Dict[str, An
         idea.update({"option_contract": option["label"], "option_ticker": option["ticker"], "estimated_option_entry": option["mid"], "recommended_contracts": contracts, "confidence_size_pct": confidence_size_pct(final), "option_liquidity": f"Spread {option['spread_pct']:.1%}, OI {option['open_interest']}, Vol {option['volume']}, Delta {option.get('delta', 0):.2f}, IV {option.get('iv', 0):.1%}, evaluated {option.get('contracts_evaluated', 0)} contracts", "estimated_option_stop_pct": round(option_stop_pct * 100, 1), "sizing_basis": f"Greek-aware sizing: stock stop {stop_distance_pct:.1%} implies approx {option_stop_pct:.1%} option risk."})
     else:
         idea.update({"option_contract": "No clean contract found yet", "option_ticker": None, "estimated_option_entry": None, "recommended_contracts": 0, "confidence_size_pct": confidence_size_pct(final), "option_liquidity": "Wait for liquid contract selection."})
-    return idea
+    return idea, debug
 
 
 def send_telegram(text: str) -> bool:
@@ -1029,6 +1047,7 @@ def run_scan_once(force: bool = False) -> bool:
         regime = market_regime_layer()
         universe = get_dynamic_tickers()
         ideas: List[Dict[str, Any]] = []
+        debug_records: List[Dict[str, Any]] = []
         completed = 0
         with ThreadPoolExecutor(max_workers=max(1, SCAN_WORKERS), thread_name_prefix="apex-ticker") as pool:
             futures = {pool.submit(analyze_ticker, ticker, regime): ticker for ticker in universe}
@@ -1036,16 +1055,24 @@ def run_scan_once(force: bool = False) -> bool:
                 ticker = futures[future]
                 completed += 1
                 try:
-                    idea = future.result()
+                    idea, debug = future.result()
+                    debug_records.append(debug)
                     if idea:
                         ideas.append(idea)
                         maybe_alert(idea)
                 except Exception as e:
+                    debug_records.append({"ticker": ticker, "excluded_reason": f"Exception during analysis: {e}"})
                     print(f"Error scanning {ticker}: {e}", flush=True)
                 if completed % 10 == 0 or completed == len(universe):
                     with STATE_LOCK:
                         STATE["last_scan_status"] = f"Scan running... {completed}/{len(universe)} tickers analyzed"
         ideas.sort(key=lambda x: (x.get("status") == "READY - IN BUY ZONE", x.get("status") == "PRE-BREAKOUT WATCHLIST", x.get("status") == "ACCUMULATION WATCHLIST", x.get("breakout_probability", 0), x.get("final_score", 0)), reverse=True)
+        # Closest-to-qualifying tickers, even when nothing actually qualified -- sorted
+        # by final_score descending so you can see how close the scan got to MIN_FINAL_SCORE.
+        near_misses = sorted(
+            [d for d in debug_records if d.get("final_score") is not None],
+            key=lambda d: d.get("final_score", 0), reverse=True,
+        )[:10]
         duration = round(time.monotonic() - scan_start, 1)
         with STATE_LOCK:
             STATE.update({
@@ -1057,6 +1084,7 @@ def run_scan_once(force: bool = False) -> bool:
                 "ticker_count": len(universe),
                 "market_regime": regime,
                 "ideas": ideas,
+                "scan_debug": near_misses,
                 "last_scan_status": f"Scan complete in {duration}s. Qualified ideas: {len(ideas)}",
                 "last_error": None,
                 "scanner_started": SCANNER_STARTED,
@@ -1362,7 +1390,17 @@ function renderCards(){
   }
   const content = document.getElementById('content');
   if(ideas.length === 0){
-    content.innerHTML = '<div class="empty"><b>No qualified setups match right now.</b><br>APEX keeps low-quality names hidden until they clear the score threshold -- check back after the next scan, or clear filters above.</div>';
+    const debug = state.scan_debug || [];
+    let extra = '';
+    if(debug.length){
+      const rows = debug.slice(0,6).map(d =>
+        '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--border);font-family:var(--mono);font-size:11.5px">' +
+        '<span>' + d.ticker + ' <span style="color:var(--faint)">' + (d.direction||'') + '</span></span>' +
+        '<span style="color:var(--accent)">' + (d.final_score!=null ? d.final_score : '--') + '</span></div>'
+      ).join('');
+      extra = '<div style="margin-top:14px;text-align:left"><div class="label">Closest to qualifying this scan</div>' + rows + '</div>';
+    }
+    content.innerHTML = '<div class="empty"><b>No qualified setups match right now.</b><br>APEX keeps low-quality names hidden until they clear the score threshold -- check back after the next scan, or clear filters above.' + extra + '</div>';
     return;
   }
   content.innerHTML = '<div class="grid">' + ideas.map(cardHtml).join('') + '</div>';
@@ -1421,7 +1459,6 @@ def api_run():
 def api_diagnostics():
     with STATE_LOCK:
         ideas = list(STATE.get("ideas", []))
-        latest = ideas[0] if ideas else {}
         return jsonify({
             "ok": True,
             "mode": VERSION,
@@ -1445,19 +1482,9 @@ def api_diagnostics():
             "market_regime": STATE.get("market_regime"),
             "ticker_count": STATE.get("ticker_count"),
             "ideas": len(ideas),
-            "latest_score_breakdown": {
-                "ticker": latest.get("ticker"),
-                "final_score": latest.get("final_score"),
-                "technical_score": latest.get("technical_score"),
-                "flow_score": latest.get("flow_score"),
-                "order_flow_score": latest.get("order_flow_score"),
-                "dark_pool_score": latest.get("dark_pool_score"),
-                "dark_pool_levels_score": latest.get("dark_pool_levels_score"),
-                "catalyst_score": latest.get("catalyst_score"),
-                "relative_strength_score": latest.get("relative_strength_score"),
-                "accumulation_score": latest.get("accumulation_score"),
-                "breakout_probability": latest.get("breakout_probability"),
-            },
+            "min_final_score": MIN_FINAL_SCORE,
+            "min_alert_score": MIN_ALERT_SCORE,
+            "closest_to_qualifying": STATE.get("scan_debug", []),
         })
 
 @app.route("/health")
