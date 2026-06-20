@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 import requests
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.2.1_INSTITUTIONAL_ENGINE"
+VERSION = "3.2.2_INSTITUTIONAL_ENGINE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -31,6 +31,11 @@ MIN_ALERT_SCORE = float(os.getenv("MIN_ALERT_SCORE", "85"))
 PREBREAKOUT_DISTANCE_PCT = float(os.getenv("PREBREAKOUT_DISTANCE_PCT", "2.0"))
 MIN_ACCUMULATION_SCORE = float(os.getenv("MIN_ACCUMULATION_SCORE", "68"))
 DARK_POOL_ENDPOINT_ENABLED = os.getenv("DARK_POOL_ENDPOINT_ENABLED", "true").lower() == "true"
+ORDER_FLOW_ENABLED = os.getenv("ORDER_FLOW_ENABLED", "true").lower() == "true"
+DARK_POOL_LEVELS_ENABLED = os.getenv("DARK_POOL_LEVELS_ENABLED", "true").lower() == "true"
+QUANTDATA_NEWS_ENABLED = os.getenv("QUANTDATA_NEWS_ENABLED", "true").lower() == "true"
+MASSIVE_API_KEY = os.getenv("MASSIVE_API_KEY", POLYGON_API_KEY).strip()
+MASSIVE_BASE_URL = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io").rstrip("/")
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
 SEND_TELEGRAM = os.getenv("SEND_TELEGRAM", "true").lower() == "true"
 RUN_SCANNER_ON_IMPORT = os.getenv("RUN_SCANNER_ON_IMPORT", "false").lower() == "true"
@@ -318,164 +323,217 @@ def technical_layer(ticker: str, daily: List[dict], intraday: List[dict]) -> Opt
     }
 
 
+def rows_from_tool_response(data: Any) -> List[dict]:
+    """Normalize tool responses into a list of row dictionaries."""
+    if data is None:
+        return []
+    if isinstance(data, list):
+        return [r for r in data if isinstance(r, dict)]
+    if not isinstance(data, dict):
+        return []
+    for key in ("results", "items", "rows", "articles", "news"):
+        val = data.get(key)
+        if isinstance(val, list):
+            return [r for r in val if isinstance(r, dict)]
+        if isinstance(val, dict):
+            return [r for r in val.values() if isinstance(r, dict)]
+    val = data.get("data")
+    if isinstance(val, list):
+        return [r for r in val if isinstance(r, dict)]
+    if isinstance(val, dict):
+        for key in ("items", "rows", "results"):
+            nested = val.get(key)
+            if isinstance(nested, list):
+                return [r for r in nested if isinstance(r, dict)]
+        return [r for r in val.values() if isinstance(r, dict)]
+    return []
+
+
 def quantdata_flow_layer(ticker: str) -> Dict[str, Any]:
+    """QuantData options net-flow layer using /v1/options/tool/net-flow."""
     if not QUANTDATA_API_KEY:
-        return {"flow_score": 50.0, "flow_status": "NEUTRAL - QUANTDATA NOT CONFIGURED", "flow_notes": ["Set QUANTDATA_API_KEY to enable live flow."], "call_premium": 0, "put_premium": 0, "call_ratio_pct": None}
+        return {"flow_score": 50.0, "flow_status": "NEUTRAL - QUANTDATA NOT CONFIGURED", "flow_notes": ["Set QUANTDATA_API_KEY to enable live net-flow."], "call_premium": 0, "put_premium": 0, "call_ratio_pct": None}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
     payload = {"dataMode": "NET_PREMIUM", "sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/net-flow", payload, headers=headers, timeout=20)
+    rows = rows_from_tool_response(data)
     call_sum = put_sum = 0.0
-    if isinstance(data, dict):
-        rows = data.get("data") or data.get("results") or data.get("buckets") or []
-        if isinstance(rows, dict):
-            rows = rows.get("items") or rows.get("rows") or []
-        for row in rows if isinstance(rows, list) else []:
-            call_sum += safe_float(row.get("callSum") or row.get("call_sum") or row.get("callPremium"))
-            put_sum += safe_float(row.get("putSum") or row.get("put_sum") or row.get("putPremium"))
+    for row in rows:
+        call_sum += safe_float(row.get("callSum") or row.get("call_sum") or row.get("callPremium") or row.get("netCallPremium"))
+        put_sum += abs(safe_float(row.get("putSum") or row.get("put_sum") or row.get("putPremium") or row.get("netPutPremium")))
     total = abs(call_sum) + abs(put_sum)
     if total <= 0:
-        return {"flow_score": 50.0, "flow_status": "NEUTRAL - NO FLOW RETURNED", "flow_notes": ["QuantData reachable but no net-flow rows were returned."], "call_premium": 0, "put_premium": 0, "call_ratio_pct": None}
-    call_ratio = call_sum / total * 100
+        return {"flow_score": 50.0, "flow_status": "NEUTRAL - NO FLOW RETURNED", "flow_notes": ["QuantData net-flow returned no usable rows."], "call_premium": 0, "put_premium": 0, "call_ratio_pct": None}
+    call_ratio = abs(call_sum) / total * 100
     bullish_score = max(0, min(100, 50 + (call_ratio - 50) * 1.2 + min(total / 5_000_000, 20)))
-    notes = [f"Call premium ratio {call_ratio:.0f}%", f"Net premium total ${total:,.0f}"]
-    status = "BULLISH FLOW" if bullish_score >= 65 else "BEARISH/PUT FLOW" if bullish_score <= 40 else "MIXED FLOW"
+    notes = [f"QuantData net-flow call ratio {call_ratio:.0f}%", f"Net-flow total ${total:,.0f}", f"Rows analyzed: {len(rows)}"]
+    status = "BULLISH NET FLOW" if bullish_score >= 65 else "BEARISH/PUT NET FLOW" if bullish_score <= 40 else "MIXED NET FLOW"
     return {"flow_score": round(bullish_score, 1), "flow_status": status, "flow_notes": notes, "call_premium": round(call_sum, 0), "put_premium": round(put_sum, 0), "call_ratio_pct": round(call_ratio, 1)}
 
 
-def catalyst_layer(ticker: str) -> Dict[str, Any]:
-    """Catalyst/news scoring.
+def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
+    """QuantData consolidated order-flow layer using /v1/options/tool/order-flow/consolidated."""
+    if not QUANTDATA_API_KEY or not ORDER_FLOW_ENABLED:
+        return {"order_flow_score": 50.0, "order_flow_status": "NEUTRAL - ORDER FLOW NOT CONFIGURED", "order_flow_notes": ["Set QUANTDATA_API_KEY and ORDER_FLOW_ENABLED=true to enable consolidated order flow."], "sweep_count": 0, "large_trade_premium": 0}
+    headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
+    payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}, "size": 75, "sort": {"field": "tradeTime", "direction": "DESCENDING"}}
+    data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/order-flow/consolidated", payload, headers=headers, timeout=20)
+    rows = rows_from_tool_response(data)
+    if not rows:
+        return {"order_flow_score": 50.0, "order_flow_status": "NEUTRAL - NO ORDER FLOW ROWS", "order_flow_notes": ["QuantData consolidated order-flow returned no rows."], "sweep_count": 0, "large_trade_premium": 0}
+    bull_premium = bear_premium = total_premium = 0.0
+    sweep_count = block_count = 0
+    for row in rows:
+        premium = safe_float(row.get("premium") or row.get("notional") or row.get("totalPremium") or row.get("tradePremium") or row.get("value"))
+        if premium <= 0:
+            price = safe_float(row.get("price") or row.get("optionPrice") or row.get("tradePrice"))
+            size = safe_float(row.get("size") or row.get("quantity") or row.get("contracts"))
+            premium = price * size * 100 if price and size else 0.0
+        total_premium += premium
+        row_text = " ".join(str(row.get(k, "")) for k in ("side", "sentiment", "tradeSide", "classification", "contractType", "type", "executionType")).lower()
+        contract_type = str(row.get("contractType") or row.get("contract_type") or row.get("optionType") or "").lower()
+        if "sweep" in row_text:
+            sweep_count += 1
+        if "block" in row_text or "split" in row_text:
+            block_count += 1
+        if any(x in row_text for x in ("bull", "ask", "above", "buy")) or (contract_type == "call" and not any(x in row_text for x in ("bear", "bid", "sell"))):
+            bull_premium += premium
+        elif any(x in row_text for x in ("bear", "bid", "below", "sell")) or contract_type == "put":
+            bear_premium += premium
+    if total_premium <= 0:
+        score = 50.0
+    else:
+        directional = ((bull_premium - bear_premium) / total_premium) * 25
+        size_boost = min(total_premium / 3_000_000, 18)
+        sweep_boost = min(sweep_count * 1.5 + block_count, 12)
+        score = max(0, min(100, 50 + directional + size_boost + sweep_boost))
+    status = "BULLISH ORDER FLOW" if score >= 65 else "BEARISH ORDER FLOW" if score <= 40 else "MIXED ORDER FLOW"
+    notes = [f"Consolidated premium ${total_premium:,.0f}", f"Sweeps {sweep_count}, blocks/splits {block_count}", f"Rows analyzed: {len(rows)}"]
+    return {"order_flow_score": round(score, 1), "order_flow_status": status, "order_flow_notes": notes, "sweep_count": sweep_count, "large_trade_premium": round(total_premium, 0)}
 
-    Production note: your Benzinga subscription is through Massive/Polygon, so the
-    default path intentionally uses Polygon/Massive reference news instead of
-    calling api.benzinga.com directly. Set BENZINGA_SOURCE=direct only if you have
-    a standalone direct Benzinga API key.
-    """
+
+def quantdata_news_rows(ticker: str) -> List[dict]:
+    if not QUANTDATA_API_KEY or not QUANTDATA_NEWS_ENABLED:
+        return []
+    headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
+    payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}, "size": 10}
+    data = safe_post_json(f"{QUANTDATA_BASE_URL}/news/tool/articles", payload, headers=headers, timeout=15)
+    return rows_from_tool_response(data)
+
+
+def massive_benzinga_news_rows(ticker: str) -> List[dict]:
+    """Massive/Polygon Benzinga news route; falls back to Polygon reference news."""
+    if not MASSIVE_API_KEY:
+        return []
+    data = safe_get_json(f"{MASSIVE_BASE_URL}/benzinga/v2/news", params={"ticker": ticker, "limit": 10}, timeout=15)
+    rows = rows_from_tool_response(data)
+    if rows:
+        return rows
+    data = safe_get_json("https://api.polygon.io/v2/reference/news", params={"ticker": ticker, "limit": 10, "order": "desc", "sort": "published_utc"}, timeout=15)
+    return rows_from_tool_response(data)
+
+
+def catalyst_layer(ticker: str) -> Dict[str, Any]:
+    """Catalyst/news scoring with correct source routing for Massive/Benzinga and QuantData news."""
     score = 50.0
     notes: List[str] = []
     rows: List[dict] = []
-
     if BENZINGA_SOURCE == "direct" and BENZINGA_API_KEY:
-        url = "https://api.benzinga.com/api/v2/news"
-        data = safe_get_json(url, params={"token": BENZINGA_API_KEY, "tickers": ticker, "pagesize": 8, "displayOutput": "full"}, timeout=15)
-        rows = data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
+        data = safe_get_json("https://api.benzinga.com/api/v2/news", params={"token": BENZINGA_API_KEY, "tickers": ticker, "pagesize": 10, "displayOutput": "full"}, timeout=15)
+        rows = rows_from_tool_response(data)
         if rows:
-            notes.append(f"{len(rows[:8])} recent direct Benzinga headlines")
-    elif POLYGON_API_KEY:
-        # Massive/Benzinga-through-Polygon compatible catalyst source.
-        url = "https://api.polygon.io/v2/reference/news"
-        data = safe_get_json(url, params={"ticker": ticker, "limit": 8, "order": "desc", "sort": "published_utc"}, timeout=15)
-        rows = data.get("results", []) if isinstance(data, dict) else []
-        if rows:
-            notes.append(f"{len(rows[:8])} recent Massive/Polygon news headlines")
-        elif BENZINGA_API_KEY and BENZINGA_SOURCE != "direct":
-            notes.append("Benzinga source set to Massive/Polygon; no Polygon news rows returned.")
+            notes.append(f"{len(rows[:10])} recent direct Benzinga headlines")
     else:
-        notes.append("No catalyst provider configured")
-
-    text = " ".join(str((r or {}).get("title", "")) for r in rows[:8]).lower()
+        rows = massive_benzinga_news_rows(ticker)
+        if rows:
+            notes.append(f"{len(rows[:10])} Massive/Benzinga or Polygon news headlines")
+        else:
+            rows = quantdata_news_rows(ticker)
+            if rows:
+                notes.append(f"{len(rows[:10])} QuantData news articles")
+    if not rows:
+        notes.append("No catalyst rows returned; catalyst kept neutral")
+    text_bits = []
+    for r in rows[:10]:
+        text_bits.append(str(r.get("title") or r.get("headline") or r.get("name") or ""))
+        text_bits.append(str(r.get("summary") or r.get("description") or r.get("teaser") or ""))
+    text = " ".join(text_bits).lower()
     if rows:
         score += 6
-    positive_words = ["upgrade", "raises", "beat", "beats", "guidance", "contract", "approval", "launch", "partnership", "record", "growth"]
-    negative_words = ["downgrade", "cuts", "miss", "probe", "lawsuit", "warning", "recall", "investigation", "delay"]
+    positive_words = ["upgrade", "raises", "beat", "beats", "guidance", "contract", "approval", "launch", "partnership", "record", "growth", "buy rating", "price target raised"]
+    negative_words = ["downgrade", "cuts", "miss", "probe", "lawsuit", "warning", "recall", "investigation", "delay", "price target cut", "sell rating"]
     score += sum(5 for w in positive_words if w in text)
     score -= sum(6 for w in negative_words if w in text)
-
     score = max(0, min(score, 100))
     status = "POSITIVE CATALYST" if score >= 65 else "NEGATIVE CATALYST" if score <= 40 else "NO MAJOR CATALYST"
     return {"catalyst_score": round(score, 1), "catalyst_status": status, "catalyst_notes": notes[:4]}
 
 
-
 def quantdata_dark_pool_layer(ticker: str) -> Dict[str, Any]:
-    """QuantData dark-flow / large-print layer.
-
-    APEX 3.2.1 uses QuantData's documented equities dark-flow endpoint instead of
-    the invalid dark-pool endpoint family that returned repeated 404s in Render.
-    If dark-flow is unavailable for the account or returns no rows, the layer stays
-    neutral and the scanner continues normally.
-    """
+    """QuantData dark-flow layer using /v1/equities/tool/dark-flow."""
     if not QUANTDATA_API_KEY or not DARK_POOL_ENDPOINT_ENABLED:
-        return {
-            "dark_pool_score": 50.0,
-            "dark_pool_status": "NEUTRAL - DARK FLOW NOT CONFIGURED",
-            "dark_pool_notional": 0,
-            "dark_pool_notes": ["Set QUANTDATA_API_KEY and keep DARK_POOL_ENDPOINT_ENABLED=true to activate QuantData dark-flow."],
-        }
-
+        return {"dark_pool_score": 50.0, "dark_pool_status": "NEUTRAL - DARK FLOW NOT CONFIGURED", "dark_pool_notional": 0, "dark_pool_notes": ["Set QUANTDATA_API_KEY and DARK_POOL_ENDPOINT_ENABLED=true to activate QuantData dark-flow."]}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
-    session_date = last_market_date().isoformat()
-    payload = {"sessionDate": session_date, "filter": {"ticker": ticker}}
-
+    payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/equities/tool/dark-flow", payload, headers=headers, timeout=18)
-    rows: List[dict] = []
-    if isinstance(data, dict):
-        possible = data.get("data") or data.get("results") or data.get("prints") or data.get("buckets") or []
-        if isinstance(possible, dict):
-            possible = possible.get("items") or possible.get("rows") or possible.get("data") or []
-        if isinstance(possible, list):
-            rows = [r for r in possible if isinstance(r, dict)]
-
+    rows = rows_from_tool_response(data)
     if not rows:
-        return {
-            "dark_pool_score": 50.0,
-            "dark_pool_status": "NEUTRAL - NO DARK FLOW ROWS",
-            "dark_pool_notional": 0,
-            "dark_pool_notes": ["QuantData dark-flow returned no rows or is unavailable for this ticker/session."],
-        }
-
+        return {"dark_pool_score": 50.0, "dark_pool_status": "NEUTRAL - NO DARK FLOW ROWS", "dark_pool_notional": 0, "dark_pool_notes": ["QuantData dark-flow returned no rows or is unavailable for this ticker/session."]}
     total_notional = 0.0
-    bullish_notional = 0.0
-    bearish_notional = 0.0
+    trade_count = 0.0
     for row in rows:
-        price = safe_float(row.get("price") or row.get("stockPrice") or row.get("p") or row.get("avgPrice"))
-        size = safe_float(row.get("size") or row.get("volume") or row.get("shares") or row.get("v"))
-        notional = safe_float(row.get("notional") or row.get("premium") or row.get("value") or row.get("amount"))
+        notional = safe_float(row.get("notionalValue") or row.get("notional") or row.get("value") or row.get("amount"))
+        price = safe_float(row.get("stockPrice") or row.get("price") or row.get("avgPrice"))
+        size = safe_float(row.get("size") or row.get("shares") or row.get("volume"))
         if notional <= 0 and price > 0 and size > 0:
             notional = price * size
-        side = str(row.get("side") or row.get("sentiment") or row.get("direction") or row.get("aggressorSide") or "").lower()
         total_notional += notional
-        if "buy" in side or "bull" in side or side in {"b", "ask", "above_ask"}:
-            bullish_notional += notional
-        elif "sell" in side or "bear" in side or side in {"s", "bid", "below_bid"}:
-            bearish_notional += notional
-
-    if total_notional <= 0:
-        score = 50.0
-    else:
-        directional = ((bullish_notional - bearish_notional) / total_notional * 25) if (bullish_notional or bearish_notional) else 0
-        scale = min(total_notional / 10_000_000, 20)
-        score = max(0, min(100, 50 + directional + scale))
-
-    status = "ACCUMULATION" if score >= 65 else "DISTRIBUTION" if score <= 40 else "MIXED/NEUTRAL"
-    return {
-        "dark_pool_score": round(score, 1),
-        "dark_pool_status": status,
-        "dark_pool_notional": round(total_notional, 0),
-        "dark_pool_notes": [f"QuantData dark-flow notional ${total_notional:,.0f}", f"Rows analyzed: {len(rows)}"],
-    }
+        trade_count += safe_float(row.get("tradeCount") or row.get("trades") or 0)
+    score = max(0, min(100, 50 + min(total_notional / 10_000_000, 28) + min(trade_count / 50, 7))) if total_notional > 0 else 50.0
+    status = "DARK FLOW ACCUMULATION" if score >= 65 else "LOW DARK FLOW" if score <= 45 else "MIXED/NEUTRAL DARK FLOW"
+    return {"dark_pool_score": round(score, 1), "dark_pool_status": status, "dark_pool_notional": round(total_notional, 0), "dark_pool_notes": [f"QuantData dark-flow notional ${total_notional:,.0f}", f"Rows analyzed: {len(rows)}", f"Trade count: {trade_count:.0f}"]}
 
 
-def institutional_accumulation_layer(direction: str, flow: Dict[str, Any], dark: Dict[str, Any], cat: Dict[str, Any], rs: Dict[str, Any], tech: Dict[str, Any]) -> Dict[str, Any]:
-    """Composite 3.2 accumulation score.
+def quantdata_dark_pool_levels_layer(ticker: str, price: float) -> Dict[str, Any]:
+    """QuantData dark-pool levels layer using /v1/equities/tool/dark-pool-levels."""
+    if not QUANTDATA_API_KEY or not DARK_POOL_LEVELS_ENABLED:
+        return {"dark_pool_levels_score": 50.0, "dark_pool_levels_status": "NEUTRAL - LEVELS NOT CONFIGURED", "nearest_dark_pool_level": None, "dark_pool_levels_notes": ["Set DARK_POOL_LEVELS_ENABLED=true and QUANTDATA_API_KEY to activate dark-pool levels."]}
+    headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
+    payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
+    data = safe_post_json(f"{QUANTDATA_BASE_URL}/equities/tool/dark-pool-levels", payload, headers=headers, timeout=18)
+    rows = rows_from_tool_response(data)
+    levels = []
+    for row in rows:
+        level = safe_float(row.get("price") or row.get("level") or row.get("stockPrice") or row.get("darkPoolLevel"))
+        notional = safe_float(row.get("notionalValue") or row.get("notional") or row.get("value"))
+        if level > 0:
+            levels.append((level, notional))
+    if not levels or price <= 0:
+        return {"dark_pool_levels_score": 50.0, "dark_pool_levels_status": "NEUTRAL - NO LEVELS", "nearest_dark_pool_level": None, "dark_pool_levels_notes": ["QuantData dark-pool levels returned no usable rows."]}
+    nearest = min(levels, key=lambda x: abs(x[0] - price))
+    distance_pct = abs(nearest[0] - price) / price * 100
+    score = max(0, min(100, 50 + max(0, 20 - distance_pct * 6) + (min(nearest[1] / 5_000_000, 10) if nearest[1] else 0)))
+    status = "NEAR INSTITUTIONAL LEVEL" if score >= 65 else "NO NEARBY LEVEL" if score <= 45 else "MODERATE LEVEL PROXIMITY"
+    return {"dark_pool_levels_score": round(score, 1), "dark_pool_levels_status": status, "nearest_dark_pool_level": round(nearest[0], 2), "dark_pool_levels_notes": [f"Nearest dark-pool level {nearest[0]:.2f}", f"Distance {distance_pct:.2f}%", f"Levels analyzed: {len(levels)}"]}
 
-    This is intentionally separate from final_score. final_score ranks trade quality;
-    accumulation_score ranks whether institutions appear to be building pressure
-    before price fully enters the zone.
+
+def institutional_accumulation_layer(direction: str, flow: Dict[str, Any], order: Dict[str, Any], dark: Dict[str, Any], levels: Dict[str, Any], cat: Dict[str, Any], rs: Dict[str, Any], tech: Dict[str, Any]) -> Dict[str, Any]:
+    """APEX 3.2.2 institutional accumulation score.
+
+    35% net-flow, 15% consolidated order-flow, 10% dark-flow, 10% dark-pool
+    levels, 15% catalyst, 10% relative strength, 5% technical structure.
     """
     directional_flow = safe_float(flow.get("flow_score"), 50.0)
+    order_score = safe_float(order.get("order_flow_score"), 50.0)
     if direction == "PUT":
         directional_flow = 100 - directional_flow
+        order_score = 100 - order_score
     dark_score = safe_float(dark.get("dark_pool_score"), 50.0)
+    levels_score = safe_float(levels.get("dark_pool_levels_score"), 50.0)
     catalyst = safe_float(cat.get("catalyst_score"), 50.0)
     rel_strength = safe_float(rs.get("relative_strength_score"), 50.0)
     technical = safe_float(tech.get("technical_score"), 50.0)
-    score = (
-        directional_flow * 0.35 +
-        dark_score * 0.25 +
-        catalyst * 0.15 +
-        rel_strength * 0.15 +
-        technical * 0.10
-    )
+    score = directional_flow * 0.35 + order_score * 0.15 + dark_score * 0.10 + levels_score * 0.10 + catalyst * 0.15 + rel_strength * 0.10 + technical * 0.05
     score = round(max(0, min(score, 100)), 1)
     if score >= 78:
         status = "SMART MONEY ACCUMULATING"
@@ -485,79 +543,10 @@ def institutional_accumulation_layer(direction: str, flow: Dict[str, Any], dark:
         status = "DISTRIBUTION / PRESSURE"
     else:
         status = "NO CLEAR ACCUMULATION"
-    notes = [
-        f"Directional flow contribution: {directional_flow:.1f}",
-        f"Dark-pool contribution: {dark_score:.1f}",
-        f"Catalyst contribution: {catalyst:.1f}",
-    ]
-    return {"accumulation_score": score, "accumulation_status": status, "accumulation_notes": notes}
-
-
-def breakout_probability_layer(idea: Dict[str, Any]) -> Dict[str, Any]:
-    distance = safe_float(idea.get("distance_to_buy_zone_pct"), 10.0)
-    final_score = safe_float(idea.get("final_score"), 50.0)
-    accumulation = safe_float(idea.get("accumulation_score"), 50.0)
-    rel_volume_value = safe_float(idea.get("rel_volume"), 1.0)
-    regime = safe_float(idea.get("market_regime_score"), 50.0)
-    distance_boost = max(0, 18 - distance * 5)
-    rvol_boost = min(max(rel_volume_value - 1.0, 0) * 8, 10)
-    probability = final_score * 0.42 + accumulation * 0.33 + regime * 0.10 + distance_boost + rvol_boost - 18
-    probability = round(max(1, min(probability, 99)), 1)
-    label = "HIGH" if probability >= 75 else "MODERATE" if probability >= 60 else "LOW"
-    return {"breakout_probability": probability, "breakout_probability_label": label}
-
-def market_regime_layer() -> Dict[str, Any]:
-    scores = []
-    notes = []
-    spy_20d_return = 0.0
-    daily_cache: Dict[str, List[dict]] = {}
-    for t in ["SPY", "QQQ", "SMH"]:
-        bars = get_daily_bars(t, days=260)
-        daily_cache[t] = bars
-        if len(bars) < 60:
-            continue
-        closes = [safe_float(x.get("c")) for x in bars]
-        if t == "SPY" and len(closes) >= 22 and closes[-21]:
-            spy_20d_return = (closes[-1] - closes[-21]) / closes[-21] * 100
-        p, e21, e50, e200 = closes[-1], ema(closes, 21), ema(closes, 50), ema(closes, 200) or ema(closes, 50)
-        if not all([p, e21, e50, e200]):
-            continue
-        s = 50
-        if p > e21: s += 12
-        if p > e50: s += 12
-        if e50 >= e200: s += 14
-        if p < e21: s -= 10
-        if p < e50: s -= 14
-        scores.append(max(0, min(s, 100)))
-        notes.append(f"{t} regime {scores[-1]:.0f}")
-    score = sum(scores) / len(scores) if scores else 50.0
-    status = "RISK ON" if score >= 70 else "DEFENSIVE" if score <= 45 else "NEUTRAL"
-    return {"market_regime_score": round(score, 1), "market_regime": status, "market_notes": notes, "spy_20d_return": round(spy_20d_return, 2)}
-
-
-def relative_strength_score(ticker: str, daily: List[dict], spy_20d_return: float = 0.0) -> Dict[str, Any]:
-    if len(daily) < 22:
-        return {"relative_strength_score": 50.0, "relative_strength_notes": []}
-    closes = [safe_float(x.get("c")) for x in daily]
-    stock_20d = (closes[-1] - closes[-21]) / closes[-21] * 100 if closes[-21] else 0
-    spread = stock_20d - spy_20d_return
-    score = max(0, min(100, 50 + spread * 2.5))
-    return {"relative_strength_score": round(score, 1), "relative_strength_notes": [f"20D relative performance vs SPY: {spread:.1f}%"]}
-
-
-def final_grade(score: float) -> str:
-    if score >= 92: return "A+"
-    if score >= 86: return "A"
-    if score >= 80: return "B+"
-    if score >= 74: return "B"
-    return "WATCH"
-
-
-def _polygon_next_page(url: Optional[str]) -> Optional[dict]:
-    if not url:
-        return None
-    # Polygon next_url usually does not include apiKey. safe_get_json will add it.
-    return safe_get_json(url, timeout=20)
+    notes = [f"Net-flow contribution: {directional_flow:.1f}", f"Order-flow contribution: {order_score:.1f}", f"Dark-flow contribution: {dark_score:.1f}", f"Dark-pool-levels contribution: {levels_score:.1f}", f"Catalyst contribution: {catalyst:.1f}"]
+    breakout = max(0, min(100, score * 0.68 + technical * 0.18 + rel_strength * 0.09 + catalyst * 0.05))
+    label = "HIGH" if breakout >= 80 else "ELEVATED" if breakout >= 68 else "MODERATE" if breakout >= 55 else "LOW"
+    return {"accumulation_score": score, "accumulation_status": status, "accumulation_notes": notes, "breakout_probability": round(breakout, 0), "breakout_probability_label": label}
 
 
 def pick_option_contract(ticker: str, direction: str, trader_type: str, price: float) -> Optional[dict]:
@@ -691,22 +680,28 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Optional[Dict[str, An
     if not tech or tech["direction"] == "NEUTRAL":
         return None
     flow = quantdata_flow_layer(ticker)
+    order = quantdata_order_flow_layer(ticker)
     dark = quantdata_dark_pool_layer(ticker)
+    levels = quantdata_dark_pool_levels_layer(ticker, tech["price"])
     cat = catalyst_layer(ticker)
     rs = relative_strength_score(ticker, daily, safe_float(regime.get("spy_20d_return")))
-    accumulation = institutional_accumulation_layer(tech["direction"], flow, dark, cat, rs, tech)
+    accumulation = institutional_accumulation_layer(tech["direction"], flow, order, dark, levels, cat, rs, tech)
 
     # Direction-aware flow: a low call ratio can support put ideas.
     flow_score = flow["flow_score"]
     if tech["direction"] == "PUT":
         flow_score = 100 - flow_score
 
+    order_score = safe_float(order.get("order_flow_score"), 50.0)
+    if tech["direction"] == "PUT":
+        order_score = 100 - order_score
     final = (
-        tech["technical_score"] * 0.25 +
-        flow_score * 0.30 +
-        cat["catalyst_score"] * 0.15 +
-        rs["relative_strength_score"] * 0.12 +
-        regime["market_regime_score"] * 0.08 +
+        tech["technical_score"] * 0.20 +
+        flow_score * 0.28 +
+        order_score * 0.12 +
+        cat["catalyst_score"] * 0.13 +
+        rs["relative_strength_score"] * 0.10 +
+        regime["market_regime_score"] * 0.07 +
         accumulation["accumulation_score"] * 0.10
     )
     if regime["market_regime"] == "DEFENSIVE" and tech["direction"] == "CALL":
@@ -723,19 +718,20 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Optional[Dict[str, An
     if ticker not in {"SPY", "QQQ"} and final >= 88 and tech["price"] > tech["ema200"]:
         trader_type = "SWING/LEAP CANDIDATE"
 
-    idea = {**tech, **flow, **dark, **cat, **rs, **regime, **accumulation}
+    idea = {**tech, **flow, **order, **dark, **levels, **cat, **rs, **regime, **accumulation}
     idea.update({
         "ticker": ticker,
         "grade": final_grade(final),
         "final_score": final,
         "conviction_score": final,
         "flow_score_directional": round(flow_score, 1),
+        "order_flow_score_directional": round(order_score, 1),
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
         "strategy": "APEX 3.2 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
-        "notes": tech["technical_notes"] + flow.get("flow_notes", []) + dark.get("dark_pool_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
+        "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
     idea.update(trade_plan(idea))
     idea.update(breakout_probability_layer(idea))
@@ -854,14 +850,14 @@ def start_background_scanner() -> None:
         threading.Thread(target=scanner_loop, name="apex-scanner", daemon=True).start()
 
 HTML = """
-<!DOCTYPE html><html><head><title>APEX 3.2 Dashboard</title><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60">
+<!DOCTYPE html><html><head><title>APEX 3.2.2 Dashboard</title><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60">
 <style>body{margin:0;font-family:Arial,sans-serif;background:#07111f;color:#e5eefb}.wrap{padding:18px;max-width:1280px;margin:auto}h1{color:#38bdf8;margin:0 0 8px}.meta{color:#b6c5d8;margin-bottom:16px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}.card{background:#111c2e;border-left:6px solid #38bdf8;border-radius:14px;padding:16px;box-shadow:0 8px 25px rgba(0,0,0,.28)}.ready{border-left-color:#22c55e}.pre{border-left-color:#f59e0b}.ticker{font-size:27px;font-weight:800}.grade{color:#22c55e}.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#22324a;color:#dbeafe;font-size:12px;margin:2px 4px 2px 0}.score{font-size:22px;font-weight:800}.section{margin-top:11px;line-height:1.35}.label{color:#8ba3c7;font-size:12px;text-transform:uppercase;letter-spacing:.06em}.value{font-size:14px}.small{font-size:13px;color:#b6c5d8}.empty{background:#111c2e;border-radius:12px;padding:18px;color:#b6c5d8}.scores{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}.scorebox{background:#17263d;border-radius:10px;padding:8px;text-align:center}.scorebox div:first-child{font-size:11px;color:#8ba3c7}.scorebox div:last-child{font-size:16px;font-weight:700}</style></head><body><div class="wrap">
-<h1>APEX 3.2 Institutional Forecast Engine</h1>
+<h1>APEX 3.2.2 Institutional Forecast Engine</h1>
 <div class="meta">Version: {{ data.mode }} | Session: {{ data.session }} | Tickers: {{ data.ticker_count or 0 }} | Updated: {{ data.updated_at_et or data.updated_at }}<br>{{ data.last_scan_status }} | Regime: {{ data.market_regime.market_regime if data.market_regime else 'N/A' }} {{ data.market_regime.market_regime_score if data.market_regime else '' }}</div>
 {% if data.ideas|length == 0 %}<div class="empty">No qualified setups right now. APEX 3.2 keeps low-quality names hidden until final score clears the threshold.</div>{% endif %}
 <div class="grid">{% for idea in data.ideas %}<div class="card {% if 'READY' in idea.status %}ready{% elif 'PRE' in idea.status %}pre{% endif %}">
 <div style="display:flex;justify-content:space-between;gap:10px"><div><div class="ticker">{{ idea.ticker }} <span class="grade">{{ idea.grade }}</span></div><span class="badge">{{ idea.direction }}</span><span class="badge">{{ idea.trader_type }}</span><span class="badge">{{ idea.status }}</span></div><div class="score">{{ idea.final_score }}</div></div>
-<div class="scores"><div class="scorebox"><div>Tech</div><div>{{ idea.technical_score }}</div></div><div class="scorebox"><div>Flow</div><div>{{ idea.flow_score_directional }}</div></div><div class="scorebox"><div>Dark</div><div>{{ idea.dark_pool_score }}</div></div><div class="scorebox"><div>Accum</div><div>{{ idea.accumulation_score }}</div></div><div class="scorebox"><div>Breakout</div><div>{{ idea.breakout_probability }}%</div></div><div class="scorebox"><div>Catalyst</div><div>{{ idea.catalyst_score }}</div></div><div class="scorebox"><div>RS</div><div>{{ idea.relative_strength_score }}</div></div><div class="scorebox"><div>Regime</div><div>{{ idea.market_regime_score }}</div></div><div class="scorebox"><div>RVOL</div><div>{{ idea.rel_volume }}</div></div></div>
+<div class="scores"><div class="scorebox"><div>Tech</div><div>{{ idea.technical_score }}</div></div><div class="scorebox"><div>Flow</div><div>{{ idea.flow_score_directional }}</div></div><div class="scorebox"><div>Order</div><div>{{ idea.order_flow_score_directional }}</div></div><div class="scorebox"><div>Dark</div><div>{{ idea.dark_pool_score }}</div></div><div class="scorebox"><div>Levels</div><div>{{ idea.dark_pool_levels_score }}</div></div><div class="scorebox"><div>Accum</div><div>{{ idea.accumulation_score }}</div></div><div class="scorebox"><div>Breakout</div><div>{{ idea.breakout_probability }}%</div></div><div class="scorebox"><div>Catalyst</div><div>{{ idea.catalyst_score }}</div></div><div class="scorebox"><div>RS</div><div>{{ idea.relative_strength_score }}</div></div><div class="scorebox"><div>Regime</div><div>{{ idea.market_regime_score }}</div></div><div class="scorebox"><div>RVOL</div><div>{{ idea.rel_volume }}</div></div></div>
 <div class="section"><div class="label">Institutional Forecast</div><div class="value">{{ idea.accumulation_status }} | Breakout Probability: {{ idea.breakout_probability }}% ({{ idea.breakout_probability_label }})<br>{{ idea.buy_zone_status }} | Zone: {{ idea.entry_range }} | Distance: {{ idea.distance_to_buy_zone_pct }}%</div></div>
 <div class="section"><div class="label">Trigger</div><div class="value">{{ idea.confirmation_trigger }}</div></div>
 <div class="section"><div class="label">Option</div><div class="value">{{ idea.option_contract }}<br>{{ idea.option_liquidity }} | Contracts: {{ idea.recommended_contracts }}</div></div>
