@@ -549,6 +549,125 @@ def institutional_accumulation_layer(direction: str, flow: Dict[str, Any], order
     return {"accumulation_score": score, "accumulation_status": status, "accumulation_notes": notes, "breakout_probability": round(breakout, 0), "breakout_probability_label": label}
 
 
+
+def market_regime_layer() -> Dict[str, Any]:
+    """Market regime filter using SPY, QQQ, and SMH daily trend structure."""
+    scores: List[float] = []
+    notes: List[str] = []
+    spy_20d_return = 0.0
+
+    for ticker in ["SPY", "QQQ", "SMH"]:
+        bars = get_daily_bars(ticker, days=260)
+        if len(bars) < 60:
+            notes.append(f"{ticker} regime unavailable")
+            continue
+
+        closes = [safe_float(x.get("c")) for x in bars]
+        price = closes[-1]
+        e21 = ema(closes, 21)
+        e50 = ema(closes, 50)
+        e200 = ema(closes, 200) or e50
+
+        if ticker == "SPY" and len(closes) >= 22 and closes[-21]:
+            spy_20d_return = (closes[-1] - closes[-21]) / closes[-21] * 100
+
+        if not all([price, e21, e50, e200]):
+            notes.append(f"{ticker} regime incomplete")
+            continue
+
+        score = 50.0
+        if price > e21:
+            score += 12
+        else:
+            score -= 10
+        if price > e50:
+            score += 12
+        else:
+            score -= 14
+        if e50 >= e200:
+            score += 14
+        else:
+            score -= 10
+
+        score = max(0, min(score, 100))
+        scores.append(score)
+        notes.append(f"{ticker} regime {score:.0f}")
+
+    market_score = sum(scores) / len(scores) if scores else 50.0
+    market_regime = "RISK ON" if market_score >= 70 else "DEFENSIVE" if market_score <= 45 else "NEUTRAL"
+
+    return {
+        "market_regime_score": round(market_score, 1),
+        "market_regime": market_regime,
+        "market_notes": notes,
+        "spy_20d_return": round(spy_20d_return, 2),
+    }
+
+
+def relative_strength_score(ticker: str, daily: List[dict], spy_20d_return: float = 0.0) -> Dict[str, Any]:
+    """20-day relative strength versus SPY, cached from the market-regime layer."""
+    if len(daily) < 22:
+        return {"relative_strength_score": 50.0, "relative_strength_notes": ["Not enough daily bars for relative strength."]}
+
+    closes = [safe_float(x.get("c")) for x in daily]
+    if closes[-21] <= 0:
+        return {"relative_strength_score": 50.0, "relative_strength_notes": ["Invalid 20-day reference price."]}
+
+    stock_20d_return = (closes[-1] - closes[-21]) / closes[-21] * 100
+    spread = stock_20d_return - spy_20d_return
+    score = max(0, min(100, 50 + spread * 2.5))
+
+    return {
+        "relative_strength_score": round(score, 1),
+        "relative_strength_notes": [f"20D relative performance vs SPY: {spread:.1f}%"],
+    }
+
+
+def final_grade(score: float) -> str:
+    if score >= 92:
+        return "A+"
+    if score >= 86:
+        return "A"
+    if score >= 80:
+        return "B+"
+    if score >= 74:
+        return "B"
+    return "WATCH"
+
+
+def _polygon_next_page(url: Optional[str]) -> Optional[dict]:
+    """Fetch a Polygon next_url page. safe_get_json adds apiKey automatically."""
+    if not url:
+        return None
+    return safe_get_json(url, timeout=20)
+
+
+def breakout_probability_layer(idea: Dict[str, Any]) -> Dict[str, Any]:
+    """Forecast breakout probability from final score, accumulation, regime, distance, and volume."""
+    existing = idea.get("breakout_probability")
+    if existing is not None:
+        try:
+            existing_value = float(existing)
+            existing_label = idea.get("breakout_probability_label")
+            if existing_label:
+                return {"breakout_probability": round(existing_value, 1), "breakout_probability_label": existing_label}
+        except Exception:
+            pass
+
+    distance = safe_float(idea.get("distance_to_buy_zone_pct"), 10.0)
+    final_score = safe_float(idea.get("final_score"), 50.0)
+    accumulation = safe_float(idea.get("accumulation_score"), 50.0)
+    rel_volume_value = safe_float(idea.get("rel_volume"), 1.0)
+    regime = safe_float(idea.get("market_regime_score"), 50.0)
+
+    distance_boost = max(0, 18 - distance * 5)
+    rvol_boost = min(max(rel_volume_value - 1.0, 0) * 8, 10)
+    probability = final_score * 0.42 + accumulation * 0.33 + regime * 0.10 + distance_boost + rvol_boost - 18
+    probability = round(max(1, min(probability, 99)), 1)
+    label = "HIGH" if probability >= 75 else "MODERATE" if probability >= 60 else "LOW"
+
+    return {"breakout_probability": probability, "breakout_probability_label": label}
+
 def pick_option_contract(ticker: str, direction: str, trader_type: str, price: float) -> Optional[dict]:
     contract_type = "call" if direction == "CALL" else "put"
     min_dte, max_dte = (0, 2) if trader_type == "0DTE" else (7, 45) if trader_type == "SWING" else (90, 365)
@@ -887,6 +1006,45 @@ def api_run():
     ran = run_scan_once(force=True)
     with STATE_LOCK:
         return jsonify({"ok": ran, "status": STATE.get("last_scan_status"), "ideas": len(STATE.get("ideas", []))})
+
+
+@app.route("/api/diagnostics")
+def api_diagnostics():
+    with STATE_LOCK:
+        ideas = list(STATE.get("ideas", []))
+        latest = ideas[0] if ideas else {}
+        return jsonify({
+            "ok": True,
+            "mode": VERSION,
+            "scanner_started": SCANNER_STARTED,
+            "updated_at": STATE.get("updated_at"),
+            "last_error": STATE.get("last_error"),
+            "last_scan_status": STATE.get("last_scan_status"),
+            "data_sources": {
+                "polygon": bool(POLYGON_API_KEY),
+                "quantdata": bool(QUANTDATA_API_KEY),
+                "benzinga_direct_key": bool(BENZINGA_API_KEY),
+                "benzinga_source": BENZINGA_SOURCE,
+                "massive": bool(MASSIVE_API_KEY),
+                "telegram": bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
+            },
+            "market_regime": STATE.get("market_regime"),
+            "ticker_count": STATE.get("ticker_count"),
+            "ideas": len(ideas),
+            "latest_score_breakdown": {
+                "ticker": latest.get("ticker"),
+                "final_score": latest.get("final_score"),
+                "technical_score": latest.get("technical_score"),
+                "flow_score": latest.get("flow_score"),
+                "order_flow_score": latest.get("order_flow_score"),
+                "dark_pool_score": latest.get("dark_pool_score"),
+                "dark_pool_levels_score": latest.get("dark_pool_levels_score"),
+                "catalyst_score": latest.get("catalyst_score"),
+                "relative_strength_score": latest.get("relative_strength_score"),
+                "accumulation_score": latest.get("accumulation_score"),
+                "breakout_probability": latest.get("breakout_probability"),
+            },
+        })
 
 @app.route("/health")
 def health():
