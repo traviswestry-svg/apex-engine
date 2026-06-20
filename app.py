@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3_PARALLEL_HARDENED_ENGINE"
+VERSION = "3.3.1_QUANTDATA_SCHEMA_FIXED"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -34,6 +34,7 @@ MIN_ACCUMULATION_SCORE = float(os.getenv("MIN_ACCUMULATION_SCORE", "68"))
 DARK_POOL_ENDPOINT_ENABLED = os.getenv("DARK_POOL_ENDPOINT_ENABLED", "true").lower() == "true"
 ORDER_FLOW_ENABLED = os.getenv("ORDER_FLOW_ENABLED", "true").lower() == "true"
 DARK_POOL_LEVELS_ENABLED = os.getenv("DARK_POOL_LEVELS_ENABLED", "true").lower() == "true"
+DARK_POOL_LEVELS_LOOKBACK_DAYS = int(os.getenv("DARK_POOL_LEVELS_LOOKBACK_DAYS", "10"))
 QUANTDATA_NEWS_ENABLED = os.getenv("QUANTDATA_NEWS_ENABLED", "true").lower() == "true"
 MASSIVE_API_KEY = os.getenv("MASSIVE_API_KEY", POLYGON_API_KEY).strip()
 MASSIVE_BASE_URL = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io").rstrip("/")
@@ -113,7 +114,7 @@ STATE: Dict[str, Any] = {
     "updated_at_et": None,
     "session": "STARTING",
     "ideas": [],
-    "last_scan_status": "Starting APEX 3.3 scanner...",
+    "last_scan_status": "Starting APEX 3.3.1 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -422,6 +423,9 @@ def quantdata_flow_layer(ticker: str) -> Dict[str, Any]:
     for row in rows:
         call_sum += safe_float(row.get("callSum") or row.get("call_sum") or row.get("callPremium") or row.get("netCallPremium"))
         put_sum += abs(safe_float(row.get("putSum") or row.get("put_sum") or row.get("putPremium") or row.get("netPutPremium")))
+    # QuantData's NET_PREMIUM dataMode returns callSum/putSum in cents, not dollars.
+    call_sum /= 100.0
+    put_sum /= 100.0
     total = abs(call_sum) + abs(put_sum)
     if total <= 0:
         return {"flow_score": 50.0, "flow_status": "NEUTRAL - NO FLOW RETURNED", "flow_notes": ["QuantData net-flow returned no usable rows."], "call_premium": 0, "put_premium": 0, "call_ratio_pct": None}
@@ -455,15 +459,23 @@ def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
             size = safe_float(row.get("size") or row.get("quantity") or row.get("contracts"))
             premium = price * size * 100 if price and size else 0.0
         total_premium += premium
-        row_text = " ".join(str(row.get(k, "")) for k in ("side", "sentiment", "tradeSide", "classification", "contractType", "type", "executionType")).lower()
-        contract_type = str(row.get("contractType") or row.get("contract_type") or row.get("optionType") or "").lower()
-        if "sweep" in row_text:
+        # Real QuantData fields (per /api/docs/endpoints/order-flow-consolidated):
+        # tradeSideCode (e.g. ABOVE_ASK / AT_ASK / AT_BID / BELOW_BID), tradeConsolidationType
+        # (SWEEP / BLOCK / SPLIT), contractType (CALL / PUT). The old code searched for
+        # "side"/"sentiment"/"tradeSide"/"type" keys that don't exist on this endpoint, so
+        # sweep/block counts were always 0 and direction silently fell back to contractType only.
+        trade_side = str(row.get("tradeSideCode") or "").upper()
+        consolidation_type = str(row.get("tradeConsolidationType") or "").upper()
+        contract_type = str(row.get("contractType") or row.get("contract_type") or row.get("optionType") or "").upper()
+        if consolidation_type == "SWEEP":
             sweep_count += 1
-        if "block" in row_text or "split" in row_text:
+        if consolidation_type in ("BLOCK", "SPLIT"):
             block_count += 1
-        if any(x in row_text for x in ("bull", "ask", "above", "buy")) or (contract_type == "call" and not any(x in row_text for x in ("bear", "bid", "sell"))):
+        bullish_side = trade_side in ("ABOVE_ASK", "AT_ASK")
+        bearish_side = trade_side in ("BELOW_BID", "AT_BID")
+        if bullish_side or (not bearish_side and contract_type == "CALL"):
             bull_premium += premium
-        elif any(x in row_text for x in ("bear", "bid", "below", "sell")) or contract_type == "put":
+        elif bearish_side or contract_type == "PUT":
             bear_premium += premium
     if total_premium <= 0:
         score = 50.0
@@ -577,23 +589,33 @@ def quantdata_dark_pool_layer(ticker: str) -> Dict[str, Any]:
 
 
 def quantdata_dark_pool_levels_layer(ticker: str, price: float) -> Dict[str, Any]:
-    """QuantData dark-pool levels layer using /v1/equities/tool/dark-pool-levels."""
+    """QuantData dark-pool levels layer using /v1/equities/tool/dark-pool-levels.
+
+    Per QuantData's docs (api/docs/endpoints/dark-pool-levels), this endpoint:
+      - requires a top-level `sessionDateRange.startDate` (NOT `sessionDate` --
+        sending `sessionDate` here returns HTTP 400 ValidationFailure every time).
+      - returns `data` as an object keyed by price-level string (e.g. "215.00"),
+        not a list of rows with a `price`/`level` field. The level itself is the
+        dict key, so it has to be parsed out explicitly rather than read off a row.
+    """
     if not QUANTDATA_API_KEY or not DARK_POOL_LEVELS_ENABLED:
         return {"dark_pool_levels_score": 50.0, "dark_pool_levels_status": "NEUTRAL - LEVELS NOT CONFIGURED", "nearest_dark_pool_level": None, "dark_pool_levels_notes": ["Set DARK_POOL_LEVELS_ENABLED=true and QUANTDATA_API_KEY to activate dark-pool levels."]}
     if BREAKER.is_open("quantdata_dark_pool_levels"):
         BREAKER.record_skip("quantdata_dark_pool_levels")
         return {"dark_pool_levels_score": 50.0, "dark_pool_levels_status": "NEUTRAL - CIRCUIT OPEN (repeated failures this scan)", "nearest_dark_pool_level": None, "dark_pool_levels_notes": ["quantdata_dark_pool_levels skipped after repeated failures this scan cycle."]}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
-    payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
+    start_date = (last_market_date() - dt.timedelta(days=DARK_POOL_LEVELS_LOOKBACK_DAYS)).isoformat()
+    payload = {"sessionDateRange": {"startDate": start_date}, "filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/equities/tool/dark-pool-levels", payload, headers=headers, timeout=18)
     BREAKER.record_failure("quantdata_dark_pool_levels") if data is None else BREAKER.record_success("quantdata_dark_pool_levels")
-    rows = rows_from_tool_response(data)
+    level_map = (data or {}).get("data") if isinstance(data, dict) else None
     levels = []
-    for row in rows:
-        level = safe_float(row.get("price") or row.get("level") or row.get("stockPrice") or row.get("darkPoolLevel"))
-        notional = safe_float(row.get("notionalValue") or row.get("notional") or row.get("value"))
-        if level > 0:
-            levels.append((level, notional))
+    if isinstance(level_map, dict):
+        for level_key, stats in level_map.items():
+            level = safe_float(level_key)
+            notional = safe_float((stats or {}).get("notionalValue")) if isinstance(stats, dict) else 0.0
+            if level > 0:
+                levels.append((level, notional))
     if not levels or price <= 0:
         return {"dark_pool_levels_score": 50.0, "dark_pool_levels_status": "NEUTRAL - NO LEVELS", "nearest_dark_pool_level": None, "dark_pool_levels_notes": ["QuantData dark-pool levels returned no usable rows."]}
     nearest = min(levels, key=lambda x: abs(x[0] - price))
@@ -934,7 +956,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Optional[Dict[str, An
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3.1 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -1057,9 +1079,27 @@ def run_scan_once(force: bool = False) -> bool:
 
 
 def scanner_loop() -> None:
+    with STATE_LOCK:
+        STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        STATE["scanner_thread_alive"] = True
     time.sleep(2)
     while True:
-        run_scan_once()
+        with STATE_LOCK:
+            STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        try:
+            run_scan_once()
+        except Exception as e:
+            # run_scan_once() already catches its own exceptions internally. This is a
+            # last-resort backstop: if something still slips through (or raises outside
+            # that try, e.g. during lock acquisition), it must not be allowed to kill
+            # this thread silently. Without this, a dead thread looks identical to a
+            # slow one -- STATE just freezes on "first scan pending" forever with no
+            # last_error to explain why.
+            with STATE_LOCK:
+                STATE["last_error"] = f"Scanner thread error (recovered): {e}"
+                STATE["last_scan_status"] = "Scanner hit an unexpected error; will retry next cycle."
+                STATE["scan_in_progress"] = False
+            print(f"Scanner loop exception (recovered, thread continues): {e}", flush=True)
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 
@@ -1073,6 +1113,8 @@ def start_background_scanner() -> None:
         SCANNER_STARTED = True
         with STATE_LOCK:
             STATE["scanner_started"] = True
+            STATE["scanner_thread_alive"] = False
+            STATE["scanner_heartbeat_at"] = None
             STATE["last_scan_status"] = "Background scanner started; first scan pending..."
         threading.Thread(target=scanner_loop, name="apex-scanner", daemon=True).start()
 
