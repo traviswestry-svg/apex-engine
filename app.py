@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3.3_SESSION_DATE_FIX"
+VERSION = "3.3.4_BENZINGA_PARAM_FIX"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -115,7 +115,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.3.3 scanner...",
+    "last_scan_status": "Starting APEX 3.3.4 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -512,7 +512,11 @@ def massive_benzinga_news_rows(ticker: str) -> List[dict]:
     if not MASSIVE_API_KEY:
         return []
     if not BREAKER.is_open("massive_benzinga_news"):
-        data = safe_get_json(f"{MASSIVE_BASE_URL}/benzinga/v2/news", params={"ticker": ticker, "limit": 10}, timeout=15)
+        # Per Massive's docs (massive.com/docs/rest/partners/benzinga/news) the filter
+        # param is the plural "tickers", not "ticker" -- the singular param was likely
+        # silently ignored or matched nothing, which would explain catalyst_score being
+        # pinned at the neutral 50.0 baseline for every ticker.
+        data = safe_get_json(f"{MASSIVE_BASE_URL}/benzinga/v2/news", params={"tickers": ticker, "limit": 10}, timeout=15)
         BREAKER.record_failure("massive_benzinga_news") if data is None else BREAKER.record_success("massive_benzinga_news")
         rows = rows_from_tool_response(data)
         if rows:
@@ -978,7 +982,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3.3 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3.4 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })

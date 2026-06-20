@@ -103,3 +103,30 @@ hasn't been confirmed against Polygon's actual Benzinga integration docs.
 Worth checking Render logs for `GET .../benzinga/v2/news failed` lines; if
 present, that route may need to be confirmed/corrected separately, though the
 Polygon reference-news fallback in the same function should still cover it.
+
+---
+
+## 3.3.4 addendum — Benzinga news query param fix
+
+The 3.3.3 fix solved flow/order-flow/dark-pool (confirmed: 10 ideas qualified
+on the next scan, with real score spread). `catalyst_score` was the lone
+holdout, still pinned at exactly 50.0 across all 22 tickers.
+
+Checked Massive's own docs (massive.com/docs/rest/partners/benzinga/news,
+Polygon.io's current home under their Massive rebrand) for the `/benzinga/v2/news`
+route: the ticker filter parameter is the plural `tickers`, not `ticker`. The
+engine was sending the singular form, which the API likely either ignored
+(returning an unfiltered, hard-to-match feed) or matched nothing. Fixed to
+send `tickers`.
+
+The path itself (`/benzinga/v2/news`) and base host (`api.polygon.io`, which
+Massive appears to keep serving for backward compatibility) were not changed
+since I found no evidence either was wrong -- only the param name.
+
+One thing I can't verify from here: Benzinga News is sold as a **separate
+paid add-on** on Massive ($99/mo individual plan per their docs) on top of
+the base Polygon/Massive subscription. If this fix doesn't move
+`catalyst_score` off 50.0, check whether that specific add-on is active on
+your account -- an unentitled call may return 200 with an empty result set
+rather than an error, which would look identical to the param bug from the
+engine's side.
