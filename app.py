@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3.4_BENZINGA_PARAM_FIX"
+VERSION = "3.3.5_DASHBOARD_UX"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -115,7 +115,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.3.4 scanner...",
+    "last_scan_status": "Starting APEX 3.3.5 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -982,7 +982,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3.4 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3.5 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -1229,9 +1229,11 @@ select{font-family:var(--sans);font-size:12.5px;background:var(--surface);color:
 .card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .ticker{font-family:var(--mono);font-size:24px;font-weight:800}
 .grade{color:var(--green);margin-left:4px}
+.price{color:var(--muted);font-family:var(--mono);font-size:14px;font-weight:500;margin-left:8px}
 .badges{margin-top:4px;display:flex;gap:5px;flex-wrap:wrap}
 .badge{display:inline-block;padding:3px 8px;border-radius:999px;background:var(--surface-alt);color:var(--muted);font-size:10.5px;font-family:var(--mono)}
 .badge.dir-CALL{color:var(--green)}
+.badge.zone-badge{color:#04131f;background:var(--accent);font-weight:700}
 .badge.dir-PUT{color:var(--red)}
 .score{font-family:var(--mono);font-size:24px;font-weight:800;color:var(--accent)}
 .scores{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
@@ -1270,6 +1272,7 @@ footer{margin-top:28px;color:var(--faint);font-size:11px;font-family:var(--mono)
   <div class="toolbar">
     <input class="search" id="search" type="text" placeholder="Filter by ticker...">
     <div class="filters" id="statusFilters"></div>
+    <button class="fbtn" id="zoneToggle" type="button" aria-pressed="false">In Zone Only</button>
     <select id="sortSel">
       <option value="rank">Sort: Default rank</option>
       <option value="final_score">Sort: Final score</option>
@@ -1287,7 +1290,9 @@ footer{margin-top:28px;color:var(--faint);font-size:11px;font-family:var(--mono)
 <script>
 let state = JSON.parse(document.getElementById('initial-data').textContent || '{}');
 let activeFilter = 'ALL';
+let zoneOnly = false;
 let lastFetchOk = true;
+let lastRenderSignature = null;
 
 const STATUS_META = {
   'READY - IN BUY ZONE': {cls:'ready', label:'Ready'},
@@ -1345,7 +1350,7 @@ function renderStatusbar(){
   } else { rb.textContent = ''; }
 
   document.getElementById('footerNote').textContent =
-    (state.ticker_count || 0) + ' tickers scanned | updated ' + fmtAgo(state.updated_at) + ' | auto-refreshing every 12s';
+    (state.ticker_count || 0) + ' tickers scanned | updated ' + fmtAgo(state.updated_at) + ' | checking for updates every 30s (only redraws when something changes)';
 }
 
 function renderFilters(ideas){
@@ -1363,10 +1368,13 @@ function renderFilters(ideas){
 function cardHtml(idea){
   const meta = STATUS_META[idea.status] || {cls:'', label: idea.status || ''};
   const notes = (idea.notes || []).slice(0, 8).map(n => '<div>&bull; ' + n + '</div>').join('');
-  return '<div class="card ' + meta.cls + '">' +
-    '<div class="card-head"><div><div class="ticker">' + idea.ticker + '<span class="grade">' + (idea.grade||'') + '</span></div>' +
+  const inZone = (idea.buy_zone_status||'').includes('INSIDE');
+  return '<div class="card ' + meta.cls + '" data-ticker="' + idea.ticker + '">' +
+    '<div class="card-head"><div><div class="ticker">' + idea.ticker + '<span class="grade">' + (idea.grade||'') + '</span>' +
+    '<span class="price">$' + (idea.price!=null ? idea.price : '--') + '</span></div>' +
     '<div class="badges"><span class="badge dir-' + idea.direction + '">' + idea.direction + '</span>' +
-    '<span class="badge">' + idea.trader_type + '</span><span class="badge">' + meta.label + '</span></div></div>' +
+    '<span class="badge">' + idea.trader_type + '</span><span class="badge">' + meta.label + '</span>' +
+    (inZone ? '<span class="badge zone-badge">IN ZONE</span>' : '') + '</div></div>' +
     '<div class="score">' + (idea.final_score!=null ? idea.final_score : '--') + '</div></div>' +
     '<div class="scores">' +
       scorebox('Tech', idea.technical_score) + scorebox('Flow', idea.flow_score_directional) +
@@ -1391,12 +1399,24 @@ function renderCards(){
   renderFilters(ideas);
   const q = document.getElementById('search').value.trim().toUpperCase();
   if(activeFilter !== 'ALL') ideas = ideas.filter(i => i.status === activeFilter);
+  if(zoneOnly) ideas = ideas.filter(i => (i.buy_zone_status||'').includes('INSIDE'));
   if(q) ideas = ideas.filter(i => (i.ticker||'').toUpperCase().includes(q));
   const sortKey = document.getElementById('sortSel').value;
   if(sortKey !== 'rank'){
     ideas.sort((a,b) => sortKey === 'ticker' ? (a.ticker||'').localeCompare(b.ticker||'') : (b[sortKey]||0) - (a[sortKey]||0));
   }
   const content = document.getElementById('content');
+
+  // Skip the DOM rebuild entirely if the visible set is identical to what's already
+  // on screen -- this is what stops a routine poll from yanking you off whatever
+  // you're reading. Only ticker/score/status feed the signature since those are the
+  // only things that change the rendered output.
+  const signature = ideas.length
+    ? JSON.stringify(ideas.map(i => [i.ticker, i.final_score, i.status, i.recommended_contracts]))
+    : 'EMPTY:' + JSON.stringify((state.scan_debug || []).map(d => [d.ticker, d.final_score]));
+  if(signature === lastRenderSignature) return;
+  lastRenderSignature = signature;
+
   if(ideas.length === 0){
     const debug = state.scan_debug || [];
     let extra = '';
@@ -1411,7 +1431,21 @@ function renderCards(){
     content.innerHTML = '<div class="empty"><b>No qualified setups match right now.</b><br>APEX keeps low-quality names hidden until they clear the score threshold -- check back after the next scan, or clear filters above.' + extra + '</div>';
     return;
   }
+
+  // Preserve scroll position and which "Why this setup" panels were expanded,
+  // since a routine refresh shouldn't reset either.
+  const scrollY = window.scrollY;
+  const openTickers = new Set(
+    Array.from(content.querySelectorAll('.card')).filter(c => c.querySelector('details[open]')).map(c => c.dataset.ticker)
+  );
   content.innerHTML = '<div class="grid">' + ideas.map(cardHtml).join('') + '</div>';
+  content.querySelectorAll('.card').forEach(c => {
+    if(openTickers.has(c.dataset.ticker)){
+      const d = c.querySelector('details');
+      if(d) d.open = true;
+    }
+  });
+  window.scrollTo(0, scrollY);
 }
 
 async function poll(){
@@ -1429,9 +1463,16 @@ async function poll(){
 
 document.getElementById('search').addEventListener('input', renderCards);
 document.getElementById('sortSel').addEventListener('change', renderCards);
+document.getElementById('zoneToggle').addEventListener('click', () => {
+  zoneOnly = !zoneOnly;
+  const btn = document.getElementById('zoneToggle');
+  btn.classList.toggle('active', zoneOnly);
+  btn.setAttribute('aria-pressed', String(zoneOnly));
+  renderCards();
+});
 renderStatusbar();
 renderCards();
-setInterval(poll, 12000);
+setInterval(poll, 30000);
 setInterval(renderStatusbar, 1000);
 </script>
 </body>
