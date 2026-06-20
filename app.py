@@ -10,13 +10,16 @@ from zoneinfo import ZoneInfo
 import requests
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.2_INSTITUTIONAL_ENGINE"
+VERSION = "3.2.1_INSTITUTIONAL_ENGINE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
 QUANTDATA_API_KEY = os.getenv("QUANTDATA_API_KEY", "").strip()
 QUANTDATA_BASE_URL = os.getenv("QUANTDATA_BASE_URL", "https://api.quantdata.us/v1").rstrip("/")
 BENZINGA_API_KEY = os.getenv("BENZINGA_API_KEY", "").strip()
+# If Benzinga is subscribed through Massive/Polygon, do not call api.benzinga.com directly.
+# Valid values: "massive"/"polygon" or "direct". Default keeps production quiet.
+BENZINGA_SOURCE = os.getenv("BENZINGA_SOURCE", "massive").strip().lower()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
@@ -340,29 +343,43 @@ def quantdata_flow_layer(ticker: str) -> Dict[str, Any]:
 
 
 def catalyst_layer(ticker: str) -> Dict[str, Any]:
+    """Catalyst/news scoring.
+
+    Production note: your Benzinga subscription is through Massive/Polygon, so the
+    default path intentionally uses Polygon/Massive reference news instead of
+    calling api.benzinga.com directly. Set BENZINGA_SOURCE=direct only if you have
+    a standalone direct Benzinga API key.
+    """
     score = 50.0
     notes: List[str] = []
-    if BENZINGA_API_KEY:
+    rows: List[dict] = []
+
+    if BENZINGA_SOURCE == "direct" and BENZINGA_API_KEY:
         url = "https://api.benzinga.com/api/v2/news"
         data = safe_get_json(url, params={"token": BENZINGA_API_KEY, "tickers": ticker, "pagesize": 8, "displayOutput": "full"}, timeout=15)
         rows = data if isinstance(data, list) else data.get("data", []) if isinstance(data, dict) else []
-        text = " ".join(str((r or {}).get("title", "")) for r in rows[:8]).lower()
         if rows:
-            score += 8
-            notes.append(f"{len(rows[:8])} recent Benzinga headlines")
-        positive_words = ["upgrade", "raises", "beat", "beats", "guidance", "contract", "approval", "launch", "partnership"]
-        negative_words = ["downgrade", "cuts", "miss", "probe", "lawsuit", "warning", "recall"]
-        score += sum(5 for w in positive_words if w in text)
-        score -= sum(6 for w in negative_words if w in text)
+            notes.append(f"{len(rows[:8])} recent direct Benzinga headlines")
     elif POLYGON_API_KEY:
+        # Massive/Benzinga-through-Polygon compatible catalyst source.
         url = "https://api.polygon.io/v2/reference/news"
         data = safe_get_json(url, params={"ticker": ticker, "limit": 8, "order": "desc", "sort": "published_utc"}, timeout=15)
-        rows = data.get("results", []) if data else []
+        rows = data.get("results", []) if isinstance(data, dict) else []
         if rows:
-            score += 5
-            notes.append(f"{len(rows[:8])} recent Polygon headlines")
+            notes.append(f"{len(rows[:8])} recent Massive/Polygon news headlines")
+        elif BENZINGA_API_KEY and BENZINGA_SOURCE != "direct":
+            notes.append("Benzinga source set to Massive/Polygon; no Polygon news rows returned.")
     else:
         notes.append("No catalyst provider configured")
+
+    text = " ".join(str((r or {}).get("title", "")) for r in rows[:8]).lower()
+    if rows:
+        score += 6
+    positive_words = ["upgrade", "raises", "beat", "beats", "guidance", "contract", "approval", "launch", "partnership", "record", "growth"]
+    negative_words = ["downgrade", "cuts", "miss", "probe", "lawsuit", "warning", "recall", "investigation", "delay"]
+    score += sum(5 for w in positive_words if w in text)
+    score -= sum(6 for w in negative_words if w in text)
+
     score = max(0, min(score, 100))
     status = "POSITIVE CATALYST" if score >= 65 else "NEGATIVE CATALYST" if score <= 40 else "NO MAJOR CATALYST"
     return {"catalyst_score": round(score, 1), "catalyst_status": status, "catalyst_notes": notes[:4]}
@@ -370,75 +387,71 @@ def catalyst_layer(ticker: str) -> Dict[str, Any]:
 
 
 def quantdata_dark_pool_layer(ticker: str) -> Dict[str, Any]:
-    """Dark-pool/large-print layer.
+    """QuantData dark-flow / large-print layer.
 
-    QuantData account endpoints can vary by entitlement, so this function is defensive:
-    it tries common dark-pool style endpoints and returns a neutral score if the
-    endpoint is unavailable. The scanner never fails because this data is missing.
+    APEX 3.2.1 uses QuantData's documented equities dark-flow endpoint instead of
+    the invalid dark-pool endpoint family that returned repeated 404s in Render.
+    If dark-flow is unavailable for the account or returns no rows, the layer stays
+    neutral and the scanner continues normally.
     """
     if not QUANTDATA_API_KEY or not DARK_POOL_ENDPOINT_ENABLED:
         return {
             "dark_pool_score": 50.0,
-            "dark_pool_status": "NEUTRAL - DARK POOL NOT CONFIGURED",
+            "dark_pool_status": "NEUTRAL - DARK FLOW NOT CONFIGURED",
             "dark_pool_notional": 0,
-            "dark_pool_notes": ["Set QUANTDATA_API_KEY and enable a dark-pool endpoint to activate."],
+            "dark_pool_notes": ["Set QUANTDATA_API_KEY and keep DARK_POOL_ENDPOINT_ENABLED=true to activate QuantData dark-flow."],
         }
+
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
     session_date = last_market_date().isoformat()
-    candidate_paths = [
-        "/market/tool/dark-pool",
-        "/equities/tool/dark-pool",
-        "/stocks/tool/dark-pool",
-        "/options/tool/dark-pool",
-    ]
+    payload = {"sessionDate": session_date, "filter": {"ticker": ticker}}
+
+    data = safe_post_json(f"{QUANTDATA_BASE_URL}/equities/tool/dark-flow", payload, headers=headers, timeout=18)
     rows: List[dict] = []
-    last_error = ""
-    for path in candidate_paths:
-        payload = {"sessionDate": session_date, "filter": {"ticker": ticker}}
-        data = safe_post_json(f"{QUANTDATA_BASE_URL}{path}", payload, headers=headers, timeout=18)
-        if not isinstance(data, dict):
-            last_error = path
-            continue
+    if isinstance(data, dict):
         possible = data.get("data") or data.get("results") or data.get("prints") or data.get("buckets") or []
         if isinstance(possible, dict):
-            possible = possible.get("items") or possible.get("rows") or []
-        if isinstance(possible, list) and possible:
+            possible = possible.get("items") or possible.get("rows") or possible.get("data") or []
+        if isinstance(possible, list):
             rows = [r for r in possible if isinstance(r, dict)]
-            break
+
     if not rows:
         return {
             "dark_pool_score": 50.0,
-            "dark_pool_status": "NEUTRAL - NO DARK POOL ROWS",
+            "dark_pool_status": "NEUTRAL - NO DARK FLOW ROWS",
             "dark_pool_notional": 0,
-            "dark_pool_notes": [f"No dark-pool rows returned; last endpoint tried: {last_error or 'none'}."],
+            "dark_pool_notes": ["QuantData dark-flow returned no rows or is unavailable for this ticker/session."],
         }
+
     total_notional = 0.0
     bullish_notional = 0.0
     bearish_notional = 0.0
     for row in rows:
-        price = safe_float(row.get("price") or row.get("stockPrice") or row.get("p"))
+        price = safe_float(row.get("price") or row.get("stockPrice") or row.get("p") or row.get("avgPrice"))
         size = safe_float(row.get("size") or row.get("volume") or row.get("shares") or row.get("v"))
-        notional = safe_float(row.get("notional") or row.get("premium") or row.get("value"))
+        notional = safe_float(row.get("notional") or row.get("premium") or row.get("value") or row.get("amount"))
         if notional <= 0 and price > 0 and size > 0:
             notional = price * size
-        side = str(row.get("side") or row.get("sentiment") or row.get("direction") or "").lower()
+        side = str(row.get("side") or row.get("sentiment") or row.get("direction") or row.get("aggressorSide") or "").lower()
         total_notional += notional
-        if "buy" in side or "bull" in side or side in {"b", "ask"}:
+        if "buy" in side or "bull" in side or side in {"b", "ask", "above_ask"}:
             bullish_notional += notional
-        elif "sell" in side or "bear" in side or side in {"s", "bid"}:
+        elif "sell" in side or "bear" in side or side in {"s", "bid", "below_bid"}:
             bearish_notional += notional
+
     if total_notional <= 0:
         score = 50.0
     else:
         directional = ((bullish_notional - bearish_notional) / total_notional * 25) if (bullish_notional or bearish_notional) else 0
         scale = min(total_notional / 10_000_000, 20)
         score = max(0, min(100, 50 + directional + scale))
+
     status = "ACCUMULATION" if score >= 65 else "DISTRIBUTION" if score <= 40 else "MIXED/NEUTRAL"
     return {
         "dark_pool_score": round(score, 1),
         "dark_pool_status": status,
         "dark_pool_notional": round(total_notional, 0),
-        "dark_pool_notes": [f"Dark/large-print notional ${total_notional:,.0f}", f"Rows analyzed: {len(rows)}"],
+        "dark_pool_notes": [f"QuantData dark-flow notional ${total_notional:,.0f}", f"Rows analyzed: {len(rows)}"],
     }
 
 
