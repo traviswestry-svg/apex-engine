@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3.5_DASHBOARD_UX"
+VERSION = "3.3.6_SCAN_NOW"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -115,7 +115,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.3.5 scanner...",
+    "last_scan_status": "Starting APEX 3.3.6 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -982,7 +982,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3.5 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3.6 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -1193,6 +1193,10 @@ a{color:inherit}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.55)}50%{box-shadow:0 0 0 6px rgba(56,189,248,0)}}
 @media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
 .statusbar .sep{width:1px;height:18px;background:var(--border)}
+.scan-now-btn{font-family:var(--sans);font-size:12px;font-weight:600;padding:5px 11px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer}
+.scan-now-btn:hover{background:rgba(56,189,248,.1)}
+.scan-now-btn:disabled{opacity:.5;cursor:default}
+.scan-now-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .source-chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted);display:flex;align-items:center;gap:5px}
 .chip .dot{width:6px;height:6px}
@@ -1264,6 +1268,7 @@ footer{margin-top:28px;color:var(--faint);font-size:11px;font-family:var(--mono)
 
   <div class="statusbar" id="statusbar">
     <div class="scan-indicator"><span class="dot" id="scanDot"></span><span id="scanText">Connecting...</span></div>
+    <button class="scan-now-btn" id="scanNowBtn" type="button">Scan Now</button>
     <div class="sep"></div>
     <div class="source-chips" id="sourceChips"></div>
     <div class="regime-badge" id="regimeBadge"></div>
@@ -1358,9 +1363,9 @@ function renderFilters(ideas){
   ideas.forEach(i => { counts[i.status] = (counts[i.status]||0) + 1; });
   const order = ['ALL', 'READY - IN BUY ZONE', 'PRE-BREAKOUT WATCHLIST', 'ACCUMULATION WATCHLIST', 'WATCHLIST - WAIT FOR ZONE'];
   const box = document.getElementById('statusFilters');
-  box.innerHTML = order.filter(k => counts[k]).map(k => {
+  box.innerHTML = order.filter(k => k === 'ALL' || counts[k]).map(k => {
     const label = k === 'ALL' ? 'All' : (STATUS_META[k] ? STATUS_META[k].label : k);
-    return '<button class="fbtn' + (activeFilter===k?' active':'') + '" data-f="' + k + '">' + label + ' (' + counts[k] + ')</button>';
+    return '<button class="fbtn' + (activeFilter===k?' active':'') + '" data-f="' + k + '">' + label + ' (' + (counts[k]||0) + ')</button>';
   }).join('');
   box.querySelectorAll('.fbtn').forEach(b => b.onclick = () => { activeFilter = b.dataset.f; renderCards(); });
 }
@@ -1469,6 +1474,21 @@ document.getElementById('zoneToggle').addEventListener('click', () => {
   btn.classList.toggle('active', zoneOnly);
   btn.setAttribute('aria-pressed', String(zoneOnly));
   renderCards();
+});
+document.getElementById('scanNowBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('scanNowBtn');
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'Scanning...';
+  try{
+    await fetch('/api/run', {method:'POST', cache:'no-store'});
+  } catch(e){
+    // poll() below will surface connection issues via lastFetchOk
+  }
+  lastRenderSignature = null; // force a redraw even if the result looks unchanged
+  await poll();
+  btn.disabled = false;
+  btn.textContent = originalLabel;
 });
 renderStatusbar();
 renderCards();
