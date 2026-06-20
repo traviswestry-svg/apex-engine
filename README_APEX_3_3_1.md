@@ -69,3 +69,37 @@ analyzed tickers by `final_score`, sorted descending, with the full score
 breakdown and `excluded_reason` for each, regardless of whether they cleared
 `MIN_FINAL_SCORE`. The dashboard's empty state also now lists these directly
 so you don't have to leave the page to see how close things are getting.
+
+---
+
+## 3.3.3 addendum — sessionDate fix (the likely real cause of 0 ideas)
+
+The `closest_to_qualifying` debug data from 3.3.2 showed `flow_score`,
+`order_flow_score`, `dark_pool_score`, and `catalyst_score` pinned at exactly
+`50.0` (the neutral fallback) for every single ticker, while the breaker
+showed zero failures -- meaning the calls succeeded but came back empty.
+`dark_pool_levels_score` was the only QuantData-derived score with real
+variation, and it's also the only one of the five that doesn't compute an
+explicit `sessionDate`.
+
+`last_market_date()` correctly identifies the latest weekday (calendar-correct),
+but that doesn't guarantee QuantData has finished finalizing that session's
+data on their end -- particularly for an off-hours/weekend request. QuantData's
+own docs state the default behavior for an omitted `sessionDate` is "the latest
+completed trading session," which is QuantData's own judgment call, not ours.
+
+Removed the explicit `sessionDate` from all four affected payloads (net-flow,
+order-flow-consolidated, dark-flow, news/tool/articles) so QuantData resolves
+it themselves instead of us guessing a date they might not have ready yet.
+
+Run `/api/run` then `/api/diagnostics` after this deploys -- if
+`closest_to_qualifying` shows non-50.0 flow/order-flow/dark-pool/catalyst
+scores with real spread between tickers, this was it.
+
+Separately: `catalyst_score` being stuck at 50.0 across the board could also
+be partly explained by the Massive Benzinga news route (`/benzinga/v2/news`
+on the Polygon host) returning nothing -- that's a guessed endpoint path that
+hasn't been confirmed against Polygon's actual Benzinga integration docs.
+Worth checking Render logs for `GET .../benzinga/v2/news failed` lines; if
+present, that route may need to be confirmed/corrected separately, though the
+Polygon reference-news fallback in the same function should still cover it.

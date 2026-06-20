@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3.2_SCAN_DEBUG_VISIBILITY"
+VERSION = "3.3.3_SESSION_DATE_FIX"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -115,7 +115,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.3.2 scanner...",
+    "last_scan_status": "Starting APEX 3.3.3 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -416,7 +416,11 @@ def quantdata_flow_layer(ticker: str) -> Dict[str, Any]:
         BREAKER.record_skip("quantdata_net_flow")
         return {"flow_score": 50.0, "flow_status": "NEUTRAL - CIRCUIT OPEN (repeated failures this scan)", "flow_notes": ["quantdata_net_flow skipped after repeated failures this scan cycle."], "call_premium": 0, "put_premium": 0, "call_ratio_pct": None}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
-    payload = {"dataMode": "NET_PREMIUM", "sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
+    # Deliberately omit sessionDate: our own last_market_date() is calendar-correct
+    # but can land on a session QuantData hasn't finished finalizing yet (e.g. a
+    # weekend request for Friday). QuantData's documented default for an omitted
+    # sessionDate is "the latest completed trading session" -- let them resolve it.
+    payload = {"dataMode": "NET_PREMIUM", "filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/net-flow", payload, headers=headers, timeout=20)
     BREAKER.record_failure("quantdata_net_flow") if data is None else BREAKER.record_success("quantdata_net_flow")
     rows = rows_from_tool_response(data)
@@ -445,7 +449,7 @@ def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
         BREAKER.record_skip("quantdata_order_flow")
         return {"order_flow_score": 50.0, "order_flow_status": "NEUTRAL - CIRCUIT OPEN (repeated failures this scan)", "order_flow_notes": ["quantdata_order_flow skipped after repeated failures this scan cycle."], "sweep_count": 0, "large_trade_premium": 0}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
-    payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}, "size": 75, "sort": {"field": "tradeTime", "direction": "DESCENDING"}}
+    payload = {"filter": {"ticker": ticker}, "size": 75, "sort": {"field": "tradeTime", "direction": "DESCENDING"}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/order-flow/consolidated", payload, headers=headers, timeout=20)
     BREAKER.record_failure("quantdata_order_flow") if data is None else BREAKER.record_success("quantdata_order_flow")
     rows = rows_from_tool_response(data)
@@ -497,7 +501,7 @@ def quantdata_news_rows(ticker: str) -> List[dict]:
         BREAKER.record_skip("quantdata_news")
         return []
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
-    payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}, "size": 10}
+    payload = {"filter": {"ticker": ticker}, "size": 10}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/news/tool/articles", payload, headers=headers, timeout=15)
     BREAKER.record_failure("quantdata_news") if data is None else BREAKER.record_success("quantdata_news")
     return rows_from_tool_response(data)
@@ -568,7 +572,7 @@ def quantdata_dark_pool_layer(ticker: str) -> Dict[str, Any]:
         BREAKER.record_skip("quantdata_dark_flow")
         return {"dark_pool_score": 50.0, "dark_pool_status": "NEUTRAL - CIRCUIT OPEN (repeated failures this scan)", "dark_pool_notional": 0, "dark_pool_notes": ["quantdata_dark_flow skipped after repeated failures this scan cycle."]}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
-    payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
+    payload = {"filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/equities/tool/dark-flow", payload, headers=headers, timeout=18)
     BREAKER.record_failure("quantdata_dark_flow") if data is None else BREAKER.record_success("quantdata_dark_flow")
     rows = rows_from_tool_response(data)
@@ -974,7 +978,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3.2 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3.3 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
