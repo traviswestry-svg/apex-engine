@@ -8,9 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.2.2_INSTITUTIONAL_ENGINE"
+VERSION = "3.3_PARALLEL_HARDENED_ENGINE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -39,6 +40,8 @@ MASSIVE_BASE_URL = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io").rstri
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
 SEND_TELEGRAM = os.getenv("SEND_TELEGRAM", "true").lower() == "true"
 RUN_SCANNER_ON_IMPORT = os.getenv("RUN_SCANNER_ON_IMPORT", "false").lower() == "true"
+SCAN_WORKERS = int(os.getenv("SCAN_WORKERS", "8"))
+BREAKER_MAX_FAILURES = int(os.getenv("BREAKER_MAX_FAILURES", "3"))
 
 CORE_TICKERS = [
     "SPY", "QQQ", "NVDA", "TSLA", "META", "MSFT", "AAPL", "AMZN", "COIN", "AMD",
@@ -50,18 +53,72 @@ MAX_DYNAMIC_TICKERS = int(os.getenv("MAX_DYNAMIC_TICKERS", "25"))
 
 app = Flask(__name__)
 SENT_ALERTS: set[str] = set()
+SENT_ALERTS_LOCK = threading.Lock()
 STATE_LOCK = threading.RLock()
 SCAN_LOCK = threading.Lock()
 SCANNER_START_LOCK = threading.Lock()
 SCANNER_STARTED = False
+
+
+class CircuitBreaker:
+    """Per-endpoint failure tracking so one dead/slow API can't stall an entire scan.
+
+    Resets at the start of every scan cycle (transient outages get retried next
+    cycle), but once an endpoint fails BREAKER_MAX_FAILURES times within the
+    current cycle, further calls to it are skipped instantly (return neutral
+    defaults) instead of burning a full network timeout per remaining ticker.
+    """
+
+    def __init__(self, max_failures: int = 3):
+        self._lock = threading.Lock()
+        self._max_failures = max_failures
+        self._failures: Dict[str, int] = {}
+        self._skipped: Dict[str, int] = {}
+
+    def reset(self) -> None:
+        with self._lock:
+            self._failures.clear()
+            self._skipped.clear()
+
+    def is_open(self, name: str) -> bool:
+        with self._lock:
+            return self._failures.get(name, 0) >= self._max_failures
+
+    def record_failure(self, name: str) -> None:
+        with self._lock:
+            self._failures[name] = self._failures.get(name, 0) + 1
+
+    def record_success(self, name: str) -> None:
+        with self._lock:
+            self._failures[name] = 0
+
+    def record_skip(self, name: str) -> None:
+        with self._lock:
+            self._skipped[name] = self._skipped.get(name, 0) + 1
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "open_circuits": [n for n, c in self._failures.items() if c >= self._max_failures],
+                "failure_counts": dict(self._failures),
+                "skipped_calls": dict(self._skipped),
+            }
+
+
+BREAKER = CircuitBreaker(max_failures=BREAKER_MAX_FAILURES)
+
 STATE: Dict[str, Any] = {
     "mode": VERSION,
     "updated_at": None,
     "updated_at_et": None,
     "session": "STARTING",
     "ideas": [],
-    "last_scan_status": "Starting APEX 3.2 scanner...",
+    "last_scan_status": "Starting APEX 3.3 scanner...",
     "last_error": None,
+    "scan_in_progress": False,
+    "scan_started_at": None,
+    "last_scan_duration_seconds": None,
+    "circuit_breaker": {"open_circuits": [], "failure_counts": {}, "skipped_calls": {}},
     "data_sources": {
         "polygon": bool(POLYGON_API_KEY),
         "quantdata": bool(QUANTDATA_API_KEY),
@@ -353,9 +410,13 @@ def quantdata_flow_layer(ticker: str) -> Dict[str, Any]:
     """QuantData options net-flow layer using /v1/options/tool/net-flow."""
     if not QUANTDATA_API_KEY:
         return {"flow_score": 50.0, "flow_status": "NEUTRAL - QUANTDATA NOT CONFIGURED", "flow_notes": ["Set QUANTDATA_API_KEY to enable live net-flow."], "call_premium": 0, "put_premium": 0, "call_ratio_pct": None}
+    if BREAKER.is_open("quantdata_net_flow"):
+        BREAKER.record_skip("quantdata_net_flow")
+        return {"flow_score": 50.0, "flow_status": "NEUTRAL - CIRCUIT OPEN (repeated failures this scan)", "flow_notes": ["quantdata_net_flow skipped after repeated failures this scan cycle."], "call_premium": 0, "put_premium": 0, "call_ratio_pct": None}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
     payload = {"dataMode": "NET_PREMIUM", "sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/net-flow", payload, headers=headers, timeout=20)
+    BREAKER.record_failure("quantdata_net_flow") if data is None else BREAKER.record_success("quantdata_net_flow")
     rows = rows_from_tool_response(data)
     call_sum = put_sum = 0.0
     for row in rows:
@@ -375,9 +436,13 @@ def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
     """QuantData consolidated order-flow layer using /v1/options/tool/order-flow/consolidated."""
     if not QUANTDATA_API_KEY or not ORDER_FLOW_ENABLED:
         return {"order_flow_score": 50.0, "order_flow_status": "NEUTRAL - ORDER FLOW NOT CONFIGURED", "order_flow_notes": ["Set QUANTDATA_API_KEY and ORDER_FLOW_ENABLED=true to enable consolidated order flow."], "sweep_count": 0, "large_trade_premium": 0}
+    if BREAKER.is_open("quantdata_order_flow"):
+        BREAKER.record_skip("quantdata_order_flow")
+        return {"order_flow_score": 50.0, "order_flow_status": "NEUTRAL - CIRCUIT OPEN (repeated failures this scan)", "order_flow_notes": ["quantdata_order_flow skipped after repeated failures this scan cycle."], "sweep_count": 0, "large_trade_premium": 0}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
     payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}, "size": 75, "sort": {"field": "tradeTime", "direction": "DESCENDING"}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/order-flow/consolidated", payload, headers=headers, timeout=20)
+    BREAKER.record_failure("quantdata_order_flow") if data is None else BREAKER.record_success("quantdata_order_flow")
     rows = rows_from_tool_response(data)
     if not rows:
         return {"order_flow_score": 50.0, "order_flow_status": "NEUTRAL - NO ORDER FLOW ROWS", "order_flow_notes": ["QuantData consolidated order-flow returned no rows."], "sweep_count": 0, "large_trade_premium": 0}
@@ -415,9 +480,13 @@ def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
 def quantdata_news_rows(ticker: str) -> List[dict]:
     if not QUANTDATA_API_KEY or not QUANTDATA_NEWS_ENABLED:
         return []
+    if BREAKER.is_open("quantdata_news"):
+        BREAKER.record_skip("quantdata_news")
+        return []
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
     payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}, "size": 10}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/news/tool/articles", payload, headers=headers, timeout=15)
+    BREAKER.record_failure("quantdata_news") if data is None else BREAKER.record_success("quantdata_news")
     return rows_from_tool_response(data)
 
 
@@ -425,11 +494,19 @@ def massive_benzinga_news_rows(ticker: str) -> List[dict]:
     """Massive/Polygon Benzinga news route; falls back to Polygon reference news."""
     if not MASSIVE_API_KEY:
         return []
-    data = safe_get_json(f"{MASSIVE_BASE_URL}/benzinga/v2/news", params={"ticker": ticker, "limit": 10}, timeout=15)
-    rows = rows_from_tool_response(data)
-    if rows:
-        return rows
+    if not BREAKER.is_open("massive_benzinga_news"):
+        data = safe_get_json(f"{MASSIVE_BASE_URL}/benzinga/v2/news", params={"ticker": ticker, "limit": 10}, timeout=15)
+        BREAKER.record_failure("massive_benzinga_news") if data is None else BREAKER.record_success("massive_benzinga_news")
+        rows = rows_from_tool_response(data)
+        if rows:
+            return rows
+    else:
+        BREAKER.record_skip("massive_benzinga_news")
+    if BREAKER.is_open("polygon_reference_news"):
+        BREAKER.record_skip("polygon_reference_news")
+        return []
     data = safe_get_json("https://api.polygon.io/v2/reference/news", params={"ticker": ticker, "limit": 10, "order": "desc", "sort": "published_utc"}, timeout=15)
+    BREAKER.record_failure("polygon_reference_news") if data is None else BREAKER.record_success("polygon_reference_news")
     return rows_from_tool_response(data)
 
 
@@ -438,8 +515,9 @@ def catalyst_layer(ticker: str) -> Dict[str, Any]:
     score = 50.0
     notes: List[str] = []
     rows: List[dict] = []
-    if BENZINGA_SOURCE == "direct" and BENZINGA_API_KEY:
+    if BENZINGA_SOURCE == "direct" and BENZINGA_API_KEY and not BREAKER.is_open("benzinga_direct"):
         data = safe_get_json("https://api.benzinga.com/api/v2/news", params={"token": BENZINGA_API_KEY, "tickers": ticker, "pagesize": 10, "displayOutput": "full"}, timeout=15)
+        BREAKER.record_failure("benzinga_direct") if data is None else BREAKER.record_success("benzinga_direct")
         rows = rows_from_tool_response(data)
         if rows:
             notes.append(f"{len(rows[:10])} recent direct Benzinga headlines")
@@ -473,9 +551,13 @@ def quantdata_dark_pool_layer(ticker: str) -> Dict[str, Any]:
     """QuantData dark-flow layer using /v1/equities/tool/dark-flow."""
     if not QUANTDATA_API_KEY or not DARK_POOL_ENDPOINT_ENABLED:
         return {"dark_pool_score": 50.0, "dark_pool_status": "NEUTRAL - DARK FLOW NOT CONFIGURED", "dark_pool_notional": 0, "dark_pool_notes": ["Set QUANTDATA_API_KEY and DARK_POOL_ENDPOINT_ENABLED=true to activate QuantData dark-flow."]}
+    if BREAKER.is_open("quantdata_dark_flow"):
+        BREAKER.record_skip("quantdata_dark_flow")
+        return {"dark_pool_score": 50.0, "dark_pool_status": "NEUTRAL - CIRCUIT OPEN (repeated failures this scan)", "dark_pool_notional": 0, "dark_pool_notes": ["quantdata_dark_flow skipped after repeated failures this scan cycle."]}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
     payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/equities/tool/dark-flow", payload, headers=headers, timeout=18)
+    BREAKER.record_failure("quantdata_dark_flow") if data is None else BREAKER.record_success("quantdata_dark_flow")
     rows = rows_from_tool_response(data)
     if not rows:
         return {"dark_pool_score": 50.0, "dark_pool_status": "NEUTRAL - NO DARK FLOW ROWS", "dark_pool_notional": 0, "dark_pool_notes": ["QuantData dark-flow returned no rows or is unavailable for this ticker/session."]}
@@ -498,9 +580,13 @@ def quantdata_dark_pool_levels_layer(ticker: str, price: float) -> Dict[str, Any
     """QuantData dark-pool levels layer using /v1/equities/tool/dark-pool-levels."""
     if not QUANTDATA_API_KEY or not DARK_POOL_LEVELS_ENABLED:
         return {"dark_pool_levels_score": 50.0, "dark_pool_levels_status": "NEUTRAL - LEVELS NOT CONFIGURED", "nearest_dark_pool_level": None, "dark_pool_levels_notes": ["Set DARK_POOL_LEVELS_ENABLED=true and QUANTDATA_API_KEY to activate dark-pool levels."]}
+    if BREAKER.is_open("quantdata_dark_pool_levels"):
+        BREAKER.record_skip("quantdata_dark_pool_levels")
+        return {"dark_pool_levels_score": 50.0, "dark_pool_levels_status": "NEUTRAL - CIRCUIT OPEN (repeated failures this scan)", "nearest_dark_pool_level": None, "dark_pool_levels_notes": ["quantdata_dark_pool_levels skipped after repeated failures this scan cycle."]}
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
     payload = {"sessionDate": last_market_date().isoformat(), "filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/equities/tool/dark-pool-levels", payload, headers=headers, timeout=18)
+    BREAKER.record_failure("quantdata_dark_pool_levels") if data is None else BREAKER.record_success("quantdata_dark_pool_levels")
     rows = rows_from_tool_response(data)
     levels = []
     for row in rows:
@@ -848,7 +934,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Optional[Dict[str, An
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.2 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -884,10 +970,12 @@ def maybe_alert(idea: Dict[str, Any]) -> None:
     if not (idea.get("status") in {"READY - IN BUY ZONE", "PRE-BREAKOUT WATCHLIST", "ACCUMULATION WATCHLIST"}):
         return
     key = f"{now_et().date()}-{idea['ticker']}-{idea['direction']}-{idea['status']}"
-    if key in SENT_ALERTS:
-        return
+    with SENT_ALERTS_LOCK:
+        if key in SENT_ALERTS:
+            return
+        SENT_ALERTS.add(key)
     text = (
-        f"🚨 APEX 3.2 {idea['status']}\n\n"
+        f"🚨 APEX 3.3 {idea['status']}\n\n"
         f"Ticker: {idea['ticker']} | {idea['direction']} | Grade: {idea['grade']}\n"
         f"Final Score: {idea['final_score']} | Accumulation: {idea.get('accumulation_score')} | Breakout Prob: {idea.get('breakout_probability')}%\n"
         f"Flow: {idea['flow_score_directional']} | Dark: {idea.get('dark_pool_score')} | Catalyst: {idea['catalyst_score']}\n"
@@ -895,8 +983,11 @@ def maybe_alert(idea: Dict[str, Any]) -> None:
         f"Regime: {idea['market_regime']} | Contract: {idea['option_contract']}\n"
         f"Trigger: {idea['confirmation_trigger']}\nStop: {idea['stop_loss']}"
     )
-    if send_telegram(text):
-        SENT_ALERTS.add(key)
+    if not send_telegram(text):
+        # Sending failed -- allow a retry on a later scan instead of permanently
+        # treating this idea/status as already-alerted.
+        with SENT_ALERTS_LOCK:
+            SENT_ALERTS.discard(key)
 
 
 def run_scan_once(force: bool = False) -> bool:
@@ -904,23 +995,36 @@ def run_scan_once(force: bool = False) -> bool:
         with STATE_LOCK:
             STATE["last_scan_status"] = "Scan already running; skipped duplicate request."
         return False
+    scan_start = time.monotonic()
     try:
         print(f"🔥 APEX ENGINE {VERSION} SCAN START 🔥", flush=True)
+        BREAKER.reset()
         with STATE_LOCK:
             STATE["last_scan_status"] = "Scan running..."
             STATE["last_error"] = None
+            STATE["scan_in_progress"] = True
+            STATE["scan_started_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         regime = market_regime_layer()
-        ideas: List[Dict[str, Any]] = []
         universe = get_dynamic_tickers()
-        for ticker in universe:
-            try:
-                idea = analyze_ticker(ticker, regime)
-                if idea:
-                    ideas.append(idea)
-                    maybe_alert(idea)
-            except Exception as e:
-                print(f"Error scanning {ticker}: {e}", flush=True)
+        ideas: List[Dict[str, Any]] = []
+        completed = 0
+        with ThreadPoolExecutor(max_workers=max(1, SCAN_WORKERS), thread_name_prefix="apex-ticker") as pool:
+            futures = {pool.submit(analyze_ticker, ticker, regime): ticker for ticker in universe}
+            for future in as_completed(futures):
+                ticker = futures[future]
+                completed += 1
+                try:
+                    idea = future.result()
+                    if idea:
+                        ideas.append(idea)
+                        maybe_alert(idea)
+                except Exception as e:
+                    print(f"Error scanning {ticker}: {e}", flush=True)
+                if completed % 10 == 0 or completed == len(universe):
+                    with STATE_LOCK:
+                        STATE["last_scan_status"] = f"Scan running... {completed}/{len(universe)} tickers analyzed"
         ideas.sort(key=lambda x: (x.get("status") == "READY - IN BUY ZONE", x.get("status") == "PRE-BREAKOUT WATCHLIST", x.get("status") == "ACCUMULATION WATCHLIST", x.get("breakout_probability", 0), x.get("final_score", 0)), reverse=True)
+        duration = round(time.monotonic() - scan_start, 1)
         with STATE_LOCK:
             STATE.update({
                 "mode": VERSION,
@@ -931,9 +1035,12 @@ def run_scan_once(force: bool = False) -> bool:
                 "ticker_count": len(universe),
                 "market_regime": regime,
                 "ideas": ideas,
-                "last_scan_status": f"Scan complete. Qualified ideas: {len(ideas)}",
+                "last_scan_status": f"Scan complete in {duration}s. Qualified ideas: {len(ideas)}",
                 "last_error": None,
                 "scanner_started": SCANNER_STARTED,
+                "scan_in_progress": False,
+                "last_scan_duration_seconds": duration,
+                "circuit_breaker": BREAKER.snapshot(),
             })
             status = STATE["last_scan_status"]
         print(status, flush=True)
@@ -942,6 +1049,7 @@ def run_scan_once(force: bool = False) -> bool:
         with STATE_LOCK:
             STATE["last_error"] = str(e)
             STATE["last_scan_status"] = "Scan failed"
+            STATE["scan_in_progress"] = False
         print(f"Fatal scan error: {e}", flush=True)
         return False
     finally:
@@ -969,21 +1077,280 @@ def start_background_scanner() -> None:
         threading.Thread(target=scanner_loop, name="apex-scanner", daemon=True).start()
 
 HTML = """
-<!DOCTYPE html><html><head><title>APEX 3.2.2 Dashboard</title><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="60">
-<style>body{margin:0;font-family:Arial,sans-serif;background:#07111f;color:#e5eefb}.wrap{padding:18px;max-width:1280px;margin:auto}h1{color:#38bdf8;margin:0 0 8px}.meta{color:#b6c5d8;margin-bottom:16px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px}.card{background:#111c2e;border-left:6px solid #38bdf8;border-radius:14px;padding:16px;box-shadow:0 8px 25px rgba(0,0,0,.28)}.ready{border-left-color:#22c55e}.pre{border-left-color:#f59e0b}.ticker{font-size:27px;font-weight:800}.grade{color:#22c55e}.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#22324a;color:#dbeafe;font-size:12px;margin:2px 4px 2px 0}.score{font-size:22px;font-weight:800}.section{margin-top:11px;line-height:1.35}.label{color:#8ba3c7;font-size:12px;text-transform:uppercase;letter-spacing:.06em}.value{font-size:14px}.small{font-size:13px;color:#b6c5d8}.empty{background:#111c2e;border-radius:12px;padding:18px;color:#b6c5d8}.scores{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px}.scorebox{background:#17263d;border-radius:10px;padding:8px;text-align:center}.scorebox div:first-child{font-size:11px;color:#8ba3c7}.scorebox div:last-child{font-size:16px;font-weight:700}</style></head><body><div class="wrap">
-<h1>APEX 3.2.2 Institutional Forecast Engine</h1>
-<div class="meta">Version: {{ data.mode }} | Session: {{ data.session }} | Tickers: {{ data.ticker_count or 0 }} | Updated: {{ data.updated_at_et or data.updated_at }}<br>{{ data.last_scan_status }} | Regime: {{ data.market_regime.market_regime if data.market_regime else 'N/A' }} {{ data.market_regime.market_regime_score if data.market_regime else '' }}</div>
-{% if data.ideas|length == 0 %}<div class="empty">No qualified setups right now. APEX 3.2 keeps low-quality names hidden until final score clears the threshold.</div>{% endif %}
-<div class="grid">{% for idea in data.ideas %}<div class="card {% if 'READY' in idea.status %}ready{% elif 'PRE' in idea.status %}pre{% endif %}">
-<div style="display:flex;justify-content:space-between;gap:10px"><div><div class="ticker">{{ idea.ticker }} <span class="grade">{{ idea.grade }}</span></div><span class="badge">{{ idea.direction }}</span><span class="badge">{{ idea.trader_type }}</span><span class="badge">{{ idea.status }}</span></div><div class="score">{{ idea.final_score }}</div></div>
-<div class="scores"><div class="scorebox"><div>Tech</div><div>{{ idea.technical_score }}</div></div><div class="scorebox"><div>Flow</div><div>{{ idea.flow_score_directional }}</div></div><div class="scorebox"><div>Order</div><div>{{ idea.order_flow_score_directional }}</div></div><div class="scorebox"><div>Dark</div><div>{{ idea.dark_pool_score }}</div></div><div class="scorebox"><div>Levels</div><div>{{ idea.dark_pool_levels_score }}</div></div><div class="scorebox"><div>Accum</div><div>{{ idea.accumulation_score }}</div></div><div class="scorebox"><div>Breakout</div><div>{{ idea.breakout_probability }}%</div></div><div class="scorebox"><div>Catalyst</div><div>{{ idea.catalyst_score }}</div></div><div class="scorebox"><div>RS</div><div>{{ idea.relative_strength_score }}</div></div><div class="scorebox"><div>Regime</div><div>{{ idea.market_regime_score }}</div></div><div class="scorebox"><div>RVOL</div><div>{{ idea.rel_volume }}</div></div></div>
-<div class="section"><div class="label">Institutional Forecast</div><div class="value">{{ idea.accumulation_status }} | Breakout Probability: {{ idea.breakout_probability }}% ({{ idea.breakout_probability_label }})<br>{{ idea.buy_zone_status }} | Zone: {{ idea.entry_range }} | Distance: {{ idea.distance_to_buy_zone_pct }}%</div></div>
-<div class="section"><div class="label">Trigger</div><div class="value">{{ idea.confirmation_trigger }}</div></div>
-<div class="section"><div class="label">Option</div><div class="value">{{ idea.option_contract }}<br>{{ idea.option_liquidity }} | Contracts: {{ idea.recommended_contracts }}</div></div>
-<div class="section"><div class="label">Targets / Stop</div><div class="value">Stock T1 {{ idea.target_1_price }} | T2 {{ idea.target_2_price }} | Stop {{ idea.stock_stop }}<br>{{ idea.stop_loss }}</div></div>
-<div class="section"><div class="label">Why</div><div class="value">{% for n in idea.notes[:6] %}• {{ n }}<br>{% endfor %}</div></div>
-</div>{% endfor %}</div></div></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>APEX 3.3 Dashboard</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#05080f; --surface:#0d141f; --surface-alt:#121c2b; --border:#1c2940;
+  --text:#e8f1fc; --muted:#8295b3; --faint:#5a6b87;
+  --accent:#38bdf8; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --purple:#a78bfa;
+  --mono:'JetBrains Mono',ui-monospace,monospace; --sans:'Inter',system-ui,-apple-system,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1320px;margin:0 auto;padding:20px 18px 60px}
+a{color:inherit}
+
+/* header */
+.topbar{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{font-family:var(--mono);font-size:21px;font-weight:800;color:var(--accent);margin:0;letter-spacing:-.01em}
+.brand .ver{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.session-pill{font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+.session-pill.open{color:var(--green);border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.08)}
+
+/* status strip: the signature element -- always-visible scan/system health */
+.statusbar{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:18px;margin-bottom:16px}
+.scan-indicator{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12.5px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.dot.live{background:var(--accent);animation:pulse 1.4s ease-in-out infinite}
+.dot.ok{background:var(--green)}
+.dot.err{background:var(--red)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.55)}50%{box-shadow:0 0 0 6px rgba(56,189,248,0)}}
+@media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
+.statusbar .sep{width:1px;height:18px;background:var(--border)}
+.source-chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted);display:flex;align-items:center;gap:5px}
+.chip .dot{width:6px;height:6px}
+.chip.breaker-open{color:var(--red);border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.08)}
+.regime-badge{margin-left:auto;font-family:var(--mono);font-size:12px;font-weight:700;padding:4px 10px;border-radius:8px}
+.regime-RISKON,.regime-RISK_ON{color:var(--green);background:rgba(34,197,94,.1)}
+.regime-DEFENSIVE{color:var(--red);background:rgba(239,68,68,.1)}
+.regime-NEUTRAL{color:var(--amber);background:rgba(245,158,11,.1)}
+
+/* toolbar */
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px}
+.search{flex:1;min-width:160px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px}
+.search::placeholder{color:var(--faint)}
+.search:focus{outline:2px solid var(--accent);outline-offset:1px}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.fbtn{font-family:var(--sans);font-size:12.5px;font-weight:600;padding:7px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer}
+.fbtn:hover{color:var(--text)}
+.fbtn.active{background:var(--accent);border-color:var(--accent);color:#04131f}
+.fbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+select{font-family:var(--sans);font-size:12.5px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 10px}
+
+/* empty state */
+.empty{background:var(--surface);border:1px dashed var(--border);border-radius:14px;padding:28px 22px;color:var(--muted);text-align:center}
+.empty b{color:var(--text)}
+
+/* grid + cards */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:14px;padding:16px;opacity:0;animation:rise .35s ease forwards}
+@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.card{animation:none;opacity:1}}
+.card.ready{border-left-color:var(--green)}
+.card.pre{border-left-color:var(--amber)}
+.card.accum{border-left-color:var(--purple)}
+.card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.ticker{font-family:var(--mono);font-size:24px;font-weight:800}
+.grade{color:var(--green);margin-left:4px}
+.badges{margin-top:4px;display:flex;gap:5px;flex-wrap:wrap}
+.badge{display:inline-block;padding:3px 8px;border-radius:999px;background:var(--surface-alt);color:var(--muted);font-size:10.5px;font-family:var(--mono)}
+.badge.dir-CALL{color:var(--green)}
+.badge.dir-PUT{color:var(--red)}
+.score{font-family:var(--mono);font-size:24px;font-weight:800;color:var(--accent)}
+.scores{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
+.scorebox{background:var(--surface-alt);border-radius:9px;padding:7px;text-align:center}
+.scorebox .l{font-size:9.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.scorebox .v{font-family:var(--mono);font-size:14px;font-weight:700;margin-top:1px}
+.section{margin-top:12px}
+.label{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:3px}
+.value{font-size:13px;line-height:1.45;color:var(--text)}
+.value.mono{font-family:var(--mono);font-size:12.5px}
+details{margin-top:12px}
+summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:600;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary:before{content:'▸ ';font-size:10px}
+details[open] summary:before{content:'▾ '}
+details:focus-within summary{outline:2px solid var(--accent);outline-offset:2px}
+.why-list{margin-top:8px;color:var(--muted);font-size:12.5px;line-height:1.6}
+
+footer{margin-top:28px;color:var(--faint);font-size:11px;font-family:var(--mono);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><h1>APEX Institutional Forecast Engine</h1><span class="ver" id="ver"></span></div>
+    <span class="session-pill" id="sessionPill">--</span>
+  </div>
+
+  <div class="statusbar" id="statusbar">
+    <div class="scan-indicator"><span class="dot" id="scanDot"></span><span id="scanText">Connecting...</span></div>
+    <div class="sep"></div>
+    <div class="source-chips" id="sourceChips"></div>
+    <div class="regime-badge" id="regimeBadge"></div>
+  </div>
+
+  <div class="toolbar">
+    <input class="search" id="search" type="text" placeholder="Filter by ticker...">
+    <div class="filters" id="statusFilters"></div>
+    <select id="sortSel">
+      <option value="rank">Sort: Default rank</option>
+      <option value="final_score">Sort: Final score</option>
+      <option value="breakout_probability">Sort: Breakout probability</option>
+      <option value="accumulation_score">Sort: Accumulation score</option>
+      <option value="ticker">Sort: Ticker A-Z</option>
+    </select>
+  </div>
+
+  <div id="content"></div>
+  <footer id="footerNote"></footer>
+</div>
+
+<script id="initial-data" type="application/json">{{ data | tojson }}</script>
+<script>
+let state = JSON.parse(document.getElementById('initial-data').textContent || '{}');
+let activeFilter = 'ALL';
+let lastFetchOk = true;
+
+const STATUS_META = {
+  'READY - IN BUY ZONE': {cls:'ready', label:'Ready'},
+  'PRE-BREAKOUT WATCHLIST': {cls:'pre', label:'Pre-Breakout'},
+  'ACCUMULATION WATCHLIST': {cls:'accum', label:'Accumulating'},
+  'WATCHLIST - WAIT FOR ZONE': {cls:'', label:'Watching'},
+};
+
+function fmtAgo(iso){
+  if(!iso) return 'never';
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime())/1000));
+  if(s < 60) return s + 's ago';
+  if(s < 3600) return Math.floor(s/60) + 'm ago';
+  return Math.floor(s/3600) + 'h ago';
+}
+
+function renderStatusbar(){
+  const dot = document.getElementById('scanDot');
+  const text = document.getElementById('scanText');
+  document.getElementById('ver').textContent = state.mode || '';
+  const pill = document.getElementById('sessionPill');
+  pill.textContent = state.session || 'UNKNOWN';
+  pill.className = 'session-pill' + (state.session === 'MARKET_OPEN' ? ' open' : '');
+
+  if(!lastFetchOk){
+    dot.className = 'dot err'; text.textContent = 'Connection lost -- retrying...';
+  } else if(state.scan_in_progress){
+    dot.className = 'dot live';
+    text.textContent = (state.last_scan_status || 'Scan running...') ;
+  } else if(state.last_error){
+    dot.className = 'dot err'; text.textContent = 'Last scan failed: ' + state.last_error;
+  } else {
+    dot.className = 'dot ok';
+    const dur = state.last_scan_duration_seconds;
+    text.textContent = 'Idle -- last scan ' + fmtAgo(state.updated_at) + (dur ? ' (' + dur + 's)' : '');
+  }
+
+  const sources = state.data_sources || {};
+  const breaker = state.circuit_breaker || {open_circuits:[], skipped_calls:{}};
+  const chips = [];
+  for(const [name, ok] of Object.entries(sources)){
+    chips.push('<span class="chip"><span class="dot ' + (ok?'ok':'') + '"></span>' + name + '</span>');
+  }
+  (breaker.open_circuits || []).forEach(name => {
+    const skipped = (breaker.skipped_calls || {})[name] || 0;
+    chips.push('<span class="chip breaker-open" title="Repeated failures this scan -- skipped automatically">' + name.replace(/_/g,' ') + ' down (' + skipped + ' skipped)</span>');
+  });
+  document.getElementById('sourceChips').innerHTML = chips.join('');
+
+  const regime = state.market_regime || {};
+  const rb = document.getElementById('regimeBadge');
+  if(regime.market_regime){
+    rb.textContent = 'Regime: ' + regime.market_regime + ' (' + regime.market_regime_score + ')';
+    rb.className = 'regime-badge regime-' + regime.market_regime.replace(/\\s+/g,'');
+  } else { rb.textContent = ''; }
+
+  document.getElementById('footerNote').textContent =
+    (state.ticker_count || 0) + ' tickers scanned | updated ' + fmtAgo(state.updated_at) + ' | auto-refreshing every 12s';
+}
+
+function renderFilters(ideas){
+  const counts = {ALL: ideas.length};
+  ideas.forEach(i => { counts[i.status] = (counts[i.status]||0) + 1; });
+  const order = ['ALL', 'READY - IN BUY ZONE', 'PRE-BREAKOUT WATCHLIST', 'ACCUMULATION WATCHLIST', 'WATCHLIST - WAIT FOR ZONE'];
+  const box = document.getElementById('statusFilters');
+  box.innerHTML = order.filter(k => counts[k]).map(k => {
+    const label = k === 'ALL' ? 'All' : (STATUS_META[k] ? STATUS_META[k].label : k);
+    return '<button class="fbtn' + (activeFilter===k?' active':'') + '" data-f="' + k + '">' + label + ' (' + counts[k] + ')</button>';
+  }).join('');
+  box.querySelectorAll('.fbtn').forEach(b => b.onclick = () => { activeFilter = b.dataset.f; renderCards(); });
+}
+
+function cardHtml(idea){
+  const meta = STATUS_META[idea.status] || {cls:'', label: idea.status || ''};
+  const notes = (idea.notes || []).slice(0, 8).map(n => '<div>&bull; ' + n + '</div>').join('');
+  return '<div class="card ' + meta.cls + '">' +
+    '<div class="card-head"><div><div class="ticker">' + idea.ticker + '<span class="grade">' + (idea.grade||'') + '</span></div>' +
+    '<div class="badges"><span class="badge dir-' + idea.direction + '">' + idea.direction + '</span>' +
+    '<span class="badge">' + idea.trader_type + '</span><span class="badge">' + meta.label + '</span></div></div>' +
+    '<div class="score">' + (idea.final_score!=null ? idea.final_score : '--') + '</div></div>' +
+    '<div class="scores">' +
+      scorebox('Tech', idea.technical_score) + scorebox('Flow', idea.flow_score_directional) +
+      scorebox('Order', idea.order_flow_score_directional) + scorebox('Dark', idea.dark_pool_score) +
+      scorebox('Accum', idea.accumulation_score) + scorebox('Breakout', idea.breakout_probability, '%') +
+      scorebox('Catalyst', idea.catalyst_score) + scorebox('RVOL', idea.rel_volume) +
+    '</div>' +
+    '<div class="section"><div class="label">Institutional Forecast</div><div class="value">' + (idea.accumulation_status||'') +
+      '<br>' + (idea.buy_zone_status||'') + ' &middot; Zone ' + (idea.entry_range||'') + ' &middot; Distance ' + idea.distance_to_buy_zone_pct + '%</div></div>' +
+    '<div class="section"><div class="label">Trigger</div><div class="value">' + (idea.confirmation_trigger||'') + '</div></div>' +
+    '<div class="section"><div class="label">Option</div><div class="value mono">' + (idea.option_contract||'') + '<br>' + (idea.option_liquidity||'') + ' &middot; Contracts: ' + idea.recommended_contracts + '</div></div>' +
+    '<div class="section"><div class="label">Targets / Stop</div><div class="value mono">T1 ' + idea.target_1_price + ' &middot; T2 ' + idea.target_2_price + ' &middot; Stop ' + idea.stock_stop + '</div></div>' +
+    '<details><summary>Why this setup (' + (idea.notes||[]).length + ' signals)</summary><div class="why-list">' + notes + '</div></details>' +
+  '</div>';
+}
+function scorebox(label, val, suffix){
+  return '<div class="scorebox"><div class="l">' + label + '</div><div class="v">' + (val!=null ? val : '--') + (suffix&&val!=null?suffix:'') + '</div></div>';
+}
+
+function renderCards(){
+  let ideas = (state.ideas || []).slice();
+  renderFilters(ideas);
+  const q = document.getElementById('search').value.trim().toUpperCase();
+  if(activeFilter !== 'ALL') ideas = ideas.filter(i => i.status === activeFilter);
+  if(q) ideas = ideas.filter(i => (i.ticker||'').toUpperCase().includes(q));
+  const sortKey = document.getElementById('sortSel').value;
+  if(sortKey !== 'rank'){
+    ideas.sort((a,b) => sortKey === 'ticker' ? (a.ticker||'').localeCompare(b.ticker||'') : (b[sortKey]||0) - (a[sortKey]||0));
+  }
+  const content = document.getElementById('content');
+  if(ideas.length === 0){
+    content.innerHTML = '<div class="empty"><b>No qualified setups match right now.</b><br>APEX keeps low-quality names hidden until they clear the score threshold -- check back after the next scan, or clear filters above.</div>';
+    return;
+  }
+  content.innerHTML = '<div class="grid">' + ideas.map(cardHtml).join('') + '</div>';
+}
+
+async function poll(){
+  try{
+    const res = await fetch('/dashboard.json', {cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    state = await res.json();
+    lastFetchOk = true;
+  } catch(e){
+    lastFetchOk = false;
+  }
+  renderStatusbar();
+  renderCards();
+}
+
+document.getElementById('search').addEventListener('input', renderCards);
+document.getElementById('sortSel').addEventListener('change', renderCards);
+renderStatusbar();
+renderCards();
+setInterval(poll, 12000);
+setInterval(renderStatusbar, 1000);
+</script>
+</body>
+</html>
 """
+
+
 
 @app.route("/")
 def dashboard():
@@ -1017,9 +1384,14 @@ def api_diagnostics():
             "ok": True,
             "mode": VERSION,
             "scanner_started": SCANNER_STARTED,
+            "scan_in_progress": STATE.get("scan_in_progress"),
+            "scan_started_at": STATE.get("scan_started_at"),
+            "last_scan_duration_seconds": STATE.get("last_scan_duration_seconds"),
+            "scan_workers": SCAN_WORKERS,
             "updated_at": STATE.get("updated_at"),
             "last_error": STATE.get("last_error"),
             "last_scan_status": STATE.get("last_scan_status"),
+            "circuit_breaker": STATE.get("circuit_breaker"),
             "data_sources": {
                 "polygon": bool(POLYGON_API_KEY),
                 "quantdata": bool(QUANTDATA_API_KEY),
@@ -1049,7 +1421,15 @@ def api_diagnostics():
 @app.route("/health")
 def health():
     with STATE_LOCK:
-        return jsonify({"ok": True, "mode": VERSION, "updated_at": STATE.get("updated_at"), "scanner_started": SCANNER_STARTED, "sources": STATE.get("data_sources")})
+        return jsonify({
+            "ok": True,
+            "mode": VERSION,
+            "updated_at": STATE.get("updated_at"),
+            "scanner_started": SCANNER_STARTED,
+            "scan_in_progress": STATE.get("scan_in_progress"),
+            "last_scan_duration_seconds": STATE.get("last_scan_duration_seconds"),
+            "sources": STATE.get("data_sources"),
+        })
 
 # Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.
 # CLI imports, tests, and library imports stay clean by default and will not start
