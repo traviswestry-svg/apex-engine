@@ -13,7 +13,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.4.0_BACKTEST_TRACKING_PHASE1"
+VERSION = "3.4.1_TRACKING_FAILSAFE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -121,7 +121,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.4.0 scanner...",
+    "last_scan_status": "Starting APEX 3.4.1 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -915,6 +915,7 @@ def position_contracts(option_price: float, score: float, estimated_option_stop_
 ## ---------------------------------------------------------------------------
 
 TRACKING_LOCK = threading.Lock()
+TRACKING_AVAILABLE = False  # flipped true only after init_tracking_db() succeeds
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -924,50 +925,71 @@ def get_db_connection() -> sqlite3.Connection:
 
 
 def init_tracking_db() -> None:
+    """Sets up the tracking DB if possible. This must NEVER raise -- a missing/
+    unmounted disk, a read-only filesystem, or any other storage problem should
+    disable tracking gracefully (TRACKING_AVAILABLE stays False) rather than
+    prevent the whole Flask app from booting. Backtest tracking is a nice-to-have
+    layered on top of the scanner; it must never be a single point of failure for
+    the scanner itself."""
+    global TRACKING_AVAILABLE
     if not TRACKING_ENABLED:
+        TRACKING_AVAILABLE = False
         return
     with TRACKING_LOCK:
-        conn = get_db_connection()
         try:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS tracked_ideas (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ticker TEXT NOT NULL,
-                    direction TEXT NOT NULL,
-                    status TEXT,
-                    final_score REAL,
-                    technical_score REAL,
-                    flow_score REAL,
-                    order_flow_score REAL,
-                    dark_pool_score REAL,
-                    catalyst_score REAL,
-                    relative_strength_score REAL,
-                    accumulation_score REAL,
-                    breakout_probability REAL,
-                    market_regime TEXT,
-                    entry_price REAL,
-                    target_1_price REAL,
-                    target_2_price REAL,
-                    stock_stop REAL,
-                    option_contract TEXT,
-                    option_entry_limit REAL,
-                    opened_at TEXT NOT NULL,
-                    resolved_at TEXT,
-                    outcome TEXT,
-                    trading_days_to_resolution REAL
-                )
-            """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_tracked_open ON tracked_ideas (ticker, direction, outcome)")
-            conn.commit()
-        finally:
-            conn.close()
+            db_dir = os.path.dirname(DB_PATH)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
+            conn = get_db_connection()
+            try:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS tracked_ideas (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ticker TEXT NOT NULL,
+                        direction TEXT NOT NULL,
+                        status TEXT,
+                        final_score REAL,
+                        technical_score REAL,
+                        flow_score REAL,
+                        order_flow_score REAL,
+                        dark_pool_score REAL,
+                        catalyst_score REAL,
+                        relative_strength_score REAL,
+                        accumulation_score REAL,
+                        breakout_probability REAL,
+                        market_regime TEXT,
+                        entry_price REAL,
+                        target_1_price REAL,
+                        target_2_price REAL,
+                        stock_stop REAL,
+                        option_contract TEXT,
+                        option_entry_limit REAL,
+                        opened_at TEXT NOT NULL,
+                        resolved_at TEXT,
+                        outcome TEXT,
+                        trading_days_to_resolution REAL
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_tracked_open ON tracked_ideas (ticker, direction, outcome)")
+                conn.commit()
+            finally:
+                conn.close()
+            TRACKING_AVAILABLE = True
+        except Exception as e:
+            TRACKING_AVAILABLE = False
+            print(
+                f"Backtest tracking DISABLED -- could not initialize DB at '{DB_PATH}': {e}. "
+                f"The rest of the app continues normally. If you intended to use a Render disk, "
+                f"confirm it's mounted in the dashboard and DB_PATH matches the mount path exactly.",
+                flush=True,
+            )
 
 
 def record_idea_if_new(idea: Dict[str, Any]) -> None:
     """Log a tracked_ideas row the first time a ticker+direction setup qualifies.
     Skips it if there's already an unresolved (OPEN) row for the same ticker+direction,
     so a setup that keeps qualifying scan after scan doesn't spawn duplicate trades."""
-    if not TRACKING_ENABLED or idea.get("price") is None:
+    if not TRACKING_ENABLED or not TRACKING_AVAILABLE or idea.get("price") is None:
         return
     with TRACKING_LOCK:
         conn = get_db_connection()
@@ -1008,7 +1030,7 @@ def resolve_open_trades() -> int:
     """Daily pass: for every still-open tracked idea, walk forward through real
     daily bars since it was opened and check whether T1, T2, or the stop was hit
     first. Resolves the row in place. Returns how many rows were resolved."""
-    if not TRACKING_ENABLED:
+    if not TRACKING_ENABLED or not TRACKING_AVAILABLE:
         return 0
     resolved_count = 0
     with TRACKING_LOCK:
@@ -1087,7 +1109,7 @@ def score_bucket(score: float) -> str:
 
 
 def backtest_stats() -> Dict[str, Any]:
-    if not TRACKING_ENABLED:
+    if not TRACKING_ENABLED or not TRACKING_AVAILABLE:
         return {"enabled": False, "buckets": []}
     conn = get_db_connection()
     try:
@@ -1236,7 +1258,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.4.0 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.4.1 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -1935,6 +1957,9 @@ def api_diagnostics():
             "scan_started_at": STATE.get("scan_started_at"),
             "last_scan_duration_seconds": STATE.get("last_scan_duration_seconds"),
             "scan_workers": SCAN_WORKERS,
+            "tracking_enabled": TRACKING_ENABLED,
+            "tracking_available": TRACKING_AVAILABLE,
+            "db_path": DB_PATH,
             "updated_at": STATE.get("updated_at"),
             "last_error": STATE.get("last_error"),
             "last_scan_status": STATE.get("last_scan_status"),
@@ -1971,7 +1996,13 @@ def health():
 # Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.
 # CLI imports, tests, and library imports stay clean by default and will not start
 # a background scanner or send Telegram alerts accidentally.
-init_tracking_db()  # idempotent CREATE TABLE IF NOT EXISTS -- safe to run on every import
+try:
+    init_tracking_db()  # idempotent CREATE TABLE IF NOT EXISTS -- safe to run on every import.
+    # Belt-and-suspenders: init_tracking_db() already catches its own exceptions and
+    # sets TRACKING_AVAILABLE=False on failure, but this wrapper exists so that even a
+    # future bug inside it can never again prevent gunicorn from importing this module.
+except Exception as e:
+    print(f"Unexpected error during tracking init (app continues, tracking disabled): {e}", flush=True)
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 
