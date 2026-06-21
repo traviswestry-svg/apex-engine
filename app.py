@@ -13,7 +13,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.4.1_TRACKING_FAILSAFE"
+VERSION = "3.4.2_DASHBOARD_JS_FIX"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -121,7 +121,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.4.1 scanner...",
+    "last_scan_status": "Starting APEX 3.4.2 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -1258,7 +1258,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.4.1 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.4.2 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -1771,12 +1771,12 @@ function historicalTimingNote(idea){
   return '<div class="atr-note">Historical: ' + bucket + ' ' + idea.direction + 's hit a target ' + match.win_rate_pct + '% of the time' +
     (match.median_days_to_win!=null ? ', median ' + match.median_days_to_win + 'd to target' : '') +
     (match.median_days_to_stop!=null ? ' (median ' + match.median_days_to_stop + 'd to stop when it failed)' : '') +
-    ' <span class="ballpark-tag">n=' + match.n + ', this engine\\'s real outcomes</span></div>';
+    ' <span class="ballpark-tag">n=' + match.n + ', real outcomes from this engine</span></div>';
 }
 
 function atrTimingNote(idea){
   if(idea.atr_days_to_t1 == null){ return ''; }
-  return '<div class="atr-note" title="Distance to target divided by this ticker\'s average daily range (ATR). Assumes a straight-line average-volatility day -- real moves gap, chop, or stall. This is a ballpark scale of patience, not a forecast of when the trigger fires or how long to hold.">' +
+  return '<div class="atr-note" title="Distance to target divided by the average daily range (ATR) for this ticker. Assumes a straight-line average-volatility day -- real moves gap, chop, or stall. This is a ballpark scale of patience, not a forecast of when the trigger fires or how long to hold.">' +
     '~' + idea.atr_days_to_t1 + 'd to T1, ~' + idea.atr_days_to_t2 + 'd to T2, ~' + idea.atr_days_to_stop + 'd to stop ' +
     '<span class="ballpark-tag">ATR ballpark, not a forecast</span></div>';
 }
