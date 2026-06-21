@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3.6_SCAN_NOW"
+VERSION = "3.3.8_QUOTE_CONFIDENCE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -115,7 +115,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.3.6 scanner...",
+    "last_scan_status": "Starting APEX 3.3.8 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -824,8 +824,10 @@ def pick_option_contract(ticker: str, direction: str, trader_type: str, price: f
                 if fallback <= 0:
                     continue
                 mid, bid, ask = fallback, fallback * 0.95, fallback * 1.05
+                quote_source = "estimated"  # no live NBBO -- synthesized a +/-5% spread around last trade/close
             else:
                 mid = (bid + ask) / 2
+                quote_source = "live"
             spread_pct = (ask - bid) / mid if mid else 9
             if spread_pct > 0.30:
                 continue
@@ -835,10 +837,11 @@ def pick_option_contract(ticker: str, direction: str, trader_type: str, price: f
             # Favor near-the-money, liquid, tighter-spread contracts inside the intended DTE window.
             rank = strike_dist * 10 + spread_pct * 4 - min(oi, 2000) / 10000 - min(vol, 1000) / 10000 + abs(dte - ((min_dte + max_dte) / 2)) / 100
             greeks = item.get("greeks") or {}
+            greeks_source = "live" if greeks.get("delta") is not None else "estimated"  # defaulted to 0.50 delta below if missing
             delta = abs(safe_float(greeks.get("delta"), 0.50))
             gamma = max(0.0, safe_float(greeks.get("gamma"), 0.0))
             iv = safe_float(item.get("implied_volatility"), 0.0)
-            candidates.append({"ticker": opt_ticker, "label": f"{opt_ticker} {exp} {float(strike):g} {direction}", "expiration": exp, "strike": float(strike), "dte": dte, "bid": round(bid, 2), "ask": round(ask, 2), "mid": round(mid, 2), "spread_pct": round(spread_pct, 3), "open_interest": int(oi), "volume": int(vol), "delta": round(delta, 3), "gamma": round(gamma, 5), "iv": round(iv, 3), "rank": rank})
+            candidates.append({"ticker": opt_ticker, "label": f"{opt_ticker} {exp} {float(strike):g} {direction}", "expiration": exp, "strike": float(strike), "dte": dte, "bid": round(bid, 2), "ask": round(ask, 2), "mid": round(mid, 2), "spread_pct": round(spread_pct, 3), "open_interest": int(oi), "volume": int(vol), "delta": round(delta, 3), "gamma": round(gamma, 5), "iv": round(iv, 3), "rank": rank, "quote_source": quote_source, "greeks_source": greeks_source})
         next_url = data.get("next_url")
         data = _polygon_next_page(next_url) if next_url else None
     if not candidates:
@@ -982,7 +985,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3.6 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3.8 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -995,8 +998,36 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         option_stop_pct = estimate_option_stop_pct(option, idea["price"], idea["stock_stop"])
         contracts = position_contracts(option.get("ask") or option.get("mid") or 0, final, option_stop_pct)
         idea.update({"option_contract": option["label"], "option_ticker": option["ticker"], "estimated_option_entry": option["mid"], "recommended_contracts": contracts, "confidence_size_pct": confidence_size_pct(final), "option_liquidity": f"Spread {option['spread_pct']:.1%}, OI {option['open_interest']}, Vol {option['volume']}, Delta {option.get('delta', 0):.2f}, IV {option.get('iv', 0):.1%}, evaluated {option.get('contracts_evaluated', 0)} contracts", "estimated_option_stop_pct": round(option_stop_pct * 100, 1), "sizing_basis": f"Greek-aware sizing: stock stop {stop_distance_pct:.1%} implies approx {option_stop_pct:.1%} option risk."})
+
+        # Exact, fillable execution numbers for the option leg. This is a single-leg
+        # long call/put (never a multi-leg spread), so the trade is always a DEBIT --
+        # premium paid up front, max loss capped at that debit (before the stop is hit).
+        entry_limit = round(option["mid"], 2)
+        bid, ask = option.get("bid", 0.0), option.get("ask", 0.0)
+        stop_price = round(entry_limit * (1 - option_stop_pct), 2)
+        exit_fast = round(entry_limit * 1.20, 2)
+        exit_t1 = round(entry_limit * 1.35, 2)
+        exit_t2 = round(entry_limit * 1.80, 2)
+        per_contract_debit = round(entry_limit * 100, 2)
+        total_debit = round(per_contract_debit * max(contracts, 1), 2)
+        idea.update({
+            "trade_side": "DEBIT",
+            "option_entry_limit": entry_limit,
+            "option_bid": round(bid, 2),
+            "option_ask": round(ask, 2),
+            "option_bid_ask_spread": round(ask - bid, 2),
+            "option_spread_pct": option.get("spread_pct"),
+            "option_stop_price": stop_price,
+            "option_exit_fast": exit_fast,
+            "option_exit_target_1": exit_t1,
+            "option_exit_target_2": exit_t2,
+            "per_contract_debit": per_contract_debit,
+            "total_debit": total_debit,
+            "quote_source": option.get("quote_source", "estimated"),
+            "greeks_source": option.get("greeks_source", "estimated"),
+        })
     else:
-        idea.update({"option_contract": "No clean contract found yet", "option_ticker": None, "estimated_option_entry": None, "recommended_contracts": 0, "confidence_size_pct": confidence_size_pct(final), "option_liquidity": "Wait for liquid contract selection."})
+        idea.update({"option_contract": "No clean contract found yet", "option_ticker": None, "estimated_option_entry": None, "recommended_contracts": 0, "confidence_size_pct": confidence_size_pct(final), "option_liquidity": "Wait for liquid contract selection.", "trade_side": None, "option_entry_limit": None, "option_stop_price": None, "option_exit_fast": None, "option_exit_target_1": None, "option_exit_target_2": None, "per_contract_debit": None, "total_debit": None, "quote_source": None, "greeks_source": None})
     return idea, debug
 
 
@@ -1238,6 +1269,8 @@ select{font-family:var(--sans);font-size:12.5px;background:var(--surface);color:
 .badge{display:inline-block;padding:3px 8px;border-radius:999px;background:var(--surface-alt);color:var(--muted);font-size:10.5px;font-family:var(--mono)}
 .badge.dir-CALL{color:var(--green)}
 .badge.zone-badge{color:#04131f;background:var(--accent);font-weight:700}
+.badge.src-live{color:var(--green);border:1px solid rgba(34,197,94,.35);background:rgba(34,197,94,.08);font-weight:700}
+.badge.src-est{color:var(--amber);border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.1);font-weight:700}
 .badge.dir-PUT{color:var(--red)}
 .score{font-family:var(--mono);font-size:24px;font-weight:800;color:var(--accent)}
 .scores{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
@@ -1248,6 +1281,10 @@ select{font-family:var(--sans);font-size:12.5px;background:var(--surface);color:
 .label{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:3px}
 .value{font-size:13px;line-height:1.45;color:var(--text)}
 .value.mono{font-family:var(--mono);font-size:12.5px}
+.exec-grid{margin-top:4px;background:var(--surface-alt);border-radius:9px;padding:8px 10px}
+.exec-row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-family:var(--mono);font-size:12px}
+.exec-row .exec-l{color:var(--faint)}
+.exec-row .exec-v{color:var(--text);font-weight:600}
 details{margin-top:12px}
 summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:600;list-style:none}
 summary::-webkit-details-marker{display:none}
@@ -1391,12 +1428,39 @@ function cardHtml(idea){
       '<br>' + (idea.buy_zone_status||'') + ' &middot; Zone ' + (idea.entry_range||'') + ' &middot; Distance ' + idea.distance_to_buy_zone_pct + '%</div></div>' +
     '<div class="section"><div class="label">Trigger</div><div class="value">' + (idea.confirmation_trigger||'') + '</div></div>' +
     '<div class="section"><div class="label">Option</div><div class="value mono">' + (idea.option_contract||'') + '<br>' + (idea.option_liquidity||'') + ' &middot; Contracts: ' + idea.recommended_contracts + '</div></div>' +
-    '<div class="section"><div class="label">Targets / Stop</div><div class="value mono">T1 ' + idea.target_1_price + ' &middot; T2 ' + idea.target_2_price + ' &middot; Stop ' + idea.stock_stop + '</div></div>' +
+    execSection(idea) +
+    '<div class="section"><div class="label">Stock Targets / Stop</div><div class="value mono">T1 ' + idea.target_1_price + ' &middot; T2 ' + idea.target_2_price + ' &middot; Stop ' + idea.stock_stop + '</div></div>' +
     '<details><summary>Why this setup (' + (idea.notes||[]).length + ' signals)</summary><div class="why-list">' + notes + '</div></details>' +
   '</div>';
 }
 function scorebox(label, val, suffix){
   return '<div class="scorebox"><div class="l">' + label + '</div><div class="v">' + (val!=null ? val : '--') + (suffix&&val!=null?suffix:'') + '</div></div>';
+}
+
+function execSection(idea){
+  if(idea.option_entry_limit == null){
+    return '<div class="section"><div class="label">Option Execution</div><div class="value mono">No clean contract found yet -- wait for liquid selection.</div></div>';
+  }
+  const row = (label, val) => '<div class="exec-row"><span class="exec-l">' + label + '</span><span class="exec-v">' + val + '</span></div>';
+  const sourceBadge = (label, source) => {
+    const live = source === 'live';
+    return '<span class="badge ' + (live ? 'src-live' : 'src-est') + '" title="' +
+      (live ? label + ': live NBBO from the snapshot.' : label + ': no live data returned -- this number is estimated, not a real market quote.') +
+      '">' + label + ': ' + (live ? 'LIVE' : 'EST') + '</span>';
+  };
+  return '<div class="section"><div class="label">Option Execution &middot; ' + (idea.trade_side||'') + '&nbsp;&nbsp;' +
+    sourceBadge('Quote', idea.quote_source) + sourceBadge('Greeks', idea.greeks_source) +
+    '</div><div class="exec-grid">' +
+    row('Entry (limit)', '$' + idea.option_entry_limit) +
+    row('Stop', '$' + idea.option_stop_price) +
+    row('Exit (fast +20%)', '$' + idea.option_exit_fast) +
+    row('Exit (T1)', '$' + idea.option_exit_target_1) +
+    row('Exit (T2)', '$' + idea.option_exit_target_2) +
+    row('Bid / Ask', '$' + idea.option_bid + ' / $' + idea.option_ask) +
+    row('Spread', '$' + idea.option_bid_ask_spread + (idea.option_spread_pct!=null ? ' (' + (idea.option_spread_pct*100).toFixed(1) + '%)' : '')) +
+    row('Debit / contract', '$' + idea.per_contract_debit) +
+    row('Total debit (' + idea.recommended_contracts + 'x)', '$' + idea.total_debit) +
+  '</div></div>';
 }
 
 function renderCards(){
