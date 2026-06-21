@@ -11,7 +11,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3.8_QUOTE_CONFIDENCE"
+VERSION = "3.3.9_QUOTE_STALENESS"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -115,7 +115,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.3.8 scanner...",
+    "last_scan_status": "Starting APEX 3.3.9 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -819,7 +819,13 @@ def pick_option_contract(ticker: str, direction: str, trader_type: str, price: f
             quote = item.get("last_quote") or {}
             bid, ask = safe_float(quote.get("bid")), safe_float(quote.get("ask"))
             day = item.get("day") or {}
-            fallback = safe_float((item.get("last_trade") or {}).get("price") or day.get("close"))
+            last_trade = item.get("last_trade") or {}
+            fallback = safe_float(last_trade.get("price") or day.get("close"))
+            # Quote staleness: prefer the live quote's own nanosecond timestamp; if we had
+            # to fall back to last trade/day close instead, use whichever of those has a
+            # timestamp so an "estimated" price still gets an honest age instead of none.
+            quote_ts_ns = quote.get("last_updated") or last_trade.get("sip_timestamp") or day.get("last_updated")
+            quote_timeframe = quote.get("timeframe")  # Polygon flags "REAL-TIME" vs delayed plans here
             if bid <= 0 or ask <= 0:
                 if fallback <= 0:
                     continue
@@ -841,7 +847,7 @@ def pick_option_contract(ticker: str, direction: str, trader_type: str, price: f
             delta = abs(safe_float(greeks.get("delta"), 0.50))
             gamma = max(0.0, safe_float(greeks.get("gamma"), 0.0))
             iv = safe_float(item.get("implied_volatility"), 0.0)
-            candidates.append({"ticker": opt_ticker, "label": f"{opt_ticker} {exp} {float(strike):g} {direction}", "expiration": exp, "strike": float(strike), "dte": dte, "bid": round(bid, 2), "ask": round(ask, 2), "mid": round(mid, 2), "spread_pct": round(spread_pct, 3), "open_interest": int(oi), "volume": int(vol), "delta": round(delta, 3), "gamma": round(gamma, 5), "iv": round(iv, 3), "rank": rank, "quote_source": quote_source, "greeks_source": greeks_source})
+            candidates.append({"ticker": opt_ticker, "label": f"{opt_ticker} {exp} {float(strike):g} {direction}", "expiration": exp, "strike": float(strike), "dte": dte, "bid": round(bid, 2), "ask": round(ask, 2), "mid": round(mid, 2), "spread_pct": round(spread_pct, 3), "open_interest": int(oi), "volume": int(vol), "delta": round(delta, 3), "gamma": round(gamma, 5), "iv": round(iv, 3), "rank": rank, "quote_source": quote_source, "greeks_source": greeks_source, "quote_timestamp_ns": int(quote_ts_ns) if quote_ts_ns else None, "quote_timeframe": quote_timeframe})
         next_url = data.get("next_url")
         data = _polygon_next_page(next_url) if next_url else None
     if not candidates:
@@ -985,7 +991,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3.8 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.3.9 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -1010,6 +1016,13 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         exit_t2 = round(entry_limit * 1.80, 2)
         per_contract_debit = round(entry_limit * 100, 2)
         total_debit = round(per_contract_debit * max(contracts, 1), 2)
+        quote_ts_ns = option.get("quote_timestamp_ns")
+        quote_updated_at = None
+        if quote_ts_ns:
+            try:
+                quote_updated_at = dt.datetime.fromtimestamp(quote_ts_ns / 1e9, tz=dt.timezone.utc).isoformat()
+            except Exception:
+                quote_updated_at = None
         idea.update({
             "trade_side": "DEBIT",
             "option_entry_limit": entry_limit,
@@ -1025,9 +1038,11 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
             "total_debit": total_debit,
             "quote_source": option.get("quote_source", "estimated"),
             "greeks_source": option.get("greeks_source", "estimated"),
+            "option_quote_updated_at": quote_updated_at,
+            "option_quote_timeframe": option.get("quote_timeframe"),
         })
     else:
-        idea.update({"option_contract": "No clean contract found yet", "option_ticker": None, "estimated_option_entry": None, "recommended_contracts": 0, "confidence_size_pct": confidence_size_pct(final), "option_liquidity": "Wait for liquid contract selection.", "trade_side": None, "option_entry_limit": None, "option_stop_price": None, "option_exit_fast": None, "option_exit_target_1": None, "option_exit_target_2": None, "per_contract_debit": None, "total_debit": None, "quote_source": None, "greeks_source": None})
+        idea.update({"option_contract": "No clean contract found yet", "option_ticker": None, "estimated_option_entry": None, "recommended_contracts": 0, "confidence_size_pct": confidence_size_pct(final), "option_liquidity": "Wait for liquid contract selection.", "trade_side": None, "option_entry_limit": None, "option_stop_price": None, "option_exit_fast": None, "option_exit_target_1": None, "option_exit_target_2": None, "per_contract_debit": None, "total_debit": None, "quote_source": None, "greeks_source": None, "option_quote_updated_at": None, "option_quote_timeframe": None})
     return idea, debug
 
 
@@ -1271,6 +1286,7 @@ select{font-family:var(--sans);font-size:12.5px;background:var(--surface);color:
 .badge.zone-badge{color:#04131f;background:var(--accent);font-weight:700}
 .badge.src-live{color:var(--green);border:1px solid rgba(34,197,94,.35);background:rgba(34,197,94,.08);font-weight:700}
 .badge.src-est{color:var(--amber);border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.1);font-weight:700}
+.badge.src-stale{color:var(--red);border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.1);font-weight:700}
 .badge.dir-PUT{color:var(--red)}
 .score{font-family:var(--mono);font-size:24px;font-weight:800;color:var(--accent)}
 .scores{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
@@ -1348,7 +1364,21 @@ function fmtAgo(iso){
   const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime())/1000));
   if(s < 60) return s + 's ago';
   if(s < 3600) return Math.floor(s/60) + 'm ago';
-  return Math.floor(s/3600) + 'h ago';
+  if(s < 86400) return Math.floor(s/3600) + 'h ago';
+  const days = Math.floor(s/86400);
+  return days + 'd ' + Math.floor((s%86400)/3600) + 'h ago';
+}
+
+function quoteAgeBadge(iso, timeframe){
+  if(!iso){
+    return '<span class="badge src-est" title="No quote timestamp returned -- freshness unknown.">Quote age: unknown</span>';
+  }
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime())/1000));
+  let cls = 'src-live', label = fmtAgo(iso);
+  if(s >= 3600) cls = 'src-stale';       // 1hr+ -- treat as stale regardless of session
+  else if(s >= 60) cls = 'src-est';      // 1-60min -- caution
+  const tf = timeframe ? ' (' + timeframe + ')' : '';
+  return '<span class="badge ' + cls + '" title="Quote last updated ' + label + tf + '. Polygon plan tiers below Options Advanced are 15-minute delayed even when live.">Quote age: ' + label + '</span>';
 }
 
 function renderStatusbar(){
@@ -1449,7 +1479,7 @@ function execSection(idea){
       '">' + label + ': ' + (live ? 'LIVE' : 'EST') + '</span>';
   };
   return '<div class="section"><div class="label">Option Execution &middot; ' + (idea.trade_side||'') + '&nbsp;&nbsp;' +
-    sourceBadge('Quote', idea.quote_source) + sourceBadge('Greeks', idea.greeks_source) +
+    sourceBadge('Quote', idea.quote_source) + sourceBadge('Greeks', idea.greeks_source) + quoteAgeBadge(idea.option_quote_updated_at, idea.option_quote_timeframe) +
     '</div><div class="exec-grid">' +
     row('Entry (limit)', '$' + idea.option_entry_limit) +
     row('Stop', '$' + idea.option_stop_price) +
