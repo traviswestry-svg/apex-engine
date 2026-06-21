@@ -4,6 +4,8 @@ import datetime as dt
 import os
 import time
 import threading
+import sqlite3
+import statistics
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -11,7 +13,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.3.9_QUOTE_STALENESS"
+VERSION = "3.4.0_BACKTEST_TRACKING_PHASE1"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -43,6 +45,10 @@ SEND_TELEGRAM = os.getenv("SEND_TELEGRAM", "true").lower() == "true"
 RUN_SCANNER_ON_IMPORT = os.getenv("RUN_SCANNER_ON_IMPORT", "false").lower() == "true"
 SCAN_WORKERS = int(os.getenv("SCAN_WORKERS", "8"))
 BREAKER_MAX_FAILURES = int(os.getenv("BREAKER_MAX_FAILURES", "3"))
+DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")  # set to /data/apex_tracking.db on Render with a mounted disk
+TRACKING_ENABLED = os.getenv("TRACKING_ENABLED", "true").lower() == "true"
+TRACK_MAX_HOLD_DAYS = int(os.getenv("TRACK_MAX_HOLD_DAYS", "30"))  # mark unresolved trades EXPIRED after this many trading days
+TRACK_MIN_SAMPLE = int(os.getenv("TRACK_MIN_SAMPLE", "10"))  # minimum resolved trades in a bucket before stats are shown
 
 CORE_TICKERS = [
     "SPY", "QQQ", "NVDA", "TSLA", "META", "MSFT", "AAPL", "AMZN", "COIN", "AMD",
@@ -115,7 +121,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.3.9 scanner...",
+    "last_scan_status": "Starting APEX 3.4.0 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -895,6 +901,232 @@ def position_contracts(option_price: float, score: float, estimated_option_stop_
     return max(0, int(allowed // risk_per_contract)) if risk_per_contract else 0
 
 
+## ---------------------------------------------------------------------------
+## Backtest tracking (Phase 1 of the historical-timing project)
+##
+## Forward-collection approach: every qualified idea this engine actually
+## produces gets logged once (deduped against an already-open position for the
+## same ticker+direction), then a daily resolution pass walks forward through
+## real daily bars to see which level -- T1, T2, or stop -- got hit first, and
+## how many trading days it took. Once enough resolved trades accumulate in a
+## given score/direction bucket, /api/backtest_stats can report real median
+## time-to-target and win rate instead of the ATR ballpark. This intentionally
+## does NOT attempt to reconstruct history retroactively -- see README for why.
+## ---------------------------------------------------------------------------
+
+TRACKING_LOCK = threading.Lock()
+
+
+def get_db_connection() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_tracking_db() -> None:
+    if not TRACKING_ENABLED:
+        return
+    with TRACKING_LOCK:
+        conn = get_db_connection()
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS tracked_ideas (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    status TEXT,
+                    final_score REAL,
+                    technical_score REAL,
+                    flow_score REAL,
+                    order_flow_score REAL,
+                    dark_pool_score REAL,
+                    catalyst_score REAL,
+                    relative_strength_score REAL,
+                    accumulation_score REAL,
+                    breakout_probability REAL,
+                    market_regime TEXT,
+                    entry_price REAL,
+                    target_1_price REAL,
+                    target_2_price REAL,
+                    stock_stop REAL,
+                    option_contract TEXT,
+                    option_entry_limit REAL,
+                    opened_at TEXT NOT NULL,
+                    resolved_at TEXT,
+                    outcome TEXT,
+                    trading_days_to_resolution REAL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_tracked_open ON tracked_ideas (ticker, direction, outcome)")
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def record_idea_if_new(idea: Dict[str, Any]) -> None:
+    """Log a tracked_ideas row the first time a ticker+direction setup qualifies.
+    Skips it if there's already an unresolved (OPEN) row for the same ticker+direction,
+    so a setup that keeps qualifying scan after scan doesn't spawn duplicate trades."""
+    if not TRACKING_ENABLED or idea.get("price") is None:
+        return
+    with TRACKING_LOCK:
+        conn = get_db_connection()
+        try:
+            existing = conn.execute(
+                "SELECT id FROM tracked_ideas WHERE ticker=? AND direction=? AND outcome IS NULL",
+                (idea["ticker"], idea["direction"]),
+            ).fetchone()
+            if existing:
+                return
+            conn.execute(
+                """INSERT INTO tracked_ideas (
+                    ticker, direction, status, final_score, technical_score, flow_score,
+                    order_flow_score, dark_pool_score, catalyst_score, relative_strength_score,
+                    accumulation_score, breakout_probability, market_regime, entry_price,
+                    target_1_price, target_2_price, stock_stop, option_contract,
+                    option_entry_limit, opened_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    idea["ticker"], idea["direction"], idea.get("status"), idea.get("final_score"),
+                    idea.get("technical_score"), idea.get("flow_score_directional"),
+                    idea.get("order_flow_score_directional"), idea.get("dark_pool_score"),
+                    idea.get("catalyst_score"), idea.get("relative_strength_score"),
+                    idea.get("accumulation_score"), idea.get("breakout_probability"),
+                    idea.get("market_regime"), idea.get("price"), idea.get("target_1_price"),
+                    idea.get("target_2_price"), idea.get("stock_stop"), idea.get("option_contract"),
+                    idea.get("option_entry_limit"), dt.datetime.now(dt.timezone.utc).isoformat(),
+                ),
+            )
+            conn.commit()
+        except Exception as e:
+            print(f"record_idea_if_new error for {idea.get('ticker')}: {e}", flush=True)
+        finally:
+            conn.close()
+
+
+def resolve_open_trades() -> int:
+    """Daily pass: for every still-open tracked idea, walk forward through real
+    daily bars since it was opened and check whether T1, T2, or the stop was hit
+    first. Resolves the row in place. Returns how many rows were resolved."""
+    if not TRACKING_ENABLED:
+        return 0
+    resolved_count = 0
+    with TRACKING_LOCK:
+        conn = get_db_connection()
+        try:
+            open_rows = conn.execute("SELECT * FROM tracked_ideas WHERE outcome IS NULL").fetchall()
+        finally:
+            conn.close()
+
+    for row in open_rows:
+        try:
+            opened_date = dt.datetime.fromisoformat(row["opened_at"]).date()
+        except Exception:
+            continue
+        bars = [b for b in get_daily_bars(row["ticker"], days=TRACK_MAX_HOLD_DAYS + 10) if _bar_date(b) and _bar_date(b) > opened_date]
+        bars.sort(key=lambda b: _bar_date(b))
+        outcome, resolved_on, days_held = None, None, None
+        for i, bar in enumerate(bars[:TRACK_MAX_HOLD_DAYS]):
+            high, low = safe_float(bar.get("h")), safe_float(bar.get("l"))
+            if row["direction"] == "CALL":
+                hit_stop = low <= row["stock_stop"]
+                hit_t2 = high >= row["target_2_price"]
+                hit_t1 = high >= row["target_1_price"]
+            else:
+                hit_stop = high >= row["stock_stop"]
+                hit_t2 = low <= row["target_2_price"]
+                hit_t1 = low <= row["target_1_price"]
+            # If both a target and the stop print on the same daily bar we can't tell
+            # which came first intraday from daily OHLC alone -- conservatively count
+            # that as the stop, since protecting against overstating win rate matters
+            # more here than flattering it.
+            if hit_stop:
+                outcome, resolved_on, days_held = "STOP", _bar_date(bar), i + 1
+                break
+            if hit_t2:
+                outcome, resolved_on, days_held = "T2", _bar_date(bar), i + 1
+                break
+            if hit_t1:
+                outcome, resolved_on, days_held = "T1", _bar_date(bar), i + 1
+                break
+        if outcome is None and len(bars) >= TRACK_MAX_HOLD_DAYS:
+            outcome, resolved_on, days_held = "EXPIRED", _bar_date(bars[TRACK_MAX_HOLD_DAYS - 1]), TRACK_MAX_HOLD_DAYS
+        if outcome:
+            with TRACKING_LOCK:
+                conn = get_db_connection()
+                try:
+                    conn.execute(
+                        "UPDATE tracked_ideas SET outcome=?, resolved_at=?, trading_days_to_resolution=? WHERE id=?",
+                        (outcome, resolved_on.isoformat() if resolved_on else None, days_held, row["id"]),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+            resolved_count += 1
+    return resolved_count
+
+
+def _bar_date(bar: dict) -> Optional[dt.date]:
+    ts = bar.get("t")
+    if not ts:
+        return None
+    try:
+        return dt.datetime.fromtimestamp(ts / 1000, tz=dt.timezone.utc).date()
+    except Exception:
+        return None
+
+
+def score_bucket(score: float) -> str:
+    if score >= 90:
+        return "90-100"
+    if score >= 85:
+        return "85-89"
+    if score >= 78:
+        return "78-84"
+    return "<78"
+
+
+def backtest_stats() -> Dict[str, Any]:
+    if not TRACKING_ENABLED:
+        return {"enabled": False, "buckets": []}
+    conn = get_db_connection()
+    try:
+        rows = conn.execute("SELECT * FROM tracked_ideas WHERE outcome IS NOT NULL AND outcome != 'EXPIRED'").fetchall()
+        total_open = conn.execute("SELECT COUNT(*) AS c FROM tracked_ideas WHERE outcome IS NULL").fetchone()["c"]
+        total_expired = conn.execute("SELECT COUNT(*) AS c FROM tracked_ideas WHERE outcome = 'EXPIRED'").fetchone()["c"]
+    finally:
+        conn.close()
+
+    grouped: Dict[Tuple[str, str], List[sqlite3.Row]] = {}
+    for r in rows:
+        key = (score_bucket(r["final_score"] or 0), r["direction"])
+        grouped.setdefault(key, []).append(r)
+
+    buckets = []
+    for (bucket, direction), group in sorted(grouped.items()):
+        n = len(group)
+        wins = [r for r in group if r["outcome"] in ("T1", "T2")]
+        win_rate = round(len(wins) / n * 100, 1) if n else None
+        days_to_win = [r["trading_days_to_resolution"] for r in wins if r["trading_days_to_resolution"] is not None]
+        days_to_stop = [r["trading_days_to_resolution"] for r in group if r["outcome"] == "STOP" and r["trading_days_to_resolution"] is not None]
+        buckets.append({
+            "score_bucket": bucket,
+            "direction": direction,
+            "n": n,
+            "sufficient_sample": n >= TRACK_MIN_SAMPLE,
+            "win_rate_pct": win_rate,
+            "median_days_to_win": round(statistics.median(days_to_win), 1) if days_to_win else None,
+            "median_days_to_stop": round(statistics.median(days_to_stop), 1) if days_to_stop else None,
+        })
+    return {
+        "enabled": True,
+        "min_sample_for_display": TRACK_MIN_SAMPLE,
+        "open_positions": total_open,
+        "expired_positions": total_expired,
+        "buckets": buckets,
+    }
+
+
 def trade_plan(idea: Dict[str, Any]) -> Dict[str, Any]:
     trader_type, direction, score, price, atr_value = idea["trader_type"], idea["direction"], idea["final_score"], idea["price"], idea["atr"]
     if direction == "CALL":
@@ -905,6 +1137,16 @@ def trade_plan(idea: Dict[str, Any]) -> Dict[str, Any]:
         stock_stop = price + max(atr_value * 0.8, price * 0.015)
         t1 = price - max(atr_value * 1.0, price * 0.02)
         t2 = price - max(atr_value * 1.8, price * 0.035)
+
+    # Rough, explicitly approximate timing estimate: trading days = price distance /
+    # daily ATR. This assumes an average-volatility day in a straight line toward the
+    # target, which real breakouts/accumulation moves rarely do -- it's a scale-of-patience
+    # ballpark (e.g. "expect low single-digit days"), not a forecast of when it'll trigger
+    # or how long to hold. There is no model here for *when* the trigger condition fires.
+    atr_days_t1 = round(abs(t1 - price) / atr_value, 1) if atr_value > 0 else None
+    atr_days_t2 = round(abs(t2 - price) / atr_value, 1) if atr_value > 0 else None
+    atr_days_stop = round(abs(price - stock_stop) / atr_value, 1) if atr_value > 0 else None
+
     return {
         "confirmation_trigger": "Enter only after 5-min reclaim/rejection of VWAP/EMA8 with volume expansion; no chase outside the zone.",
         "entry_range": f"{idea['buy_zone_low']:.2f} - {idea['buy_zone_high']:.2f}",
@@ -915,6 +1157,9 @@ def trade_plan(idea: Dict[str, Any]) -> Dict[str, Any]:
         "stop_loss": "Option hard stop -25% to -35%, or stock invalidates the listed stock stop.",
         "time_stop": "Swing: reduce/exit if no follow-through in 2-3 sessions. 0DTE: hard exit by 3:30 PM ET.",
         "position_plan": "Scale size by conviction; protect gains fast, leave runner only while EMA/VWAP trend holds.",
+        "atr_days_to_t1": atr_days_t1,
+        "atr_days_to_t2": atr_days_t2,
+        "atr_days_to_stop": atr_days_stop,
     }
 
 
@@ -991,7 +1236,7 @@ def analyze_ticker(ticker: str, regime: Dict[str, Any]) -> Tuple[Optional[Dict[s
         "status": status,
         "trade_permission": trade_permission,
         "trader_type": trader_type,
-        "strategy": "APEX 3.3.9 institutional forecast + Greek-aware risk engine",
+        "strategy": "APEX 3.4.0 institutional forecast + Greek-aware risk engine",
         "no_trade_reason": "Waiting for buy-zone confirmation." if trade_permission != "TRUE" else "",
         "notes": tech["technical_notes"] + flow.get("flow_notes", []) + order.get("order_flow_notes", []) + dark.get("dark_pool_notes", []) + levels.get("dark_pool_levels_notes", []) + cat.get("catalyst_notes", []) + rs.get("relative_strength_notes", []) + accumulation.get("accumulation_notes", []),
     })
@@ -1114,6 +1359,7 @@ def run_scan_once(force: bool = False) -> bool:
                     if idea:
                         ideas.append(idea)
                         maybe_alert(idea)
+                        record_idea_if_new(idea)
                 except Exception as e:
                     debug_records.append({"ticker": ticker, "excluded_reason": f"Exception during analysis: {e}"})
                     print(f"Error scanning {ticker}: {e}", flush=True)
@@ -1164,6 +1410,8 @@ def scanner_loop() -> None:
     with STATE_LOCK:
         STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         STATE["scanner_thread_alive"] = True
+    init_tracking_db()
+    last_resolution_date: Optional[dt.date] = None
     time.sleep(2)
     while True:
         with STATE_LOCK:
@@ -1182,6 +1430,15 @@ def scanner_loop() -> None:
                 STATE["last_scan_status"] = "Scanner hit an unexpected error; will retry next cycle."
                 STATE["scan_in_progress"] = False
             print(f"Scanner loop exception (recovered, thread continues): {e}", flush=True)
+        today = now_et().date()
+        if TRACKING_ENABLED and today != last_resolution_date:
+            try:
+                resolved = resolve_open_trades()
+                last_resolution_date = today
+                if resolved:
+                    print(f"Backtest tracking: resolved {resolved} trade(s) today.", flush=True)
+            except Exception as e:
+                print(f"resolve_open_trades error (recovered): {e}", flush=True)
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 
@@ -1297,6 +1554,8 @@ select{font-family:var(--sans);font-size:12.5px;background:var(--surface);color:
 .label{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:3px}
 .value{font-size:13px;line-height:1.45;color:var(--text)}
 .value.mono{font-family:var(--mono);font-size:12.5px}
+.atr-note{margin-top:6px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.ballpark-tag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:5px;background:var(--surface-alt);color:var(--faint);font-size:9.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;vertical-align:middle}
 .exec-grid{margin-top:4px;background:var(--surface-alt);border-radius:9px;padding:8px 10px}
 .exec-row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-family:var(--mono);font-size:12px}
 .exec-row .exec-l{color:var(--faint)}
@@ -1459,10 +1718,47 @@ function cardHtml(idea){
     '<div class="section"><div class="label">Trigger</div><div class="value">' + (idea.confirmation_trigger||'') + '</div></div>' +
     '<div class="section"><div class="label">Option</div><div class="value mono">' + (idea.option_contract||'') + '<br>' + (idea.option_liquidity||'') + ' &middot; Contracts: ' + idea.recommended_contracts + '</div></div>' +
     execSection(idea) +
-    '<div class="section"><div class="label">Stock Targets / Stop</div><div class="value mono">T1 ' + idea.target_1_price + ' &middot; T2 ' + idea.target_2_price + ' &middot; Stop ' + idea.stock_stop + '</div></div>' +
+    '<div class="section"><div class="label">Stock Targets / Stop</div><div class="value mono">T1 ' + idea.target_1_price + ' &middot; T2 ' + idea.target_2_price + ' &middot; Stop ' + idea.stock_stop + '</div>' + atrTimingNote(idea) + historicalTimingNote(idea) + '</div>' +
     '<details><summary>Why this setup (' + (idea.notes||[]).length + ' signals)</summary><div class="why-list">' + notes + '</div></details>' +
   '</div>';
 }
+let backtestStats = {enabled: false, buckets: []};
+
+function scoreBucketJs(score){
+  if(score >= 90) return '90-100';
+  if(score >= 85) return '85-89';
+  if(score >= 78) return '78-84';
+  return '<78';
+}
+
+async function loadBacktestStats(){
+  try{
+    const res = await fetch('/api/backtest_stats', {cache:'no-store'});
+    if(res.ok) backtestStats = await res.json();
+  } catch(e){ /* leave previous value in place */ }
+}
+
+function historicalTimingNote(idea){
+  if(!backtestStats.enabled || idea.final_score == null) return '';
+  const bucket = scoreBucketJs(idea.final_score);
+  const match = (backtestStats.buckets || []).find(b => b.score_bucket === bucket && b.direction === idea.direction);
+  if(!match || !match.sufficient_sample){
+    const n = match ? match.n : 0;
+    return '<div class="atr-note">Historical timing: not enough resolved trades yet for ' + bucket + ' ' + idea.direction + 's (n=' + n + ', need ' + (backtestStats.min_sample_for_display||10) + ') <span class="ballpark-tag">forward-tracked, building sample</span></div>';
+  }
+  return '<div class="atr-note">Historical: ' + bucket + ' ' + idea.direction + 's hit a target ' + match.win_rate_pct + '% of the time' +
+    (match.median_days_to_win!=null ? ', median ' + match.median_days_to_win + 'd to target' : '') +
+    (match.median_days_to_stop!=null ? ' (median ' + match.median_days_to_stop + 'd to stop when it failed)' : '') +
+    ' <span class="ballpark-tag">n=' + match.n + ', this engine\\'s real outcomes</span></div>';
+}
+
+function atrTimingNote(idea){
+  if(idea.atr_days_to_t1 == null){ return ''; }
+  return '<div class="atr-note" title="Distance to target divided by this ticker\'s average daily range (ATR). Assumes a straight-line average-volatility day -- real moves gap, chop, or stall. This is a ballpark scale of patience, not a forecast of when the trigger fires or how long to hold.">' +
+    '~' + idea.atr_days_to_t1 + 'd to T1, ~' + idea.atr_days_to_t2 + 'd to T2, ~' + idea.atr_days_to_stop + 'd to stop ' +
+    '<span class="ballpark-tag">ATR ballpark, not a forecast</span></div>';
+}
+
 function scorebox(label, val, suffix){
   return '<div class="scorebox"><div class="l">' + label + '</div><div class="v">' + (val!=null ? val : '--') + (suffix&&val!=null?suffix:'') + '</div></div>';
 }
@@ -1586,8 +1882,10 @@ document.getElementById('scanNowBtn').addEventListener('click', async () => {
 });
 renderStatusbar();
 renderCards();
+loadBacktestStats().then(() => { lastRenderSignature = null; renderCards(); });
 setInterval(poll, 30000);
 setInterval(renderStatusbar, 1000);
+setInterval(() => { loadBacktestStats().then(() => { lastRenderSignature = null; renderCards(); }); }, 300000);
 </script>
 </body>
 </html>
@@ -1617,6 +1915,13 @@ def api_run():
     with STATE_LOCK:
         return jsonify({"ok": ran, "status": STATE.get("last_scan_status"), "ideas": len(STATE.get("ideas", []))})
 
+
+@app.route("/api/backtest_stats")
+def api_backtest_stats():
+    try:
+        return jsonify(backtest_stats())
+    except Exception as e:
+        return jsonify({"enabled": TRACKING_ENABLED, "error": str(e), "buckets": []}), 500
 
 @app.route("/api/diagnostics")
 def api_diagnostics():
@@ -1666,6 +1971,7 @@ def health():
 # Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.
 # CLI imports, tests, and library imports stay clean by default and will not start
 # a background scanner or send Telegram alerts accidentally.
+init_tracking_db()  # idempotent CREATE TABLE IF NOT EXISTS -- safe to run on every import
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 

@@ -5,6 +5,10 @@ services:
     plan: starter
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120"
+    disk:
+      name: apex-tracking-disk
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.11"
@@ -38,3 +42,11 @@ services:
         value: "8"
       - key: BREAKER_MAX_FAILURES
         value: "3"
+      - key: DB_PATH
+        value: "/data/apex_tracking.db"
+      - key: TRACKING_ENABLED
+        value: "true"
+      - key: TRACK_MAX_HOLD_DAYS
+        value: "30"
+      - key: TRACK_MIN_SAMPLE
+        value: "10"
