@@ -13,7 +13,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.4.2_DASHBOARD_JS_FIX"
+VERSION = "3.4.3_QUANTDATA_FLOW_GEX_DASHBOARD"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -38,6 +38,8 @@ ORDER_FLOW_ENABLED = os.getenv("ORDER_FLOW_ENABLED", "true").lower() == "true"
 DARK_POOL_LEVELS_ENABLED = os.getenv("DARK_POOL_LEVELS_ENABLED", "true").lower() == "true"
 DARK_POOL_LEVELS_LOOKBACK_DAYS = int(os.getenv("DARK_POOL_LEVELS_LOOKBACK_DAYS", "10"))
 QUANTDATA_NEWS_ENABLED = os.getenv("QUANTDATA_NEWS_ENABLED", "true").lower() == "true"
+FLOW_DASHBOARD_TICKERS = [x.strip().upper() for x in os.getenv("FLOW_DASHBOARD_TICKERS", "SPY,QQQ,SPX").split(",") if x.strip()]
+GEX_ENABLED = os.getenv("GEX_ENABLED", "true").lower() == "true"
 MASSIVE_API_KEY = os.getenv("MASSIVE_API_KEY", POLYGON_API_KEY).strip()
 MASSIVE_BASE_URL = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io").rstrip("/")
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
@@ -499,6 +501,122 @@ def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
     notes = [f"Consolidated premium ${total_premium:,.0f}", f"Sweeps {sweep_count}, blocks/splits {block_count}", f"Rows analyzed: {len(rows)}"]
     return {"order_flow_score": round(score, 1), "order_flow_status": status, "order_flow_notes": notes, "sweep_count": sweep_count, "large_trade_premium": round(total_premium, 0)}
 
+
+
+def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
+    """QuantData gamma exposure-by-strike layer.
+
+    Uses QuantData's documented /v1/options/tool/exposure-by-strike endpoint with
+    greekMode=GAMMA and representationMode=RAW. It summarizes the largest call
+    wall, largest put wall, and an approximate zero-gamma strike from the current
+    exposure map.
+    """
+    if not QUANTDATA_API_KEY or not GEX_ENABLED:
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - GEX NOT CONFIGURED", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["Set QUANTDATA_API_KEY and GEX_ENABLED=true to enable gamma exposure."]}
+    if BREAKER.is_open("quantdata_gex"):
+        BREAKER.record_skip("quantdata_gex")
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - CIRCUIT OPEN", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["quantdata_gex skipped after repeated failures this scan cycle."]}
+
+    headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
+    payload = {"greekMode": "GAMMA", "representationMode": "RAW", "filter": {"ticker": ticker}}
+    data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/exposure-by-strike", payload, headers=headers, timeout=20)
+    BREAKER.record_failure("quantdata_gex") if data is None else BREAKER.record_success("quantdata_gex")
+    if not isinstance(data, dict):
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - NO GEX RETURNED", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["QuantData exposure-by-strike returned no usable response."]}
+
+    ticker_data = (data.get("data") or {}).get(ticker) if isinstance(data.get("data"), dict) else None
+    if not isinstance(ticker_data, dict):
+        # Some accounts normalize index symbols differently. Try case-insensitive fallback.
+        for k, v in (data.get("data") or {}).items() if isinstance(data.get("data"), dict) else []:
+            if str(k).upper() == ticker.upper() and isinstance(v, dict):
+                ticker_data = v
+                break
+    if not isinstance(ticker_data, dict):
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - NO GEX MAP", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["No exposureMap found for ticker."]}
+
+    exposure_map = ticker_data.get("exposureMap") or {}
+    stock_price = safe_float(ticker_data.get("stockPrice"), None)
+    by_strike: Dict[float, Dict[str, float]] = {}
+    if isinstance(exposure_map, dict):
+        for _exp, strikes in exposure_map.items():
+            if not isinstance(strikes, dict):
+                continue
+            for strike_raw, cell in strikes.items():
+                if not isinstance(cell, dict):
+                    continue
+                strike = safe_float(strike_raw, None)
+                if strike is None:
+                    continue
+                bucket = by_strike.setdefault(strike, {"call": 0.0, "put": 0.0, "net": 0.0})
+                call_exp = safe_float(cell.get("callExposure"), 0.0)
+                put_exp = safe_float(cell.get("putExposure"), 0.0)
+                bucket["call"] += call_exp
+                bucket["put"] += put_exp
+                bucket["net"] += call_exp + put_exp
+
+    if not by_strike:
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - EMPTY GEX MAP", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": stock_price, "gex_notes": ["Exposure map contained no strike rows."]}
+
+    call_wall = max(by_strike.items(), key=lambda kv: kv[1]["call"])[0]
+    put_wall = min(by_strike.items(), key=lambda kv: kv[1]["put"])[0]
+    zero_gamma = min(by_strike.items(), key=lambda kv: abs(kv[1]["net"]))[0]
+    total_net = sum(v["net"] for v in by_strike.values())
+    total_abs = sum(abs(v["call"]) + abs(v["put"]) for v in by_strike.values()) or 1.0
+    net_ratio = total_net / total_abs
+    score = max(0, min(100, 50 + net_ratio * 50))
+    status = "POSITIVE GAMMA / PIN RISK" if score >= 60 else "NEGATIVE GAMMA / TREND RISK" if score <= 40 else "MIXED GAMMA"
+    return {
+        "gex_score": round(score, 1),
+        "gex_status": status,
+        "call_wall": round(call_wall, 2),
+        "put_wall": round(put_wall, 2),
+        "zero_gamma": round(zero_gamma, 2),
+        "stock_price": round(stock_price, 2) if stock_price else None,
+        "net_gamma_ratio": round(net_ratio, 4),
+        "strike_count": len(by_strike),
+        "gex_notes": [f"Call wall {call_wall:.2f}", f"Put wall {put_wall:.2f}", f"Approx zero-gamma {zero_gamma:.2f}", f"Strikes analyzed: {len(by_strike)}"],
+    }
+
+
+def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
+    """One ticker snapshot for the /flow dashboard."""
+    flow = quantdata_flow_layer(ticker)
+    order = quantdata_order_flow_layer(ticker)
+    gex = quantdata_gex_layer(ticker)
+    call_premium = safe_float(flow.get("call_premium"))
+    put_premium = safe_float(flow.get("put_premium"))
+    net_premium = call_premium - put_premium
+    total = call_premium + put_premium
+    flow_ratio = round(call_premium / put_premium, 2) if put_premium > 0 else None
+    if net_premium > 0 and safe_float(flow.get("flow_score"), 50) >= 60:
+        bias = "BULLISH"
+    elif net_premium < 0 and safe_float(flow.get("flow_score"), 50) <= 45:
+        bias = "BEARISH"
+    else:
+        bias = "MIXED"
+    return {
+        "ticker": ticker,
+        "bias": bias,
+        "flow_score": flow.get("flow_score"),
+        "flow_status": flow.get("flow_status"),
+        "call_premium": round(call_premium, 0),
+        "put_premium": round(put_premium, 0),
+        "net_premium": round(net_premium, 0),
+        "total_premium": round(total, 0),
+        "flow_ratio": flow_ratio,
+        "call_ratio_pct": flow.get("call_ratio_pct"),
+        "order_flow_score": order.get("order_flow_score"),
+        "order_flow_status": order.get("order_flow_status"),
+        "sweep_count": order.get("sweep_count"),
+        "large_trade_premium": order.get("large_trade_premium"),
+        "gex_score": gex.get("gex_score"),
+        "gex_status": gex.get("gex_status"),
+        "call_wall": gex.get("call_wall"),
+        "put_wall": gex.get("put_wall"),
+        "zero_gamma": gex.get("zero_gamma"),
+        "stock_price": gex.get("stock_price"),
+        "notes": (flow.get("flow_notes") or []) + (order.get("order_flow_notes") or []) + (gex.get("gex_notes") or []),
+    }
 
 def quantdata_news_rows(ticker: str) -> List[dict]:
     if not QUANTDATA_API_KEY or not QUANTDATA_NEWS_ENABLED:
@@ -1914,6 +2032,90 @@ setInterval(() => { loadBacktestStats().then(() => { lastRenderSignature = null;
 """
 
 
+
+
+FLOW_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>APEX QuantData Flow Dashboard</title>
+<style>
+:root{--bg:#090d14;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#8fa0b8;--accent:#6ee7f9;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);font-family:Arial,Helvetica,sans-serif;color:var(--text)}header{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border);background:#0b101a;position:sticky;top:0;z-index:3}.brand{font-size:20px;font-weight:800}.sub{color:var(--muted);font-size:13px;margin-top:4px}.nav a{color:var(--accent);text-decoration:none;margin-left:14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;padding:18px}.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.28)}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.ticker{font-size:26px;font-weight:900}.badge{padding:6px 10px;border-radius:999px;font-size:12px;font-weight:800;background:#263244}.BULLISH{color:var(--good)}.BEARISH{color:var(--bad)}.MIXED{color:var(--warn)}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.metric{background:#0a111d;border:1px solid #223047;border-radius:12px;padding:10px}.label{font-size:12px;color:var(--muted)}.value{font-size:20px;font-weight:800;margin-top:5px}.wide{grid-column:1/-1}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.notes{font-size:12px;color:var(--muted);line-height:1.5;margin-top:12px}.status{padding:0 18px 8px;color:var(--muted);font-size:13px}.btn{background:#10243a;color:var(--text);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.btn:hover{border-color:var(--accent)}@media(max-width:600px){.metrics,.levels{grid-template-columns:1fr}header{display:block}.nav{margin-top:8px}.nav a{margin-left:0;margin-right:12px}}
+</style>
+</head>
+<body>
+<header>
+  <div><div class="brand">APEX QuantData Flow / GEX</div><div class="sub">Net flow, sweeps, call/put premium and gamma levels from QuantData</div></div>
+  <div class="nav"><button class="btn" onclick="loadFlow()">Refresh</button><a href="/">APEX Dashboard</a><a href="/api/flow">JSON</a></div>
+</header>
+<div class="status" id="status">Loading flow data...</div>
+<div class="grid" id="grid"></div>
+<script>
+function money(v){ if(v===null||v===undefined) return '--'; const n=Number(v); const sign=n<0?'-':''; const a=Math.abs(n); if(a>=1e9) return sign+'$'+(a/1e9).toFixed(2)+'B'; if(a>=1e6) return sign+'$'+(a/1e6).toFixed(2)+'M'; if(a>=1e3) return sign+'$'+(a/1e3).toFixed(1)+'K'; return sign+'$'+a.toFixed(0); }
+function val(v){ return (v===null||v===undefined||v==='')?'--':v; }
+function card(x){
+ const bias=x.bias||'MIXED';
+ const cls=bias.replace(/[^A-Z]/g,'');
+ return `<div class="card">
+  <div class="top"><div><div class="ticker">${x.ticker}</div><div class="sub">${val(x.flow_status)}</div></div><div class="badge ${cls}">${bias}</div></div>
+  <div class="metrics">
+    <div class="metric"><div class="label">Call premium</div><div class="value BULLISH">${money(x.call_premium)}</div></div>
+    <div class="metric"><div class="label">Put premium</div><div class="value BEARISH">${money(x.put_premium)}</div></div>
+    <div class="metric"><div class="label">Net premium</div><div class="value ${x.net_premium>=0?'BULLISH':'BEARISH'}">${money(x.net_premium)}</div></div>
+    <div class="metric"><div class="label">Call/put ratio</div><div class="value">${val(x.flow_ratio)}</div></div>
+    <div class="metric"><div class="label">Flow score</div><div class="value">${val(x.flow_score)}</div></div>
+    <div class="metric"><div class="label">Order score / sweeps</div><div class="value">${val(x.order_flow_score)} / ${val(x.sweep_count)}</div></div>
+  </div>
+  <div class="levels">
+    <div class="metric"><div class="label">Call wall</div><div class="value">${val(x.call_wall)}</div></div>
+    <div class="metric"><div class="label">Zero gamma</div><div class="value">${val(x.zero_gamma)}</div></div>
+    <div class="metric"><div class="label">Put wall</div><div class="value">${val(x.put_wall)}</div></div>
+  </div>
+  <div class="notes">${(x.notes||[]).slice(0,6).map(n=>'• '+n).join('<br>')}</div>
+ </div>`;
+}
+async function loadFlow(){
+ const status=document.getElementById('status'); const grid=document.getElementById('grid');
+ status.textContent='Refreshing QuantData flow...';
+ try{
+   const r=await fetch('/api/flow',{cache:'no-store'}); const data=await r.json();
+   if(!r.ok) throw new Error(data.error||('HTTP '+r.status));
+   grid.innerHTML=(data.items||[]).map(card).join('') || '<div class="card">No flow rows returned.</div>';
+   status.textContent=`Updated ${data.updated_at_et || data.updated_at || ''} · Sources: QuantData ${data.quantdata_configured?'configured':'not configured'}`;
+ }catch(e){ status.textContent='Flow dashboard error: '+e.message; }
+}
+loadFlow(); setInterval(loadFlow, 60000);
+</script>
+</body>
+</html>
+"""
+
+@app.route("/flow")
+def flow_dashboard():
+    return render_template_string(FLOW_HTML)
+
+@app.route("/api/flow")
+def api_flow():
+    tickers_raw = request.args.get("tickers", "")
+    tickers = [x.strip().upper() for x in tickers_raw.split(",") if x.strip()] or FLOW_DASHBOARD_TICKERS
+    items = []
+    for ticker in tickers[:10]:
+        items.append(quantdata_flow_snapshot(ticker))
+    return jsonify({
+        "ok": True,
+        "version": VERSION,
+        "quantdata_configured": bool(QUANTDATA_API_KEY),
+        "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "tickers": tickers[:10],
+        "items": items,
+    })
+
+@app.route("/api/flow/<ticker>")
+def api_flow_ticker(ticker: str):
+    return jsonify(quantdata_flow_snapshot(ticker.upper()))
 
 @app.route("/")
 def dashboard():
