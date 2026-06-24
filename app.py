@@ -13,7 +13,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.4.3_QUANTDATA_FLOW_GEX_DASHBOARD"
+VERSION = "3.4.4_FLOW_GEX_DECISION_DASHBOARD"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -578,6 +578,74 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
     }
 
 
+def flow_decision_gate(bias: str, net_premium: float, flow_score: float, order_flow_score: float, gex_score: float) -> Dict[str, Any]:
+    """Fast traffic-light decision gate for the Flow/GEX dashboard.
+
+    This does not create a trade by itself. It approves or blocks the Pine signal side.
+    Green = only trade the approved side. Yellow = reduce size / wait. Red = skip.
+    """
+    reasons: List[str] = []
+    call_approved = (bias == "BULLISH" and net_premium > 0 and flow_score >= 70 and order_flow_score >= 65)
+    put_approved = (bias == "BEARISH" and net_premium < 0 and flow_score <= 30 and order_flow_score >= 65)
+
+    if call_approved:
+        decision = "TRADE APPROVED - CALL"
+        color = "GREEN"
+        side = "CALL"
+        reasons += ["Bullish flow bias", "Positive net premium", "Flow score >= 70", "Order flow confirms"]
+    elif put_approved:
+        decision = "TRADE APPROVED - PUT"
+        color = "GREEN"
+        side = "PUT"
+        reasons += ["Bearish flow bias", "Negative net premium", "Put-side flow confirmed", "Order flow confirms"]
+    else:
+        # Caution only when the picture is close but incomplete. Mixed/negative with no approved side is a no-trade for speed.
+        close_to_call = bias == "BULLISH" and net_premium > 0 and flow_score >= 60
+        close_to_put = bias == "BEARISH" and net_premium < 0 and flow_score <= 40
+        strong_order_only = order_flow_score >= 70 and bias != "MIXED"
+        if close_to_call or close_to_put or strong_order_only:
+            decision = "CAUTION"
+            color = "YELLOW"
+            side = "WAIT"
+            reasons.append("Some alignment present, but not enough for a green approval")
+        else:
+            decision = "NO TRADE"
+            color = "RED"
+            side = "NONE"
+            reasons.append("Institutional alignment is not strong enough")
+
+        if bias == "MIXED":
+            reasons.append("Bias is mixed")
+        if flow_score < 70 and bias == "BULLISH":
+            reasons.append("Flow score below CALL approval threshold")
+        if flow_score > 30 and bias == "BEARISH":
+            reasons.append("Put-side flow is not strong enough")
+        if net_premium <= 0 and bias != "BEARISH":
+            reasons.append("Net premium is not supportive for calls")
+        if net_premium >= 0 and bias == "BEARISH":
+            reasons.append("Net premium is not supportive for puts")
+        if order_flow_score < 65:
+            reasons.append("Order flow score below confirmation threshold")
+
+    # Simple 0-100 institutional alignment readout for faster visual decisions.
+    if side == "CALL":
+        alignment = min(100, max(0, flow_score * 0.55 + order_flow_score * 0.25 + (20 if net_premium > 0 else 0)))
+    elif side == "PUT":
+        put_flow_score = 100 - flow_score
+        alignment = min(100, max(0, put_flow_score * 0.55 + order_flow_score * 0.25 + (20 if net_premium < 0 else 0)))
+    else:
+        directional_component = flow_score if net_premium > 0 else (100 - flow_score if net_premium < 0 else 50)
+        alignment = min(100, max(0, directional_component * 0.45 + order_flow_score * 0.25 + gex_score * 0.10))
+
+    return {
+        "decision": decision,
+        "decision_color": color,
+        "approved_side": side,
+        "institutional_alignment": round(alignment, 1),
+        "decision_reasons": reasons[:6],
+    }
+
+
 def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
     """One ticker snapshot for the /flow dashboard."""
     flow = quantdata_flow_layer(ticker)
@@ -588,15 +656,20 @@ def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
     net_premium = call_premium - put_premium
     total = call_premium + put_premium
     flow_ratio = round(call_premium / put_premium, 2) if put_premium > 0 else None
-    if net_premium > 0 and safe_float(flow.get("flow_score"), 50) >= 60:
+    flow_score_val = safe_float(flow.get("flow_score"), 50.0)
+    order_score_val = safe_float(order.get("order_flow_score"), 50.0)
+    gex_score_val = safe_float(gex.get("gex_score"), 50.0)
+    if net_premium > 0 and flow_score_val >= 60:
         bias = "BULLISH"
-    elif net_premium < 0 and safe_float(flow.get("flow_score"), 50) <= 45:
+    elif net_premium < 0 and flow_score_val <= 40:
         bias = "BEARISH"
     else:
         bias = "MIXED"
+    decision = flow_decision_gate(bias, net_premium, flow_score_val, order_score_val, gex_score_val)
     return {
         "ticker": ticker,
         "bias": bias,
+        **decision,
         "flow_score": flow.get("flow_score"),
         "flow_status": flow.get("flow_status"),
         "call_premium": round(call_premium, 0),
@@ -615,7 +688,7 @@ def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
         "put_wall": gex.get("put_wall"),
         "zero_gamma": gex.get("zero_gamma"),
         "stock_price": gex.get("stock_price"),
-        "notes": (flow.get("flow_notes") or []) + (order.get("order_flow_notes") or []) + (gex.get("gex_notes") or []),
+        "notes": (decision.get("decision_reasons") or []) + (flow.get("flow_notes") or []) + (order.get("order_flow_notes") or []) + (gex.get("gex_notes") or []),
     }
 
 def quantdata_news_rows(ticker: str) -> List[dict]:
@@ -2042,7 +2115,7 @@ FLOW_HTML = """
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>APEX QuantData Flow Dashboard</title>
 <style>
-:root{--bg:#090d14;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#8fa0b8;--accent:#6ee7f9;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);font-family:Arial,Helvetica,sans-serif;color:var(--text)}header{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border);background:#0b101a;position:sticky;top:0;z-index:3}.brand{font-size:20px;font-weight:800}.sub{color:var(--muted);font-size:13px;margin-top:4px}.nav a{color:var(--accent);text-decoration:none;margin-left:14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;padding:18px}.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.28)}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.ticker{font-size:26px;font-weight:900}.badge{padding:6px 10px;border-radius:999px;font-size:12px;font-weight:800;background:#263244}.BULLISH{color:var(--good)}.BEARISH{color:var(--bad)}.MIXED{color:var(--warn)}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.metric{background:#0a111d;border:1px solid #223047;border-radius:12px;padding:10px}.label{font-size:12px;color:var(--muted)}.value{font-size:20px;font-weight:800;margin-top:5px}.wide{grid-column:1/-1}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.notes{font-size:12px;color:var(--muted);line-height:1.5;margin-top:12px}.status{padding:0 18px 8px;color:var(--muted);font-size:13px}.btn{background:#10243a;color:var(--text);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.btn:hover{border-color:var(--accent)}@media(max-width:600px){.metrics,.levels{grid-template-columns:1fr}header{display:block}.nav{margin-top:8px}.nav a{margin-left:0;margin-right:12px}}
+:root{--bg:#090d14;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#8fa0b8;--accent:#6ee7f9;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);font-family:Arial,Helvetica,sans-serif;color:var(--text)}header{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border);background:#0b101a;position:sticky;top:0;z-index:3}.brand{font-size:20px;font-weight:800}.sub{color:var(--muted);font-size:13px;margin-top:4px}.nav a{color:var(--accent);text-decoration:none;margin-left:14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;padding:18px}.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.28)}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.ticker{font-size:26px;font-weight:900}.badge{padding:6px 10px;border-radius:999px;font-size:12px;font-weight:800;background:#263244}.BULLISH{color:var(--good)}.BEARISH{color:var(--bad)}.MIXED{color:var(--warn)}.decision{border-radius:14px;padding:14px;margin:10px 0 14px;border:1px solid var(--border);background:#0a111d}.decisionTitle{font-size:24px;font-weight:900;letter-spacing:.2px}.decisionSub{font-size:13px;color:var(--muted);margin-top:4px}.GREENBOX{border-color:rgba(34,197,94,.65);box-shadow:0 0 0 1px rgba(34,197,94,.16) inset}.YELLOWBOX{border-color:rgba(245,158,11,.65);box-shadow:0 0 0 1px rgba(245,158,11,.16) inset}.REDBOX{border-color:rgba(239,68,68,.65);box-shadow:0 0 0 1px rgba(239,68,68,.16) inset}.GREEN{color:var(--good)}.YELLOW{color:var(--warn)}.RED{color:var(--bad)}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.metric{background:#0a111d;border:1px solid #223047;border-radius:12px;padding:10px}.label{font-size:12px;color:var(--muted)}.value{font-size:20px;font-weight:800;margin-top:5px}.wide{grid-column:1/-1}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.notes{font-size:12px;color:var(--muted);line-height:1.5;margin-top:12px}.status{padding:0 18px 8px;color:var(--muted);font-size:13px}.btn{background:#10243a;color:var(--text);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.btn:hover{border-color:var(--accent)}@media(max-width:600px){.metrics,.levels{grid-template-columns:1fr}header{display:block}.nav{margin-top:8px}.nav a{margin-left:0;margin-right:12px}}
 </style>
 </head>
 <body>
@@ -2058,8 +2131,14 @@ function val(v){ return (v===null||v===undefined||v==='')?'--':v; }
 function card(x){
  const bias=x.bias||'MIXED';
  const cls=bias.replace(/[^A-Z]/g,'');
+ const dColor=x.decision_color||'YELLOW';
+ const icon=dColor==='GREEN'?'🟢':dColor==='RED'?'🔴':'🟡';
  return `<div class="card">
   <div class="top"><div><div class="ticker">${x.ticker}</div><div class="sub">${val(x.flow_status)}</div></div><div class="badge ${cls}">${bias}</div></div>
+  <div class="decision ${dColor}BOX">
+    <div class="decisionTitle ${dColor}">${icon} ${val(x.decision)}</div>
+    <div class="decisionSub">Institutional Alignment: ${val(x.institutional_alignment)}/100 · Approved side: ${val(x.approved_side)}</div>
+  </div>
   <div class="metrics">
     <div class="metric"><div class="label">Call premium</div><div class="value BULLISH">${money(x.call_premium)}</div></div>
     <div class="metric"><div class="label">Put premium</div><div class="value BEARISH">${money(x.put_premium)}</div></div>
