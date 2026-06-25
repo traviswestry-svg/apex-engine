@@ -13,7 +13,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.5.0_INSTITUTIONAL_TRADE_ASSISTANT"
+VERSION = "3.5.1_SESSION_AWARE_TRADE_ASSISTANT"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -141,7 +141,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.4.2 scanner...",
+    "last_scan_status": "Starting APEX 3.5.1 scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -170,6 +170,57 @@ def session_status() -> str:
     if 4 * 60 <= minutes < 9 * 60 + 30:
         return "PREMARKET"
     return "AFTER_HOURS"
+
+
+def market_session_context() -> Dict[str, Any]:
+    """Session-aware guidance for the Trade Assistant.
+
+    The assistant should not imply an executable entry when the market is
+    closed, premarket, or after-hours. Flow/GEX can define the game plan, but
+    only a fresh Pine trigger during MARKET_OPEN can produce ENTER_NOW.
+    """
+    status = session_status()
+    n = now_et()
+    minutes = n.hour * 60 + n.minute
+    open_minutes = 9 * 60 + 30
+    close_minutes = 16 * 60
+    if status == "MARKET_OPEN":
+        return {
+            "session": status,
+            "is_tradeable_session": True,
+            "banner_level": "GREEN",
+            "banner_title": "MARKET OPEN",
+            "banner_message": "Live mode: entries require Flow/GEX approval plus a fresh Pine trigger.",
+            "assistant_mode": "LIVE_TRADE_ASSISTANT",
+        }
+    if status == "PREMARKET":
+        mins_to_open = max(0, open_minutes - minutes)
+        return {
+            "session": status,
+            "is_tradeable_session": False,
+            "minutes_to_open": mins_to_open,
+            "banner_level": "YELLOW",
+            "banner_title": "PREMARKET GAME PLAN",
+            "banner_message": f"No entries yet. Use the bias as the opening plan; wait for market open and a fresh Pine trigger. Open in ~{mins_to_open} min.",
+            "assistant_mode": "GAME_PLAN",
+        }
+    if status == "AFTER_HOURS":
+        return {
+            "session": status,
+            "is_tradeable_session": False,
+            "banner_level": "YELLOW",
+            "banner_title": "AFTER HOURS",
+            "banner_message": "Execution disabled. Use current Flow/GEX as review and preparation only; it will be refreshed next session.",
+            "assistant_mode": "REVIEW_PREP",
+        }
+    return {
+        "session": status,
+        "is_tradeable_session": False,
+        "banner_level": "RED",
+        "banner_title": "MARKET CLOSED",
+        "banner_message": "No new entries while the market is closed. Bias is informational only; wait for the next open and a fresh Pine trigger.",
+        "assistant_mode": "CLOSED_GAME_PLAN",
+    }
 
 
 def last_market_date(max_lookback: int = 8) -> dt.date:
@@ -837,7 +888,9 @@ def build_assistant_trade_plan(flow_item: Dict[str, Any], signal: Optional[Dict[
         contract_hint = "Wait for price/contract selection"
     remaining = signal_seconds_remaining(signal)
     expired = bool(signal) and remaining <= 0
+    session_ctx = market_session_context()
     checklist = [
+        {"label": "Market open", "ok": session_ctx.get("is_tradeable_session")},
         {"label": "Institutional side agrees", "ok": side in {"CALL", "PUT"} and flow_item.get("approved_side") == side},
         {"label": "Alignment >= 70", "ok": safe_float(flow_item.get("institutional_alignment"), 0) >= 70},
         {"label": "Flow score >= 70", "ok": safe_float(flow_item.get("flow_score"), 0) >= 70},
@@ -869,8 +922,14 @@ def build_assistant_trade_plan(flow_item: Dict[str, Any], signal: Optional[Dict[
             "Do not enter after countdown expires; wait for the next Pine trigger.",
         ],
         "walls": {"call_wall": call_wall or None, "zero_gamma": zero_gamma or None, "put_wall": put_wall or None},
+        "session_context": session_ctx,
     }
-    if state.startswith("ENTER_") and not expired:
+    if not session_ctx.get("is_tradeable_session"):
+        if side in {"CALL", "PUT"}:
+            plan["execution_summary"] = f"{session_ctx.get('banner_title')}: bias is {side}, but entries are disabled until market open plus a fresh Pine trigger."
+        else:
+            plan["execution_summary"] = f"{session_ctx.get('banner_title')}: no executable trade plan until the next live session."
+    elif state.startswith("ENTER_") and not expired:
         plan["execution_summary"] = f"{side} setup active: {contract_hint}, entry {plan['entry_zone']}, stop {plan['stop_price']}, targets {plan['target_1']} / {plan['target_2']}."
     elif expired:
         plan["execution_summary"] = "Signal expired. Do not chase; wait for next Pine trigger."
@@ -917,7 +976,15 @@ def build_trade_assistant_decision(flow_item: Dict[str, Any], signal: Optional[D
     alert = False
     reason = []
 
-    if fresh:
+    session_ctx = market_session_context()
+
+    if fresh and not session_ctx.get("is_tradeable_session"):
+        reason.append(f"Fresh Pine signal received outside market hours: {sig_side} score {sig_score:g} on {sig_ticker or 'unknown'}")
+        state = "MARKET_CLOSED_SIGNAL_IGNORED" if session_ctx.get("session") == "CLOSED" else "OUTSIDE_LIVE_SESSION"
+        message = session_ctx.get("banner_message")
+        action = "Do not enter. Treat the signal as stale planning information and wait for the next market-open trigger."
+        priority = "WARNING"
+    elif fresh:
         reason.append(f"Fresh Pine signal: {sig_side} score {sig_score:g} on {sig_ticker or 'unknown'}")
         if sig_ticker and sig_ticker != ticker:
             state = "SIGNAL_TICKER_MISMATCH"
@@ -962,6 +1029,7 @@ def build_trade_assistant_decision(flow_item: Dict[str, Any], signal: Optional[D
         "action": action,
         "approved_side": approved_side,
         "flow_decision": flow_decision,
+        "session_context": session_ctx,
         "institutional_alignment": round(alignment, 1),
         "fresh_signal": fresh,
         "last_signal": signal,
@@ -2503,16 +2571,16 @@ loadFlow(); setInterval(loadFlow, 60000);
 ASSISTANT_HTML = """
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>APEX 3.5 Trade Assistant</title>
+<title>APEX 3.5.1 Trade Assistant</title>
 <style>
-:root{--bg:#070a10;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);color:var(--text);font-family:Arial,Helvetica,sans-serif}.wrap{max-width:1180px;margin:0 auto;padding:18px}header{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid var(--border);padding:14px 0 18px}.brand{font-size:27px;font-weight:900}.sub{color:var(--muted);margin-top:5px}.nav a,.btn{color:var(--cyan);text-decoration:none;margin-left:12px}.btn{background:#10243a;border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:18px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:10px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:20px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}.planner{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.bigplan{background:#07111f;border:1px solid #2b405d;border-radius:16px;padding:16px}.summary{font-size:22px;font-weight:900;line-height:1.25}.countdown{font-size:34px;font-weight:1000}.check{display:flex;align-items:center;gap:8px;margin:7px 0;color:#cbd8ea}.ok{color:var(--good)}.no{color:var(--bad)}.rules{margin-top:10px;color:#b7c7dd;line-height:1.5}.stale{border-color:rgba(245,158,11,.7)}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}@media(max-width:820px){header{display:block}.nav{margin-top:10px}.planner{grid-template-columns:1fr}.state{font-size:34px}}
-</style></head><body><div class="wrap"><header><div><div class="brand">APEX 3.5 Institutional Trade Assistant</div><div class="sub">Flow/GEX bias + Pine trigger + execution plan + countdown</div></div><div class="nav"><button class="btn" onclick="loadAssistant()">Refresh</button><a href="/flow">Flow/GEX</a><a href="/api/assistant">JSON</a></div></header><div id="app" class="panel">Loading...</div></div>
+:root{--bg:#070a10;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);color:var(--text);font-family:Arial,Helvetica,sans-serif}.wrap{max-width:1180px;margin:0 auto;padding:18px}header{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid var(--border);padding:14px 0 18px}.brand{font-size:27px;font-weight:900}.sub{color:var(--muted);margin-top:5px}.nav a,.btn{color:var(--cyan);text-decoration:none;margin-left:12px}.btn{background:#10243a;border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:18px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.banner{border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:12px;background:#09111d}.banner.GREEN{border-color:rgba(34,197,94,.5)}.banner.YELLOW{border-color:rgba(245,158,11,.55)}.banner.RED{border-color:rgba(239,68,68,.55)}.banner-title{font-weight:900;font-size:16px}.banner-msg{color:var(--muted);margin-top:4px;font-size:13px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:10px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:20px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}.planner{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.bigplan{background:#07111f;border:1px solid #2b405d;border-radius:16px;padding:16px}.summary{font-size:22px;font-weight:900;line-height:1.25}.countdown{font-size:34px;font-weight:1000}.check{display:flex;align-items:center;gap:8px;margin:7px 0;color:#cbd8ea}.ok{color:var(--good)}.no{color:var(--bad)}.rules{margin-top:10px;color:#b7c7dd;line-height:1.5}.stale{border-color:rgba(245,158,11,.7)}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}@media(max-width:820px){header{display:block}.nav{margin-top:10px}.planner{grid-template-columns:1fr}.state{font-size:34px}}
+</style></head><body><div class="wrap"><header><div><div class="brand">APEX 3.5.1 Session-Aware Trade Assistant</div><div class="sub">Session-aware Flow/GEX bias + Pine trigger + execution plan + countdown</div></div><div class="nav"><button class="btn" onclick="loadAssistant()">Refresh</button><a href="/flow">Flow/GEX</a><a href="/api/assistant">JSON</a></div></header><div id="app" class="panel">Loading...</div></div>
 <script>
 function cls(p){ if(p==='URGENT') return 'good flash'; if(p==='BLOCKED') return 'bad'; if(p==='WARNING') return 'warn'; if(p==='INFO') return 'info'; return 'warn';}
 function money(v){if(v==null)return'--';let n=Number(v),s=n<0?'-':'',a=Math.abs(n);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';return s+'$'+a.toFixed(0)}
 function mmss(s){s=Number(s||0);let m=Math.floor(s/60),r=s%60;return String(m).padStart(2,'0')+':'+String(r).padStart(2,'0')}
 function yes(v){return v?'✅':'❌'}
-async function loadAssistant(){const el=document.getElementById('app');try{const r=await fetch('/api/assistant?ticker=SPX',{cache:'no-store'});const d=await r.json();const f=d.flow||{}, a=d.assistant||{}, p=a.trade_plan||{};const checklist=(a.checklist||[]).map(x=>`<div class="check"><span class="${x.ok?'ok':'no'}">${yes(x.ok)}</span><span>${x.label}</span></div>`).join('');const rules=(p.exit_rules||[]).map(x=>'• '+x).join('<br>');el.className='panel '+(p.signal_expired?'stale':'');el.innerHTML=`<div class="label">${a.updated_at_et||''}</div><div class="state ${cls(a.priority)}">${a.state||'WAITING'}</div><div class="sub">${a.message||''}</div><div class="action">${a.action||''}</div><div class="grid"><div class="box"><div class="label">Approved Side</div><div class="val">${a.approved_side||'--'}</div></div><div class="box"><div class="label">Alignment</div><div class="val">${a.institutional_alignment||'--'}/100</div></div><div class="box"><div class="label">Net Premium</div><div class="val">${money(f.net_premium)}</div></div><div class="box"><div class="label">Flow / Order</div><div class="val">${f.flow_score||'--'} / ${f.order_flow_score||'--'}</div></div><div class="box"><div class="label">Call / Put Wall</div><div class="val">${f.call_wall||'--'} / ${f.put_wall||'--'}</div></div><div class="box"><div class="label">Signal Countdown</div><div class="val countdown">${a.fresh_signal?mmss(p.signal_seconds_remaining):'--'}</div></div></div><div class="planner"><div class="bigplan"><div class="label">Execution Plan</div><div class="summary">${p.execution_summary||'Waiting for setup'}</div><div class="grid" style="margin-top:12px"><div class="box"><div class="label">Contract</div><div class="val">${p.recommended_contract||'--'}</div></div><div class="box"><div class="label">Entry Zone</div><div class="val">${p.entry_zone||'--'}</div></div><div class="box"><div class="label">Stop</div><div class="val">${p.stop_price||'--'}</div></div><div class="box"><div class="label">Targets</div><div class="val">${p.target_1||'--'} / ${p.target_2||'--'}</div></div></div><div class="rules">${rules}</div></div><div class="bigplan"><div class="label">Checklist</div>${checklist}<div class="notes" style="margin-top:12px">${(a.reasons||[]).map(x=>'• '+x).join('<br>')}</div></div></div>`}catch(e){el.innerHTML='Error: '+e.message}}
+async function loadAssistant(){const el=document.getElementById('app');try{const r=await fetch('/api/assistant?ticker=SPX',{cache:'no-store'});const d=await r.json();const f=d.flow||{}, a=d.assistant||{}, p=a.trade_plan||{};const checklist=(a.checklist||[]).map(x=>`<div class="check"><span class="${x.ok?'ok':'no'}">${yes(x.ok)}</span><span>${x.label}</span></div>`).join('');const rules=(p.exit_rules||[]).map(x=>'• '+x).join('<br>');const sc=a.session_context||p.session_context||{};const banner=`<div class="banner ${sc.banner_level||'YELLOW'}"><div class="banner-title">${sc.banner_title||'SESSION STATUS'}</div><div class="banner-msg">${sc.banner_message||''}</div></div>`;el.className='panel '+(p.signal_expired?'stale':'');el.innerHTML=banner+`<div class="label">${a.updated_at_et||''}</div><div class="state ${cls(a.priority)}">${a.state||'WAITING'}</div><div class="sub">${a.message||''}</div><div class="action">${a.action||''}</div><div class="grid"><div class="box"><div class="label">Approved Side</div><div class="val">${a.approved_side||'--'}</div></div><div class="box"><div class="label">Assistant Mode</div><div class="val">${sc.assistant_mode||'--'}</div></div><div class="box"><div class="label">Alignment</div><div class="val">${a.institutional_alignment||'--'}/100</div></div><div class="box"><div class="label">Net Premium</div><div class="val">${money(f.net_premium)}</div></div><div class="box"><div class="label">Flow / Order</div><div class="val">${f.flow_score||'--'} / ${f.order_flow_score||'--'}</div></div><div class="box"><div class="label">Signal Countdown</div><div class="val countdown">${(a.fresh_signal&&sc.is_tradeable_session)?mmss(p.signal_seconds_remaining):'--'}</div></div></div><div class="planner"><div class="bigplan"><div class="label">Execution Plan</div><div class="summary">${p.execution_summary||'Waiting for setup'}</div><div class="grid" style="margin-top:12px"><div class="box"><div class="label">Contract</div><div class="val">${p.recommended_contract||'--'}</div></div><div class="box"><div class="label">Entry Zone</div><div class="val">${p.entry_zone||'--'}</div></div><div class="box"><div class="label">Stop</div><div class="val">${p.stop_price||'--'}</div></div><div class="box"><div class="label">Targets</div><div class="val">${p.target_1||'--'} / ${p.target_2||'--'}</div></div></div><div class="rules">${rules}</div></div><div class="bigplan"><div class="label">Checklist</div>${checklist}<div class="notes" style="margin-top:12px">${(a.reasons||[]).map(x=>'• '+x).join('<br>')}</div></div></div>`}catch(e){el.innerHTML='Error: '+e.message}}
 loadAssistant(); setInterval(loadAssistant, 5000);
 </script></body></html>
 """
@@ -2520,6 +2588,11 @@ loadAssistant(); setInterval(loadAssistant, 5000);
 @app.route("/assistant")
 def assistant_dashboard():
     return render_template_string(ASSISTANT_HTML)
+
+
+@app.route("/api/session")
+def api_session():
+    return jsonify(market_session_context())
 
 @app.route("/api/assistant")
 def api_assistant():
