@@ -13,7 +13,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.4.4_FLOW_GEX_DECISION_DASHBOARD"
+VERSION = "3.4.6_APEX_STATE_ASSISTANT"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -25,6 +25,9 @@ BENZINGA_API_KEY = os.getenv("BENZINGA_API_KEY", "").strip()
 BENZINGA_SOURCE = os.getenv("BENZINGA_SOURCE", "massive").strip().lower()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "tv_institutional_signal").strip()
+SIGNAL_TTL_SECONDS = int(os.getenv("SIGNAL_TTL_SECONDS", "360"))
+ASSISTANT_TICKER = os.getenv("ASSISTANT_TICKER", "SPX").strip().upper()
 
 ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "60000"))
 MAX_RISK_PER_TRADE = float(os.getenv("MAX_RISK_PER_TRADE", "750"))
@@ -67,6 +70,15 @@ STATE_LOCK = threading.RLock()
 SCAN_LOCK = threading.Lock()
 SCANNER_START_LOCK = threading.Lock()
 SCANNER_STARTED = False
+TRADE_ASSISTANT_LOCK = threading.RLock()
+TRADE_ASSISTANT_STATE: Dict[str, Any] = {
+    "state": "WAITING",
+    "message": "Waiting for Flow/GEX snapshot and Pine trigger",
+    "last_signal": None,
+    "last_decision": None,
+    "updated_at": None,
+    "updated_at_et": None,
+}
 
 
 class CircuitBreaker:
@@ -709,6 +721,110 @@ def flow_decision_gate(bias: str, net_premium: float, flow_score: float, order_f
     }
 
 
+
+
+def normalize_signal_ticker(ticker: str) -> str:
+    t = (ticker or "").upper()
+    if "SPX" in t:
+        return "SPX"
+    if "SPY" in t:
+        return "SPY"
+    if "QQQ" in t:
+        return "QQQ"
+    return t.split(":")[-1]
+
+
+def signal_is_fresh(sig: Optional[Dict[str, Any]]) -> bool:
+    if not sig:
+        return False
+    try:
+        ts = dt.datetime.fromisoformat(sig.get("received_at", ""))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=dt.timezone.utc)
+        return (dt.datetime.now(dt.timezone.utc) - ts).total_seconds() <= SIGNAL_TTL_SECONDS
+    except Exception:
+        return False
+
+
+def build_trade_assistant_decision(flow_item: Dict[str, Any], signal: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Combine Flow/GEX institutional filter with the latest Pine webhook signal.
+
+    Flow approves a side. Pine provides the actual entry trigger.
+    This function turns those two pieces into a state-machine decision.
+    """
+    approved_side = (flow_item.get("approved_side") or "NONE").upper()
+    decision_color = flow_item.get("decision_color") or "YELLOW"
+    alignment = safe_float(flow_item.get("institutional_alignment"), 0.0)
+    flow_decision = flow_item.get("decision") or "NO TRADE"
+    fresh = signal_is_fresh(signal)
+    sig_side = ((signal or {}).get("signal") or (signal or {}).get("side") or "NONE").upper()
+    sig_score = safe_float((signal or {}).get("score"), 0.0)
+    sig_ticker = normalize_signal_ticker((signal or {}).get("ticker", ""))
+    ticker = flow_item.get("ticker") or ASSISTANT_TICKER
+
+    if decision_color == "GREEN" and approved_side in {"CALL", "PUT"}:
+        base_state = f"WATCHING_{approved_side}S"
+        base_message = f"Institutional filter approves {approved_side}. Waiting for Pine {approved_side} trigger."
+        base_action = f"Only take {approved_side} setups. Ignore the opposite side unless Flow/GEX flips."
+    elif decision_color == "YELLOW":
+        base_state = "CAUTION"
+        base_message = "Flow/GEX is not clean enough for full-size entries. Wait or reduce size."
+        base_action = "Do not chase. Require a very clean Pine trigger and smaller size."
+    else:
+        base_state = "NO_TRADE"
+        base_message = "Institutional filter is blocking new trades."
+        base_action = "Skip new entries until the dashboard turns green."
+
+    state = base_state
+    message = base_message
+    action = base_action
+    priority = "INFO"
+    alert = False
+    reason = []
+
+    if fresh:
+        reason.append(f"Fresh Pine signal: {sig_side} score {sig_score:g} on {sig_ticker or 'unknown'}")
+        if sig_ticker and sig_ticker != ticker:
+            state = "SIGNAL_TICKER_MISMATCH"
+            message = f"Pine signal was for {sig_ticker}, but assistant is viewing {ticker}."
+            action = "Check the chart/ticker before acting."
+            priority = "WARNING"
+        elif decision_color == "GREEN" and sig_side == approved_side and sig_side in {"CALL", "PUT"}:
+            state = f"ENTER_{approved_side}_NOW"
+            message = f"Pine {approved_side} trigger confirmed by Flow/GEX."
+            action = f"ENTER {approved_side} only if spread/liquidity is acceptable. Scale at +30%, move stop to breakeven, exit on EMA21/VWAP failure."
+            priority = "URGENT"
+            alert = True
+            reason.append("Pine side matches approved institutional side")
+        elif decision_color == "GREEN" and sig_side in {"CALL", "PUT"} and sig_side != approved_side:
+            state = "REJECTED_SIGNAL"
+            message = f"Pine fired {sig_side}, but Flow/GEX only approves {approved_side}."
+            action = "Skip this signal. Do not trade against the institutional filter."
+            priority = "BLOCKED"
+            reason.append("Signal conflicts with Flow/GEX approved side")
+        elif sig_side in {"CALL", "PUT"}:
+            state = "REJECTED_SIGNAL"
+            message = f"Pine fired {sig_side}, but Flow/GEX is not green."
+            action = "Skip or wait for Flow/GEX to improve."
+            priority = "BLOCKED"
+            reason.append("Flow/GEX did not approve the trade")
+
+    reason += (flow_item.get("decision_reasons") or flow_item.get("notes") or [])[:4]
+    return {
+        "state": state,
+        "priority": priority,
+        "message": message,
+        "action": action,
+        "approved_side": approved_side,
+        "flow_decision": flow_decision,
+        "institutional_alignment": round(alignment, 1),
+        "fresh_signal": fresh,
+        "last_signal": signal,
+        "alert": alert,
+        "reasons": reason[:8],
+        "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    }
 def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
     """One ticker snapshot for the /flow dashboard."""
     flow = quantdata_flow_layer(ticker)
@@ -2184,7 +2300,7 @@ FLOW_HTML = """
 <body>
 <header>
   <div><div class="brand">APEX QuantData Flow / GEX</div><div class="sub">Net flow, sweeps, call/put premium and gamma levels from QuantData</div></div>
-  <div class="nav"><button class="btn" onclick="loadFlow()">Refresh</button><a href="/">APEX Dashboard</a><a href="/api/flow">JSON</a></div>
+  <div class="nav"><button class="btn" onclick="loadFlow()">Refresh</button><a href="/assistant">State Assistant</a><a href="/">APEX Dashboard</a><a href="/api/flow">JSON</a></div>
 </header>
 <div class="status" id="status">Loading flow data...</div>
 <div class="grid" id="grid"></div>
@@ -2233,6 +2349,67 @@ loadFlow(); setInterval(loadFlow, 60000);
 </body>
 </html>
 """
+
+
+ASSISTANT_HTML = """
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>APEX Trade Assistant</title>
+<style>
+:root{--bg:#070a10;--panel:#101827;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);color:var(--text);font-family:Arial,Helvetica,sans-serif}.wrap{max-width:980px;margin:0 auto;padding:18px}header{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid var(--border);padding:14px 0 18px}.brand{font-size:25px;font-weight:900}.sub{color:var(--muted);margin-top:5px}.nav a,.btn{color:var(--cyan);text-decoration:none;margin-left:12px}.btn{background:#10243a;border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:18px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:12px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted)}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:22px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}
+</style></head><body><div class="wrap"><header><div><div class="brand">APEX State Assistant</div><div class="sub">Pine trigger + QuantData Flow/GEX confirmation</div></div><div class="nav"><button class="btn" onclick="loadAssistant()">Refresh</button><a href="/flow">Flow/GEX</a><a href="/api/assistant">JSON</a></div></header><div id="app" class="panel">Loading...</div></div>
+<script>
+function cls(p){ if(p==='URGENT') return 'good flash'; if(p==='BLOCKED') return 'bad'; if(p==='WARNING') return 'warn'; if(p==='INFO') return 'info'; return 'warn';}
+function money(v){if(v==null)return'--';let n=Number(v),s=n<0?'-':'',a=Math.abs(n);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';return s+'$'+a.toFixed(0)}
+async function loadAssistant(){const el=document.getElementById('app');try{const r=await fetch('/api/assistant?ticker=SPX',{cache:'no-store'});const d=await r.json();const f=d.flow||{}, a=d.assistant||{};el.innerHTML=`<div class="label">${a.updated_at_et||''}</div><div class="state ${cls(a.priority)}">${a.state||'WAITING'}</div><div class="sub">${a.message||''}</div><div class="action">${a.action||''}</div><div class="grid"><div class="box"><div class="label">Approved Side</div><div class="val">${a.approved_side||'--'}</div></div><div class="box"><div class="label">Alignment</div><div class="val">${a.institutional_alignment||'--'}/100</div></div><div class="box"><div class="label">Net Premium</div><div class="val">${money(f.net_premium)}</div></div><div class="box"><div class="label">Flow / Order</div><div class="val">${f.flow_score||'--'} / ${f.order_flow_score||'--'}</div></div><div class="box"><div class="label">Call / Put Wall</div><div class="val">${f.call_wall||'--'} / ${f.put_wall||'--'}</div></div><div class="box"><div class="label">Last Pine</div><div class="val">${a.fresh_signal && a.last_signal ? a.last_signal.signal+' '+(a.last_signal.score||'') : 'None fresh'}</div></div></div><div class="notes">${(a.reasons||[]).map(x=>'• '+x).join('<br>')}</div>`}catch(e){el.innerHTML='Error: '+e.message}}
+loadAssistant(); setInterval(loadAssistant, 5000);
+</script></body></html>
+"""
+
+@app.route("/assistant")
+def assistant_dashboard():
+    return render_template_string(ASSISTANT_HTML)
+
+@app.route("/api/assistant")
+def api_assistant():
+    ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
+    flow_item = quantdata_flow_snapshot(ticker)
+    with TRADE_ASSISTANT_LOCK:
+        sig = TRADE_ASSISTANT_STATE.get("last_signal")
+    assistant = build_trade_assistant_decision(flow_item, sig)
+    with TRADE_ASSISTANT_LOCK:
+        TRADE_ASSISTANT_STATE.update(assistant)
+        TRADE_ASSISTANT_STATE["last_decision"] = assistant
+    return jsonify({"ok": True, "version": VERSION, "ticker": ticker, "flow": flow_item, "assistant": assistant})
+
+@app.route("/tv_signal", methods=["POST"])
+def tv_signal():
+    payload = request.get_json(silent=True) or {}
+    secret = str(payload.get("secret", ""))
+    if WEBHOOK_SECRET and secret != WEBHOOK_SECRET:
+        return jsonify({"ok": False, "error": "bad secret"}), 403
+    ticker = normalize_signal_ticker(str(payload.get("ticker", ASSISTANT_TICKER)))
+    side = str(payload.get("signal", payload.get("side", "NONE"))).upper()
+    signal = {
+        "ticker": ticker,
+        "signal": side,
+        "direction": str(payload.get("direction", "")),
+        "score": payload.get("score"),
+        "close": payload.get("close"),
+        "timeframe": payload.get("timeframe"),
+        "system": payload.get("system", "APEX_PRO"),
+        "received_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "received_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    }
+    flow_item = quantdata_flow_snapshot(ticker)
+    assistant = build_trade_assistant_decision(flow_item, signal)
+    with TRADE_ASSISTANT_LOCK:
+        TRADE_ASSISTANT_STATE.update(assistant)
+        TRADE_ASSISTANT_STATE["last_signal"] = signal
+        TRADE_ASSISTANT_STATE["last_decision"] = assistant
+    if assistant.get("alert"):
+        send_telegram(f"🚨 APEX ENTER {side} NOW\nTicker: {ticker}\nPine Score: {signal.get('score')}\nInstitutional Alignment: {assistant.get('institutional_alignment')}/100\nAction: {assistant.get('action')}")
+    return jsonify({"ok": True, "version": VERSION, "signal": signal, "flow": flow_item, "assistant": assistant})
 
 @app.route("/flow")
 def flow_dashboard():
