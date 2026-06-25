@@ -13,7 +13,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
-VERSION = "3.4.6_APEX_STATE_ASSISTANT"
+VERSION = "3.5.0_INSTITUTIONAL_TRADE_ASSISTANT"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -28,6 +28,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "tv_institutional_signal").strip()
 SIGNAL_TTL_SECONDS = int(os.getenv("SIGNAL_TTL_SECONDS", "360"))
 ASSISTANT_TICKER = os.getenv("ASSISTANT_TICKER", "SPX").strip().upper()
+ASSISTANT_SIGNAL_VALID_SECONDS = int(os.getenv("ASSISTANT_SIGNAL_VALID_SECONDS", str(SIGNAL_TTL_SECONDS)))
+ASSISTANT_DEFAULT_RISK_POINTS = float(os.getenv("ASSISTANT_DEFAULT_RISK_POINTS", "6"))
+ASSISTANT_TARGET1_R_MULT = float(os.getenv("ASSISTANT_TARGET1_R_MULT", "1.2"))
+ASSISTANT_TARGET2_R_MULT = float(os.getenv("ASSISTANT_TARGET2_R_MULT", "2.0"))
+ASSISTANT_STRIKE_STEP_SPX = int(os.getenv("ASSISTANT_STRIKE_STEP_SPX", "5"))
+ASSISTANT_STRIKE_STEP_ETF = int(os.getenv("ASSISTANT_STRIKE_STEP_ETF", "1"))
 
 ACCOUNT_SIZE = float(os.getenv("ACCOUNT_SIZE", "60000"))
 MAX_RISK_PER_TRADE = float(os.getenv("MAX_RISK_PER_TRADE", "750"))
@@ -746,6 +752,135 @@ def signal_is_fresh(sig: Optional[Dict[str, Any]]) -> bool:
         return False
 
 
+def signal_age_seconds(sig: Optional[Dict[str, Any]]) -> Optional[int]:
+    """Age of latest Pine/TradingView signal in seconds."""
+    if not sig:
+        return None
+    try:
+        ts = dt.datetime.fromisoformat(sig.get("received_at", ""))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=dt.timezone.utc)
+        return max(0, int((dt.datetime.now(dt.timezone.utc) - ts).total_seconds()))
+    except Exception:
+        return None
+
+
+def signal_seconds_remaining(sig: Optional[Dict[str, Any]]) -> int:
+    age = signal_age_seconds(sig)
+    if age is None:
+        return 0
+    return max(0, ASSISTANT_SIGNAL_VALID_SECONDS - age)
+
+
+def assistant_price_from_signal_or_flow(flow_item: Dict[str, Any], signal: Optional[Dict[str, Any]]) -> float:
+    for obj in (signal or {}, flow_item or {}):
+        for key in ("close", "price", "underlying_price", "last", "spot"):
+            v = safe_float(obj.get(key), 0.0)
+            if v > 0:
+                return v
+    zg = safe_float((flow_item or {}).get("zero_gamma"), 0.0)
+    cw = safe_float((flow_item or {}).get("call_wall"), 0.0)
+    pw = safe_float((flow_item or {}).get("put_wall"), 0.0)
+    if zg > 0:
+        return zg
+    vals = [x for x in [cw, pw] if x > 0]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def round_to_strike(price: float, side: str, ticker: str) -> Optional[float]:
+    if price <= 0:
+        return None
+    step = ASSISTANT_STRIKE_STEP_SPX if "SPX" in ticker.upper() else ASSISTANT_STRIKE_STEP_ETF
+    if side == "CALL":
+        return float(((int(price // step) + 1) * step))
+    if side == "PUT":
+        return float((int(price // step) * step))
+    return float(round(price / step) * step)
+
+
+def build_assistant_trade_plan(flow_item: Dict[str, Any], signal: Optional[Dict[str, Any]], side: str, state: str) -> Dict[str, Any]:
+    """Turn institutional bias + Pine trigger into an execution plan.
+
+    This is intentionally a planner, not a broker order. It gives a strike,
+    entry zone, stop, targets, risk notes, and a countdown so stale signals are
+    not chased.
+    """
+    ticker = normalize_signal_ticker((flow_item.get("ticker") or (signal or {}).get("ticker") or ASSISTANT_TICKER))
+    px = assistant_price_from_signal_or_flow(flow_item, signal)
+    side = (side or "NONE").upper()
+    risk_pts = ASSISTANT_DEFAULT_RISK_POINTS
+    if ticker in {"SPY", "QQQ"}:
+        risk_pts = max(0.55, ASSISTANT_DEFAULT_RISK_POINTS / 10.0)
+    # If zero gamma / walls are nearby, use that to avoid oversized stops.
+    zero_gamma = safe_float(flow_item.get("zero_gamma"), 0.0)
+    call_wall = safe_float(flow_item.get("call_wall"), 0.0)
+    put_wall = safe_float(flow_item.get("put_wall"), 0.0)
+    if px > 0 and zero_gamma > 0:
+        risk_pts = max(risk_pts, min(abs(px - zero_gamma) * 0.55, risk_pts * 1.8))
+    if side == "CALL" and px > 0:
+        entry_low, entry_high = px - risk_pts * 0.18, px + risk_pts * 0.18
+        stop = px - risk_pts
+        target1 = px + risk_pts * ASSISTANT_TARGET1_R_MULT
+        target2 = px + risk_pts * ASSISTANT_TARGET2_R_MULT
+    elif side == "PUT" and px > 0:
+        entry_low, entry_high = px - risk_pts * 0.18, px + risk_pts * 0.18
+        stop = px + risk_pts
+        target1 = px - risk_pts * ASSISTANT_TARGET1_R_MULT
+        target2 = px - risk_pts * ASSISTANT_TARGET2_R_MULT
+    else:
+        entry_low = entry_high = stop = target1 = target2 = None
+    strike = round_to_strike(px, side, ticker) if side in {"CALL", "PUT"} else None
+    if strike is not None:
+        suffix = "C" if side == "CALL" else "P"
+        contract_hint = f"{ticker} 0DTE {int(strike) if strike.is_integer() else strike:g}{suffix}"
+    else:
+        contract_hint = "Wait for price/contract selection"
+    remaining = signal_seconds_remaining(signal)
+    expired = bool(signal) and remaining <= 0
+    checklist = [
+        {"label": "Institutional side agrees", "ok": side in {"CALL", "PUT"} and flow_item.get("approved_side") == side},
+        {"label": "Alignment >= 70", "ok": safe_float(flow_item.get("institutional_alignment"), 0) >= 70},
+        {"label": "Flow score >= 70", "ok": safe_float(flow_item.get("flow_score"), 0) >= 70},
+        {"label": "Order flow confirms", "ok": safe_float(flow_item.get("order_flow_score"), 0) >= 70},
+        {"label": "Fresh Pine trigger", "ok": bool(signal) and not expired},
+        {"label": "No stale chase", "ok": not expired},
+    ]
+    plan = {
+        "ticker": ticker,
+        "side": side,
+        "spot_price": round(px, 2) if px else None,
+        "recommended_contract": contract_hint,
+        "recommended_strike": strike,
+        "entry_zone": f"{entry_low:.2f} - {entry_high:.2f}" if entry_low is not None else "Waiting for live price",
+        "stop_price": round(stop, 2) if stop is not None else None,
+        "target_1": round(target1, 2) if target1 is not None else None,
+        "target_2": round(target2, 2) if target2 is not None else None,
+        "risk_points": round(risk_pts, 2),
+        "rr_to_t1": round(ASSISTANT_TARGET1_R_MULT, 2),
+        "rr_to_t2": round(ASSISTANT_TARGET2_R_MULT, 2),
+        "signal_seconds_remaining": remaining,
+        "signal_ttl_seconds": ASSISTANT_SIGNAL_VALID_SECONDS,
+        "signal_expired": expired,
+        "checklist": checklist,
+        "exit_rules": [
+            "Take partials into Target 1 or +20% to +30% option gain.",
+            "Move stop near breakeven after fast profit.",
+            "Exit immediately if Flow/GEX flips against the trade.",
+            "Do not enter after countdown expires; wait for the next Pine trigger.",
+        ],
+        "walls": {"call_wall": call_wall or None, "zero_gamma": zero_gamma or None, "put_wall": put_wall or None},
+    }
+    if state.startswith("ENTER_") and not expired:
+        plan["execution_summary"] = f"{side} setup active: {contract_hint}, entry {plan['entry_zone']}, stop {plan['stop_price']}, targets {plan['target_1']} / {plan['target_2']}."
+    elif expired:
+        plan["execution_summary"] = "Signal expired. Do not chase; wait for next Pine trigger."
+    elif side in {"CALL", "PUT"}:
+        plan["execution_summary"] = f"Bias is {side}. Wait for fresh Pine trigger before entry."
+    else:
+        plan["execution_summary"] = "No trade plan until institutional side is clean."
+    return plan
+
+
 def build_trade_assistant_decision(flow_item: Dict[str, Any], signal: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Combine Flow/GEX institutional filter with the latest Pine webhook signal.
 
@@ -809,7 +944,17 @@ def build_trade_assistant_decision(flow_item: Dict[str, Any], signal: Optional[D
             priority = "BLOCKED"
             reason.append("Flow/GEX did not approve the trade")
 
+    if fresh and signal_seconds_remaining(signal) <= 0:
+        state = "SIGNAL_EXPIRED"
+        message = "The last Pine trigger is stale."
+        action = "Do not chase. Wait for the next trigger."
+        priority = "WARNING"
+        alert = False
+        reason.append("Signal countdown expired")
+
     reason += (flow_item.get("decision_reasons") or flow_item.get("notes") or [])[:4]
+    plan_side = approved_side if approved_side in {"CALL", "PUT"} else sig_side
+    trade_plan = build_assistant_trade_plan(flow_item, signal, plan_side, state)
     return {
         "state": state,
         "priority": priority,
@@ -822,6 +967,10 @@ def build_trade_assistant_decision(flow_item: Dict[str, Any], signal: Optional[D
         "last_signal": signal,
         "alert": alert,
         "reasons": reason[:8],
+        "trade_plan": trade_plan,
+        "checklist": trade_plan.get("checklist", []),
+        "signal_seconds_remaining": trade_plan.get("signal_seconds_remaining", 0),
+        "signal_ttl_seconds": trade_plan.get("signal_ttl_seconds", ASSISTANT_SIGNAL_VALID_SECONDS),
         "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
     }
@@ -2354,14 +2503,16 @@ loadFlow(); setInterval(loadFlow, 60000);
 ASSISTANT_HTML = """
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>APEX Trade Assistant</title>
+<title>APEX 3.5 Trade Assistant</title>
 <style>
-:root{--bg:#070a10;--panel:#101827;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);color:var(--text);font-family:Arial,Helvetica,sans-serif}.wrap{max-width:980px;margin:0 auto;padding:18px}header{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid var(--border);padding:14px 0 18px}.brand{font-size:25px;font-weight:900}.sub{color:var(--muted);margin-top:5px}.nav a,.btn{color:var(--cyan);text-decoration:none;margin-left:12px}.btn{background:#10243a;border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:18px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:12px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted)}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:22px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}
-</style></head><body><div class="wrap"><header><div><div class="brand">APEX State Assistant</div><div class="sub">Pine trigger + QuantData Flow/GEX confirmation</div></div><div class="nav"><button class="btn" onclick="loadAssistant()">Refresh</button><a href="/flow">Flow/GEX</a><a href="/api/assistant">JSON</a></div></header><div id="app" class="panel">Loading...</div></div>
+:root{--bg:#070a10;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);color:var(--text);font-family:Arial,Helvetica,sans-serif}.wrap{max-width:1180px;margin:0 auto;padding:18px}header{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid var(--border);padding:14px 0 18px}.brand{font-size:27px;font-weight:900}.sub{color:var(--muted);margin-top:5px}.nav a,.btn{color:var(--cyan);text-decoration:none;margin-left:12px}.btn{background:#10243a;border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:18px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:10px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:20px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}.planner{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.bigplan{background:#07111f;border:1px solid #2b405d;border-radius:16px;padding:16px}.summary{font-size:22px;font-weight:900;line-height:1.25}.countdown{font-size:34px;font-weight:1000}.check{display:flex;align-items:center;gap:8px;margin:7px 0;color:#cbd8ea}.ok{color:var(--good)}.no{color:var(--bad)}.rules{margin-top:10px;color:#b7c7dd;line-height:1.5}.stale{border-color:rgba(245,158,11,.7)}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}@media(max-width:820px){header{display:block}.nav{margin-top:10px}.planner{grid-template-columns:1fr}.state{font-size:34px}}
+</style></head><body><div class="wrap"><header><div><div class="brand">APEX 3.5 Institutional Trade Assistant</div><div class="sub">Flow/GEX bias + Pine trigger + execution plan + countdown</div></div><div class="nav"><button class="btn" onclick="loadAssistant()">Refresh</button><a href="/flow">Flow/GEX</a><a href="/api/assistant">JSON</a></div></header><div id="app" class="panel">Loading...</div></div>
 <script>
 function cls(p){ if(p==='URGENT') return 'good flash'; if(p==='BLOCKED') return 'bad'; if(p==='WARNING') return 'warn'; if(p==='INFO') return 'info'; return 'warn';}
 function money(v){if(v==null)return'--';let n=Number(v),s=n<0?'-':'',a=Math.abs(n);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';return s+'$'+a.toFixed(0)}
-async function loadAssistant(){const el=document.getElementById('app');try{const r=await fetch('/api/assistant?ticker=SPX',{cache:'no-store'});const d=await r.json();const f=d.flow||{}, a=d.assistant||{};el.innerHTML=`<div class="label">${a.updated_at_et||''}</div><div class="state ${cls(a.priority)}">${a.state||'WAITING'}</div><div class="sub">${a.message||''}</div><div class="action">${a.action||''}</div><div class="grid"><div class="box"><div class="label">Approved Side</div><div class="val">${a.approved_side||'--'}</div></div><div class="box"><div class="label">Alignment</div><div class="val">${a.institutional_alignment||'--'}/100</div></div><div class="box"><div class="label">Net Premium</div><div class="val">${money(f.net_premium)}</div></div><div class="box"><div class="label">Flow / Order</div><div class="val">${f.flow_score||'--'} / ${f.order_flow_score||'--'}</div></div><div class="box"><div class="label">Call / Put Wall</div><div class="val">${f.call_wall||'--'} / ${f.put_wall||'--'}</div></div><div class="box"><div class="label">Last Pine</div><div class="val">${a.fresh_signal && a.last_signal ? a.last_signal.signal+' '+(a.last_signal.score||'') : 'None fresh'}</div></div></div><div class="notes">${(a.reasons||[]).map(x=>'• '+x).join('<br>')}</div>`}catch(e){el.innerHTML='Error: '+e.message}}
+function mmss(s){s=Number(s||0);let m=Math.floor(s/60),r=s%60;return String(m).padStart(2,'0')+':'+String(r).padStart(2,'0')}
+function yes(v){return v?'✅':'❌'}
+async function loadAssistant(){const el=document.getElementById('app');try{const r=await fetch('/api/assistant?ticker=SPX',{cache:'no-store'});const d=await r.json();const f=d.flow||{}, a=d.assistant||{}, p=a.trade_plan||{};const checklist=(a.checklist||[]).map(x=>`<div class="check"><span class="${x.ok?'ok':'no'}">${yes(x.ok)}</span><span>${x.label}</span></div>`).join('');const rules=(p.exit_rules||[]).map(x=>'• '+x).join('<br>');el.className='panel '+(p.signal_expired?'stale':'');el.innerHTML=`<div class="label">${a.updated_at_et||''}</div><div class="state ${cls(a.priority)}">${a.state||'WAITING'}</div><div class="sub">${a.message||''}</div><div class="action">${a.action||''}</div><div class="grid"><div class="box"><div class="label">Approved Side</div><div class="val">${a.approved_side||'--'}</div></div><div class="box"><div class="label">Alignment</div><div class="val">${a.institutional_alignment||'--'}/100</div></div><div class="box"><div class="label">Net Premium</div><div class="val">${money(f.net_premium)}</div></div><div class="box"><div class="label">Flow / Order</div><div class="val">${f.flow_score||'--'} / ${f.order_flow_score||'--'}</div></div><div class="box"><div class="label">Call / Put Wall</div><div class="val">${f.call_wall||'--'} / ${f.put_wall||'--'}</div></div><div class="box"><div class="label">Signal Countdown</div><div class="val countdown">${a.fresh_signal?mmss(p.signal_seconds_remaining):'--'}</div></div></div><div class="planner"><div class="bigplan"><div class="label">Execution Plan</div><div class="summary">${p.execution_summary||'Waiting for setup'}</div><div class="grid" style="margin-top:12px"><div class="box"><div class="label">Contract</div><div class="val">${p.recommended_contract||'--'}</div></div><div class="box"><div class="label">Entry Zone</div><div class="val">${p.entry_zone||'--'}</div></div><div class="box"><div class="label">Stop</div><div class="val">${p.stop_price||'--'}</div></div><div class="box"><div class="label">Targets</div><div class="val">${p.target_1||'--'} / ${p.target_2||'--'}</div></div></div><div class="rules">${rules}</div></div><div class="bigplan"><div class="label">Checklist</div>${checklist}<div class="notes" style="margin-top:12px">${(a.reasons||[]).map(x=>'• '+x).join('<br>')}</div></div></div>`}catch(e){el.innerHTML='Error: '+e.message}}
 loadAssistant(); setInterval(loadAssistant, 5000);
 </script></body></html>
 """
@@ -2408,7 +2559,7 @@ def tv_signal():
         TRADE_ASSISTANT_STATE["last_signal"] = signal
         TRADE_ASSISTANT_STATE["last_decision"] = assistant
     if assistant.get("alert"):
-        send_telegram(f"🚨 APEX ENTER {side} NOW\nTicker: {ticker}\nPine Score: {signal.get('score')}\nInstitutional Alignment: {assistant.get('institutional_alignment')}/100\nAction: {assistant.get('action')}")
+        send_telegram(f"🚨 APEX 3.5 ENTER {side} NOW\nTicker: {ticker}\nPine Score: {signal.get('score')}\nInstitutional Alignment: {assistant.get('institutional_alignment')}/100\nPlan: {(assistant.get('trade_plan') or {}).get('execution_summary')}\nCountdown: {(assistant.get('trade_plan') or {}).get('signal_seconds_remaining')}s")
     return jsonify({"ok": True, "version": VERSION, "signal": signal, "flow": flow_item, "assistant": assistant})
 
 @app.route("/flow")
