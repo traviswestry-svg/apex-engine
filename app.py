@@ -2066,6 +2066,1081 @@ def start_background_scanner() -> None:
             STATE["last_scan_status"] = "Background scanner started; first scan pending..."
         threading.Thread(target=scanner_loop, name="apex-scanner", daemon=True).start()
 
+
+# =============================================================================
+# APEX 4.5 INSTITUTIONAL OS — NEW ENGINES
+# Additive layer on top of 3.5.1. All existing functions preserved above.
+# =============================================================================
+
+VERSION_45 = "4.5.0_INSTITUTIONAL_OS"
+
+# ---------------------------------------------------------------------------
+# New env vars for v4.5 features
+# ---------------------------------------------------------------------------
+STORY_ENABLED = os.getenv("STORY_ENABLED", "true").lower() == "true"
+HEATMAP_TICKERS = [x.strip().upper() for x in os.getenv("HEATMAP_TICKERS", "SPX,SPY,QQQ,NVDA,TSLA,IWM").split(",") if x.strip()]
+POSITION_MONITOR_ENABLED = os.getenv("POSITION_MONITOR_ENABLED", "true").lower() == "true"
+GAMEPLAN_TICKERS = [x.strip().upper() for x in os.getenv("GAMEPLAN_TICKERS", "SPX,SPY,QQQ").split(",") if x.strip()]
+
+# In-memory store for the position monitor (does not need persistence across restarts)
+ACTIVE_POSITION: Dict[str, Any] = {}
+ACTIVE_POSITION_LOCK = threading.RLock()
+
+# In-memory store for the daily game plan (refreshed each premarket)
+DAILY_GAMEPLAN: Dict[str, Any] = {}
+DAILY_GAMEPLAN_LOCK = threading.RLock()
+
+# ---------------------------------------------------------------------------
+# Confidence Decay Engine
+# Scores decay over time after a signal. Returned by /api/assistant already
+# via signal_seconds_remaining; this adds a richer decay curve.
+# ---------------------------------------------------------------------------
+
+def confidence_decay(base_confidence: float, signal_age_secs: int, ttl_secs: int) -> Dict[str, Any]:
+    """
+    Applies exponential-style decay to a base confidence score.
+    Returns current confidence, % remaining, and a decay status label.
+    """
+    if ttl_secs <= 0 or signal_age_secs < 0:
+        return {
+            "base_confidence": round(base_confidence, 1),
+            "current_confidence": round(base_confidence, 1),
+            "decay_pct": 100.0,
+            "time_remaining_secs": 0,
+            "decay_status": "NO_SIGNAL",
+        }
+    elapsed_ratio = min(1.0, signal_age_secs / ttl_secs)
+    # Non-linear decay: fast initial drop, slower toward expiry
+    # At 0% elapsed → 100% confidence, at 50% elapsed → ~75%, at 100% → 0%
+    decay_factor = 1.0 - (elapsed_ratio ** 0.6)
+    current = round(base_confidence * decay_factor, 1)
+    time_remaining = max(0, ttl_secs - signal_age_secs)
+    if elapsed_ratio >= 1.0:
+        status = "EXPIRED"
+    elif elapsed_ratio >= 0.75:
+        status = "FADING"
+    elif elapsed_ratio >= 0.50:
+        status = "WEAKENING"
+    elif elapsed_ratio >= 0.25:
+        status = "ACTIVE"
+    else:
+        status = "FRESH"
+    return {
+        "base_confidence": round(base_confidence, 1),
+        "current_confidence": current,
+        "decay_pct": round(decay_factor * 100, 1),
+        "time_remaining_secs": time_remaining,
+        "decay_status": status,
+        "elapsed_ratio": round(elapsed_ratio, 3),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Institutional Story Engine
+# The killer feature: turns raw data into a timestamped narrative.
+# ---------------------------------------------------------------------------
+
+def build_institutional_story(ticker: str, flow_item: Dict[str, Any], signal: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Builds a timestamped institutional narrative from flow/gex/order data.
+    Instead of showing numbers, it tells the story of what institutions are doing.
+    Each chapter has a timestamp (wall-clock ET), a short description, a color
+    (green=bullish, blue=informational, amber=caution, red=bearish), and a
+    significance weight.
+    """
+    now = now_et()
+    story_chapters: List[Dict[str, Any]] = []
+    narrative_lines: List[str] = []
+    bias = (flow_item.get("bias") or "MIXED").upper()
+    approved_side = (flow_item.get("approved_side") or "NONE").upper()
+    alignment = safe_float(flow_item.get("institutional_alignment"), 0.0)
+    flow_score = safe_float(flow_item.get("flow_score"), 50.0)
+    order_score = safe_float(flow_item.get("order_flow_score"), 50.0)
+    gex_score = safe_float(flow_item.get("gex_score"), 50.0)
+    net_premium = safe_float(flow_item.get("net_premium"), 0.0)
+    sweep_count = safe_float(flow_item.get("sweep_count"), 0)
+    call_wall = flow_item.get("call_wall")
+    put_wall = flow_item.get("put_wall")
+    zero_gamma = flow_item.get("zero_gamma")
+    stock_price = flow_item.get("stock_price")
+
+    # Chapter 1: Opening institutional position
+    if net_premium != 0:
+        side_word = "accumulating" if net_premium > 0 else "distributing"
+        premium_abs = abs(net_premium)
+        size_label = "aggressively" if premium_abs > 10_000_000 else "steadily" if premium_abs > 2_000_000 else "quietly"
+        color = "#0ca30c" if net_premium > 0 else "#e34948"
+        story_chapters.append({
+            "time": now.strftime("%H:%M"),
+            "chapter": "Net flow",
+            "text": f"Institutions {size_label} {side_word} on {ticker}. Net premium {'+' if net_premium > 0 else ''}{net_premium:,.0f}.",
+            "color": color,
+            "significance": min(abs(net_premium) / 5_000_000, 3.0),
+        })
+        narrative_lines.append(f"Institutions are {side_word} at a net {'+' if net_premium > 0 else ''}{net_premium / 1_000_000:.1f}M premium level.")
+
+    # Chapter 2: GEX / dealer positioning
+    if gex_score >= 60:
+        gex_narrative = f"Dealers are long gamma, creating a magnetic pin effect near {zero_gamma or stock_price}."
+        color = "#2a78d6"
+        story_chapters.append({
+            "time": now.strftime("%H:%M"),
+            "chapter": "Gamma positioning",
+            "text": gex_narrative,
+            "color": color,
+            "significance": 2.0,
+        })
+        narrative_lines.append(gex_narrative)
+    elif gex_score <= 40:
+        gex_narrative = f"Dealers are short gamma — price can trend more freely. Expect larger intraday swings."
+        story_chapters.append({
+            "time": now.strftime("%H:%M"),
+            "chapter": "Gamma positioning",
+            "text": gex_narrative,
+            "color": "#fab219",
+            "significance": 2.0,
+        })
+        narrative_lines.append(gex_narrative)
+
+    # Chapter 3: Call/Put walls as context
+    if call_wall and put_wall and stock_price:
+        dist_to_call = round(abs(call_wall - stock_price), 2)
+        dist_to_put = round(abs(stock_price - put_wall), 2)
+        wall_text = f"Call wall at {call_wall} (+{dist_to_call} pts). Put wall at {put_wall} (-{dist_to_put} pts)."
+        story_chapters.append({
+            "time": now.strftime("%H:%M"),
+            "chapter": "Key levels",
+            "text": wall_text,
+            "color": "#2a78d6",
+            "significance": 1.5,
+        })
+        narrative_lines.append(f"Price is range-bound between the put wall ({put_wall}) and call wall ({call_wall}).")
+
+    # Chapter 4: Order flow (sweeps, large prints)
+    if order_score >= 70:
+        sweep_text = f"Order flow is directionally bullish." if bias == "BULLISH" else "Order flow is directionally bearish."
+        if sweep_count >= 5:
+            sweep_text += f" {int(sweep_count)} sweeps detected — aggressive institutional urgency."
+        story_chapters.append({
+            "time": now.strftime("%H:%M"),
+            "chapter": "Order flow",
+            "text": sweep_text,
+            "color": "#0ca30c" if bias == "BULLISH" else "#e34948",
+            "significance": 2.5,
+        })
+        narrative_lines.append(sweep_text)
+    elif order_score <= 35:
+        story_chapters.append({
+            "time": now.strftime("%H:%M"),
+            "chapter": "Order flow",
+            "text": "Order flow is weak or opposing. Institutional confirmation is absent.",
+            "color": "#e34948",
+            "significance": 1.5,
+        })
+
+    # Chapter 5: Fresh Pine trigger (if signal present)
+    if signal and signal_is_fresh(signal):
+        sig_side = (signal.get("signal") or signal.get("side") or "NONE").upper()
+        sig_score = safe_float(signal.get("score"), 0.0)
+        remaining = signal_seconds_remaining(signal)
+        if sig_side in ("CALL", "PUT") and approved_side == sig_side:
+            story_chapters.append({
+                "time": signal.get("received_at_et", now.strftime("%H:%M:%S ET")).split(" ")[1][:5] if signal.get("received_at_et") else now.strftime("%H:%M"),
+                "chapter": "Pine trigger",
+                "text": f"Pine fired a {sig_side} signal (score {sig_score:g}). Institutional side agrees. Countdown: {remaining}s.",
+                "color": "#0ca30c",
+                "significance": 3.0,
+            })
+            narrative_lines.append(f"Pine trigger confirmed on the {sig_side} side with {remaining}s remaining.")
+        elif sig_side in ("CALL", "PUT") and approved_side != sig_side:
+            story_chapters.append({
+                "time": signal.get("received_at_et", now.strftime("%H:%M:%S ET")).split(" ")[1][:5] if signal.get("received_at_et") else now.strftime("%H:%M"),
+                "chapter": "Pine trigger — REJECTED",
+                "text": f"Pine fired {sig_side} but institutions approve {approved_side}. Signal rejected.",
+                "color": "#e34948",
+                "significance": 3.0,
+            })
+            narrative_lines.append(f"Pine {sig_side} signal was rejected — institutional flow demands {approved_side}.")
+
+    # Chapter 6: Overall institutional verdict
+    if approved_side in ("CALL", "PUT"):
+        verdict_text = f"Institutional verdict: {approved_side}S. Alignment score {alignment:.0f}/100. Wait for Pine confirmation."
+        verdict_color = "#0ca30c" if alignment >= 70 else "#fab219"
+    else:
+        verdict_text = f"Institutional verdict: NO TRADE. Mixed or insufficient institutional conviction ({alignment:.0f}/100)."
+        verdict_color = "#e34948" if alignment < 40 else "#fab219"
+
+    story_chapters.append({
+        "time": now.strftime("%H:%M"),
+        "chapter": "Verdict",
+        "text": verdict_text,
+        "color": verdict_color,
+        "significance": 3.0,
+    })
+    narrative_lines.append(verdict_text)
+
+    # Sort chapters by significance (most important last, for narrative flow)
+    story_chapters.sort(key=lambda c: c["significance"])
+
+    # Build the full prose narrative paragraph
+    full_narrative = " ".join(narrative_lines)
+
+    return {
+        "ticker": ticker,
+        "chapters": story_chapters,
+        "full_narrative": full_narrative,
+        "approved_side": approved_side,
+        "alignment": round(alignment, 1),
+        "bias": bias,
+        "chapter_count": len(story_chapters),
+        "generated_at": now.strftime("%Y-%m-%d %H:%M:%S ET"),
+        "generated_at_iso": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Institutional Heat Map Engine
+# Scores multiple tickers quickly for a side-by-side comparison.
+# ---------------------------------------------------------------------------
+
+def _heatmap_quick_score(ticker: str) -> Dict[str, Any]:
+    """
+    Quick institutional score for one ticker — optimized for parallel heatmap calls.
+    Lighter than the full scanner; only calls Flow/GEX, not dark-pool levels or catalyst.
+    """
+    try:
+        flow_item = quantdata_flow_snapshot(ticker)
+        alignment = safe_float(flow_item.get("institutional_alignment"), 0.0)
+        approved_side = flow_item.get("approved_side") or "NONE"
+        decision_color = flow_item.get("decision_color") or "RED"
+        bias = flow_item.get("bias") or "MIXED"
+        if decision_color == "GREEN" and alignment >= 80:
+            action = "ENTER"
+            action_class = "enter"
+        elif decision_color == "GREEN" or alignment >= 65:
+            action = "WATCH"
+            action_class = "watch"
+        elif decision_color == "YELLOW" or alignment >= 45:
+            action = "WAIT"
+            action_class = "wait"
+        else:
+            action = "NO TRADE"
+            action_class = "no"
+        return {
+            "ticker": ticker,
+            "score": round(alignment, 0),
+            "approved_side": approved_side,
+            "action": action,
+            "action_class": action_class,
+            "bias": bias,
+            "decision_color": decision_color,
+            "flow_score": flow_item.get("flow_score"),
+            "gex_score": flow_item.get("gex_score"),
+            "call_wall": flow_item.get("call_wall"),
+            "put_wall": flow_item.get("put_wall"),
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "ticker": ticker, "score": 0, "approved_side": "NONE",
+            "action": "ERROR", "action_class": "no", "bias": "MIXED",
+            "decision_color": "RED", "flow_score": None, "gex_score": None,
+            "call_wall": None, "put_wall": None, "error": str(e),
+        }
+
+
+def build_institutional_heatmap(tickers: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Parallel heatmap scan across multiple tickers.
+    Returns sorted list (best score first) with action labels.
+    """
+    target_tickers = tickers or HEATMAP_TICKERS
+    results: List[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=min(len(target_tickers), 6), thread_name_prefix="apex-heatmap") as pool:
+        futures = {pool.submit(_heatmap_quick_score, t): t for t in target_tickers}
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as e:
+                results.append({"ticker": futures[future], "score": 0, "action": "ERROR", "error": str(e)})
+    results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    best = results[0] if results else {}
+    return {
+        "tickers": results,
+        "best_ticker": best.get("ticker"),
+        "best_score": best.get("score"),
+        "best_action": best.get("action"),
+        "generated_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "generated_at_iso": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Daily Game Plan Engine
+# Pre-market or early session bias summary for the day.
+# ---------------------------------------------------------------------------
+
+def build_daily_gameplan(tickers: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Generates the daily institutional game plan before or at open.
+    Aggregates Flow/GEX for primary tickers and produces:
+    - Today's bias (BULLISH / BEARISH / MIXED)
+    - Key levels to watch
+    - Best window estimate (based on session position)
+    - Expected volatility label (from GEX scores)
+    - Watchlist for the day
+    """
+    target = tickers or GAMEPLAN_TICKERS
+    session_ctx = market_session_context()
+    heatmap = build_institutional_heatmap(target)
+    items = heatmap.get("tickers", [])
+
+    # Aggregate bias
+    bullish_count = sum(1 for i in items if i.get("approved_side") == "CALL")
+    bearish_count = sum(1 for i in items if i.get("approved_side") == "PUT")
+    total = len(items) or 1
+    if bullish_count / total >= 0.60:
+        today_bias = "BULLISH"
+        bias_color = "#0ca30c"
+    elif bearish_count / total >= 0.60:
+        today_bias = "BEARISH"
+        bias_color = "#e34948"
+    else:
+        today_bias = "MIXED"
+        bias_color = "#fab219"
+
+    # Aggregate GEX for expected volatility
+    gex_scores = [safe_float(i.get("gex_score"), 50.0) for i in items]
+    avg_gex = sum(gex_scores) / len(gex_scores) if gex_scores else 50.0
+    if avg_gex >= 65:
+        expected_vol = "LOW — Dealers long gamma, expect chop/pin"
+    elif avg_gex <= 35:
+        expected_vol = "HIGH — Dealers short gamma, expect trend moves"
+    else:
+        expected_vol = "MEDIUM — Mixed gamma, moderate expected range"
+
+    # Best window: use session context
+    n = now_et()
+    hour = n.hour
+    if hour < 10:
+        best_window = "9:45 – 10:30 (first hour momentum)"
+    elif hour < 12:
+        best_window = "Current: midmorning. Best remaining: 11:00 – 11:45"
+    elif hour < 14:
+        best_window = "Midday chop zone. Wait for 2:00 PM ET re-acceleration"
+    else:
+        best_window = "2:00 – 3:30 PM ET power hour"
+
+    # Key levels from primary ticker (first in list)
+    primary = items[0] if items else {}
+    key_levels = []
+    if primary.get("call_wall"):
+        key_levels.append({"label": "Call wall", "value": primary["call_wall"], "ticker": primary.get("ticker", "")})
+    if primary.get("put_wall"):
+        key_levels.append({"label": "Put wall", "value": primary["put_wall"], "ticker": primary.get("ticker", "")})
+
+    # Watchlist: tickers with ENTER or WATCH action
+    watchlist = [i for i in items if i.get("action") in ("ENTER", "WATCH")]
+
+    plan = {
+        "date": now_et().strftime("%Y-%m-%d"),
+        "generated_at": now_et().strftime("%H:%M ET"),
+        "session": session_ctx.get("session"),
+        "today_bias": today_bias,
+        "bias_color": bias_color,
+        "expected_volatility": expected_vol,
+        "best_window": best_window,
+        "key_levels": key_levels,
+        "watchlist": watchlist,
+        "tickers_analyzed": len(items),
+        "bullish_count": bullish_count,
+        "bearish_count": bearish_count,
+        "avg_gex_score": round(avg_gex, 1),
+        "heatmap": items,
+    }
+
+    with DAILY_GAMEPLAN_LOCK:
+        DAILY_GAMEPLAN.update(plan)
+
+    return plan
+
+
+# ---------------------------------------------------------------------------
+# Position Monitor Engine
+# After entry, monitors the open position against live flow and GEX.
+# ---------------------------------------------------------------------------
+
+def set_active_position(ticker: str, side: str, entry_price: float, stop: float, target1: float, target2: float) -> Dict[str, Any]:
+    """Record an open position for monitoring."""
+    pos = {
+        "ticker": ticker.upper(),
+        "side": side.upper(),
+        "entry_price": entry_price,
+        "stop": stop,
+        "target1": target1,
+        "target2": target2,
+        "entered_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "entered_at_iso": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "status": "OPEN",
+        "last_checked_at": None,
+        "last_recommendation": None,
+    }
+    with ACTIVE_POSITION_LOCK:
+        ACTIVE_POSITION.update(pos)
+    return pos
+
+
+def monitor_active_position() -> Dict[str, Any]:
+    """
+    Checks the currently tracked position against live Flow/GEX.
+    Returns: HOLD, TAKE_PARTIAL, EXIT, or NO_POSITION.
+    """
+    with ACTIVE_POSITION_LOCK:
+        pos = dict(ACTIVE_POSITION)
+
+    if not pos or pos.get("status") != "OPEN":
+        return {"status": "NO_POSITION", "recommendation": "No active position being tracked."}
+
+    ticker = pos["ticker"]
+    side = pos["side"]
+    entry = safe_float(pos.get("entry_price"), 0.0)
+    stop = safe_float(pos.get("stop"), 0.0)
+    t1 = safe_float(pos.get("target1"), 0.0)
+    t2 = safe_float(pos.get("target2"), 0.0)
+
+    flow_item = quantdata_flow_snapshot(ticker)
+    current_price = safe_float(flow_item.get("stock_price") or flow_item.get("zero_gamma"), 0.0)
+    approved_side = (flow_item.get("approved_side") or "NONE").upper()
+    alignment = safe_float(flow_item.get("institutional_alignment"), 0.0)
+    gex_score = safe_float(flow_item.get("gex_score"), 50.0)
+
+    reasons = []
+    recommendation = "HOLD"
+    priority = "INFO"
+
+    # Check if flow has flipped against us
+    if approved_side != side and approved_side in ("CALL", "PUT"):
+        reasons.append(f"Flow/GEX now approves {approved_side}, opposing our {side} position.")
+        recommendation = "EXIT"
+        priority = "URGENT"
+
+    # Check alignment drop
+    if alignment < 45:
+        reasons.append(f"Institutional alignment dropped to {alignment:.0f}/100 — conviction is fading.")
+        recommendation = "TAKE_PARTIAL" if recommendation == "HOLD" else recommendation
+        priority = "WARNING" if priority == "INFO" else priority
+
+    # Check GEX flip risk
+    if gex_score <= 35 and side == "CALL":
+        reasons.append("Dealers are now short gamma — directional protection is weakening.")
+        recommendation = "TAKE_PARTIAL" if recommendation == "HOLD" else recommendation
+
+    # Price target checks (if we have current price)
+    if current_price > 0 and entry > 0:
+        if side == "CALL":
+            if current_price >= t2:
+                reasons.append(f"Price {current_price:.2f} has reached Target 2 ({t2:.2f}).")
+                recommendation = "EXIT"
+                priority = "URGENT"
+            elif current_price >= t1:
+                reasons.append(f"Price {current_price:.2f} has reached Target 1 ({t1:.2f}). Consider partials.")
+                recommendation = "TAKE_PARTIAL" if recommendation == "HOLD" else recommendation
+            elif current_price <= stop:
+                reasons.append(f"Price {current_price:.2f} has hit stop ({stop:.2f}).")
+                recommendation = "EXIT"
+                priority = "URGENT"
+        elif side == "PUT":
+            if current_price <= t2:
+                reasons.append(f"Price {current_price:.2f} has reached Target 2 ({t2:.2f}).")
+                recommendation = "EXIT"
+                priority = "URGENT"
+            elif current_price <= t1:
+                reasons.append(f"Price {current_price:.2f} has reached Target 1 ({t1:.2f}). Consider partials.")
+                recommendation = "TAKE_PARTIAL" if recommendation == "HOLD" else recommendation
+            elif current_price >= stop:
+                reasons.append(f"Price {current_price:.2f} has hit stop ({stop:.2f}).")
+                recommendation = "EXIT"
+                priority = "URGENT"
+
+    if not reasons:
+        reasons.append("Flow/GEX remains aligned. Institutional support intact. Hold.")
+
+    result = {
+        "status": "MONITORING",
+        "position": pos,
+        "current_price": current_price,
+        "approved_side": approved_side,
+        "alignment": alignment,
+        "gex_score": gex_score,
+        "recommendation": recommendation,
+        "priority": priority,
+        "reasons": reasons,
+        "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "flow_snapshot": {
+            "bias": flow_item.get("bias"),
+            "decision_color": flow_item.get("decision_color"),
+            "flow_score": flow_item.get("flow_score"),
+            "order_flow_score": flow_item.get("order_flow_score"),
+        },
+    }
+
+    with ACTIVE_POSITION_LOCK:
+        ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
+        ACTIVE_POSITION["last_recommendation"] = recommendation
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Performance Dashboard Engine (pulls from tracking DB)
+# ---------------------------------------------------------------------------
+
+def build_performance_dashboard() -> Dict[str, Any]:
+    """
+    Builds a comprehensive performance summary from the tracking DB.
+    Returns win rate, average hold, best setup, PnL estimates.
+    This is the /api/performance endpoint response.
+    """
+    if not TRACKING_ENABLED or not TRACKING_AVAILABLE:
+        return {
+            "enabled": False,
+            "message": "Tracking not enabled or DB unavailable.",
+            "summary": {},
+            "monthly": [],
+            "best_setup": None,
+        }
+    try:
+        conn = get_db_connection()
+        rows = conn.execute(
+            "SELECT * FROM tracked_ideas WHERE outcome IS NOT NULL"
+        ).fetchall()
+        open_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM tracked_ideas WHERE outcome IS NULL"
+        ).fetchone()["c"]
+        conn.close()
+    except Exception as e:
+        return {"enabled": True, "error": str(e), "summary": {}, "monthly": [], "best_setup": None}
+
+    if not rows:
+        return {
+            "enabled": True,
+            "message": "No resolved trades yet. Performance data accumulates as trades close.",
+            "open_positions": open_count,
+            "summary": {},
+            "monthly": {},
+            "best_setup": None,
+        }
+
+    total = len(rows)
+    wins = [r for r in rows if r["outcome"] in ("T1", "T2")]
+    stops = [r for r in rows if r["outcome"] == "STOP"]
+    expired = [r for r in rows if r["outcome"] == "EXPIRED"]
+    win_rate = round(len(wins) / (total - len(expired)) * 100, 1) if (total - len(expired)) > 0 else 0.0
+
+    win_days = [r["trading_days_to_resolution"] for r in wins if r["trading_days_to_resolution"]]
+    stop_days = [r["trading_days_to_resolution"] for r in stops if r["trading_days_to_resolution"]]
+    avg_win_hold = round(statistics.mean(win_days), 1) if win_days else None
+    avg_stop_hold = round(statistics.mean(stop_days), 1) if stop_days else None
+
+    # Best setup by win rate (bucket + direction with >= 3 trades)
+    from collections import defaultdict
+    bucket_stats: Dict[str, Dict] = defaultdict(lambda: {"wins": 0, "total": 0, "label": ""})
+    for r in rows:
+        if r["outcome"] == "EXPIRED":
+            continue
+        key = f"{score_bucket(r['final_score'] or 0)} {r['direction']}"
+        bucket_stats[key]["wins"] += 1 if r["outcome"] in ("T1", "T2") else 0
+        bucket_stats[key]["total"] += 1
+        bucket_stats[key]["label"] = key
+    best_setup = None
+    best_wr = 0.0
+    for key, s in bucket_stats.items():
+        if s["total"] >= 3:
+            wr = s["wins"] / s["total"]
+            if wr > best_wr:
+                best_wr = wr
+                best_setup = {"setup": key, "win_rate_pct": round(wr * 100, 1), "sample": s["total"]}
+
+    # Monthly summary
+    monthly: Dict[str, Dict] = {}
+    for r in rows:
+        try:
+            month = dt.datetime.fromisoformat(r["opened_at"]).strftime("%Y-%m")
+        except Exception:
+            month = "unknown"
+        m = monthly.setdefault(month, {"wins": 0, "stops": 0, "expired": 0, "total": 0})
+        m["total"] += 1
+        if r["outcome"] in ("T1", "T2"):
+            m["wins"] += 1
+        elif r["outcome"] == "STOP":
+            m["stops"] += 1
+        else:
+            m["expired"] += 1
+
+    return {
+        "enabled": True,
+        "summary": {
+            "total_trades": total,
+            "wins": len(wins),
+            "stops": len(stops),
+            "expired": len(expired),
+            "win_rate_pct": win_rate,
+            "avg_hold_win_days": avg_win_hold,
+            "avg_hold_stop_days": avg_stop_hold,
+            "open_positions": open_count,
+        },
+        "best_setup": best_setup,
+        "monthly": [{"month": k, **v} for k, v in sorted(monthly.items())],
+        "generated_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Institutional OS Master Endpoint
+# Single call that returns everything the APEX Institutional OS dashboard needs.
+# ---------------------------------------------------------------------------
+
+def build_institutional_os(ticker: str, include_heatmap: bool = True) -> Dict[str, Any]:
+    """
+    Master endpoint data for the APEX Institutional OS dashboard.
+    Calls Flow/GEX, builds Story, applies Decay, optionally runs Heatmap.
+    All in one shot for the dashboard's polling loop.
+    """
+    with TRADE_ASSISTANT_LOCK:
+        last_signal = TRADE_ASSISTANT_STATE.get("last_signal")
+
+    # Core flow/gex snapshot
+    flow_item = quantdata_flow_snapshot(ticker)
+
+    # Build assistant decision (same as /api/assistant)
+    assistant = build_trade_assistant_decision(flow_item, last_signal)
+
+    # Confidence decay
+    alignment = safe_float(flow_item.get("institutional_alignment"), 50.0)
+    age_secs = signal_age_seconds(last_signal) or 0
+    decay = confidence_decay(alignment, age_secs, ASSISTANT_SIGNAL_VALID_SECONDS)
+
+    # Institutional story
+    story = build_institutional_story(ticker, flow_item, last_signal)
+
+    # Heat map (parallel, can be disabled per-call)
+    heatmap_data = build_institutional_heatmap() if include_heatmap else None
+
+    # Session context
+    session_ctx = market_session_context()
+
+    # Position monitor
+    position_status = monitor_active_position() if POSITION_MONITOR_ENABLED else {"status": "DISABLED"}
+
+    return {
+        "version": VERSION_45,
+        "ticker": ticker,
+        "updated_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "updated_at_iso": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "session": session_ctx,
+        "decision": {
+            "state": assistant.get("state"),
+            "priority": assistant.get("priority"),
+            "message": assistant.get("message"),
+            "action": assistant.get("action"),
+            "approved_side": assistant.get("approved_side"),
+            "institutional_alignment": assistant.get("institutional_alignment"),
+            "fresh_signal": assistant.get("fresh_signal"),
+            "signal_seconds_remaining": assistant.get("signal_seconds_remaining"),
+            "signal_ttl_seconds": assistant.get("signal_ttl_seconds"),
+            "checklist": assistant.get("checklist"),
+            "trade_plan": assistant.get("trade_plan"),
+        },
+        "confidence_decay": decay,
+        "flow": {
+            "ticker": ticker,
+            "bias": flow_item.get("bias"),
+            "decision_color": flow_item.get("decision_color"),
+            "flow_score": flow_item.get("flow_score"),
+            "order_flow_score": flow_item.get("order_flow_score"),
+            "net_premium": flow_item.get("net_premium"),
+            "sweep_count": flow_item.get("sweep_count"),
+            "gex_score": flow_item.get("gex_score"),
+            "call_wall": flow_item.get("call_wall"),
+            "put_wall": flow_item.get("put_wall"),
+            "zero_gamma": flow_item.get("zero_gamma"),
+            "stock_price": flow_item.get("stock_price"),
+            "notes": flow_item.get("notes", [])[:6],
+        },
+        "story": story,
+        "heatmap": heatmap_data,
+        "position_monitor": position_status,
+        "last_signal": last_signal,
+    }
+
+
+# ---------------------------------------------------------------------------
+# New v4.5 HTML Template for the APEX Institutional OS Dashboard
+# Replaces ASSISTANT_HTML with the full OS experience.
+# ---------------------------------------------------------------------------
+
+APEX_OS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>APEX Institutional OS</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#05080f;--surf:#0d141f;--surf2:#121c2b;--bdr:#1c2940;
+  --text:#e8f1fc;--muted:#8295b3;--faint:#5a6b87;
+  --blue:#38bdf8;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--purple:#a78bfa;
+  --mono:'JetBrains Mono',ui-monospace,monospace;--sans:'Inter',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1400px;margin:0 auto;padding:16px 16px 60px}
+.topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;padding:12px 16px;background:var(--surf);border:1px solid var(--bdr);border-radius:12px}
+.logo{font-family:var(--mono);font-size:18px;font-weight:800;color:var(--blue)}
+.logo span{font-size:12px;font-weight:400;color:var(--faint);margin-left:8px}
+.top-meta{display:flex;align-items:center;gap:16px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.spx-price{color:var(--text);font-weight:700;font-size:14px}
+.session-pill{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--bdr)}
+.sess-open{color:var(--green);border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.08)}
+.sess-closed{color:var(--amber);border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.08)}
+.dot-live{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:pulse 1.4s ease-in-out infinite;display:inline-block;margin-right:5px}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.6)}50%{box-shadow:0 0 0 6px rgba(56,189,248,0)}}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px}
+.card{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:14px 16px}
+.card-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--faint);margin-bottom:10px}
+.decision-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px;font-weight:700;font-size:14px;margin-bottom:12px;font-family:var(--mono)}
+.badge-call{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.3)}
+.badge-put{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+.badge-caution{background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.3)}
+.badge-neutral{background:rgba(130,149,179,.1);color:var(--muted);border:1px solid var(--bdr)}
+.readiness-num{font-size:54px;font-weight:800;line-height:1;font-family:var(--mono)}
+.num-green{color:var(--green)}
+.num-amber{color:var(--amber)}
+.num-red{color:var(--red)}
+.gate-row{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);margin:3px 0}
+.gate-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.gd-on{background:var(--green)}
+.gd-warn{background:var(--amber)}
+.gd-off{background:var(--red)}
+.decay-bar{height:4px;border-radius:2px;background:var(--surf2);overflow:hidden;margin:6px 0 2px}
+.decay-fill{height:100%;border-radius:2px;transition:width .5s;background:var(--blue)}
+.decay-meta{display:flex;justify-content:space-between;font-size:10px;color:var(--faint)}
+.story-entry{display:flex;gap:10px;align-items:flex-start;margin-bottom:8px}
+.story-time{font-family:var(--mono);font-size:10px;color:var(--faint);flex-shrink:0;width:36px;padding-top:2px}
+.story-connector{display:flex;flex-direction:column;align-items:center;flex-shrink:0}
+.s-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:2px}
+.s-line{width:1px;flex:1;min-height:14px;background:var(--bdr);margin:3px 0}
+.story-text{font-size:12px;color:var(--muted);line-height:1.6;padding-bottom:4px}
+.coach-block{font-size:13px;color:var(--muted);line-height:1.75;padding:11px 13px;background:var(--surf2);border-radius:8px;border-left:3px solid var(--blue)}
+.level-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--bdr);font-size:12px}
+.level-label{color:var(--faint)}
+.level-val{font-family:var(--mono);font-weight:500}
+.badge-small{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:700}
+.bs-bull{background:rgba(34,197,94,.12);color:var(--green)}
+.bs-bear{background:rgba(239,68,68,.12);color:var(--red)}
+.bs-neut{background:rgba(130,149,179,.1);color:var(--muted)}
+.heat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.heat-item{padding:10px;border-radius:8px;text-align:center;border:1px solid var(--bdr)}
+.heat-ticker{font-family:var(--mono);font-size:12px;font-weight:700}
+.heat-score{font-size:20px;font-weight:800;font-family:var(--mono)}
+.heat-action{font-size:10px;font-weight:700;margin-top:2px;text-transform:uppercase}
+.h-enter{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.25)}
+.h-enter .heat-ticker,.h-enter .heat-score,.h-enter .heat-action{color:var(--green)}
+.h-watch{background:rgba(56,189,248,.06);border-color:rgba(56,189,248,.2)}
+.h-watch .heat-ticker,.h-watch .heat-score,.h-watch .heat-action{color:var(--blue)}
+.h-wait{background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)}
+.h-wait .heat-ticker,.h-wait .heat-score,.h-wait .heat-action{color:var(--amber)}
+.h-no{background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2)}
+.h-no .heat-ticker,.h-no .heat-score,.h-no .heat-action{color:var(--red)}
+.planner-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pl-item{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid var(--bdr)}
+.pl-key{color:var(--faint)}
+.pl-val{font-family:var(--mono);font-weight:500}
+.flow-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.flow-card{background:var(--surf2);border:1px solid var(--bdr);border-radius:8px;padding:10px 12px}
+.flow-name{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);margin-bottom:4px}
+.flow-val{font-size:17px;font-weight:700;font-family:var(--mono)}
+.flow-sub{font-size:10px;color:var(--muted);margin-top:2px}
+.action-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.btn{font-size:11px;padding:5px 11px;border-radius:7px;border:1px solid var(--bdr);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--sans);transition:all .15s}
+.btn:hover{background:var(--surf2);color:var(--text)}
+.btn-primary{border-color:rgba(56,189,248,.5);color:var(--blue);background:rgba(56,189,248,.06)}
+.btn-primary:hover{background:rgba(56,189,248,.12)}
+.conf-num{font-size:28px;font-weight:800;font-family:var(--mono)}
+.section-full{margin-bottom:10px}
+.last-updated{font-size:10px;color:var(--faint);text-align:right;margin-top:8px}
+.checklist{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+.err-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:10px 14px;color:var(--red);font-size:12px;margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="wrap" id="root">
+
+<div class="topbar">
+  <div>
+    <div class="logo">APEX <span>Institutional OS v4.5</span></div>
+  </div>
+  <div class="top-meta">
+    <span><span class="dot-live"></span><span id="clockEl">--:--:-- ET</span></span>
+    <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
+    <span>SPX <span class="spx-price" id="spxEl">--</span></span>
+    <button class="btn btn-primary" onclick="loadOS()">↻ Refresh</button>
+  </div>
+</div>
+
+<div id="errBox" class="err-box" style="display:none">Error loading APEX data.</div>
+
+<div class="grid2">
+  <div class="card">
+    <div class="card-label">Decision engine</div>
+    <div id="decisionBadge" class="decision-badge badge-neutral">— Loading</div>
+    <div style="display:flex;gap:16px;align-items:flex-end">
+      <div>
+        <div id="confNum" class="conf-num" style="color:var(--blue)">--</div>
+        <div style="font-size:11px;color:var(--faint);margin-top:3px">Confidence</div>
+      </div>
+      <div style="flex:1">
+        <div style="font-size:10px;color:var(--faint);margin-bottom:2px">Signal decay</div>
+        <div id="decayFill" class="decay-bar"><div class="decay-fill" id="decayBar" style="width:0%"></div></div>
+        <div class="decay-meta"><span id="decayAge">--</span><span id="decayExp">--</span></div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6" id="decisionMsg">--</div>
+    <div style="font-size:11px;color:var(--faint);margin-top:6px;font-style:italic" id="decisionAction">--</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Trade readiness</div>
+    <div style="display:flex;gap:14px;align-items:flex-start">
+      <div>
+        <div class="readiness-num num-green" id="readinessNum">--</div>
+        <div style="font-size:11px;color:var(--faint)">/ 100</div>
+      </div>
+      <div class="checklist" id="gateChecks"></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <div class="card-label">Institutional story</div>
+    <div id="storyWrap"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">AI trade coach</div>
+    <div id="coachText" class="coach-block">Loading institutional narrative...</div>
+    <div class="action-bar">
+      <button class="btn btn-primary" onclick="window.location.href='/api/institutional_os'">Full JSON ↗</button>
+      <button class="btn" onclick="window.location.href='/assistant'">Assistant ↗</button>
+      <button class="btn" onclick="window.location.href='/flow'">Flow dashboard ↗</button>
+    </div>
+  </div>
+</div>
+
+<div class="grid3">
+  <div class="card">
+    <div class="card-label">GEX levels</div>
+    <div id="gexRows"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Flow inputs</div>
+    <div class="flow-grid" id="flowGrid"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Trade planner</div>
+    <div id="plannerWrap"></div>
+  </div>
+</div>
+
+<div class="section-full card">
+  <div class="card-label">Institutional heat map</div>
+  <div class="heat-grid" id="heatGrid"></div>
+</div>
+
+<div class="last-updated" id="lastUpdated">--</div>
+
+</div>
+
+<script>
+let osData = null;
+
+function clock(){
+  const now = new Date();
+  const et = new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true,timeZone:'America/New_York'}).format(now);
+  document.getElementById('clockEl').textContent = et + ' ET';
+}
+setInterval(clock, 1000); clock();
+
+function badgeClass(state){
+  if(!state) return 'badge-neutral';
+  if(state.includes('CALL')) return 'badge-call';
+  if(state.includes('PUT')) return 'badge-put';
+  if(state.includes('CAUTION') || state.includes('WAITING')) return 'badge-caution';
+  return 'badge-neutral';
+}
+
+function renderDecision(d){
+  if(!d) return;
+  const badge = document.getElementById('decisionBadge');
+  const state = d.state || 'WAITING';
+  badge.className = 'decision-badge ' + badgeClass(state);
+  badge.textContent = (state.includes('CALL') ? '▲ ' : state.includes('PUT') ? '▼ ' : '— ') + state.replace(/_/g,' ');
+  document.getElementById('decisionMsg').textContent = d.message || '--';
+  document.getElementById('decisionAction').textContent = d.action || '';
+
+  // Alignment / confidence
+  const align = d.institutional_alignment || 0;
+  const num = document.getElementById('confNum');
+  num.textContent = Math.round(align) + '%';
+  num.style.color = align >= 70 ? 'var(--green)' : align >= 50 ? 'var(--amber)' : 'var(--red)';
+  const rNum = document.getElementById('readinessNum');
+  const gates = d.checklist || [];
+  const passCount = gates.filter(g => g.ok).length;
+  const pct = gates.length ? Math.round(passCount / gates.length * 100) : 0;
+  rNum.textContent = pct;
+  rNum.className = 'readiness-num ' + (pct >= 75 ? 'num-green' : pct >= 50 ? 'num-amber' : 'num-red');
+  // Gates
+  const gc = document.getElementById('gateChecks');
+  gc.innerHTML = (d.checklist || []).map(g => `<div class="gate-row"><span class="gate-dot ${g.ok ? 'gd-on' : 'gd-warn'}"></span>${g.label}</div>`).join('');
+
+  // Decay
+  const secs = d.signal_seconds_remaining || 0;
+  const ttl = d.signal_ttl_seconds || 360;
+  const decPct = Math.round(secs / ttl * 100);
+  document.getElementById('decayBar').style.width = decPct + '%';
+  document.getElementById('decayAge').textContent = secs > 0 ? secs + 's left' : 'Expired';
+  document.getElementById('decayExp').textContent = secs > 0 ? 'Live' : 'No signal';
+}
+
+function renderStory(story){
+  const el = document.getElementById('storyWrap');
+  if(!story || !story.chapters || !story.chapters.length){
+    el.innerHTML = '<div style="color:var(--faint);font-size:12px">No story data yet.</div>';
+    return;
+  }
+  el.innerHTML = story.chapters.map((c, i) => `
+    <div class="story-entry">
+      <span class="story-time">${c.time || '--'}</span>
+      <div class="story-connector">
+        <span class="s-dot" style="background:${c.color || '#5a6b87'}"></span>
+        ${i < story.chapters.length - 1 ? '<span class="s-line"></span>' : ''}
+      </div>
+      <div class="story-text"><strong style="color:${c.color || 'var(--muted)'}; font-size:10px; text-transform:uppercase; letter-spacing:.6px">${c.chapter}</strong><br>${c.text}</div>
+    </div>`).join('');
+}
+
+function renderCoach(story, decision){
+  const el = document.getElementById('coachText');
+  if(story && story.full_narrative){
+    el.textContent = story.full_narrative;
+  } else if(decision){
+    el.textContent = decision.action || 'Waiting for institutional data...';
+  }
+}
+
+function renderGex(flow){
+  const el = document.getElementById('gexRows');
+  if(!flow){ el.innerHTML = ''; return; }
+  const rows = [
+    {label:'Call wall', val: flow.call_wall ? flow.call_wall.toLocaleString() : '--', cls:'bs-bull'},
+    {label:'Put wall', val: flow.put_wall ? flow.put_wall.toLocaleString() : '--', cls:'bs-bear'},
+    {label:'Zero gamma', val: flow.zero_gamma ? flow.zero_gamma.toLocaleString() : '--', cls:'bs-neut'},
+    {label:'GEX score', val: flow.gex_score != null ? flow.gex_score : '--', cls: flow.gex_score >= 60 ? 'bs-bull' : flow.gex_score <= 40 ? 'bs-bear' : 'bs-neut'},
+    {label:'Spot price', val: flow.stock_price ? flow.stock_price.toLocaleString() : '--', cls:'bs-neut'},
+  ];
+  el.innerHTML = rows.map(r => `<div class="level-row"><span class="level-label">${r.label}</span><div style="display:flex;align-items:center;gap:6px"><span class="level-val">${r.val}</span><span class="badge-small ${r.cls}">${r.val !== '--' ? '✓' : '?'}</span></div></div>`).join('');
+}
+
+function renderFlow(flow){
+  const el = document.getElementById('flowGrid');
+  if(!flow){ el.innerHTML = ''; return; }
+  const items = [
+    {name:'Net flow', val: flow.net_premium != null ? '$' + (flow.net_premium/1e6).toFixed(1)+'M' : '--', sub: flow.bias || '--'},
+    {name:'Flow score', val: flow.flow_score != null ? flow.flow_score : '--', sub: 'Inst. options'},
+    {name:'Order flow', val: flow.order_flow_score != null ? flow.order_flow_score : '--', sub: 'Sweeps: ' + (flow.sweep_count || 0)},
+    {name:'GEX score', val: flow.gex_score != null ? flow.gex_score : '--', sub: 'Gamma exposure'},
+    {name:'Alignment', val: flow.institutional_alignment != null ? Math.round(flow.institutional_alignment) + '%' : '--', sub: flow.decision_color || '--'},
+    {name:'Approved', val: flow.approved_side || '--', sub: flow.decision || ''},
+  ];
+  el.innerHTML = items.map(i => `<div class="flow-card"><div class="flow-name">${i.name}</div><div class="flow-val">${i.val}</div><div class="flow-sub">${i.sub}</div></div>`).join('');
+}
+
+function renderPlanner(plan){
+  const el = document.getElementById('plannerWrap');
+  if(!plan){ el.innerHTML = '<div style="color:var(--faint);font-size:12px">Waiting for signal...</div>'; return; }
+  const contract = plan.recommended_contract || '--';
+  const rows = [
+    {key:'Contract', val: contract},
+    {key:'Entry zone', val: plan.entry_zone || '--'},
+    {key:'Stop', val: plan.stop_price || '--'},
+    {key:'Target 1', val: plan.target_1 || '--'},
+    {key:'Target 2', val: plan.target_2 || '--'},
+    {key:'R:R', val: plan.rr_to_t1 ? plan.rr_to_t1 + ':1' : '--'},
+  ];
+  el.innerHTML = `<div style="font-size:13px;font-family:var(--mono);font-weight:700;color:var(--blue);margin-bottom:8px">${contract}</div>
+    <div class="planner-grid">${rows.map(r => `<div class="pl-item"><span class="pl-key">${r.key}</span><span class="pl-val">${r.val}</span></div>`).join('')}</div>`;
+}
+
+function renderHeatmap(heatmap){
+  const el = document.getElementById('heatGrid');
+  if(!heatmap || !heatmap.tickers){ el.innerHTML = ''; return; }
+  el.innerHTML = heatmap.tickers.map(t => {
+    const cls = t.action_class === 'enter' ? 'h-enter' : t.action_class === 'watch' ? 'h-watch' : t.action_class === 'wait' ? 'h-wait' : 'h-no';
+    return `<div class="heat-item ${cls}">
+      <div class="heat-ticker">${t.ticker}</div>
+      <div class="heat-score">${Math.round(t.score || 0)}</div>
+      <div class="heat-action">${t.action}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderSPX(flow){
+  if(flow && flow.stock_price){
+    document.getElementById('spxEl').textContent = parseFloat(flow.stock_price).toLocaleString();
+  }
+}
+
+function renderSession(session){
+  const pill = document.getElementById('sessionPill');
+  if(!session){ return; }
+  const s = session.session || '';
+  pill.textContent = s.replace('_', ' ');
+  pill.className = 'session-pill ' + (s === 'MARKET_OPEN' ? 'sess-open' : 'sess-closed');
+}
+
+async function loadOS(){
+  try{
+    const ticker = new URLSearchParams(window.location.search).get('ticker') || 'SPX';
+    const r = await fetch('/api/institutional_os?ticker=' + ticker + '&heatmap=1');
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    osData = data;
+    document.getElementById('errBox').style.display = 'none';
+
+    renderSession(data.session);
+    renderDecision(data.decision);
+    renderStory(data.story);
+    renderCoach(data.story, data.decision);
+    renderGex(data.flow);
+    renderFlow({...data.flow, institutional_alignment: data.decision?.institutional_alignment, approved_side: data.decision?.approved_side, decision_color: data.flow?.decision_color, decision: data.flow?.decision_color});
+    renderPlanner(data.decision?.trade_plan);
+    renderHeatmap(data.heatmap);
+    renderSPX(data.flow);
+    document.getElementById('lastUpdated').textContent = 'Updated: ' + (data.updated_at || '--');
+  }catch(e){
+    document.getElementById('errBox').style.display = '';
+    document.getElementById('errBox').textContent = 'Error loading APEX OS: ' + e.message;
+  }
+}
+
+loadOS();
+setInterval(loadOS, 10000);
+</script>
+</body>
+</html>"""
+
 HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -2757,3 +3832,153 @@ if __name__ == "__main__":
         print("Background scanner disabled for direct app.py execution. Set RUN_SCANNER_ON_IMPORT=true to enable it.", flush=True)
     port = int(os.getenv("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
+
+
+# =============================================================================
+# APEX 4.5 NEW API ROUTES
+# =============================================================================
+
+@app.route("/apex_os")
+def apex_os_dashboard():
+    """APEX Institutional OS — the full v4.5 dashboard."""
+    return render_template_string(APEX_OS_HTML)
+
+
+@app.route("/api/institutional_os")
+def api_institutional_os():
+    """
+    Master endpoint for the APEX Institutional OS dashboard.
+    Returns decision, flow, story, heatmap, decay, and position monitor in one call.
+    """
+    ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
+    include_heatmap = request.args.get("heatmap", "1") == "1"
+    try:
+        data = build_institutional_os(ticker, include_heatmap=include_heatmap)
+        return jsonify({"ok": True, **data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION_45}), 500
+
+
+@app.route("/api/story")
+def api_story():
+    """Institutional Story Engine — narrative for one ticker."""
+    ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
+    try:
+        with TRADE_ASSISTANT_LOCK:
+            last_signal = TRADE_ASSISTANT_STATE.get("last_signal")
+        flow_item = quantdata_flow_snapshot(ticker)
+        story = build_institutional_story(ticker, flow_item, last_signal)
+        return jsonify({"ok": True, "ticker": ticker, "story": story})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/heatmap")
+def api_heatmap():
+    """Institutional Heat Map — quick score for multiple tickers."""
+    tickers_raw = request.args.get("tickers", "")
+    tickers = [x.strip().upper() for x in tickers_raw.split(",") if x.strip()] or None
+    try:
+        heatmap = build_institutional_heatmap(tickers)
+        return jsonify({"ok": True, "version": VERSION_45, **heatmap})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/gameplan")
+def api_gameplan():
+    """Daily game plan — pre-market bias summary."""
+    tickers_raw = request.args.get("tickers", "")
+    tickers = [x.strip().upper() for x in tickers_raw.split(",") if x.strip()] or None
+    try:
+        plan = build_daily_gameplan(tickers)
+        return jsonify({"ok": True, "version": VERSION_45, "gameplan": plan})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/position", methods=["GET", "POST"])
+def api_position():
+    """
+    GET  — monitor the current active position.
+    POST — set a new active position to monitor.
+         JSON body: {ticker, side, entry_price, stop, target1, target2}
+    """
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        ticker = str(body.get("ticker", ASSISTANT_TICKER)).upper()
+        side = str(body.get("side", "NONE")).upper()
+        entry = safe_float(body.get("entry_price"), 0.0)
+        stop = safe_float(body.get("stop"), 0.0)
+        t1 = safe_float(body.get("target1"), 0.0)
+        t2 = safe_float(body.get("target2"), 0.0)
+        if not ticker or side not in ("CALL", "PUT"):
+            return jsonify({"ok": False, "error": "side must be CALL or PUT"}), 400
+        pos = set_active_position(ticker, side, entry, stop, t1, t2)
+        return jsonify({"ok": True, "position": pos})
+    try:
+        result = monitor_active_position()
+        return jsonify({"ok": True, "version": VERSION_45, **result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/position/clear", methods=["POST"])
+def api_position_clear():
+    """Clear the active position monitor."""
+    with ACTIVE_POSITION_LOCK:
+        ACTIVE_POSITION.clear()
+    return jsonify({"ok": True, "message": "Active position cleared."})
+
+
+@app.route("/api/performance")
+def api_performance():
+    """Performance dashboard — win rate, hold time, best setup from tracking DB."""
+    try:
+        return jsonify({"ok": True, "version": VERSION_45, **build_performance_dashboard()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/decay")
+def api_decay():
+    """Confidence decay for the current signal."""
+    with TRADE_ASSISTANT_LOCK:
+        last_signal = TRADE_ASSISTANT_STATE.get("last_signal")
+    alignment = safe_float(
+        (TRADE_ASSISTANT_STATE.get("last_decision") or {}).get("institutional_alignment") or
+        TRADE_ASSISTANT_STATE.get("institutional_alignment"), 50.0
+    )
+    age = signal_age_seconds(last_signal) or 0
+    decay = confidence_decay(alignment, age, ASSISTANT_SIGNAL_VALID_SECONDS)
+    return jsonify({"ok": True, "version": VERSION_45, "decay": decay,
+                    "last_signal": last_signal, "ttl_seconds": ASSISTANT_SIGNAL_VALID_SECONDS})
+
+
+@app.route("/api/v45/status")
+def api_v45_status():
+    """v4.5 feature availability status."""
+    return jsonify({
+        "ok": True,
+        "version": VERSION_45,
+        "base_version": VERSION,
+        "features": {
+            "institutional_os": True,
+            "story_engine": STORY_ENABLED,
+            "heatmap": True,
+            "daily_gameplan": True,
+            "confidence_decay": True,
+            "position_monitor": POSITION_MONITOR_ENABLED,
+            "performance_dashboard": TRACKING_AVAILABLE,
+            "backtest_tracking": TRACKING_ENABLED,
+        },
+        "config": {
+            "assistant_ticker": ASSISTANT_TICKER,
+            "heatmap_tickers": HEATMAP_TICKERS,
+            "gameplan_tickers": GAMEPLAN_TICKERS,
+            "signal_ttl_seconds": ASSISTANT_SIGNAL_VALID_SECONDS,
+        },
+        "active_position": bool(ACTIVE_POSITION),
+        "updated_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    })
+
