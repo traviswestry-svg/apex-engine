@@ -93,43 +93,113 @@ def _ema(values: List[float], period: int) -> Optional[float]:
 # Weights are used in the Consensus Engine vote-weight sum.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Base adaptive weight table (gamma-regime dimension).
+# flow_intelligence replaces the old "flow" key — it now votes directly.
+# Structure and Execution receive session-aware adjustment via
+# get_adaptive_weights() which merges both dimensions.
+# ---------------------------------------------------------------------------
+
 ADAPTIVE_WEIGHTS: Dict[str, Dict[str, float]] = {
     "NEGATIVE_GAMMA": {
-        # Negative gamma = dealer amplification = momentum/flow dominate
-        "market_regime":  0.10,
-        "gamma_regime":   0.08,
-        "flow":           0.30,   # flow divergence is the primary signal
-        "structure":      0.12,   # structure matters less — levels get blown through
-        "trend":          0.20,   # trend/momentum elevated
-        "execution":      0.20,   # Pine confirmation still required
+        # Negative gamma = dealer amplification; flow + trend dominate
+        "market_regime":    0.08,
+        "gamma_regime":     0.07,
+        "flow_intelligence":0.28,  # HIGHEST — flow divergence is the primary signal
+        "structure":        0.10,  # structure matters less — levels get blown through
+        "trend":            0.20,  # momentum elevated
+        "execution":        0.27,  # Pine confirmation still critical
     },
     "POSITIVE_GAMMA": {
-        # Positive gamma = dealer dampening = structure and mean-reversion dominate
-        "market_regime":  0.10,
-        "gamma_regime":   0.08,
-        "flow":           0.20,
-        "structure":      0.28,   # structure elevated — levels hold better
-        "trend":          0.14,
-        "execution":      0.20,
+        # Positive gamma = dealer dampening; structure + mean-reversion dominate
+        "market_regime":    0.09,
+        "gamma_regime":     0.08,
+        "flow_intelligence":0.20,
+        "structure":        0.26,  # structure elevated — levels hold better
+        "trend":            0.12,
+        "execution":        0.25,
     },
     "MIXED_GAMMA": {
         # Default balanced weights
-        "market_regime":  0.10,
-        "gamma_regime":   0.08,
-        "flow":           0.25,
-        "structure":      0.20,
-        "trend":          0.17,
-        "execution":      0.20,
+        "market_regime":    0.09,
+        "gamma_regime":     0.08,
+        "flow_intelligence":0.24,
+        "structure":        0.18,
+        "trend":            0.15,
+        "execution":        0.26,
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Session-aware ICI weight tables.
+# When the market is closed or pre-session, Execution and Structure
+# cannot contribute meaningfully. Their ICI weight is redistributed
+# to Conviction and Flow Momentum so the score still reflects real data.
+# ---------------------------------------------------------------------------
+
+ICI_WEIGHTS_BY_SESSION: Dict[str, Dict[str, float]] = {
+    "MARKET_OPEN": {
+        # Full weighting — all components meaningful
+        "conviction":    0.50,
+        "freshness":     0.20,  # Pine signal contribution
+        "gamma":         0.15,
+        "momentum":      0.15,
+    },
+    "PREMARKET": {
+        # No Pine signal yet, no VWAP/OR — redistribute freshness weight
+        "conviction":    0.55,
+        "freshness":     0.05,  # Small — signal unlikely pre-market
+        "gamma":         0.20,  # Gamma levels still valid
+        "momentum":      0.20,  # Flow reading still useful
+    },
+    "AFTER_HOURS": {
+        # Session closed — execution and structure are stale
+        "conviction":    0.55,
+        "freshness":     0.00,  # No live signal possible
+        "gamma":         0.20,
+        "momentum":      0.25,  # Flow premium accumulation still informative
+    },
+    "CLOSED": {
+        "conviction":    0.55,
+        "freshness":     0.00,
+        "gamma":         0.20,
+        "momentum":      0.25,
     },
 }
 
 
-def get_adaptive_weights(gamma_regime_label: str) -> Dict[str, float]:
+def get_adaptive_weights(gamma_regime_label: str, session_state: str = "MARKET_OPEN") -> Dict[str, float]:
+    """Return engine vote weights for the current gamma regime.
+
+    When market is not open, Structure and Execution weights are halved and
+    redistributed to Flow Intelligence (which has live data from QuantData
+    regardless of session) so the consensus score reflects real information.
+    """
     label = (gamma_regime_label or "MIXED_GAMMA").upper()
+    base = None
     for key in ADAPTIVE_WEIGHTS:
         if key in label or label in key:
-            return ADAPTIVE_WEIGHTS[key]
-    return ADAPTIVE_WEIGHTS["MIXED_GAMMA"]
+            base = dict(ADAPTIVE_WEIGHTS[key])
+            break
+    if base is None:
+        base = dict(ADAPTIVE_WEIGHTS["MIXED_GAMMA"])
+
+    if session_state not in ("MARKET_OPEN",):
+        # Halve structure and execution — their session-data inputs are unavailable
+        released = base["structure"] * 0.5 + base["execution"] * 0.15
+        base["structure"]        = round(base["structure"] * 0.5, 3)
+        base["execution"]        = round(base["execution"] * 0.85, 3)
+        base["flow_intelligence"]= round(base["flow_intelligence"] + released * 0.7, 3)
+        base["market_regime"]    = round(base["market_regime"] + released * 0.3, 3)
+        # Re-normalize to exactly 1.0
+        total = sum(base.values())
+        base = {k: round(v / total, 4) for k, v in base.items()}
+    return base
+
+
+def get_ici_weights(session_state: str = "MARKET_OPEN") -> Dict[str, float]:
+    """Return ICI component weights adjusted for session state."""
+    return ICI_WEIGHTS_BY_SESSION.get(session_state, ICI_WEIGHTS_BY_SESSION["CLOSED"])
 
 
 # ===========================================================================
@@ -1140,6 +1210,17 @@ def engine_market_structure(
 
     structure_vote_score = round(max(0.0, min(100.0, structure_vote_score)), 1)
 
+    # data_available = True only when we have live session data to score from.
+    # When False, the consensus engine redistributes this engine's weight
+    # to engines that do have live data rather than counting a neutral 50.0.
+    session_data_available = bool(session_bars and current_price)
+    prev_data_available = bool(prev_close is not None)
+    data_available = session_data_available  # live session required for a real vote
+
+    # If no session bars, vote NEUTRAL but flag as unavailable so consensus skips it
+    final_vote = "BULLISH" if structure_vote_score >= 62 else "BEARISH" if structure_vote_score <= 38 else "NEUTRAL"
+    final_strength = round(abs(structure_vote_score - 50) / 50, 2) if session_data_available else 0.0
+
     return {
         "vwap": vwap,
         "session_poc": session_poc,
@@ -1160,8 +1241,11 @@ def engine_market_structure(
         "structure_score": structure_vote_score,
         "notes": notes,
         "engine": "MARKET_STRUCTURE",
-        "vote": "BULLISH" if structure_vote_score >= 62 else "BEARISH" if structure_vote_score <= 38 else "NEUTRAL",
-        "vote_strength": round(abs(structure_vote_score - 50) / 50, 2),
+        "data_available": data_available,
+        "prev_data_available": prev_data_available,
+        "session_bars_count": len(session_bars),
+        "vote": final_vote if data_available else "NEUTRAL",
+        "vote_strength": final_strength,
     }
 
 
@@ -1289,7 +1373,37 @@ def engine_trend(
     if compression: trend_score -= 4  # Compression is neutral — potential for either direction
 
     trend_score = round(max(0.0, min(100.0, trend_score)), 1)
-    direction = "BULLISH" if trend_score >= 60 else "BEARISH" if trend_score <= 40 else "NEUTRAL"
+
+    # Five-state direction with lean bands:
+    #   BULLISH       >= 65  — full EMA stack, RSI confirming, volume
+    #   BULLISH_LEAN  55–64  — price above key EMAs but not full stack
+    #   NEUTRAL       45–54  — mixed signals
+    #   BEARISH_LEAN  35–44  — price below key EMAs but not confirmed reversal
+    #   BEARISH        < 35  — full bearish stack confirmed
+    if trend_score >= 65:
+        direction = "BULLISH"
+        vote = "BULLISH"
+        vote_strength = round((trend_score - 65) / 35, 2)
+    elif trend_score >= 55:
+        direction = "BULLISH_LEAN"
+        vote = "BULLISH"          # Votes bullish but with lower strength
+        vote_strength = round((trend_score - 55) / 35 * 0.6, 2)
+        notes.append(f"Bullish lean ({trend_score:.0f}/100) — partial alignment, not full stack.")
+    elif trend_score >= 45:
+        direction = "NEUTRAL"
+        vote = "NEUTRAL"
+        vote_strength = 0.0
+    elif trend_score >= 35:
+        direction = "BEARISH_LEAN"
+        vote = "BEARISH"          # Votes bearish but with lower strength
+        vote_strength = round((45 - trend_score) / 35 * 0.6, 2)
+        notes.append(f"Bearish lean ({trend_score:.0f}/100) — partial weakness, not confirmed reversal.")
+    else:
+        direction = "BEARISH"
+        vote = "BEARISH"
+        vote_strength = round((40 - trend_score) / 40, 2)
+
+    vote_strength = round(min(1.0, max(0.0, vote_strength)), 2)
 
     return {
         "trend_score": trend_score,
@@ -1311,8 +1425,9 @@ def engine_trend(
         "intraday_confirms": intraday_confirms,
         "notes": notes,
         "engine": "TREND",
-        "vote": direction,
-        "vote_strength": round(abs(trend_score - 50) / 50, 2),
+        "vote": vote,
+        "vote_strength": vote_strength,
+        "data_available": True,
     }
 
 
@@ -1419,50 +1534,75 @@ def engine_consensus(
     execution: Dict[str, Any],
     gamma_regime_label: str,
     target_side: Optional[str] = None,  # If set, score only for this side
+    session_state: str = "MARKET_OPEN",
 ) -> Dict[str, Any]:
     """
-    Institutional Consensus Engine — APEX 5.0 conviction-weighted version.
+    Institutional Consensus Engine — APEX 6.2 conviction-weighted version.
 
-    Each engine casts a directional vote (BULLISH / BEARISH / NEUTRAL).
-    Votes are weighted by BOTH the adaptive weight table (which engine matters
-    more in this gamma regime) AND the engine's own vote_strength (how
-    convinced that engine is). A 0.99-strength flow vote in a negative-gamma
-    regime contributes far more than a 0.51-strength trend vote.
+    Flow Intelligence is now a first-class voting engine (highest weight in
+    NEGATIVE_GAMMA regimes). Engines with unavailable session data
+    (Structure, Execution) have their weights redistributed automatically
+    via get_adaptive_weights(session_state).
 
     Conviction score bands (0–100):
       ≥ 75  → ENTER
       55–74 → WATCH
       35–54 → WAIT
       < 35  → NO_TRADE
-
-    The dashboard also shows the simple "N of 6 engines agree" count so
-    you can see at a glance which engines are aligned vs. dissenting.
     """
-    weights = get_adaptive_weights(gamma_regime_label)
+    weights = get_adaptive_weights(gamma_regime_label, session_state=session_state)
 
+    # flow_intelligence is now a first-class voter; data_available gates skip
     engines = {
-        "market_regime": market_regime,
-        "gamma_regime": gamma_regime,
-        "flow": flow,
-        "structure": structure,
-        "trend": trend,
-        "execution": execution,
+        "market_regime":    market_regime,
+        "gamma_regime":     gamma_regime,
+        "flow_intelligence":flow,
+        "structure":        structure,
+        "trend":            trend,
+        "execution":        execution,
     }
 
-    # Build vote table — weighted_bull/bear accumulate weight × strength per engine
+    # Build vote table — weighted_bull/bear accumulate weight × strength per engine.
+    # Engines that declare data_available=False are skipped; their weight is
+    # redistributed proportionally across the remaining engines so the total
+    # always sums to 1.0.
     vote_table: List[Dict[str, Any]] = []
     weighted_bull = 0.0
     weighted_bear = 0.0
     total_weight = 0.0
+    skipped_weight = 0.0
 
     for name, engine_data in engines.items():
+        data_available = engine_data.get("data_available", True)
+        if not data_available:
+            skipped_weight += weights.get(name, 0.0)
+
+    for name, engine_data in engines.items():
+        data_available = engine_data.get("data_available", True)
+        weight = weights.get(name, 0.0)
+        engine_label = engine_data.get("engine", name.replace("_", " ").title())
+
+        if not data_available:
+            vote_table.append({
+                "engine": engine_label,
+                "vote": "UNAVAILABLE",
+                "strength": 0.0,
+                "weight": 0.0,
+                "conviction_contribution": 0.0,
+                "emoji": "⏳",
+                "skipped": True,
+            })
+            continue
+
+        # Boost weight of active engines to absorb skipped weight
+        active_base = 1.0 - skipped_weight
+        effective_weight = (weight / active_base * 1.0) if active_base > 0 else weight
+
         vote = (engine_data.get("vote") or "NEUTRAL").upper()
         strength = _safe_float(engine_data.get("vote_strength"), 0.0)
-        weight = weights.get(name, 0.15)
-        engine_label = engine_data.get("engine", name.upper())
 
-        # Conviction contribution = weight × strength (not just weight)
-        conviction_contribution = weight * strength
+        # Conviction contribution = effective_weight × strength
+        conviction_contribution = effective_weight * strength
 
         if vote == "BULLISH":
             weighted_bull += conviction_contribution
@@ -1474,14 +1614,15 @@ def engine_consensus(
             vote_emoji = "—"
             conviction_contribution = 0.0
 
-        total_weight += weight
+        total_weight += effective_weight
         vote_table.append({
             "engine": engine_label,
             "vote": vote,
             "strength": round(strength, 2),
-            "weight": round(weight, 2),
+            "weight": round(effective_weight, 3),
             "conviction_contribution": round(conviction_contribution, 3),
             "emoji": vote_emoji,
+            "skipped": False,
         })
 
     # Normalize to 0–100 conviction scores
@@ -2045,6 +2186,7 @@ def compute_institutional_confidence_index(
     gamma_regime: Dict[str, Any],
     flow: Dict[str, Any],
     signal_ttl_seconds: int = 360,
+    session_state: str = "MARKET_OPEN",
 ) -> Dict[str, Any]:
     """
     Institutional Confidence Index (ICI) — APEX 5.0.
@@ -2120,12 +2262,13 @@ def compute_institutional_confidence_index(
     else:
         momentum_component = 45.0  # Mixed
 
-    # ── Composite ICI ──
+    # ── Composite ICI — session-aware weights ──
+    ici_w = get_ici_weights(session_state)
     raw_ici = (
-        conviction_component * 0.50 +
-        freshness_component * 0.20 +
-        gamma_component * 0.15 +
-        momentum_component * 0.15
+        conviction_component * ici_w["conviction"] +
+        freshness_component  * ici_w["freshness"] +
+        gamma_component      * ici_w["gamma"] +
+        momentum_component   * ici_w["momentum"]
     )
     ici = round(max(0.0, min(100.0, raw_ici)), 1)
 
@@ -2154,7 +2297,8 @@ def compute_institutional_confidence_index(
             "gamma_stability": round(gamma_component, 1),
             "flow_momentum": round(momentum_component, 1),
         },
-        "weights": {"conviction": 0.50, "freshness": 0.20, "gamma": 0.15, "momentum": 0.15},
+        "weights": ici_w,
+        "session_state": session_state,
     }
 
 
@@ -2266,30 +2410,122 @@ def derive_decision_state(consensus: Dict[str, Any], execution: Dict[str, Any], 
 
 
 def build_engine_contributions(*, market_regime: Dict[str, Any], gamma_regime: Dict[str, Any], flow: Dict[str, Any], structure: Dict[str, Any], trend: Dict[str, Any], execution: Dict[str, Any], consensus: Dict[str, Any], ici: Dict[str, Any]) -> List[Dict[str, Any]]:
-    vote_by_engine = {str(v.get("engine", "")).upper(): v for v in consensus.get("vote_table", []) if isinstance(v, dict)}
+    """Build engine contribution rows for the Engine Matrix panel.
+
+    Each row includes:
+    - vote, weight, strength, conviction_contribution from the consensus vote_table
+    - data_available flag (False = engine was skipped this cycle)
+    - health_status: OK / WAITING / SKIPPED / NO_SIGNAL
+    - ici_component: how much this engine contributed to the ICI score
+    """
+    now_str = _now_et().strftime("%H:%M:%S ET")
+    # consensus vote_table uses engine label strings — map by matching
+    vote_by_label = {}
+    for v in consensus.get("vote_table", []):
+        if isinstance(v, dict):
+            lbl = str(v.get("engine", "")).upper().replace(" ", "_")
+            vote_by_label[lbl] = v
+
+    def _find_vote(search_keys: List[str]) -> Dict:
+        for k in search_keys:
+            if k in vote_by_label:
+                return vote_by_label[k]
+        return {}
+
     sources = [
-        ("Market Regime", "MARKET_REGIME", market_regime.get("composite_score"), market_regime.get("regime"), market_regime.get("notes", [])),
-        ("Gamma", "GAMMA_REGIME", gamma_regime.get("gex_score"), gamma_regime.get("regime_display"), gamma_regime.get("notes", [])),
-        ("Flow Intelligence", "FLOW", flow.get("intelligence_score"), flow.get("flow_momentum"), flow.get("notes", [])),
-        ("Structure", "STRUCTURE", structure.get("structure_score"), structure.get("structure_bias"), structure.get("notes", [])),
-        ("Trend", "TREND", trend.get("trend_score"), trend.get("trend_direction"), trend.get("notes", [])),
-        ("Execution", "EXECUTION", execution.get("signal_score"), execution.get("execution_state"), execution.get("notes", [])),
+        {
+            "label": "Market Regime",
+            "engine_key": "market_regime",
+            "search_keys": ["MARKET_REGIME", "MARKET REGIME"],
+            "score": market_regime.get("composite_score"),
+            "status": market_regime.get("regime"),
+            "notes": market_regime.get("notes", []),
+            "data_available": True,
+            "ici_comp_key": "conviction",
+        },
+        {
+            "label": "Gamma Regime",
+            "engine_key": "gamma_regime",
+            "search_keys": ["GAMMA_REGIME", "GAMMA REGIME"],
+            "score": gamma_regime.get("gex_score"),
+            "status": gamma_regime.get("regime_display"),
+            "notes": gamma_regime.get("notes", []),
+            "data_available": True,
+            "ici_comp_key": "gamma_stability",
+        },
+        {
+            "label": "Flow Intelligence",
+            "engine_key": "flow_intelligence",
+            "search_keys": ["INSTITUTIONAL_FLOW", "FLOW_INTELLIGENCE", "FLOW INTELLIGENCE", "FLOW"],
+            "score": flow.get("intelligence_score"),
+            "status": flow.get("flow_momentum"),
+            "notes": flow.get("notes", []),
+            "data_available": flow.get("data_available", True),
+            "ici_comp_key": "flow_momentum",
+        },
+        {
+            "label": "Structure",
+            "engine_key": "structure",
+            "search_keys": ["MARKET_STRUCTURE", "STRUCTURE"],
+            "score": structure.get("structure_score"),
+            "status": "Live" if structure.get("data_available") else "Pre-session",
+            "notes": structure.get("notes", []),
+            "data_available": structure.get("data_available", False),
+            "ici_comp_key": "conviction",
+        },
+        {
+            "label": "Trend",
+            "engine_key": "trend",
+            "search_keys": ["TREND"],
+            "score": trend.get("trend_score"),
+            "status": trend.get("trend_direction"),
+            "notes": trend.get("notes", []),
+            "data_available": trend.get("data_available", True),
+            "ici_comp_key": "conviction",
+        },
+        {
+            "label": "Execution",
+            "engine_key": "execution",
+            "search_keys": ["EXECUTION"],
+            "score": execution.get("signal_score"),
+            "status": execution.get("execution_state"),
+            "notes": execution.get("notes", []),
+            "data_available": execution.get("has_signal", False) or execution.get("execution_state", "") not in ("WAITING_FOR_PINE", ""),
+            "ici_comp_key": "freshness",
+        },
     ]
+
     out: List[Dict[str, Any]] = []
     components = ici.get("components", {}) if isinstance(ici, dict) else {}
-    for label, key, score, status, notes in sources:
-        vote = vote_by_engine.get(key, {})
+
+    for src in sources:
+        vote_row = _find_vote(src["search_keys"])
+        data_av = src["data_available"]
+
+        # Health status label
+        if vote_row.get("skipped"):
+            health = "SKIPPED"
+        elif not data_av:
+            health = "WAITING"
+        elif src["engine_key"] == "execution" and src["status"] == "WAITING_FOR_PINE":
+            health = "NO_SIGNAL"
+        else:
+            health = "OK"
+
         out.append({
-            "engine": key.lower(),
-            "label": label,
-            "score": round(_safe_float(score, 0.0), 1) if score is not None else None,
-            "status": status,
-            "vote": vote.get("vote"),
-            "weight": vote.get("weight"),
-            "strength": vote.get("strength"),
-            "contribution": vote.get("conviction_contribution"),
-            "ici_component": components.get("flow_momentum") if key == "FLOW" else components.get("gamma_stability") if key == "GAMMA_REGIME" else components.get("freshness") if key == "EXECUTION" else components.get("conviction"),
-            "notes": list(notes or [])[:3],
+            "engine": src["engine_key"],
+            "label": src["label"],
+            "score": round(_safe_float(src["score"], 0.0), 1) if src["score"] is not None else None,
+            "status": src["status"],
+            "vote": vote_row.get("vote"),
+            "weight": vote_row.get("weight"),
+            "strength": vote_row.get("strength"),
+            "contribution": vote_row.get("conviction_contribution"),
+            "ici_component": components.get(src["ici_comp_key"]),
+            "notes": list(src["notes"] or [])[:3],
+            "data_available": data_av,
+            "health_status": health,
+            "sampled_at": now_str,
         })
     return out
 
@@ -2486,6 +2722,20 @@ def build_institutional_decision(
     )
 
     # ── Engine 7 (Consensus) ──
+    # Derive session_state string for adaptive weighting
+    _now = _now_et()
+    _market_open_start = _now.replace(hour=9, minute=30, second=0, microsecond=0)
+    _market_close = _now.replace(hour=16, minute=0, second=0, microsecond=0)
+    _premarket_start = _now.replace(hour=4, minute=0, second=0, microsecond=0)
+    if _market_open_start <= _now < _market_close and _now.weekday() < 5:
+        _session_state = "MARKET_OPEN"
+    elif _premarket_start <= _now < _market_open_start and _now.weekday() < 5:
+        _session_state = "PREMARKET"
+    elif _market_close <= _now and _now.weekday() < 5:
+        _session_state = "AFTER_HOURS"
+    else:
+        _session_state = "CLOSED"
+
     consensus = engine_consensus(
         market_regime=market_regime,
         gamma_regime=gamma_regime,
@@ -2494,6 +2744,7 @@ def build_institutional_decision(
         trend=trend,
         execution=execution,
         gamma_regime_label=gamma_label,
+        session_state=_session_state,
     )
 
     # ── Engine 8 (Risk) ──
@@ -2526,13 +2777,14 @@ def build_institutional_decision(
         risk=risk,
     )
 
-    # ── Institutional Confidence Index (APEX 5.0) ──
+    # ── Institutional Confidence Index (APEX 6.2) ──
     ici = compute_institutional_confidence_index(
         consensus=consensus,
         execution=execution,
         gamma_regime=gamma_regime,
         flow=flow_intelligence,
         signal_ttl_seconds=signal_ttl_seconds,
+        session_state=_session_state,
     )
 
     decision_state = derive_decision_state(consensus, execution, risk, ici)
@@ -2571,7 +2823,7 @@ def build_institutional_decision(
     story_timeline = build_story_timeline(story)
 
     return {
-        "version": "6.0.6_ROUTE_VERSION_HEALTH_PATCH",
+        "version": "6.2.0_FLOW_VOTE_ENGINE",
         "ticker": ticker,
         "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "updated_at_et": _now_et().strftime("%Y-%m-%d %H:%M:%S ET"),

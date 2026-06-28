@@ -256,24 +256,27 @@ function renderEngineMatrix(d) {
   const cons = d.consensus || {};
 
   // Consensus bar
-  const nBull = cons.n_bullish  || 0;
-  const nBear = cons.n_bearish  || 0;
-  const nNeut = cons.n_neutral  || 0;
-  const nTot  = cons.n_engines  || 6;
+  const nBull = cons.n_bullish || 0;
+  const nBear = cons.n_bearish || 0;
+  const nNeut = cons.n_neutral || 0;
   const consEl = $('consensusBar');
   if (consEl) {
-    consEl.innerHTML = `
-      <div class="consensus-bars">
-        <div class="cb-bull" style="flex:${nBull}"></div>
-        <div class="cb-neut" style="flex:${nNeut}"></div>
-        <div class="cb-bear" style="flex:${nBear}"></div>
-      </div>
-      <div class="consensus-meta">
-        <span style="color:var(--green)">▲ ${nBull} Bull</span>
-        <span>${cons.consensus_label || '--'}</span>
-        <span style="color:var(--red)">▼ ${nBear} Bear</span>
-      </div>
-    `;
+    const iciW = (d.ici || {}).weights || {};
+    const sessState = (d.ici || {}).session_state || 'CLOSED';
+    const sessBadge = sessState !== 'MARKET_OPEN'
+      ? `<span style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(245,158,11,.12);color:var(--amber);margin-left:6px;font-weight:700">${sessState.replace(/_/g,' ')} — adaptive weights active</span>`
+      : '';
+    consEl.innerHTML =
+      '<div class="consensus-bars">' +
+        '<div class="cb-bull" style="flex:' + nBull + '"></div>' +
+        '<div class="cb-neut" style="flex:' + nNeut + '"></div>' +
+        '<div class="cb-bear" style="flex:' + nBear + '"></div>' +
+      '</div>' +
+      '<div class="consensus-meta">' +
+        '<span style="color:var(--green)">▲ ' + nBull + ' Bull</span>' +
+        '<span>' + esc(cons.consensus_label || '--') + sessBadge + '</span>' +
+        '<span style="color:var(--red)">▼ ' + nBear + ' Bear</span>' +
+      '</div>';
   }
 
   if (!contribs.length) {
@@ -282,34 +285,106 @@ function renderEngineMatrix(d) {
   }
 
   el.innerHTML = contribs.map((e, idx) => {
-    const score = Number(e.score || 0);
+    const score = e.score != null ? Number(e.score) : null;
     const vote  = (e.vote || 'NEUTRAL').toUpperCase();
-    const voteCls = vote === 'BULLISH' ? 'ev-bull' : vote === 'BEARISH' ? 'ev-bear' : 'ev-neut';
-    const voteLabel = vote === 'BULLISH' ? '▲ BULL' : vote === 'BEARISH' ? '▼ BEAR' : '— NEUT';
-    const barColor = score >= 65 ? 'var(--green)' : score >= 40 ? 'var(--blue)' : 'var(--red)';
+    const health = (e.health_status || 'OK').toUpperCase();
+    const dataAv = e.data_available !== false;
+
+    // Vote badge
+    let voteCls, voteLabel;
+    if (!dataAv || vote === 'UNAVAILABLE') {
+      voteCls  = 'ev-neut'; voteLabel = '⏳ WAIT';
+    } else if (vote === 'BULLISH') {
+      voteCls = 'ev-bull'; voteLabel = '▲ BULL';
+    } else if (vote === 'BEARISH') {
+      voteCls = 'ev-bear'; voteLabel = '▼ BEAR';
+    } else {
+      voteCls = 'ev-neut'; voteLabel = '— NEUT';
+    }
+
+    // Health dot
+    const healthColor = health === 'OK' ? 'var(--green)'
+      : health === 'NO_SIGNAL' ? 'var(--amber)'
+      : health === 'WAITING' || health === 'SKIPPED' ? 'var(--faint)' : 'var(--red)';
+    const healthDot = '<span style="width:7px;height:7px;border-radius:50%;background:' + healthColor + ';display:inline-block;margin-right:4px;flex-shrink:0"></span>';
+
+    // Score bar
+    const barPct  = score != null ? score : 0;
+    const barColor = !dataAv ? 'var(--bdr)'
+      : barPct >= 65 ? 'var(--green)'
+      : barPct >= 45 ? 'var(--blue)' : 'var(--red)';
+    const scoreDisp = score != null ? score.toFixed(0) : '--';
+
+    // Weight and contribution
+    const wt   = e.weight  != null ? (e.weight * 100).toFixed(1) + '%' : '--';
+    const cont = e.contribution != null ? e.contribution.toFixed(3) : '--';
+
+    // Timestamp
+    const ts = e.sampled_at || '--';
+
     const notes = (e.notes || []).slice(0, 3);
     const notesHTML = notes.length
-      ? '<div class="em-notes" id="em-notes-' + idx + '">' + notes.map(n => `<div class="em-note-item">· ${esc(n)}</div>`).join('') + '</div>'
+      ? '<div class="em-notes" id="em-notes-' + idx + '">' +
+          notes.map(n => '<div class="em-note-item">· ' + esc(n) + '</div>').join('') +
+          '<div class="em-note-item" style="color:var(--faint)">Sampled ' + ts + ' · Weight ' + wt + ' · Contribution ' + cont + '</div>' +
+        '</div>'
       : '';
-    return `
-      <div class="em-row" id="em-row-${idx}" onclick="toggleEmRow(${idx},${notes.length > 0})" style="cursor:${notes.length > 0 ? 'pointer' : 'default'}">
-        <div class="em-name">${esc(e.label || e.engine)}</div>
-        <div class="em-vote ${voteCls}">${voteLabel}</div>
-        <div class="em-bar-wrap"><div class="em-bar" style="width:${score}%;background:${barColor}"></div></div>
-        <div class="em-score">${score > 0 ? score.toFixed(0) : '--'}</div>
-      </div>
-      ${notesHTML}
-    `;
+
+    const rowStyle = !dataAv ? 'opacity:0.55' : '';
+
+    return (
+      '<div class="em-row" id="em-row-' + idx + '" onclick="toggleEmRow(' + idx + ',' + (notes.length > 0 || !dataAv) + ')" style="cursor:pointer;' + rowStyle + '">' +
+        '<div class="em-name">' + healthDot + esc(e.label || e.engine) + '</div>' +
+        '<div class="em-vote ' + voteCls + '">' + voteLabel + '</div>' +
+        '<div class="em-bar-wrap"><div class="em-bar" style="width:' + barPct + '%;background:' + barColor + '"></div></div>' +
+        '<div class="em-score">' + scoreDisp + '</div>' +
+      '</div>' +
+      notesHTML
+    );
   }).join('');
+
+  // Engine Health summary panel
+  const healthEl = $('engineHealthPanel');
+  if (healthEl) renderEngineHealth(contribs);
 }
 
 function toggleEmRow(idx, hasNotes) {
-  if (!hasNotes) return;
   const row   = $('em-row-' + idx);
   const notes = $('em-notes-' + idx);
   if (!row || !notes) return;
   row.classList.toggle('expanded');
   notes.style.display = row.classList.contains('expanded') ? 'flex' : 'none';
+}
+
+/* ── Engine Health Panel ───────────────────────────────────────────────────── */
+function renderEngineHealth(contribs) {
+  const el = $('engineHealthPanel');
+  if (!el || !contribs) return;
+
+  const rows = contribs.map(e => {
+    const health = (e.health_status || 'OK').toUpperCase();
+    const dataAv = e.data_available !== false;
+    const col = health === 'OK' ? 'var(--green)'
+      : health === 'NO_SIGNAL' ? 'var(--amber)'
+      : 'var(--faint)';
+    const icon = health === 'OK' ? '●' : health === 'NO_SIGNAL' ? '◐' : '○';
+    return (
+      '<div style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid var(--bdr);font-size:11px">' +
+        '<span style="color:' + col + ';font-size:10px;width:10px">' + icon + '</span>' +
+        '<span style="color:var(--muted);min-width:120px">' + esc(e.label) + '</span>' +
+        '<span style="font-family:var(--mono);font-size:10px;color:' + col + ';font-weight:700">' + health + '</span>' +
+        '<span style="font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:auto">' + (e.sampled_at || '--') + '</span>' +
+      '</div>'
+    );
+  }).join('');
+
+  const allOk = contribs.every(e => (e.health_status || 'OK') === 'OK');
+  const waiting = contribs.filter(e => ['WAITING','SKIPPED','NO_SIGNAL'].includes(e.health_status || '')).length;
+  const summary = allOk
+    ? '<span style="color:var(--green);font-size:10px;font-weight:700">● All engines healthy</span>'
+    : '<span style="color:var(--amber);font-size:10px;font-weight:700">◐ ' + waiting + ' engine(s) waiting / skipped</span>';
+
+  el.innerHTML = summary + '<div style="margin-top:6px">' + rows + '</div>';
 }
 
 /* ── Session status / heatmap ─────────────────────────────────────────────── */
