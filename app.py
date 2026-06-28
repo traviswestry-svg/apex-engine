@@ -622,129 +622,43 @@ def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
 def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
     """QuantData gamma exposure-by-strike layer.
 
-    Production fix:
-    - Uses QuantData spot when available, otherwise falls back to the nearest live Polygon price.
-    - Separates call wall and put wall by side: call wall must be above/equal spot, put wall must be below/equal spot.
-    - Uses a tight, session-relevant strike window first so far OTM/old strikes do not distort the ribbon.
-    - Uses absolute exposure magnitude for wall detection because put gamma is often negative.
-    - Calculates zero-gamma from cumulative net exposure, then chooses the crossing closest to spot.
-    - Returns diagnostics so the dashboard can show why a wall was selected.
+    Uses QuantData's /options/tool/exposure-by-strike endpoint with greekMode=GAMMA
+    and representationMode=RAW.
+
+    v3.4.5 fix:
+    - Filters strike selection around current spot before choosing walls.
+    - Chooses call wall from strikes at/above spot and put wall from strikes at/below spot.
+    - Uses absolute exposure magnitude so negative put exposure is handled correctly.
+    - Calculates zero-gamma from cumulative filtered net exposure instead of grabbing an
+      extreme far-away strike with the smallest single-row net value.
     """
-    empty = {
-        "gex_score": 50.0,
-        "gex_status": "NEUTRAL - GEX NOT CONFIGURED",
-        "call_wall": None,
-        "put_wall": None,
-        "zero_gamma": None,
-        "stock_price": None,
-        "gex_notes": ["Set QUANTDATA_API_KEY and GEX_ENABLED=true to enable gamma exposure."],
-    }
+    empty = {"gex_score": 50.0, "gex_status": "NEUTRAL - GEX NOT CONFIGURED", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["Set QUANTDATA_API_KEY and GEX_ENABLED=true to enable gamma exposure."]}
     if not QUANTDATA_API_KEY or not GEX_ENABLED:
         return empty
     if BREAKER.is_open("quantdata_gex"):
         BREAKER.record_skip("quantdata_gex")
-        return {
-            "gex_score": 50.0,
-            "gex_status": "NEUTRAL - CIRCUIT OPEN",
-            "call_wall": None,
-            "put_wall": None,
-            "zero_gamma": None,
-            "stock_price": None,
-            "gex_notes": ["quantdata_gex skipped after repeated failures this scan cycle."],
-        }
-
-    def _spot_fallback(symbol: str) -> Optional[float]:
-        """Use Polygon as a spot fallback only when QuantData omits stockPrice."""
-        symbol = symbol.upper().strip()
-        candidates = []
-        if symbol in {"SPX", "SPXW"}:
-            candidates = ["I:SPX", "SPY"]
-        elif symbol == "NDX":
-            candidates = ["I:NDX", "QQQ"]
-        else:
-            candidates = [symbol]
-        for candidate in candidates:
-            snap = safe_get_json(f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/{candidate}", timeout=8)
-            if isinstance(snap, dict):
-                day = (snap.get("ticker") or {}).get("day") or {}
-                last_trade = (snap.get("ticker") or {}).get("lastTrade") or {}
-                px = safe_float(last_trade.get("p") or day.get("c") or day.get("vw"), 0.0)
-                if px > 0:
-                    return px
-            last = safe_get_json(f"https://api.polygon.io/v2/last/trade/{candidate}", timeout=8)
-            if isinstance(last, dict):
-                px = safe_float((last.get("results") or {}).get("p") or (last.get("results") or {}).get("price"), 0.0)
-                if px > 0:
-                    return px
-        return None
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - CIRCUIT OPEN", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["quantdata_gex skipped after repeated failures this scan cycle."]}
 
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
-    qd_ticker = "SPX" if ticker.upper().strip() in {"SPXW", "SPX"} else ticker.upper().strip()
-    payload = {"greekMode": "GAMMA", "representationMode": "RAW", "filter": {"ticker": qd_ticker}}
+    payload = {"greekMode": "GAMMA", "representationMode": "RAW", "filter": {"ticker": ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/exposure-by-strike", payload, headers=headers, timeout=20)
     BREAKER.record_failure("quantdata_gex") if data is None else BREAKER.record_success("quantdata_gex")
     if not isinstance(data, dict):
-        return {
-            "gex_score": 50.0,
-            "gex_status": "NEUTRAL - NO GEX RETURNED",
-            "call_wall": None,
-            "put_wall": None,
-            "zero_gamma": None,
-            "stock_price": None,
-            "gex_notes": ["QuantData exposure-by-strike returned no usable response."],
-        }
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - NO GEX RETURNED", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["QuantData exposure-by-strike returned no usable response."]}
 
-    data_map = data.get("data") or {}
-    ticker_data = data_map.get(qd_ticker) if isinstance(data_map, dict) else None
-    if not isinstance(ticker_data, dict) and isinstance(data_map, dict):
-        for k, v in data_map.items():
-            if str(k).upper() == qd_ticker and isinstance(v, dict):
+    ticker_data = (data.get("data") or {}).get(ticker) if isinstance(data.get("data"), dict) else None
+    if not isinstance(ticker_data, dict):
+        for k, v in (data.get("data") or {}).items() if isinstance(data.get("data"), dict) else []:
+            if str(k).upper() == ticker.upper() and isinstance(v, dict):
                 ticker_data = v
                 break
     if not isinstance(ticker_data, dict):
-        return {
-            "gex_score": 50.0,
-            "gex_status": "NEUTRAL - NO GEX MAP",
-            "call_wall": None,
-            "put_wall": None,
-            "zero_gamma": None,
-            "stock_price": None,
-            "gex_notes": ["No exposureMap found for ticker."],
-        }
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - NO GEX MAP", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["No exposureMap found for ticker."]}
 
     exposure_map = ticker_data.get("exposureMap") or {}
-    stock_price = safe_float(ticker_data.get("stockPrice"), 0.0)
-    if stock_price <= 0:
-        stock_price = safe_float(_spot_fallback(qd_ticker), 0.0)
-
-    # QuantData index gamma can occasionally arrive with index strikes scaled down
-    # by one or two decimal places (example: SPX 7300 shown as 730). Keep the
-    # math honest by normalizing index spot/strikes to the same display scale
-    # before wall selection, zero-gamma, ribbon, and story text use the values.
-    # This does NOT invent levels; it only restores the missing power-of-ten
-    # scale when the whole chain is clearly compressed relative to SPX/NDX.
-    symbol_for_scale = qd_ticker.upper().strip()
-
-    def _normalize_index_spot(px: float) -> float:
-        px = safe_float(px, 0.0)
-        if symbol_for_scale in {"SPX", "SPXW", "NDX"}:
-            while 0 < px < 1000:
-                px *= 10.0
-        return px
-
-    def _normalize_index_strike(strike: float, anchor: float) -> float:
-        strike = safe_float(strike, 0.0)
-        anchor = safe_float(anchor, 0.0)
-        if symbol_for_scale not in {"SPX", "SPXW", "NDX"} or strike <= 0 or anchor <= 0:
-            return strike
-        candidates = [strike * (10 ** power) for power in range(-2, 4)]
-        candidates = [x for x in candidates if x > 0]
-        return min(candidates, key=lambda x: abs(x - anchor)) if candidates else strike
-
-    raw_stock_price = stock_price
-    stock_price = _normalize_index_spot(stock_price)
-
+    stock_price = safe_float(ticker_data.get("stockPrice"), None)
     by_strike: Dict[float, Dict[str, float]] = {}
+
     if isinstance(exposure_map, dict):
         for _exp, strikes in exposure_map.items():
             if not isinstance(strikes, dict):
@@ -753,91 +667,58 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
                 if not isinstance(cell, dict):
                     continue
                 strike = safe_float(strike_raw, None)
-                if strike is None or strike <= 0:
+                if strike is None:
                     continue
-                strike = _normalize_index_strike(strike, stock_price)
+                bucket = by_strike.setdefault(strike, {"call": 0.0, "put": 0.0, "net": 0.0})
                 call_exp = safe_float(cell.get("callExposure"), 0.0)
                 put_exp = safe_float(cell.get("putExposure"), 0.0)
-                if call_exp == 0 and put_exp == 0:
-                    continue
-                bucket = by_strike.setdefault(strike, {"call": 0.0, "put": 0.0, "net": 0.0, "abs_total": 0.0})
                 bucket["call"] += call_exp
                 bucket["put"] += put_exp
                 bucket["net"] += call_exp + put_exp
-                bucket["abs_total"] += abs(call_exp) + abs(put_exp)
 
     if not by_strike:
-        return {
-            "gex_score": 50.0,
-            "gex_status": "NEUTRAL - EMPTY GEX MAP",
-            "call_wall": None,
-            "put_wall": None,
-            "zero_gamma": None,
-            "stock_price": stock_price or None,
-            "gex_notes": ["Exposure map contained no strike rows."],
-        }
+        return {"gex_score": 50.0, "gex_status": "NEUTRAL - EMPTY GEX MAP", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": stock_price, "gex_notes": ["Exposure map contained no strike rows."]}
 
-    strikes_all = sorted(by_strike.keys())
-    if stock_price <= 0:
-        # Last resort only. This keeps the function alive but flags the quality issue.
-        stock_price = strikes_all[len(strikes_all) // 2]
-        spot_source_note = "Spot missing; used median strike fallback."
-    else:
-        spot_source_note = "Spot anchored from QuantData/Polygon."
+    # If QuantData does not provide a spot price, use the median strike as a defensive fallback.
+    if not stock_price or stock_price <= 0:
+        sorted_all = sorted(by_strike.keys())
+        stock_price = sorted_all[len(sorted_all) // 2]
 
-    # Session-relevant filter. SPX 0DTE should not let far-away strikes control the ribbon.
-    symbol = qd_ticker.upper()
-    if symbol in {"SPX", "SPXW", "NDX"}:
-        primary_band_pct = 0.035   # about +/- 3.5% around spot for index 0DTE relevance
-        secondary_band_pct = 0.075
-    else:
-        primary_band_pct = 0.055
-        secondary_band_pct = 0.10
+    # Wall levels should be relevant to the current trading area, not far OTM/LEAPS strikes.
+    # SPX can have wider strike maps, so keep a 10% band around spot by default.
+    band_pct = 0.10 if ticker.upper() in ("SPX", "SPXW") else 0.12
+    low_bound = stock_price * (1 - band_pct)
+    high_bound = stock_price * (1 + band_pct)
+    filtered = {k: v for k, v in by_strike.items() if low_bound <= k <= high_bound}
 
-    def _window(pct: float) -> Dict[float, Dict[str, float]]:
-        lo = stock_price * (1 - pct)
-        hi = stock_price * (1 + pct)
-        return {k: v for k, v in by_strike.items() if lo <= k <= hi}
-
-    filtered = _window(primary_band_pct)
-    band_used = primary_band_pct
-    if len(filtered) < 8:
-        filtered = _window(secondary_band_pct)
-        band_used = secondary_band_pct
-    if len(filtered) < 4:
+    # If the band is too sparse, widen once before falling back to all strikes.
+    if len(filtered) < 10:
+        wide_low = stock_price * 0.80
+        wide_high = stock_price * 1.20
+        filtered = {k: v for k, v in by_strike.items() if wide_low <= k <= wide_high}
+        low_bound, high_bound = wide_low, wide_high
+    if not filtered:
         filtered = by_strike
-        band_used = 1.0
+        low_bound, high_bound = min(by_strike.keys()), max(by_strike.keys())
 
-    # Hard side separation. A call wall below spot or put wall above spot is not useful for live decisions.
-    calls_above = {k: v for k, v in filtered.items() if k >= stock_price and abs(v.get("call", 0.0)) > 0}
-    puts_below = {k: v for k, v in filtered.items() if k <= stock_price and abs(v.get("put", 0.0)) > 0}
+    calls_above = {k: v for k, v in filtered.items() if k >= stock_price}
+    puts_below = {k: v for k, v in filtered.items() if k <= stock_price}
 
-    # If spot sits between sparse strikes, use nearest valid side from the full chain, not the opposite side.
-    if not calls_above:
-        calls_above = {k: v for k, v in by_strike.items() if k >= stock_price and abs(v.get("call", 0.0)) > 0}
-    if not puts_below:
-        puts_below = {k: v for k, v in by_strike.items() if k <= stock_price and abs(v.get("put", 0.0)) > 0}
+    # Use absolute exposure magnitude. Put exposure is commonly negative, so min() alone can be misleading.
+    call_pool = calls_above or filtered
+    put_pool = puts_below or filtered
+    call_wall = max(call_pool.items(), key=lambda kv: abs(kv[1]["call"]))[0]
+    put_wall = max(put_pool.items(), key=lambda kv: abs(kv[1]["put"]))[0]
 
-    strike_step = 5 if symbol in {"SPX", "SPXW", "NDX"} else 1
-    call_fallback = round((int(stock_price / strike_step) + 1) * strike_step, 2)
-    put_fallback = round((int(stock_price / strike_step)) * strike_step, 2)
-
-    call_wall = max(calls_above.items(), key=lambda kv: (abs(kv[1]["call"]), -abs(kv[0] - stock_price)))[0] if calls_above else call_fallback
-    put_wall = max(puts_below.items(), key=lambda kv: (abs(kv[1]["put"]), -abs(kv[0] - stock_price)))[0] if puts_below else put_fallback
-
-    # Enforce final geometry even if the data is sparse or malformed.
-    if call_wall < stock_price:
-        call_wall = call_fallback
-    if put_wall > stock_price:
-        put_wall = put_fallback
-
+    # Approximate zero-gamma from cumulative net exposure across the filtered strike curve.
+    # Prefer the cumulative zero crossing closest to spot; fallback to closest cumulative value.
     sorted_rows = sorted(filtered.items(), key=lambda kv: kv[0])
     cumulative = 0.0
     prev_strike = None
     prev_cum = None
     crossing_candidates: List[float] = []
-    best_zero = min(filtered.keys(), key=lambda k: abs(k - stock_price))
     best_abs = None
+    best_zero = sorted_rows[0][0]
     for strike, vals in sorted_rows:
         cumulative += vals["net"]
         if prev_cum is not None and ((prev_cum <= 0 <= cumulative) or (prev_cum >= 0 >= cumulative)):
@@ -851,13 +732,11 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
     zero_gamma = min(crossing_candidates, key=lambda x: abs(x - stock_price)) if crossing_candidates else best_zero
 
     total_net = sum(v["net"] for v in filtered.values())
-    total_abs = sum(v["abs_total"] for v in filtered.values()) or 1.0
-    net_ratio = max(-1.0, min(1.0, total_net / total_abs))
+    total_abs = sum(abs(v["call"]) + abs(v["put"]) for v in filtered.values()) or 1.0
+    net_ratio = total_net / total_abs
     score = max(0, min(100, 50 + net_ratio * 50))
     status = "POSITIVE GAMMA / PIN RISK" if score >= 60 else "NEGATIVE GAMMA / TREND RISK" if score <= 40 else "MIXED GAMMA"
 
-    low_bound = min(filtered.keys())
-    high_bound = max(filtered.keys())
     return {
         "gex_score": round(score, 1),
         "gex_status": status,
@@ -868,26 +747,15 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
         "net_gamma_ratio": round(net_ratio, 4),
         "strike_count": len(filtered),
         "raw_strike_count": len(by_strike),
-        "gex_quality": {
-            "spot": round(stock_price, 2),
-            "raw_spot": round(raw_stock_price, 4) if raw_stock_price else None,
-            "scale_normalized": bool(raw_stock_price and stock_price and round(raw_stock_price, 4) != round(stock_price, 4)),
-            "call_wall_valid": call_wall >= stock_price,
-            "put_wall_valid": put_wall <= stock_price,
-            "band_used_pct": None if band_used == 1.0 else round(band_used * 100, 2),
-            "call_candidates": len(calls_above),
-            "put_candidates": len(puts_below),
-        },
         "gex_notes": [
-            f"Call wall {call_wall:.2f} selected above spot {stock_price:.2f}",
-            f"Put wall {put_wall:.2f} selected below spot {stock_price:.2f}",
+            f"Call wall {call_wall:.2f}",
+            f"Put wall {put_wall:.2f}",
             f"Approx zero-gamma {zero_gamma:.2f}",
-            f"Gamma score {score:.1f} from net/absolute exposure ratio {net_ratio:.4f}",
+            f"Spot {stock_price:.2f}",
             f"Filtered strikes {len(filtered)}/{len(by_strike)} within {low_bound:.2f}-{high_bound:.2f}",
-            "Index gamma scale normalized from compressed QuantData strikes." if raw_stock_price and round(raw_stock_price, 4) != round(stock_price, 4) else "Index gamma scale already matched spot.",
-            spot_source_note,
         ],
     }
+
 
 def flow_decision_gate(bias: str, net_premium: float, flow_score: float, order_flow_score: float, gex_score: float) -> Dict[str, Any]:
     """Fast traffic-light decision gate for the Flow/GEX dashboard.
