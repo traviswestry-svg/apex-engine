@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>APEX Institutional OS</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/apex_os.css') }}">
+</head>
+<body>
+
+<nav class="apex-nav">
+  <a href="/" class="nav-logo">APEX</a>
+  <a href="/">Scanner</a>
+  <a href="/apex_os" class="active">Institutional OS</a>
+  <a href="/assistant">Trade Assistant</a>
+  <a href="/flow">Flow / GEX</a>
+  <a href="/chart">Charts</a>
+  <div class="nav-sep"></div>
+  <a href="/api/v45/status" target="_blank">Status</a>
+  <a href="/health" target="_blank">Health</a>
+  <div class="nav-right">
+    <span><span class="dot-live"></span><span id="clockEl">-- ET</span></span>
+    <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
+    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">6.0.4_FLOW2_STORY</span>
+  </div>
+</nav>
+
+<div class="os-wrap">
+
+  <div class="os-error" id="osError"></div>
+
+  <!-- Institutional Ribbon -->
+  <div id="ribbon" class="ribbon sec-mb"></div>
+
+  <!-- Ticker + Tab row -->
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+    <div style="display:flex;gap:4px">
+      <button class="ticker-btn tab-btn active" data-ticker="SPX">SPX</button>
+      <button class="ticker-btn tab-btn" data-ticker="SPY">SPY</button>
+      <button class="ticker-btn tab-btn" data-ticker="QQQ">QQQ</button>
+      <button class="ticker-btn tab-btn" data-ticker="IWM">IWM</button>
+    </div>
+    <div style="width:1px;height:20px;background:var(--bdr)"></div>
+    <div class="tab-bar" style="padding:0;margin:0">
+      <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+      <button class="tab-btn" data-tab="flow2">Flow Intelligence</button>
+      <button class="tab-btn" data-tab="story">Story Engine</button>
+      <button class="tab-btn" data-tab="replay">Replay</button>
+      <button class="tab-btn" data-tab="review">Review</button>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <button class="btn btn-blue" id="refreshBtn">&#8635; Refresh</button>
+      <span class="last-upd" id="lastUpdated">--</span>
+    </div>
+  </div>
+
+  <!-- TAB: DASHBOARD (6.0.3) -->
+  <div id="tab-dashboard" class="tab-pane active">
+
+    <div class="grid2 sec-mb">
+      <div class="card">
+        <div class="card-label">Institutional Confidence Index
+          <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.0.3</span>
+        </div>
+        <div id="iciPanel"></div>
+        <div style="margin-top:10px">
+          <div id="decisionBadge" class="decision-badge db-neutral">&#8212; Loading</div>
+          <div style="font-size:12px;color:var(--muted);line-height:1.65;margin-top:4px" id="decisionMsg">--</div>
+          <div style="font-size:11px;color:var(--faint);font-style:italic;margin-top:3px" id="decisionAction">--</div>
+          <div class="decay-wrap">
+            <div class="decay-bar"><div class="decay-fill" id="decayBar" style="width:0%"></div></div>
+            <div class="decay-meta"><span id="decayAge">--</span><span id="decayExp">--</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Trade Readiness</div>
+        <div style="display:flex;gap:16px;align-items:flex-start">
+          <div>
+            <div class="ici-big ici-amber" id="readinessNum">--</div>
+            <div style="font-size:10px;color:var(--faint);margin-top:2px">/ 100</div>
+          </div>
+          <div id="gateChecks" style="flex:1"></div>
+        </div>
+        <div class="action-bar" style="margin-top:12px">
+          <a href="/api/institutional_os" target="_blank" class="btn btn-blue">Full JSON &#8599;</a>
+          <a href="/assistant" class="btn">Assistant &#8599;</a>
+          <a href="/flow" class="btn">Flow &#8599;</a>
+          <a href="/chart" class="btn">Charts &#8599;</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card sec-mb">
+      <div class="card-label">AI Trade Coach
+        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.0.3</span>
+      </div>
+      <div id="tradeCoach"></div>
+    </div>
+
+    <div class="card sec-mb">
+      <div class="card-label">Engine Matrix &#8212; Nine Engine Pipeline</div>
+      <div id="consensusBar" class="sec-mb"></div>
+      <div id="engineMatrix" class="engine-matrix"></div>
+    </div>
+
+    <div class="card sec-mb">
+      <div class="card-label">Institutional Heat Map</div>
+      <div id="heatGrid" class="heat-grid"></div>
+    </div>
+
+    <div class="card sec-mb">
+      <div class="card-label">Scanner Qualified Ideas
+        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">Scanner</span>
+      </div>
+      <div style="font-size:10px;color:var(--faint);margin-bottom:10px">
+        Populates from the legacy scanner state after background/manual scans complete.
+      </div>
+      <div id="scannerIdeasPanel" class="scanner-ideas-panel">Loading scanner ideas...</div>
+    </div>
+
+  </div><!-- /tab-dashboard -->
+
+  <!-- TAB: FLOW INTELLIGENCE 2.0 (6.0.4) -->
+  <div id="tab-flow2" class="tab-pane">
+    <div class="card">
+      <div class="card-label">Flow Intelligence 2.0
+        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.0.4</span>
+      </div>
+      <div id="flow2Panel"></div>
+    </div>
+  </div>
+
+  <!-- TAB: STORY ENGINE (6.0.4) -->
+  <div id="tab-story" class="tab-pane">
+    <div class="card sec-mb">
+      <div class="card-label">Executive Summary</div>
+      <div id="execSummary" class="exec-summary">Loading institutional narrative...</div>
+    </div>
+    <div class="card sec-mb">
+      <div class="card-label">Story Engine &#8212; Chapter Timeline
+        <span class="badge-xs" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.25)">6.0.4</span>
+      </div>
+      <div id="storyPanel"></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Full Institutional Narrative</div>
+      <div id="narrativeBlock" class="narrative-block">Loading...</div>
+    </div>
+  </div>
+
+  <!-- TAB: SESSION REPLAY (6.0.4) -->
+  <div id="tab-replay" class="tab-pane">
+    <div class="card sec-mb">
+      <div class="card-label">Session Replay
+        <span class="badge-xs" style="background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.25)">6.0.4</span>
+      </div>
+      <div class="replay-controls">
+        <button class="rep-btn" id="repPrev">&#9664; Prev</button>
+        <button class="rep-btn" id="repNext">Next &#9654;</button>
+        <input type="range" class="rep-scrub" id="replayScrub" min="0" max="0" value="0">
+        <button class="rep-btn active" id="repLive">&#9679; Live</button>
+        <span class="rep-time" id="replayTime">0 / 0</span>
+      </div>
+      <div class="replay-frame" id="replayFrame">
+        <div class="rf-label">Replay</div>
+        <div class="rf-note" style="color:var(--faint)">Snapshots captured every 12 seconds once loaded.</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-label">Event Log (last 30 snapshots)</div>
+      <div id="replayEvents"></div>
+    </div>
+  </div>
+
+  <!-- TAB: REVIEW (6.0.4) -->
+  <div id="tab-review" class="tab-pane">
+    <div class="card">
+      <div class="card-label">Session Review &#8212; Actionable Signal Log
+        <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">6.0.4</span>
+      </div>
+      <div style="font-size:10px;color:var(--faint);margin-bottom:10px">
+        ENTER_CALL, ENTER_PUT, and READY signals are logged automatically each refresh cycle.
+      </div>
+      <div id="reviewPanel"><div class="review-empty">No actionable signals yet this session.</div></div>
+    </div>
+  </div>
+
+</div><!-- /os-wrap -->
+
+<style>
+.ticker-btn { margin: 0; }
+.ticker-btn.active {
+  background: rgba(56,189,248,.1) !important;
+  color: var(--blue) !important;
+  border-color: rgba(56,189,248,.4) !important;
+}
+</style>
+
+<script src="{{ url_for('static', filename='js/apex_os.js') }}"></script>
+</body>
+</html>
