@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template, request
 
 # APEX Institutional OS 6.0.1 modular engines
 try:
@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.0.1A_GAMMA_FLIP_ES_SEPARATION"
+VERSION = "6.0.2_LIGHTWEIGHT_CHART_ENGINE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -2786,964 +2786,21 @@ def build_institutional_os(ticker: str, include_heatmap: bool = True) -> Dict[st
 # Replaces ASSISTANT_HTML with the full OS experience.
 # ---------------------------------------------------------------------------
 
-APEX_OS_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>APEX Institutional OS</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-:root{
-  --bg:#05080f;--surf:#0d141f;--surf2:#121c2b;--bdr:#1c2940;
-  --text:#e8f1fc;--muted:#8295b3;--faint:#5a6b87;
-  --blue:#38bdf8;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--purple:#a78bfa;
-  --mono:'JetBrains Mono',ui-monospace,monospace;--sans:'Inter',system-ui,sans-serif;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-.wrap{max-width:1400px;margin:0 auto;padding:16px 16px 60px}
-.topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;padding:12px 16px;background:var(--surf);border:1px solid var(--bdr);border-radius:12px}
-.logo{font-family:var(--mono);font-size:18px;font-weight:800;color:var(--blue)}
-.logo span{font-size:12px;font-weight:400;color:var(--faint);margin-left:8px}
-.top-meta{display:flex;align-items:center;gap:16px;font-family:var(--mono);font-size:12px;color:var(--muted)}
-.spx-price{color:var(--text);font-weight:700;font-size:14px}
-.session-pill{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--bdr)}
-.sess-open{color:var(--green);border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.08)}
-.sess-closed{color:var(--amber);border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.08)}
-.dot-live{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:pulse 1.4s ease-in-out infinite;display:inline-block;margin-right:5px}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.6)}50%{box-shadow:0 0 0 6px rgba(56,189,248,0)}}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
-.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px}
-.card{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:14px 16px}
-.card-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--faint);margin-bottom:10px}
-.decision-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px;font-weight:700;font-size:14px;margin-bottom:12px;font-family:var(--mono)}
-.badge-call{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.3)}
-.badge-put{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3)}
-.badge-caution{background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.3)}
-.badge-neutral{background:rgba(130,149,179,.1);color:var(--muted);border:1px solid var(--bdr)}
-.readiness-num{font-size:54px;font-weight:800;line-height:1;font-family:var(--mono)}
-.num-green{color:var(--green)}
-.num-amber{color:var(--amber)}
-.num-red{color:var(--red)}
-.gate-row{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);margin:3px 0}
-.gate-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.gd-on{background:var(--green)}
-.gd-warn{background:var(--amber)}
-.gd-off{background:var(--red)}
-.decay-bar{height:4px;border-radius:2px;background:var(--surf2);overflow:hidden;margin:6px 0 2px}
-.decay-fill{height:100%;border-radius:2px;transition:width .5s;background:var(--blue)}
-.decay-meta{display:flex;justify-content:space-between;font-size:10px;color:var(--faint)}
-.story-entry{display:flex;gap:10px;align-items:flex-start;margin-bottom:8px}
-.story-time{font-family:var(--mono);font-size:10px;color:var(--faint);flex-shrink:0;width:36px;padding-top:2px}
-.story-connector{display:flex;flex-direction:column;align-items:center;flex-shrink:0}
-.s-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:2px}
-.s-line{width:1px;flex:1;min-height:14px;background:var(--bdr);margin:3px 0}
-.story-text{font-size:12px;color:var(--muted);line-height:1.6;padding-bottom:4px}
-.coach-block{font-size:13px;color:var(--muted);line-height:1.75;padding:11px 13px;background:var(--surf2);border-radius:8px;border-left:3px solid var(--blue)}
-.level-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--bdr);font-size:12px}
-.level-label{color:var(--faint)}
-.level-val{font-family:var(--mono);font-weight:500}
-.badge-small{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:700}
-.bs-bull{background:rgba(34,197,94,.12);color:var(--green)}
-.bs-bear{background:rgba(239,68,68,.12);color:var(--red)}
-.bs-neut{background:rgba(130,149,179,.1);color:var(--muted)}
-.heat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-.heat-item{padding:10px;border-radius:8px;text-align:center;border:1px solid var(--bdr)}
-.heat-ticker{font-family:var(--mono);font-size:12px;font-weight:700}
-.heat-score{font-size:20px;font-weight:800;font-family:var(--mono)}
-.heat-action{font-size:10px;font-weight:700;margin-top:2px;text-transform:uppercase}
-.h-enter{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.25)}
-.h-enter .heat-ticker,.h-enter .heat-score,.h-enter .heat-action{color:var(--green)}
-.h-watch{background:rgba(56,189,248,.06);border-color:rgba(56,189,248,.2)}
-.h-watch .heat-ticker,.h-watch .heat-score,.h-watch .heat-action{color:var(--blue)}
-.h-wait{background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)}
-.h-wait .heat-ticker,.h-wait .heat-score,.h-wait .heat-action{color:var(--amber)}
-.h-no{background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2)}
-.h-no .heat-ticker,.h-no .heat-score,.h-no .heat-action{color:var(--red)}
-.planner-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.pl-item{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid var(--bdr)}
-.pl-key{color:var(--faint)}
-.pl-val{font-family:var(--mono);font-weight:500}
-.flow-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
-.flow-card{background:var(--surf2);border:1px solid var(--bdr);border-radius:8px;padding:10px 12px}
-.flow-name{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);margin-bottom:4px}
-.flow-val{font-size:17px;font-weight:700;font-family:var(--mono)}
-.flow-sub{font-size:10px;color:var(--muted);margin-top:2px}
-.action-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
-.btn{font-size:11px;padding:5px 11px;border-radius:7px;border:1px solid var(--bdr);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--sans);transition:all .15s}
-.btn:hover{background:var(--surf2);color:var(--text)}
-.btn-primary{border-color:rgba(56,189,248,.5);color:var(--blue);background:rgba(56,189,248,.06)}
-.btn-primary:hover{background:rgba(56,189,248,.12)}
-.conf-num{font-size:28px;font-weight:800;font-family:var(--mono)}
-.section-full{margin-bottom:10px}
-.last-updated{font-size:10px;color:var(--faint);text-align:right;margin-top:8px}
-.checklist{display:flex;flex-direction:column;gap:5px;margin-top:8px}
-.err-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:10px 14px;color:var(--red);font-size:12px;margin-bottom:10px}
-.apex-nav{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--surf);border:1px solid var(--bdr);border-radius:12px;margin-bottom:12px;flex-wrap:wrap}
-.apex-nav .nav-logo{font-family:var(--mono);font-size:13px;font-weight:800;color:var(--blue);margin-right:10px;text-decoration:none}
-.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:var(--muted);text-decoration:none;transition:all .15s}
-.apex-nav a:hover{background:var(--surf2);color:var(--text);border-color:var(--bdr)}
-.apex-nav a.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.35)}
-.apex-nav .nav-sep{width:1px;height:18px;background:var(--bdr);margin:0 4px}
-</style>
-</head>
-<body>
-<div class="wrap" id="root">
+# APEX_OS_HTML migrated to templates/apex_os.html
 
-<nav class="apex-nav">
-  <a href="/" class="nav-logo">APEX</a>
-  <a href="/">Scanner</a>
-  <a href="/apex_os" class="active">Institutional OS</a>
-  <a href="/assistant">Trade Assistant</a>
-  <a href="/flow">Flow / GEX</a>
-  <a href="/chart">Charts</a>
-  <div class="nav-sep"></div>
-  <a href="/api/v45/status" target="_blank">Status</a>
-  <a href="/health" target="_blank">Health</a>
-</nav>
+# HTML migrated to templates/dashboard.html
 
-<div class="topbar">
-  <div>
-    <div class="logo">APEX <span>Institutional OS v5.1</span></div>
-  </div>
-  <div class="top-meta">
-    <span><span class="dot-live"></span><span id="clockEl">--:--:-- ET</span></span>
-    <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
-    <span>SPX <span class="spx-price" id="spxEl">--</span></span>
-    <button class="btn btn-primary" onclick="loadOS()">↻ Refresh</button>
-  </div>
-</div>
 
-<div id="errBox" class="err-box" style="display:none">Error loading APEX data.</div>
 
-<div class="grid2">
-  <div class="card">
-    <div class="card-label">Decision engine</div>
-    <div id="decisionBadge" class="decision-badge badge-neutral">— Loading</div>
-    <div style="display:flex;gap:16px;align-items:flex-end">
-      <div>
-        <div id="confNum" class="conf-num" style="color:var(--blue)">--</div>
-        <div style="font-size:11px;color:var(--faint);margin-top:3px">Confidence</div>
-      </div>
-      <div style="flex:1">
-        <div style="font-size:10px;color:var(--faint);margin-bottom:2px">Signal decay</div>
-        <div id="decayFill" class="decay-bar"><div class="decay-fill" id="decayBar" style="width:0%"></div></div>
-        <div class="decay-meta"><span id="decayAge">--</span><span id="decayExp">--</span></div>
-      </div>
-    </div>
-    <div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6" id="decisionMsg">--</div>
-    <div style="font-size:11px;color:var(--faint);margin-top:6px;font-style:italic" id="decisionAction">--</div>
-  </div>
 
-  <div class="card">
-    <div class="card-label">Trade readiness</div>
-    <div style="display:flex;gap:14px;align-items:flex-start">
-      <div>
-        <div class="readiness-num num-green" id="readinessNum">--</div>
-        <div style="font-size:11px;color:var(--faint)">/ 100</div>
-      </div>
-      <div class="checklist" id="gateChecks"></div>
-    </div>
-  </div>
-</div>
+# FLOW_HTML migrated to templates/flow.html
 
-<div class="grid2">
-  <div class="card">
-    <div class="card-label">Institutional story</div>
-    <div id="storyWrap"></div>
-  </div>
-  <div class="card">
-    <div class="card-label">AI trade coach</div>
-    <div id="coachText" class="coach-block">Loading institutional narrative...</div>
-    <div class="action-bar">
-      <button class="btn btn-primary" onclick="window.location.href='/api/institutional_os'">Full JSON ↗</button>
-      <button class="btn" onclick="window.location.href='/assistant'">Assistant ↗</button>
-      <button class="btn" onclick="window.location.href='/flow'">Flow dashboard ↗</button>
-    </div>
-  </div>
-</div>
 
-<div class="grid3">
-  <div class="card">
-    <div class="card-label">GEX levels</div>
-    <div id="gexRows"></div>
-  </div>
-  <div class="card">
-    <div class="card-label">Flow inputs</div>
-    <div class="flow-grid" id="flowGrid"></div>
-  </div>
-  <div class="card">
-    <div class="card-label">Trade planner</div>
-    <div id="plannerWrap"></div>
-  </div>
-</div>
-
-<div class="section-full card">
-  <div class="card-label">Institutional heat map</div>
-  <div class="heat-grid" id="heatGrid"></div>
-</div>
-
-<div class="last-updated" id="lastUpdated">--</div>
-
-</div>
-
-<script>
-let osData = null;
-
-function clock(){
-  const now = new Date();
-  const et = new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true,timeZone:'America/New_York'}).format(now);
-  document.getElementById('clockEl').textContent = et + ' ET';
-}
-setInterval(clock, 1000); clock();
-
-function badgeClass(state){
-  if(!state) return 'badge-neutral';
-  if(state.includes('CALL')) return 'badge-call';
-  if(state.includes('PUT')) return 'badge-put';
-  if(state.includes('CAUTION') || state.includes('WAITING')) return 'badge-caution';
-  return 'badge-neutral';
-}
-
-function renderDecision(d){
-  if(!d) return;
-  const badge = document.getElementById('decisionBadge');
-  const state = d.state || 'WAITING';
-  badge.className = 'decision-badge ' + badgeClass(state);
-  badge.textContent = (state.includes('CALL') ? '▲ ' : state.includes('PUT') ? '▼ ' : '— ') + state.replace(/_/g,' ');
-  document.getElementById('decisionMsg').textContent = d.message || '--';
-  document.getElementById('decisionAction').textContent = d.action || '';
-
-  // Alignment / confidence
-  const align = d.institutional_alignment || 0;
-  const num = document.getElementById('confNum');
-  num.textContent = Math.round(align) + '%';
-  num.style.color = align >= 70 ? 'var(--green)' : align >= 50 ? 'var(--amber)' : 'var(--red)';
-  const rNum = document.getElementById('readinessNum');
-  const gates = d.checklist || [];
-  const passCount = gates.filter(g => g.ok).length;
-  const pct = gates.length ? Math.round(passCount / gates.length * 100) : 0;
-  rNum.textContent = pct;
-  rNum.className = 'readiness-num ' + (pct >= 75 ? 'num-green' : pct >= 50 ? 'num-amber' : 'num-red');
-  // Gates
-  const gc = document.getElementById('gateChecks');
-  gc.innerHTML = (d.checklist || []).map(g => `<div class="gate-row"><span class="gate-dot ${g.ok ? 'gd-on' : 'gd-warn'}"></span>${g.label}</div>`).join('');
-
-  // Decay
-  const secs = d.signal_seconds_remaining || 0;
-  const ttl = d.signal_ttl_seconds || 360;
-  const decPct = Math.round(secs / ttl * 100);
-  document.getElementById('decayBar').style.width = decPct + '%';
-  document.getElementById('decayAge').textContent = secs > 0 ? secs + 's left' : 'Expired';
-  document.getElementById('decayExp').textContent = secs > 0 ? 'Live' : 'No signal';
-}
-
-function renderStory(story){
-  const el = document.getElementById('storyWrap');
-  if(!story || !story.chapters || !story.chapters.length){
-    el.innerHTML = '<div style="color:var(--faint);font-size:12px">No story data yet.</div>';
-    return;
-  }
-  el.innerHTML = story.chapters.map((c, i) => `
-    <div class="story-entry">
-      <span class="story-time">${c.time || '--'}</span>
-      <div class="story-connector">
-        <span class="s-dot" style="background:${c.color || '#5a6b87'}"></span>
-        ${i < story.chapters.length - 1 ? '<span class="s-line"></span>' : ''}
-      </div>
-      <div class="story-text"><strong style="color:${c.color || 'var(--muted)'}; font-size:10px; text-transform:uppercase; letter-spacing:.6px">${c.chapter}</strong><br>${c.text}</div>
-    </div>`).join('');
-}
-
-function renderCoach(story, decision){
-  const el = document.getElementById('coachText');
-  if(story && story.full_narrative){
-    el.textContent = story.full_narrative;
-  } else if(decision){
-    el.textContent = decision.action || 'Waiting for institutional data...';
-  }
-}
-
-function renderGex(flow){
-  const el = document.getElementById('gexRows');
-  if(!flow){ el.innerHTML = ''; return; }
-  const rows = [
-    {label:'Call wall', val: flow.call_wall ? flow.call_wall.toLocaleString() : '--', cls:'bs-bull'},
-    {label:'Put wall', val: flow.put_wall ? flow.put_wall.toLocaleString() : '--', cls:'bs-bear'},
-    {label:'Zero gamma', val: flow.zero_gamma ? flow.zero_gamma.toLocaleString() : '--', cls:'bs-neut'},
-    {label:'GEX score', val: flow.gex_score != null ? flow.gex_score : '--', cls: flow.gex_score >= 60 ? 'bs-bull' : flow.gex_score <= 40 ? 'bs-bear' : 'bs-neut'},
-    {label:'Spot price', val: flow.stock_price ? flow.stock_price.toLocaleString() : '--', cls:'bs-neut'},
-  ];
-  el.innerHTML = rows.map(r => `<div class="level-row"><span class="level-label">${r.label}</span><div style="display:flex;align-items:center;gap:6px"><span class="level-val">${r.val}</span><span class="badge-small ${r.cls}">${r.val !== '--' ? '✓' : '?'}</span></div></div>`).join('');
-}
-
-function renderFlow(flow){
-  const el = document.getElementById('flowGrid');
-  if(!flow){ el.innerHTML = ''; return; }
-  const items = [
-    {name:'Net flow', val: flow.net_premium != null ? '$' + (flow.net_premium/1e6).toFixed(1)+'M' : '--', sub: flow.bias || '--'},
-    {name:'Flow score', val: flow.flow_score != null ? flow.flow_score : '--', sub: 'Inst. options'},
-    {name:'Order flow', val: flow.order_flow_score != null ? flow.order_flow_score : '--', sub: 'Sweeps: ' + (flow.sweep_count || 0)},
-    {name:'GEX score', val: flow.gex_score != null ? flow.gex_score : '--', sub: 'Gamma exposure'},
-    {name:'Alignment', val: flow.institutional_alignment != null ? Math.round(flow.institutional_alignment) + '%' : '--', sub: flow.decision_color || '--'},
-    {name:'Approved', val: flow.approved_side || '--', sub: flow.decision || ''},
-  ];
-  el.innerHTML = items.map(i => `<div class="flow-card"><div class="flow-name">${i.name}</div><div class="flow-val">${i.val}</div><div class="flow-sub">${i.sub}</div></div>`).join('');
-}
-
-function renderPlanner(plan){
-  const el = document.getElementById('plannerWrap');
-  if(!plan){ el.innerHTML = '<div style="color:var(--faint);font-size:12px">Waiting for signal...</div>'; return; }
-  const contract = plan.recommended_contract || '--';
-  const rows = [
-    {key:'Contract', val: contract},
-    {key:'Entry zone', val: plan.entry_zone || '--'},
-    {key:'Stop', val: plan.stop_price || '--'},
-    {key:'Target 1', val: plan.target_1 || '--'},
-    {key:'Target 2', val: plan.target_2 || '--'},
-    {key:'R:R', val: plan.rr_to_t1 ? plan.rr_to_t1 + ':1' : '--'},
-  ];
-  el.innerHTML = `<div style="font-size:13px;font-family:var(--mono);font-weight:700;color:var(--blue);margin-bottom:8px">${contract}</div>
-    <div class="planner-grid">${rows.map(r => `<div class="pl-item"><span class="pl-key">${r.key}</span><span class="pl-val">${r.val}</span></div>`).join('')}</div>`;
-}
-
-function renderHeatmap(heatmap){
-  const el = document.getElementById('heatGrid');
-  if(!heatmap || !heatmap.tickers){ el.innerHTML = ''; return; }
-  el.innerHTML = heatmap.tickers.map(t => {
-    const cls = t.action_class === 'enter' ? 'h-enter' : t.action_class === 'watch' ? 'h-watch' : t.action_class === 'wait' ? 'h-wait' : 'h-no';
-    return `<div class="heat-item ${cls}">
-      <div class="heat-ticker">${t.ticker}</div>
-      <div class="heat-score">${Math.round(t.score || 0)}</div>
-      <div class="heat-action">${t.action}</div>
-    </div>`;
-  }).join('');
-}
-
-function renderSPX(flow){
-  if(flow && flow.stock_price){
-    document.getElementById('spxEl').textContent = parseFloat(flow.stock_price).toLocaleString();
-  }
-}
-
-function renderSession(session){
-  const pill = document.getElementById('sessionPill');
-  if(!session){ return; }
-  const s = session.session || '';
-  pill.textContent = s.replace('_', ' ');
-  pill.className = 'session-pill ' + (s === 'MARKET_OPEN' ? 'sess-open' : 'sess-closed');
-}
-
-async function loadOS(){
-  try{
-    const ticker = new URLSearchParams(window.location.search).get('ticker') || 'SPX';
-    const r = await fetch('/api/institutional_os?ticker=' + ticker + '&heatmap=1');
-    if(!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    osData = data;
-    document.getElementById('errBox').style.display = 'none';
-
-    renderSession(data.session);
-    renderDecision(data.decision);
-    renderStory(data.story);
-    renderCoach(data.story, data.decision);
-    renderGex(data.flow);
-    renderFlow({...data.flow, institutional_alignment: data.decision?.institutional_alignment, approved_side: data.decision?.approved_side, decision_color: data.flow?.decision_color, decision: data.flow?.decision_color});
-    renderPlanner(data.decision?.trade_plan);
-    renderHeatmap(data.heatmap);
-    renderSPX(data.flow);
-    document.getElementById('lastUpdated').textContent = 'Updated: ' + (data.updated_at || '--');
-  }catch(e){
-    document.getElementById('errBox').style.display = '';
-    document.getElementById('errBox').textContent = 'Error loading APEX OS: ' + e.message;
-  }
-}
-
-loadOS();
-setInterval(loadOS, 10000);
-</script>
-</body>
-</html>"""
-
-HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>APEX 3.3 Dashboard</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-:root{
-  --bg:#05080f; --surface:#0d141f; --surface-alt:#121c2b; --border:#1c2940;
-  --text:#e8f1fc; --muted:#8295b3; --faint:#5a6b87;
-  --accent:#38bdf8; --green:#22c55e; --amber:#f59e0b; --red:#ef4444; --purple:#a78bfa;
-  --mono:'JetBrains Mono',ui-monospace,monospace; --sans:'Inter',system-ui,-apple-system,sans-serif;
-}
-*{box-sizing:border-box}
-body{margin:0;font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-.wrap{max-width:1320px;margin:0 auto;padding:20px 18px 60px}
-a{color:inherit}
-
-/* header */
-.topbar{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
-.brand{display:flex;align-items:baseline;gap:10px}
-.brand h1{font-family:var(--mono);font-size:21px;font-weight:800;color:var(--accent);margin:0;letter-spacing:-.01em}
-.brand .ver{font-family:var(--mono);font-size:11px;color:var(--faint)}
-.session-pill{font-family:var(--mono);font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
-.session-pill.open{color:var(--green);border-color:rgba(34,197,94,.35);background:rgba(34,197,94,.08)}
-
-/* status strip: the signature element -- always-visible scan/system health */
-.statusbar{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 16px;display:flex;flex-wrap:wrap;align-items:center;gap:18px;margin-bottom:16px}
-.scan-indicator{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:12.5px}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--faint);flex-shrink:0}
-.dot.live{background:var(--accent);animation:pulse 1.4s ease-in-out infinite}
-.dot.ok{background:var(--green)}
-.dot.err{background:var(--red)}
-@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.55)}50%{box-shadow:0 0 0 6px rgba(56,189,248,0)}}
-@media (prefers-reduced-motion:reduce){.dot.live{animation:none}}
-.statusbar .sep{width:1px;height:18px;background:var(--border)}
-.scan-now-btn{font-family:var(--sans);font-size:12px;font-weight:600;padding:5px 11px;border-radius:8px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer}
-.scan-now-btn:hover{background:rgba(56,189,248,.1)}
-.scan-now-btn:disabled{opacity:.5;cursor:default}
-.scan-now-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.source-chips{display:flex;gap:6px;flex-wrap:wrap}
-.chip{font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted);display:flex;align-items:center;gap:5px}
-.chip .dot{width:6px;height:6px}
-.chip.breaker-open{color:var(--red);border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.08)}
-.regime-badge{margin-left:auto;font-family:var(--mono);font-size:12px;font-weight:700;padding:4px 10px;border-radius:8px}
-.regime-RISKON,.regime-RISK_ON{color:var(--green);background:rgba(34,197,94,.1)}
-.regime-DEFENSIVE{color:var(--red);background:rgba(239,68,68,.1)}
-.regime-NEUTRAL{color:var(--amber);background:rgba(245,158,11,.1)}
-
-/* toolbar */
-.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px}
-.search{flex:1;min-width:160px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px}
-.search::placeholder{color:var(--faint)}
-.search:focus{outline:2px solid var(--accent);outline-offset:1px}
-.filters{display:flex;gap:6px;flex-wrap:wrap}
-.fbtn{font-family:var(--sans);font-size:12.5px;font-weight:600;padding:7px 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted);cursor:pointer}
-.fbtn:hover{color:var(--text)}
-.fbtn.active{background:var(--accent);border-color:var(--accent);color:#04131f}
-.fbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-select{font-family:var(--sans);font-size:12.5px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:8px 10px}
-
-/* empty state */
-.empty{background:var(--surface);border:1px dashed var(--border);border-radius:14px;padding:28px 22px;color:var(--muted);text-align:center}
-.empty b{color:var(--text)}
-
-/* grid + cards */
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px}
-.card{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:14px;padding:16px;opacity:0;animation:rise .35s ease forwards}
-@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-@media (prefers-reduced-motion:reduce){.card{animation:none;opacity:1}}
-.card.ready{border-left-color:var(--green)}
-.card.pre{border-left-color:var(--amber)}
-.card.accum{border-left-color:var(--purple)}
-.card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.ticker{font-family:var(--mono);font-size:24px;font-weight:800}
-.grade{color:var(--green);margin-left:4px}
-.price{color:var(--muted);font-family:var(--mono);font-size:14px;font-weight:500;margin-left:8px}
-.badges{margin-top:4px;display:flex;gap:5px;flex-wrap:wrap}
-.badge{display:inline-block;padding:3px 8px;border-radius:999px;background:var(--surface-alt);color:var(--muted);font-size:10.5px;font-family:var(--mono)}
-.badge.dir-CALL{color:var(--green)}
-.badge.zone-badge{color:#04131f;background:var(--accent);font-weight:700}
-.badge.src-live{color:var(--green);border:1px solid rgba(34,197,94,.35);background:rgba(34,197,94,.08);font-weight:700}
-.badge.src-est{color:var(--amber);border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.1);font-weight:700}
-.badge.src-stale{color:var(--red);border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.1);font-weight:700}
-.badge.dir-PUT{color:var(--red)}
-.score{font-family:var(--mono);font-size:24px;font-weight:800;color:var(--accent)}
-.scores{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:12px}
-.scorebox{background:var(--surface-alt);border-radius:9px;padding:7px;text-align:center}
-.scorebox .l{font-size:9.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
-.scorebox .v{font-family:var(--mono);font-size:14px;font-weight:700;margin-top:1px}
-.section{margin-top:12px}
-.label{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:3px}
-.value{font-size:13px;line-height:1.45;color:var(--text)}
-.value.mono{font-family:var(--mono);font-size:12.5px}
-.atr-note{margin-top:6px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
-.ballpark-tag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:5px;background:var(--surface-alt);color:var(--faint);font-size:9.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;vertical-align:middle}
-.exec-grid{margin-top:4px;background:var(--surface-alt);border-radius:9px;padding:8px 10px}
-.exec-row{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-family:var(--mono);font-size:12px}
-.exec-row .exec-l{color:var(--faint)}
-.exec-row .exec-v{color:var(--text);font-weight:600}
-details{margin-top:12px}
-summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:600;list-style:none}
-summary::-webkit-details-marker{display:none}
-summary:before{content:'▸ ';font-size:10px}
-details[open] summary:before{content:'▾ '}
-details:focus-within summary{outline:2px solid var(--accent);outline-offset:2px}
-.why-list{margin-top:8px;color:var(--muted);font-size:12.5px;line-height:1.6}
-
-footer{margin-top:28px;color:var(--faint);font-size:11px;font-family:var(--mono);text-align:center}
-</style>
-</head>
-<style>
-.apex-nav{display:flex;align-items:center;gap:6px;padding:8px 14px;background:#0d141f;border:1px solid #1c2940;border-radius:12px;margin-bottom:12px;flex-wrap:wrap}
-.apex-nav .nav-logo{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#38bdf8;margin-right:10px;text-decoration:none}
-.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:#8295b3;text-decoration:none;transition:all .15s;font-family:'Inter',sans-serif}
-.apex-nav a:hover{background:#121c2b;color:#e8f1fc;border-color:#1c2940}
-.apex-nav a.active{background:rgba(56,189,248,.1);color:#38bdf8;border-color:rgba(56,189,248,.35)}
-.apex-nav .nav-sep{width:1px;height:18px;background:#1c2940;margin:0 4px}
-</style>
-<body>
-<div class="wrap">
-  <nav class="apex-nav">
-    <a href="/" class="nav-logo">APEX</a>
-    <a href="/" class="active">Scanner</a>
-    <a href="/apex_os">Institutional OS</a>
-    <a href="/assistant">Trade Assistant</a>
-    <a href="/flow">Flow / GEX</a>
-    <a href="/chart">Charts</a>
-    <div class="nav-sep"></div>
-    <a href="/api/v45/status" target="_blank">Status</a>
-    <a href="/health" target="_blank">Health</a>
-  </nav>
-  <div class="topbar">
-    <div class="brand"><h1>APEX Institutional Forecast Engine</h1><span class="ver" id="ver"></span></div>
-    <span class="session-pill" id="sessionPill">--</span>
-  </div>
-
-  <div class="statusbar" id="statusbar">
-    <div class="scan-indicator"><span class="dot" id="scanDot"></span><span id="scanText">Connecting...</span></div>
-    <button class="scan-now-btn" id="scanNowBtn" type="button">Scan Now</button>
-    <div class="sep"></div>
-    <div class="source-chips" id="sourceChips"></div>
-    <div class="regime-badge" id="regimeBadge"></div>
-  </div>
-
-  <div class="toolbar">
-    <input class="search" id="search" type="text" placeholder="Filter by ticker...">
-    <div class="filters" id="statusFilters"></div>
-    <button class="fbtn" id="zoneToggle" type="button" aria-pressed="false">In Zone Only</button>
-    <select id="sortSel">
-      <option value="rank">Sort: Default rank</option>
-      <option value="final_score">Sort: Final score</option>
-      <option value="breakout_probability">Sort: Breakout probability</option>
-      <option value="accumulation_score">Sort: Accumulation score</option>
-      <option value="ticker">Sort: Ticker A-Z</option>
-    </select>
-  </div>
-
-  <div id="content"></div>
-  <footer id="footerNote"></footer>
-</div>
-
-<script id="initial-data" type="application/json">{{ data | tojson }}</script>
-<script>
-let state = JSON.parse(document.getElementById('initial-data').textContent || '{}');
-let activeFilter = 'ALL';
-let zoneOnly = false;
-let lastFetchOk = true;
-let lastRenderSignature = null;
-
-const STATUS_META = {
-  'READY - IN BUY ZONE': {cls:'ready', label:'Ready'},
-  'PRE-BREAKOUT WATCHLIST': {cls:'pre', label:'Pre-Breakout'},
-  'ACCUMULATION WATCHLIST': {cls:'accum', label:'Accumulating'},
-  'WATCHLIST - WAIT FOR ZONE': {cls:'', label:'Watching'},
-};
-
-function fmtAgo(iso){
-  if(!iso) return 'never';
-  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime())/1000));
-  if(s < 60) return s + 's ago';
-  if(s < 3600) return Math.floor(s/60) + 'm ago';
-  if(s < 86400) return Math.floor(s/3600) + 'h ago';
-  const days = Math.floor(s/86400);
-  return days + 'd ' + Math.floor((s%86400)/3600) + 'h ago';
-}
-
-function quoteAgeBadge(iso, timeframe){
-  if(!iso){
-    return '<span class="badge src-est" title="No quote timestamp returned -- freshness unknown.">Quote age: unknown</span>';
-  }
-  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime())/1000));
-  let cls = 'src-live', label = fmtAgo(iso);
-  if(s >= 3600) cls = 'src-stale';       // 1hr+ -- treat as stale regardless of session
-  else if(s >= 60) cls = 'src-est';      // 1-60min -- caution
-  const tf = timeframe ? ' (' + timeframe + ')' : '';
-  return '<span class="badge ' + cls + '" title="Quote last updated ' + label + tf + '. Polygon plan tiers below Options Advanced are 15-minute delayed even when live.">Quote age: ' + label + '</span>';
-}
-
-function renderStatusbar(){
-  const dot = document.getElementById('scanDot');
-  const text = document.getElementById('scanText');
-  document.getElementById('ver').textContent = state.mode || '';
-  const pill = document.getElementById('sessionPill');
-  pill.textContent = state.session || 'UNKNOWN';
-  pill.className = 'session-pill' + (state.session === 'MARKET_OPEN' ? ' open' : '');
-
-  if(!lastFetchOk){
-    dot.className = 'dot err'; text.textContent = 'Connection lost -- retrying...';
-  } else if(state.scan_in_progress){
-    dot.className = 'dot live';
-    text.textContent = (state.last_scan_status || 'Scan running...') ;
-  } else if(state.last_error){
-    dot.className = 'dot err'; text.textContent = 'Last scan failed: ' + state.last_error;
-  } else {
-    dot.className = 'dot ok';
-    const dur = state.last_scan_duration_seconds;
-    text.textContent = 'Idle -- last scan ' + fmtAgo(state.updated_at) + (dur ? ' (' + dur + 's)' : '');
-  }
-
-  const sources = state.data_sources || {};
-  const breaker = state.circuit_breaker || {open_circuits:[], skipped_calls:{}};
-  const chips = [];
-  for(const [name, ok] of Object.entries(sources)){
-    chips.push('<span class="chip"><span class="dot ' + (ok?'ok':'') + '"></span>' + name + '</span>');
-  }
-  (breaker.open_circuits || []).forEach(name => {
-    const skipped = (breaker.skipped_calls || {})[name] || 0;
-    chips.push('<span class="chip breaker-open" title="Repeated failures this scan -- skipped automatically">' + name.replace(/_/g,' ') + ' down (' + skipped + ' skipped)</span>');
-  });
-  document.getElementById('sourceChips').innerHTML = chips.join('');
-
-  const regime = state.market_regime || {};
-  const rb = document.getElementById('regimeBadge');
-  if(regime.market_regime){
-    rb.textContent = 'Regime: ' + regime.market_regime + ' (' + regime.market_regime_score + ')';
-    rb.className = 'regime-badge regime-' + regime.market_regime.replace(/\\s+/g,'');
-  } else { rb.textContent = ''; }
-
-  document.getElementById('footerNote').textContent =
-    (state.ticker_count || 0) + ' tickers scanned | updated ' + fmtAgo(state.updated_at) + ' | checking for updates every 30s (only redraws when something changes)';
-}
-
-function renderFilters(ideas){
-  const counts = {ALL: ideas.length};
-  ideas.forEach(i => { counts[i.status] = (counts[i.status]||0) + 1; });
-  const order = ['ALL', 'READY - IN BUY ZONE', 'PRE-BREAKOUT WATCHLIST', 'ACCUMULATION WATCHLIST', 'WATCHLIST - WAIT FOR ZONE'];
-  const box = document.getElementById('statusFilters');
-  box.innerHTML = order.filter(k => k === 'ALL' || counts[k]).map(k => {
-    const label = k === 'ALL' ? 'All' : (STATUS_META[k] ? STATUS_META[k].label : k);
-    return '<button class="fbtn' + (activeFilter===k?' active':'') + '" data-f="' + k + '">' + label + ' (' + (counts[k]||0) + ')</button>';
-  }).join('');
-  box.querySelectorAll('.fbtn').forEach(b => b.onclick = () => { activeFilter = b.dataset.f; renderCards(); });
-}
-
-function cardHtml(idea){
-  const meta = STATUS_META[idea.status] || {cls:'', label: idea.status || ''};
-  const notes = (idea.notes || []).slice(0, 8).map(n => '<div>&bull; ' + n + '</div>').join('');
-  const inZone = (idea.buy_zone_status||'').includes('INSIDE');
-  return '<div class="card ' + meta.cls + '" data-ticker="' + idea.ticker + '">' +
-    '<div class="card-head"><div><div class="ticker">' + idea.ticker + '<span class="grade">' + (idea.grade||'') + '</span>' +
-    '<span class="price">$' + (idea.price!=null ? idea.price : '--') + '</span></div>' +
-    '<div class="badges"><span class="badge dir-' + idea.direction + '">' + idea.direction + '</span>' +
-    '<span class="badge">' + idea.trader_type + '</span><span class="badge">' + meta.label + '</span>' +
-    (inZone ? '<span class="badge zone-badge">IN ZONE</span>' : '') + '</div></div>' +
-    '<div class="score">' + (idea.final_score!=null ? idea.final_score : '--') + '</div></div>' +
-    '<div class="scores">' +
-      scorebox('Tech', idea.technical_score) + scorebox('Flow', idea.flow_score_directional) +
-      scorebox('Order', idea.order_flow_score_directional) + scorebox('Dark', idea.dark_pool_score) +
-      scorebox('Accum', idea.accumulation_score) + scorebox('Breakout', idea.breakout_probability, '%') +
-      scorebox('Catalyst', idea.catalyst_score) + scorebox('RVOL', idea.rel_volume) +
-    '</div>' +
-    '<div class="section"><div class="label">Institutional Forecast</div><div class="value">' + (idea.accumulation_status||'') +
-      '<br>' + (idea.buy_zone_status||'') + ' &middot; Zone ' + (idea.entry_range||'') + ' &middot; Distance ' + idea.distance_to_buy_zone_pct + '%</div></div>' +
-    '<div class="section"><div class="label">Trigger</div><div class="value">' + (idea.confirmation_trigger||'') + '</div></div>' +
-    '<div class="section"><div class="label">Option</div><div class="value mono">' + (idea.option_contract||'') + '<br>' + (idea.option_liquidity||'') + ' &middot; Contracts: ' + idea.recommended_contracts + '</div></div>' +
-    execSection(idea) +
-    '<div class="section"><div class="label">Stock Targets / Stop</div><div class="value mono">T1 ' + idea.target_1_price + ' &middot; T2 ' + idea.target_2_price + ' &middot; Stop ' + idea.stock_stop + '</div>' + atrTimingNote(idea) + historicalTimingNote(idea) + '</div>' +
-    '<details><summary>Why this setup (' + (idea.notes||[]).length + ' signals)</summary><div class="why-list">' + notes + '</div></details>' +
-  '</div>';
-}
-let backtestStats = {enabled: false, buckets: []};
-
-function scoreBucketJs(score){
-  if(score >= 90) return '90-100';
-  if(score >= 85) return '85-89';
-  if(score >= 78) return '78-84';
-  return '<78';
-}
-
-async function loadBacktestStats(){
-  try{
-    const res = await fetch('/api/backtest_stats', {cache:'no-store'});
-    if(res.ok) backtestStats = await res.json();
-  } catch(e){ /* leave previous value in place */ }
-}
-
-function historicalTimingNote(idea){
-  if(!backtestStats.enabled || idea.final_score == null) return '';
-  const bucket = scoreBucketJs(idea.final_score);
-  const match = (backtestStats.buckets || []).find(b => b.score_bucket === bucket && b.direction === idea.direction);
-  if(!match || !match.sufficient_sample){
-    const n = match ? match.n : 0;
-    return '<div class="atr-note">Historical timing: not enough resolved trades yet for ' + bucket + ' ' + idea.direction + 's (n=' + n + ', need ' + (backtestStats.min_sample_for_display||10) + ') <span class="ballpark-tag">forward-tracked, building sample</span></div>';
-  }
-  return '<div class="atr-note">Historical: ' + bucket + ' ' + idea.direction + 's hit a target ' + match.win_rate_pct + '% of the time' +
-    (match.median_days_to_win!=null ? ', median ' + match.median_days_to_win + 'd to target' : '') +
-    (match.median_days_to_stop!=null ? ' (median ' + match.median_days_to_stop + 'd to stop when it failed)' : '') +
-    ' <span class="ballpark-tag">n=' + match.n + ', real outcomes from this engine</span></div>';
-}
-
-function atrTimingNote(idea){
-  if(idea.atr_days_to_t1 == null){ return ''; }
-  return '<div class="atr-note" title="Distance to target divided by the average daily range (ATR) for this ticker. Assumes a straight-line average-volatility day -- real moves gap, chop, or stall. This is a ballpark scale of patience, not a forecast of when the trigger fires or how long to hold.">' +
-    '~' + idea.atr_days_to_t1 + 'd to T1, ~' + idea.atr_days_to_t2 + 'd to T2, ~' + idea.atr_days_to_stop + 'd to stop ' +
-    '<span class="ballpark-tag">ATR ballpark, not a forecast</span></div>';
-}
-
-function scorebox(label, val, suffix){
-  return '<div class="scorebox"><div class="l">' + label + '</div><div class="v">' + (val!=null ? val : '--') + (suffix&&val!=null?suffix:'') + '</div></div>';
-}
-
-function execSection(idea){
-  if(idea.option_entry_limit == null){
-    return '<div class="section"><div class="label">Option Execution</div><div class="value mono">No clean contract found yet -- wait for liquid selection.</div></div>';
-  }
-  const row = (label, val) => '<div class="exec-row"><span class="exec-l">' + label + '</span><span class="exec-v">' + val + '</span></div>';
-  const sourceBadge = (label, source) => {
-    const live = source === 'live';
-    return '<span class="badge ' + (live ? 'src-live' : 'src-est') + '" title="' +
-      (live ? label + ': live NBBO from the snapshot.' : label + ': no live data returned -- this number is estimated, not a real market quote.') +
-      '">' + label + ': ' + (live ? 'LIVE' : 'EST') + '</span>';
-  };
-  return '<div class="section"><div class="label">Option Execution &middot; ' + (idea.trade_side||'') + '&nbsp;&nbsp;' +
-    sourceBadge('Quote', idea.quote_source) + sourceBadge('Greeks', idea.greeks_source) + quoteAgeBadge(idea.option_quote_updated_at, idea.option_quote_timeframe) +
-    '</div><div class="exec-grid">' +
-    row('Entry (limit)', '$' + idea.option_entry_limit) +
-    row('Stop', '$' + idea.option_stop_price) +
-    row('Exit (fast +20%)', '$' + idea.option_exit_fast) +
-    row('Exit (T1)', '$' + idea.option_exit_target_1) +
-    row('Exit (T2)', '$' + idea.option_exit_target_2) +
-    row('Bid / Ask', '$' + idea.option_bid + ' / $' + idea.option_ask) +
-    row('Spread', '$' + idea.option_bid_ask_spread + (idea.option_spread_pct!=null ? ' (' + (idea.option_spread_pct*100).toFixed(1) + '%)' : '')) +
-    row('Debit / contract', '$' + idea.per_contract_debit) +
-    row('Total debit (' + idea.recommended_contracts + 'x)', '$' + idea.total_debit) +
-  '</div></div>';
-}
-
-function renderCards(){
-  let ideas = (state.ideas || []).slice();
-  renderFilters(ideas);
-  const q = document.getElementById('search').value.trim().toUpperCase();
-  if(activeFilter !== 'ALL') ideas = ideas.filter(i => i.status === activeFilter);
-  if(zoneOnly) ideas = ideas.filter(i => (i.buy_zone_status||'').includes('INSIDE'));
-  if(q) ideas = ideas.filter(i => (i.ticker||'').toUpperCase().includes(q));
-  const sortKey = document.getElementById('sortSel').value;
-  if(sortKey !== 'rank'){
-    ideas.sort((a,b) => sortKey === 'ticker' ? (a.ticker||'').localeCompare(b.ticker||'') : (b[sortKey]||0) - (a[sortKey]||0));
-  }
-  const content = document.getElementById('content');
-
-  // Skip the DOM rebuild entirely if the visible set is identical to what's already
-  // on screen -- this is what stops a routine poll from yanking you off whatever
-  // you're reading. Only ticker/score/status feed the signature since those are the
-  // only things that change the rendered output.
-  const signature = ideas.length
-    ? JSON.stringify(ideas.map(i => [i.ticker, i.final_score, i.status, i.recommended_contracts]))
-    : 'EMPTY:' + JSON.stringify((state.scan_debug || []).map(d => [d.ticker, d.final_score]));
-  if(signature === lastRenderSignature) return;
-  lastRenderSignature = signature;
-
-  if(ideas.length === 0){
-    const debug = state.scan_debug || [];
-    let extra = '';
-    if(debug.length){
-      const rows = debug.slice(0,6).map(d =>
-        '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--border);font-family:var(--mono);font-size:11.5px">' +
-        '<span>' + d.ticker + ' <span style="color:var(--faint)">' + (d.direction||'') + '</span></span>' +
-        '<span style="color:var(--accent)">' + (d.final_score!=null ? d.final_score : '--') + '</span></div>'
-      ).join('');
-      extra = '<div style="margin-top:14px;text-align:left"><div class="label">Closest to qualifying this scan</div>' + rows + '</div>';
-    }
-    content.innerHTML = '<div class="empty"><b>No qualified setups match right now.</b><br>APEX keeps low-quality names hidden until they clear the score threshold -- check back after the next scan, or clear filters above.' + extra + '</div>';
-    return;
-  }
-
-  // Preserve scroll position and which "Why this setup" panels were expanded,
-  // since a routine refresh shouldn't reset either.
-  const scrollY = window.scrollY;
-  const openTickers = new Set(
-    Array.from(content.querySelectorAll('.card')).filter(c => c.querySelector('details[open]')).map(c => c.dataset.ticker)
-  );
-  content.innerHTML = '<div class="grid">' + ideas.map(cardHtml).join('') + '</div>';
-  content.querySelectorAll('.card').forEach(c => {
-    if(openTickers.has(c.dataset.ticker)){
-      const d = c.querySelector('details');
-      if(d) d.open = true;
-    }
-  });
-  window.scrollTo(0, scrollY);
-}
-
-async function poll(){
-  try{
-    const res = await fetch('/dashboard.json', {cache:'no-store'});
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    state = await res.json();
-    lastFetchOk = true;
-  } catch(e){
-    lastFetchOk = false;
-  }
-  renderStatusbar();
-  renderCards();
-}
-
-document.getElementById('search').addEventListener('input', renderCards);
-document.getElementById('sortSel').addEventListener('change', renderCards);
-document.getElementById('zoneToggle').addEventListener('click', () => {
-  zoneOnly = !zoneOnly;
-  const btn = document.getElementById('zoneToggle');
-  btn.classList.toggle('active', zoneOnly);
-  btn.setAttribute('aria-pressed', String(zoneOnly));
-  renderCards();
-});
-document.getElementById('scanNowBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('scanNowBtn');
-  btn.disabled = true;
-  const originalLabel = btn.textContent;
-  btn.textContent = 'Scanning...';
-  try{
-    await fetch('/api/run', {method:'POST', cache:'no-store'});
-  } catch(e){
-    // poll() below will surface connection issues via lastFetchOk
-  }
-  lastRenderSignature = null; // force a redraw even if the result looks unchanged
-  await poll();
-  btn.disabled = false;
-  btn.textContent = originalLabel;
-});
-renderStatusbar();
-renderCards();
-loadBacktestStats().then(() => { lastRenderSignature = null; renderCards(); });
-setInterval(poll, 30000);
-setInterval(renderStatusbar, 1000);
-setInterval(() => { loadBacktestStats().then(() => { lastRenderSignature = null; renderCards(); }); }, 300000);
-</script>
-</body>
-</html>
-"""
-
-
-
-
-FLOW_HTML = """
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>APEX Flow / GEX Dashboard</title>
-<style>
-:root{--bg:#090d14;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#8fa0b8;--accent:#6ee7f9;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--border:#263244}*{box-sizing:border-box}body{margin:0;background:#090d14;font-family:Arial,Helvetica,sans-serif;color:var(--text)}
-.apex-nav{display:flex;align-items:center;gap:6px;padding:10px 16px;background:#101827;border-bottom:1px solid #263244;flex-wrap:wrap}
-.apex-nav .nav-logo{font-family:monospace;font-size:13px;font-weight:800;color:#6ee7f9;margin-right:10px;text-decoration:none}
-.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:#8fa0b8;text-decoration:none;transition:all .15s}
-.apex-nav a:hover{background:#131f32;color:#eef4ff;border-color:#263244}
-.apex-nav a.active{background:rgba(110,231,249,.08);color:#6ee7f9;border-color:rgba(110,231,249,.3)}
-.apex-nav .nav-sep{width:1px;height:18px;background:#263244;margin:0 4px}
-.brand{font-size:20px;font-weight:800;padding:14px 18px 0}.sub-title{color:var(--muted);font-size:13px;padding:2px 18px 10px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;padding:18px}.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.28)}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.ticker{font-size:26px;font-weight:900}.badge{padding:6px 10px;border-radius:999px;font-size:12px;font-weight:800;background:#263244}.BULLISH{color:var(--good)}.BEARISH{color:var(--bad)}.MIXED{color:var(--warn)}.decision{border-radius:14px;padding:14px;margin:10px 0 14px;border:1px solid var(--border);background:#0a111d}.decisionTitle{font-size:24px;font-weight:900;letter-spacing:.2px}.decisionSub{font-size:13px;color:var(--muted);margin-top:4px}.GREENBOX{border-color:rgba(34,197,94,.65);box-shadow:0 0 0 1px rgba(34,197,94,.16) inset}.YELLOWBOX{border-color:rgba(245,158,11,.65);box-shadow:0 0 0 1px rgba(245,158,11,.16) inset}.REDBOX{border-color:rgba(239,68,68,.65);box-shadow:0 0 0 1px rgba(239,68,68,.16) inset}.GREEN{color:var(--good)}.YELLOW{color:var(--warn)}.RED{color:var(--bad)}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.metric{background:#0a111d;border:1px solid #223047;border-radius:12px;padding:10px}.label{font-size:12px;color:var(--muted)}.value{font-size:20px;font-weight:800;margin-top:5px}.wide{grid-column:1/-1}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.notes{font-size:12px;color:var(--muted);line-height:1.5;margin-top:12px}.status{padding:0 18px 8px;color:var(--muted);font-size:13px}.btn{background:#10243a;color:var(--text);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.btn:hover{border-color:var(--accent)}@media(max-width:600px){.metrics,.levels{grid-column:1fr}}
-</style>
-</head>
-<body>
-<nav class="apex-nav">
-  <a href="/" class="nav-logo">APEX</a>
-  <a href="/">Scanner</a>
-  <a href="/apex_os">Institutional OS</a>
-  <a href="/assistant">Trade Assistant</a>
-  <a href="/flow" class="active">Flow / GEX</a>
-  <a href="/chart">Charts</a>
-  <div class="nav-sep"></div>
-  <a href="/api/v45/status" target="_blank">Status</a>
-  <a href="/health" target="_blank">Health</a>
-</nav>
-<div class="brand">APEX Flow / GEX</div>
-<div class="sub-title">Net flow, sweeps, call/put premium and gamma levels from QuantData &nbsp;·&nbsp; <button class="btn" onclick="loadFlow()" style="font-size:12px;padding:4px 10px">Refresh</button></div>
-<div class="status" id="status">Loading flow data...</div>
-<div class="grid" id="grid"></div>
-<script>
-function money(v){ if(v===null||v===undefined) return '--'; const n=Number(v); const sign=n<0?'-':''; const a=Math.abs(n); if(a>=1e9) return sign+'$'+(a/1e9).toFixed(2)+'B'; if(a>=1e6) return sign+'$'+(a/1e6).toFixed(2)+'M'; if(a>=1e3) return sign+'$'+(a/1e3).toFixed(1)+'K'; return sign+'$'+a.toFixed(0); }
-function val(v){ return (v===null||v===undefined||v==='')?'--':v; }
-function card(x){
- const bias=x.bias||'MIXED';
- const cls=bias.replace(/[^A-Z]/g,'');
- const dColor=x.decision_color||'YELLOW';
- const icon=dColor==='GREEN'?'🟢':dColor==='RED'?'🔴':'🟡';
- return `<div class="card">
-  <div class="top"><div><div class="ticker">${x.ticker}</div><div class="sub">${val(x.flow_status)}</div></div><div class="badge ${cls}">${bias}</div></div>
-  <div class="decision ${dColor}BOX">
-    <div class="decisionTitle ${dColor}">${icon} ${val(x.decision)}</div>
-    <div class="decisionSub">Institutional Alignment: ${val(x.institutional_alignment)}/100 · Approved side: ${val(x.approved_side)}</div>
-  </div>
-  <div class="metrics">
-    <div class="metric"><div class="label">Call premium</div><div class="value BULLISH">${money(x.call_premium)}</div></div>
-    <div class="metric"><div class="label">Put premium</div><div class="value BEARISH">${money(x.put_premium)}</div></div>
-    <div class="metric"><div class="label">Net premium</div><div class="value ${x.net_premium>=0?'BULLISH':'BEARISH'}">${money(x.net_premium)}</div></div>
-    <div class="metric"><div class="label">Call/put ratio</div><div class="value">${val(x.flow_ratio)}</div></div>
-    <div class="metric"><div class="label">Flow score</div><div class="value">${val(x.flow_score)}</div></div>
-    <div class="metric"><div class="label">Order score / sweeps</div><div class="value">${val(x.order_flow_score)} / ${val(x.sweep_count)}</div></div>
-  </div>
-  <div class="levels">
-    <div class="metric"><div class="label">Call wall</div><div class="value">${val(x.call_wall)}</div></div>
-    <div class="metric"><div class="label">Zero gamma</div><div class="value">${val(x.zero_gamma)}</div></div>
-    <div class="metric"><div class="label">Put wall</div><div class="value">${val(x.put_wall)}</div></div>
-  </div>
-  <div class="notes">${(x.notes||[]).slice(0,6).map(n=>'• '+n).join('<br>')}</div>
- </div>`;
-}
-async function loadFlow(){
- const status=document.getElementById('status'); const grid=document.getElementById('grid');
- status.textContent='Refreshing QuantData flow...';
- try{
-   const r=await fetch('/api/flow',{cache:'no-store'}); const data=await r.json();
-   if(!r.ok) throw new Error(data.error||('HTTP '+r.status));
-   grid.innerHTML=(data.items||[]).map(card).join('') || '<div class="card">No flow rows returned.</div>';
-   status.textContent=`Updated ${data.updated_at_et || data.updated_at || ''} · QuantData ${data.quantdata_configured?'configured':'not configured'}`;
- }catch(e){ status.textContent='Flow dashboard error: '+e.message; }
-}
-loadFlow(); setInterval(loadFlow, 60000);
-</script>
-</body>
-</html>
-"""
-
-
-ASSISTANT_HTML = """
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>APEX Trade Assistant</title>
-<style>
-:root{--bg:#070a10;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:#070a10;color:var(--text);font-family:Arial,Helvetica,sans-serif}
-.apex-nav{display:flex;align-items:center;gap:6px;padding:10px 16px;background:#101827;border-bottom:1px solid #263244;flex-wrap:wrap}
-.apex-nav .nav-logo{font-family:monospace;font-size:13px;font-weight:800;color:#6ee7f9;margin-right:10px;text-decoration:none}
-.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:#91a4bd;text-decoration:none;transition:all .15s}
-.apex-nav a:hover{background:#131f32;color:#eef4ff;border-color:#263244}
-.apex-nav a.active{background:rgba(110,231,249,.08);color:#6ee7f9;border-color:rgba(110,231,249,.3)}
-.apex-nav .nav-sep{width:1px;height:18px;background:#263244;margin:0 4px}
-.wrap{max-width:1180px;margin:0 auto;padding:18px}.sub-header{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0 18px}.brand{font-size:22px;font-weight:900}.sub{color:var(--muted);margin-top:5px;font-size:13px}.btn{background:#10243a;color:var(--cyan);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:4px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.banner{border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:12px;background:#09111d}.banner.GREEN{border-color:rgba(34,197,94,.5)}.banner.YELLOW{border-color:rgba(245,158,11,.55)}.banner.RED{border-color:rgba(239,68,68,.55)}.banner-title{font-weight:900;font-size:16px}.banner-msg{color:var(--muted);margin-top:4px;font-size:13px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:10px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:20px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}.planner{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.bigplan{background:#07111f;border:1px solid #2b405d;border-radius:16px;padding:16px}.summary{font-size:22px;font-weight:900;line-height:1.25}.countdown{font-size:34px;font-weight:1000}.check{display:flex;align-items:center;gap:8px;margin:7px 0;color:#cbd8ea}.ok{color:var(--good)}.no{color:var(--bad)}.rules{margin-top:10px;color:#b7c7dd;line-height:1.5}.stale{border-color:rgba(245,158,11,.7)}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}@media(max-width:820px){.planner{grid-template-columns:1fr}.state{font-size:34px}}
-</style></head><body>
-<nav class="apex-nav">
-  <a href="/" class="nav-logo">APEX</a>
-  <a href="/">Scanner</a>
-  <a href="/apex_os">Institutional OS</a>
-  <a href="/assistant" class="active">Trade Assistant</a>
-  <a href="/flow">Flow / GEX</a>
-  <a href="/chart">Charts</a>
-  <div class="nav-sep"></div>
-  <a href="/api/v45/status" target="_blank">Status</a>
-  <a href="/health" target="_blank">Health</a>
-</nav>
-<div class="wrap">
-<div class="sub-header"><div><div class="brand">APEX Trade Assistant</div><div class="sub">Session-aware Flow/GEX bias + Pine trigger + execution plan</div></div><div><button class="btn" onclick="loadAssistant()">Refresh</button></div></div>
-<div id="app" class="panel">Loading...</div></div>
-<script>
-function cls(p){ if(p==='URGENT') return 'good flash'; if(p==='BLOCKED') return 'bad'; if(p==='WARNING') return 'warn'; if(p==='INFO') return 'info'; return 'warn';}
-function money(v){if(v==null)return'--';let n=Number(v),s=n<0?'-':'',a=Math.abs(n);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';return s+'$'+a.toFixed(0)}
-function mmss(s){s=Number(s||0);let m=Math.floor(s/60),r=s%60;return String(m).padStart(2,'0')+':'+String(r).padStart(2,'0')}
-function yes(v){return v?'✅':'❌'}
-async function loadAssistant(){const el=document.getElementById('app');try{const r=await fetch('/api/assistant?ticker=SPX',{cache:'no-store'});const d=await r.json();const f=d.flow||{}, a=d.assistant||{}, p=a.trade_plan||{};const checklist=(a.checklist||[]).map(x=>`<div class="check"><span class="${x.ok?'ok':'no'}">${yes(x.ok)}</span><span>${x.label}</span></div>`).join('');const rules=(p.exit_rules||[]).map(x=>'• '+x).join('<br>');const sc=a.session_context||p.session_context||{};const banner=`<div class="banner ${sc.banner_level||'YELLOW'}"><div class="banner-title">${sc.banner_title||'SESSION STATUS'}</div><div class="banner-msg">${sc.banner_message||''}</div></div>`;el.className='panel '+(p.signal_expired?'stale':'');el.innerHTML=banner+`<div class="label">${a.updated_at_et||''}</div><div class="state ${cls(a.priority)}">${a.state||'WAITING'}</div><div class="sub">${a.message||''}</div><div class="action">${a.action||''}</div><div class="grid"><div class="box"><div class="label">Approved Side</div><div class="val">${a.approved_side||'--'}</div></div><div class="box"><div class="label">Assistant Mode</div><div class="val">${sc.assistant_mode||'--'}</div></div><div class="box"><div class="label">Alignment</div><div class="val">${a.institutional_alignment||'--'}/100</div></div><div class="box"><div class="label">Net Premium</div><div class="val">${money(f.net_premium)}</div></div><div class="box"><div class="label">Flow / Order</div><div class="val">${f.flow_score||'--'} / ${f.order_flow_score||'--'}</div></div><div class="box"><div class="label">Signal Countdown</div><div class="val countdown">${(a.fresh_signal&&sc.is_tradeable_session)?mmss(p.signal_seconds_remaining):'--'}</div></div></div><div class="planner"><div class="bigplan"><div class="label">Execution Plan</div><div class="summary">${p.execution_summary||'Waiting for setup'}</div><div class="grid" style="margin-top:12px"><div class="box"><div class="label">Contract</div><div class="val">${p.recommended_contract||'--'}</div></div><div class="box"><div class="label">Entry Zone</div><div class="val">${p.entry_zone||'--'}</div></div><div class="box"><div class="label">Stop</div><div class="val">${p.stop_price||'--'}</div></div><div class="box"><div class="label">Targets</div><div class="val">${p.target_1||'--'} / ${p.target_2||'--'}</div></div></div><div class="rules">${rules}</div></div><div class="bigplan"><div class="label">Checklist</div>${checklist}<div class="notes" style="margin-top:12px">${(a.reasons||[]).map(x=>'• '+x).join('<br>')}</div></div></div>`}catch(e){el.innerHTML='Error: '+e.message}}
-loadAssistant(); setInterval(loadAssistant, 5000);
-</script></body></html>
-"""
+# ASSISTANT_HTML migrated to templates/assistant.html
 
 @app.route("/assistant")
 def assistant_dashboard():
-    return render_template_string(ASSISTANT_HTML)
+    return render_template("assistant.html")
 
 
 @app.route("/api/session")
@@ -3793,7 +2850,7 @@ def tv_signal():
 
 @app.route("/flow")
 def flow_dashboard():
-    return render_template_string(FLOW_HTML)
+    return render_template("flow.html")
 
 @app.route("/api/flow")
 def api_flow():
@@ -3820,7 +2877,7 @@ def api_flow_ticker(ticker: str):
 def dashboard():
     with STATE_LOCK:
         data = dict(STATE)
-    return render_template_string(HTML, data=data)
+    return render_template("dashboard.html", data=data)
 
 @app.route("/dashboard.json")
 def dashboard_json():
@@ -3922,7 +2979,7 @@ if __name__ == "__main__":
 @app.route("/apex_os")
 def apex_os_dashboard():
     """APEX Institutional OS — the full v4.5 dashboard."""
-    return render_template_string(APEX_OS_HTML)
+    return render_template("apex_os.html")
 
 
 @app.route("/api/institutional_os")
@@ -4750,661 +3807,125 @@ def api_gamma_diagnostics():
         return jsonify({"ok": False, "error": str(e), "ticker": ticker}), 500
 
 
-CHART_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>APEX — Market Intelligence Terminal</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-<style>
-:root{
-  --bg:#05080f;--surf:#0d141f;--surf2:#121c2b;--bdr:#1c2940;
-  --text:#e8f1fc;--muted:#8295b3;--faint:#5a6b87;
-  --blue:#38bdf8;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--purple:#a78bfa;
-  --bullish:#22c55e;--bearish:#ef4444;--caution:#f59e0b;--neutral:#8295b3;
-  --mono:'JetBrains Mono',monospace;--sans:'Inter',system-ui,sans-serif;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
-.apex-nav{display:flex;align-items:center;gap:6px;padding:10px 16px;background:var(--surf);border-bottom:1px solid var(--bdr);flex-wrap:wrap}
-.apex-nav .nav-logo{font-family:var(--mono);font-size:13px;font-weight:800;color:var(--blue);margin-right:10px;text-decoration:none}
-.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:var(--muted);text-decoration:none;transition:all .15s}
-.apex-nav a:hover{background:var(--surf2);color:var(--text);border-color:var(--bdr)}
-.apex-nav a.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.35)}
-.apex-nav .nav-sep{width:1px;height:18px;background:var(--bdr);margin:0 4px}
-.wrap{padding:14px 14px 60px}
-.page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
-.page-title{font-family:var(--mono);font-size:16px;font-weight:800;color:var(--blue)}
-.page-sub{font-size:12px;color:var(--muted);margin-top:2px}
-.controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.day-btn{font-family:var(--mono);font-size:11px;font-weight:700;padding:5px 12px;border-radius:7px;border:1px solid var(--bdr);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
-.day-btn:hover{background:var(--surf2);color:var(--text)}
-.day-btn.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.4)}
-.tf-btn{font-family:var(--mono);font-size:11px;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid var(--bdr);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
-.tf-btn:hover{background:var(--surf2);color:var(--text)}
-.tf-btn.active{background:rgba(167,139,250,.1);color:var(--purple);border-color:rgba(167,139,250,.4)}
-.refresh-btn{font-family:var(--sans);font-size:11px;font-weight:600;padding:5px 13px;border-radius:7px;border:1px solid rgba(56,189,248,.4);background:rgba(56,189,248,.06);color:var(--blue);cursor:pointer;transition:all .15s}
-.refresh-btn:hover{background:rgba(56,189,248,.12)}
-.last-update{font-size:10px;color:var(--faint);font-family:var(--mono)}
-.ctrl-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-family:var(--mono)}
-.ctrl-sep{width:1px;height:20px;background:var(--bdr);margin:0 2px}
 
-
-.data-bus-ribbon{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin:0 0 12px}
-.bus-card{background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:9px 10px}
-.bus-label{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:800}
-.bus-value{font-family:var(--mono);font-size:16px;font-weight:900;color:var(--text);margin-top:3px}
-.bus-green{color:var(--green)}.bus-red{color:var(--red)}.bus-blue{color:var(--blue)}.bus-amber{color:var(--amber)}
-@media(max-width:900px){.data-bus-ribbon{grid-template-columns:repeat(2,1fr)}}
-
-/* Side-by-side chart panels */
-.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
-@media(max-width:900px){.charts-row{grid-template-columns:1fr}}
-.chart-panel{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;overflow:hidden}
-.chart-panel-inner{display:flex;gap:0}
-.chart-main{flex:1;min-width:0;padding:12px}
-.chart-sidebar{width:148px;flex-shrink:0;border-left:1px solid var(--bdr);padding:10px 8px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:420px}
-
-/* Regime banner */
-.regime-bar{padding:8px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;gap:8px}
-.regime-label{font-size:12px;font-weight:700;font-family:var(--mono)}
-.regime-bullish{color:var(--bullish)}
-.regime-bearish{color:var(--bearish)}
-.regime-caution{color:var(--caution)}
-.regime-neutral{color:var(--neutral)}
-.strength-pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surf2);color:var(--muted);font-family:var(--mono)}
-
-/* Canvas */
-.chart-canvas-wrap{position:relative;height:420px;cursor:grab}
-.chart-canvas-wrap.dragging{cursor:grabbing}
-.chart-tools{display:flex;align-items:center;gap:6px;padding:8px 0 4px;flex-wrap:wrap}
-.chart-tool-btn{font-family:var(--mono);font-size:10px;font-weight:800;padding:4px 8px;border-radius:6px;border:1px solid var(--bdr);background:var(--surf2);color:var(--muted);cursor:pointer}
-.chart-tool-btn:hover{color:var(--blue);border-color:rgba(56,189,248,.45)}
-.chart-hint{font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:auto}
-canvas{display:block}
-
-/* Legend */
-.chart-legend{display:flex;align-items:center;gap:12px;padding:6px 12px 8px;border-top:1px solid var(--bdr);flex-wrap:wrap}
-.leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
-.leg-dot{width:10px;height:3px;border-radius:2px;flex-shrink:0}
-
-/* Sidebar level cards */
-.level-card{padding:5px 6px;border-radius:6px;background:var(--surf2);margin-bottom:2px}
-.level-card-label{font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:var(--faint);font-weight:700}
-.level-card-val{font-family:var(--mono);font-size:13px;font-weight:800;margin-top:1px}
-.lc-resistance{border-left:2px solid var(--red)}
-.lc-resistance .level-card-val{color:var(--red)}
-.lc-gamma{border-left:2px solid var(--amber)}
-.lc-gamma .level-card-val{color:var(--amber)}
-.lc-hvbo{border-left:2px solid var(--purple)}
-.lc-hvbo .level-card-val{color:var(--purple)}
-.lc-call{border-left:2px solid var(--green)}
-.lc-call .level-card-val{color:var(--green)}
-.lc-price{border-left:2px solid var(--blue)}
-.lc-price .level-card-val{color:var(--blue)}
-.lc-support{border-left:2px solid rgba(239,68,68,.5)}
-.lc-support .level-card-val{color:rgba(239,68,68,.8)}
-.lc-put{border-left:2px solid rgba(239,68,68,.7)}
-.lc-put .level-card-val{color:var(--red)}
-.sidebar-title{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:700;padding:2px 0 4px;border-bottom:1px solid var(--bdr);margin-bottom:4px}
-
-/* Symbol header */
-.symbol-head{padding:10px 12px 0;display:flex;align-items:baseline;gap:8px}
-.symbol-name{font-family:var(--mono);font-size:14px;font-weight:800;color:var(--text)}
-.symbol-price{font-family:var(--mono);font-size:22px;font-weight:800;color:var(--blue)}
-.symbol-date{font-size:10px;color:var(--faint);font-family:var(--mono)}
-
-/* Error / loading */
-.panel-msg{padding:40px;text-align:center;color:var(--muted);font-size:13px}
-.err{color:var(--red)}
-</style>
-</head>
-<body>
-<nav class="apex-nav">
-  <a href="/" class="nav-logo">APEX</a>
-  <a href="/">Scanner</a>
-  <a href="/apex_os">Institutional OS</a>
-  <a href="/assistant">Trade Assistant</a>
-  <a href="/flow">Flow / GEX</a>
-  <a href="/chart" class="active">Charts</a>
-  <div class="nav-sep"></div>
-  <a href="/api/v45/status" target="_blank">Status</a>
-  <a href="/health" target="_blank">Health</a>
-</nav>
-
-<div class="wrap">
-  <div class="page-header">
-    <div>
-      <div class="page-title">Market Intelligence Terminal</div>
-      <div class="page-sub">ES Futures &amp; SPX — EMA 8/21 · VWAP · HVBO · Gamma levels</div>
-    </div>
-    <div class="controls">
-      <span class="ctrl-label">DAYS</span>
-      <button class="day-btn" data-d="1">1D</button>
-      <button class="day-btn active" data-d="2">2D</button>
-      <button class="day-btn" data-d="3">3D</button>
-      <button class="day-btn" data-d="5">5D</button>
-      <div class="ctrl-sep"></div>
-      <span class="ctrl-label">TF</span>
-      <button class="tf-btn" data-tf="1">1m</button>
-      <button class="tf-btn" data-tf="5">5m</button>
-      <button class="tf-btn active" data-tf="15">15m</button>
-      <div class="ctrl-sep"></div>
-      <button class="refresh-btn" id="refreshBtn">↻ Refresh</button>
-      <span class="last-update" id="lastUpdate">--</span>
-    </div>
-  </div>
-
-  <div class="data-bus-ribbon" id="dataBusRibbon">
-    <div class="bus-card"><div class="bus-label">Data Bus</div><div class="bus-value bus-blue">Loading…</div></div>
-  </div>
-
-  <div class="charts-row" id="chartsRow">
-    <div class="chart-panel" id="panelES">
-      <div class="panel-msg">Loading ES…</div>
-    </div>
-    <div class="chart-panel" id="panelSPX">
-      <div class="panel-msg">Loading SPX…</div>
-    </div>
-  </div>
-</div>
-
-<script>
-// ── State ────────────────────────────────────────────────────────────────────
-let activeDays = 2;
-let activeTf   = 15;   // timeframe in minutes: 1, 5, or 15
-let chartInstances = {};
-
-// ── Utilities ────────────────────────────────────────────────────────────────
-function fmt(v){ return v != null ? Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--'; }
-function fmtV(v){ if(!v) return '--'; if(v>=1e6) return (v/1e6).toFixed(1)+'M'; if(v>=1e3) return (v/1e3).toFixed(0)+'K'; return v.toFixed(0); }
-
-function regimeClass(color){
-  return color === 'bullish' ? 'regime-bullish' :
-         color === 'bearish' ? 'regime-bearish' :
-         color === 'caution' ? 'regime-caution' : 'regime-neutral';
-}
-
-// ── Sidebar levels HTML ───────────────────────────────────────────────────────
-function sidebarHTML(d){
-  const card = (cls, label, val) =>
-    `<div class="level-card ${cls}">
-       <div class="level-card-label">${label}</div>
-       <div class="level-card-val">$${fmt(val)}</div>
-     </div>`;
-  return `
-    <div class="sidebar-title">Key Levels</div>
-    ${card('lc-resistance','Recent High ↑',d.recentHigh)}
-    ${card('lc-gamma','Gamma Flip ⚡',d.gammaFlip)}
-    ${card('lc-hvbo','HVBO High ▲',d.hvboHigh)}
-    ${card('lc-call','Call Wall ☑',d.callWall)}
-    ${card('lc-price','Current Close',d.currentClose)}
-    ${card('lc-hvbo','HVBO Low ▼',d.hvboLow)}
-    ${card('lc-support','Major Support ↓',d.majorSupport)}
-    ${card('lc-support','Secondary Sup.',d.secondarySupport)}
-    ${card('lc-put','Put Wall ☒',d.putWall)}
-  `;
-}
-
-// ── Build one chart panel ─────────────────────────────────────────────────────
-function buildPanel(panelId, data) {
-  const panel = document.getElementById(panelId);
-  if (!panel) return;
-
-  // Destroy any existing Chart.js instance
-  if (chartInstances[panelId]) {
-    chartInstances[panelId].destroy();
-    delete chartInstances[panelId];
-  }
-
-  const rc = regimeClass(data.regimeColor);
-  const dateRange = data.tradingDays && data.tradingDays.length
-    ? `${data.tradingDays[0]} – ${data.tradingDays[data.tradingDays.length-1]}`
-    : '';
-
-  panel.innerHTML = `
-    <div class="regime-bar">
-      <div>
-        <div style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:700">MARKET REGIME</div>
-        <div class="regime-label ${rc}">${data.regime}</div>
-      </div>
-      <div class="strength-pill">${data.strengthLabel} · ${data.strength}/5</div>
-    </div>
-    <div class="symbol-head">
-      <div class="symbol-name">${data.symbol}</div>
-      <div class="symbol-price">$${fmt(data.currentClose)}</div>
-      <div class="symbol-date">${data.barInterval} · ${dateRange}</div>
-    </div>
-    <div class="chart-panel-inner">
-      <div class="chart-main">
-        <div class="chart-tools">
-          <button class="chart-tool-btn" data-action="left">◀</button>
-          <button class="chart-tool-btn" data-action="right">▶</button>
-          <button class="chart-tool-btn" data-action="fitLatest">Fit Latest</button>
-          <button class="chart-tool-btn" data-action="fitAll">Fit All</button>
-          <span class="chart-hint">Wheel zoom · Drag pan · Shift+wheel scroll</span>
-        </div>
-        <div class="chart-canvas-wrap" id="wrap_${panelId}">
-          <canvas id="canvas_${panelId}"></canvas>
-        </div>
-        <div class="chart-legend">
-          <div class="leg-item"><div class="leg-dot" style="background:#22c55e"></div>Bull candle</div>
-          <div class="leg-item"><div class="leg-dot" style="background:#ef4444"></div>Bear candle</div>
-          <div class="leg-item"><div class="leg-dot" style="background:#34d399;height:2px"></div>EMA 8</div>
-          <div class="leg-item"><div class="leg-dot" style="background:#818cf8;height:2px"></div>EMA 21</div>
-          <div class="leg-item"><div class="leg-dot" style="background:#f59e0b;height:2px"></div>VWAP</div>
-        </div>
-      </div>
-      <div class="chart-sidebar">${sidebarHTML(data)}</div>
-    </div>
-  `;
-
-  const chart = data.chart || [];
-  if (!chart.length) return;
-
-  // ── Plugin-free candlestick rendering ────────────────────────────────────
-  // Uses Chart.js floating bar chart (native) to draw OHLC candles.
-  // No external plugin required.
-  //
-  // Each candle = two bars stacked on the same x position:
-  //   1. Wick bar:  [low, high]  — thin, same color as body
-  //   2. Body bar:  [open, close] — thicker, green or red
-  //
-  // We use a custom plugin to draw wicks as lines over the body bars.
-
-  const labels = chart.map((_, i) => i);
-  const bulls  = chart.map(b => b.close >= b.open ? [b.open, b.close] : [null, null]);
-  const bears  = chart.map(b => b.close <  b.open ? [b.close, b.open] : [null, null]);
-  const wicks  = chart.map(b => [b.low, b.high]);
-
-  const ema8pts  = chart.map((b,i) => b.ema8  != null ? {x:i, y:b.ema8}  : null);
-  const ema21pts = chart.map((b,i) => b.ema21 != null ? {x:i, y:b.ema21} : null);
-  const vwapPts  = chart.map((b,i) => ({x:i, y:b.vwap}));
-  const n = chart.length;
-
-  const levelLine = (val, color, dash=[]) => ({
-    type:'line',
-    data: Array(n).fill(val),
-    borderColor: color, borderWidth:1, borderDash:dash,
-    pointRadius:0, fill:false, tension:0, order:10,
-  });
-
-  // Custom plugin: draws wicks (thin lines from low→high through body)
-  const wickPlugin = {
-    id:'wicks',
-    afterDatasetsDraw(chartInst) {
-      const {ctx, scales:{x,y}, chartArea} = chartInst;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(chartArea.left, chartArea.top, chartArea.right-chartArea.left, chartArea.bottom-chartArea.top);
-      ctx.clip();
-      ctx.strokeStyle = 'rgba(130,149,179,0.8)';
-      ctx.lineWidth = 1;
-      chart.forEach((b, i) => {
-        if (i < x.min - 2 || i > x.max + 2) return;
-        const xPos  = x.getPixelForValue(i);
-        const yHigh = y.getPixelForValue(b.high);
-        const yLow  = y.getPixelForValue(b.low);
-        const yOpen = y.getPixelForValue(b.open);
-        const yCls  = y.getPixelForValue(b.close);
-        const col   = b.close >= b.open ? '#22c55e' : '#ef4444';
-        ctx.strokeStyle = col;
-        ctx.beginPath();
-        ctx.moveTo(xPos, yHigh);
-        ctx.lineTo(xPos, Math.min(yOpen, yCls));
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(xPos, yLow);
-        ctx.lineTo(xPos, Math.max(yOpen, yCls));
-        ctx.stroke();
-      });
-      ctx.restore();
-    }
-  };
-
-  const ctx = document.getElementById('canvas_' + panelId);
-  if (!ctx) return;
-
-  const hvboHigh = data.hvboHigh;
-  const hvboLow  = data.hvboLow;
-
-  const inst = new Chart(ctx, {
-    type: 'bar',
-    plugins: [wickPlugin],
-    data: {
-      labels,
-      datasets: [
-        // Bull bodies (open→close, green)
-        {
-          type:'bar', label:'Bull',
-          data: bulls,
-          backgroundColor:'rgba(34,197,94,0.85)',
-          borderColor:'rgba(34,197,94,1)',
-          borderWidth:0, borderSkipped:false,
-          barPercentage:0.6, categoryPercentage:0.8,
-          order:2,
-        },
-        // Bear bodies (close→open, red)
-        {
-          type:'bar', label:'Bear',
-          data: bears,
-          backgroundColor:'rgba(239,68,68,0.85)',
-          borderColor:'rgba(239,68,68,1)',
-          borderWidth:0, borderSkipped:false,
-          barPercentage:0.6, categoryPercentage:0.8,
-          order:2,
-        },
-        // HVBO band top
-        {
-          type:'line', label:'HVBO High',
-          data: Array(n).fill(hvboHigh),
-          borderColor:'rgba(167,139,250,0.4)', borderWidth:1,
-          backgroundColor:'rgba(167,139,250,0.06)',
-          pointRadius:0, fill:'+1', tension:0, order:9,
-        },
-        // HVBO band bottom
-        {
-          type:'line', label:'HVBO Low',
-          data: Array(n).fill(hvboLow),
-          borderColor:'rgba(167,139,250,0.4)', borderWidth:1,
-          backgroundColor:'rgba(167,139,250,0.06)',
-          pointRadius:0, fill:false, tension:0, order:9,
-        },
-        // EMA 8
-        {
-          type:'line', label:'EMA 8',
-          data: ema8pts, borderColor:'#34d399', borderWidth:1.5,
-          pointRadius:0, fill:false, tension:0.2, order:3,
-        },
-        // EMA 21
-        {
-          type:'line', label:'EMA 21',
-          data: ema21pts, borderColor:'#818cf8', borderWidth:1.5,
-          pointRadius:0, fill:false, tension:0.2, order:3,
-        },
-        // VWAP
-        {
-          type:'line', label:'VWAP',
-          data: vwapPts, borderColor:'#f59e0b', borderWidth:1.5,
-          borderDash:[4,3], pointRadius:0, fill:false, tension:0, order:4,
-        },
-        // Level lines
-        levelLine(data.gammaFlip,  'rgba(245,158,11,0.65)', [6,3]),
-        levelLine(data.callWall,   'rgba(34,197,94,0.55)',  [4,2]),
-        levelLine(data.putWall,    'rgba(239,68,68,0.55)',  [4,2]),
-        levelLine(data.resistance, 'rgba(239,68,68,0.3)',   [2,2]),
-        levelLine(data.majorSupport,'rgba(239,68,68,0.3)',  [2,2]),
-      ],
-    },
-    options: {
-      responsive:true, maintainAspectRatio:false, animation:false,
-      interaction:{mode:'index', intersect:false},
-      plugins:{
-        legend:{display:false},
-        tooltip:{
-          backgroundColor:'#0d141f', borderColor:'#1c2940', borderWidth:1,
-          titleColor:'#e8f1fc', bodyColor:'#8295b3',
-          callbacks:{
-            title(items){ const b=chart[items[0].dataIndex]; return b ? b.time : ''; },
-            label(item){
-              const b=chart[item.dataIndex];
-              if(!b) return '';
-              if(item.datasetIndex===0||item.datasetIndex===1){
-                return `O:${fmt(b.open)} H:${fmt(b.high)} L:${fmt(b.low)} C:${fmt(b.close)}`;
-              }
-              if(item.dataset.label==='EMA 8')  return `EMA 8: ${fmt(item.raw?.y)}`;
-              if(item.dataset.label==='EMA 21') return `EMA 21: ${fmt(item.raw?.y)}`;
-              if(item.dataset.label==='VWAP')   return `VWAP: ${fmt(item.raw?.y)}`;
-              return null;
-            },
-            filter(item){ return item.datasetIndex<=6; }
-          }
+def _chart_payload_for_lightweight(symbol: str, days: int, multiplier: int) -> Dict[str, Any]:
+    """Convert existing APEX chart data into Lightweight Charts payload."""
+    data = build_chart_data(symbol, days=days, multiplier=multiplier)
+    if data.get("error"):
+        return {
+            "symbol": data.get("symbol", symbol),
+            "rawSymbol": symbol,
+            "polygonTicker": data.get("polygonTicker"),
+            "isFutures": False,
+            "dataAvailable": False,
+            "currentClose": None,
+            "candles": [],
+            "levels": {},
+            "message": data.get("error"),
         }
-      },
-      scales:{
-        x:{
-          type:'linear', min:0, max:n-1,
-          ticks:{
-            maxTicksLimit:8, color:'#5a6b87',
-            font:{size:10, family:"'JetBrains Mono',monospace"},
-            callback(val){ const b=chart[Math.round(val)]; return b?b.time:''; }
-          },
-          grid:{color:'rgba(28,41,64,0.5)'}
+    candles = []
+    for row in data.get("chart", []):
+        ts = safe_float(row.get("ts"), 0.0)
+        if ts <= 0:
+            continue
+        candles.append({
+            "time": int(ts / 1000),
+            "ts": int(ts),
+            "open": safe_float(row.get("open")),
+            "high": safe_float(row.get("high")),
+            "low": safe_float(row.get("low")),
+            "close": safe_float(row.get("close")),
+            "volume": safe_float(row.get("volume"), 0.0),
+            "ema8": row.get("ema8"),
+            "ema21": row.get("ema21"),
+            "vwap": row.get("vwap"),
+        })
+    return {
+        "symbol": data.get("symbol", symbol),
+        "rawSymbol": data.get("rawSymbol", symbol),
+        "polygonTicker": data.get("polygonTicker"),
+        "isFutures": bool(data.get("isFutures")),
+        "dataAvailable": bool(candles) and not data.get("error"),
+        "currentClose": data.get("currentClose"),
+        "recentHigh": data.get("recentHigh"),
+        "recentLow": data.get("recentLow"),
+        "barInterval": data.get("barInterval"),
+        "candles": candles,
+        "levels": {
+            "vwap": candles[-1].get("vwap") if candles else None,
+            "hvbo_low": data.get("hvboLow"),
+            "hvbo_high": data.get("hvboHigh"),
+            "resistance": data.get("resistance"),
+            "support": data.get("majorSupport"),
         },
-        y:{
-          position:'right',
-          // Tight bounds from actual price range — prevents candles from rendering
-          // as invisible slivers when the y-axis auto-scales to 0
-          min: data.yMin,
-          max: data.yMax,
-          ticks:{
-            color:'#5a6b87',
-            font:{size:10, family:"'JetBrains Mono',monospace"},
-            callback:v=>'$'+fmt(v)
-          },
-          grid:{color:'rgba(28,41,64,0.5)'}
+        "message": None,
+    }
+
+
+@app.route("/api/charts/state")
+def api_charts_state():
+    """APEX 6.0.2 chart-state endpoint for the Lightweight Charts frontend."""
+    days = max(1, min(int(request.args.get("days", "1")), 5))
+    multiplier = int(request.args.get("tf", "5"))
+    multiplier = multiplier if multiplier in (1, 5, 15) else 5
+    dev_mode = request.args.get("dev", "0") in {"1", "true", "yes", "on"}
+    try:
+        es_payload = _chart_payload_for_lightweight("ES", days, multiplier)
+        spx_payload = _chart_payload_for_lightweight("SPX", days, multiplier)
+        spx_flow = quantdata_flow_snapshot("SPX")
+        spx_gamma = {
+            "stock_price": spx_flow.get("stock_price"),
+            "call_wall": spx_flow.get("call_wall"),
+            "put_wall": spx_flow.get("put_wall"),
+            "zero_gamma": spx_flow.get("zero_gamma"),
+            "active_gamma_flip": spx_flow.get("active_gamma_flip"),
+            "raw_zero_gamma": spx_flow.get("raw_zero_gamma"),
+            "zero_gamma_method": spx_flow.get("zero_gamma_method"),
+            "zero_gamma_confidence": spx_flow.get("zero_gamma_confidence"),
+            "gex_score": spx_flow.get("gex_score"),
+            "gex_status": spx_flow.get("gex_status"),
+            "quality_flags": spx_flow.get("quality_flags", []),
+            "diagnostics": spx_flow.get("gamma_diagnostics"),
         }
-      }
-    }
-  });
+        if build_market_state_v6 is not None:
+            market_state = build_market_state_v6(
+                es_chart={**es_payload, "currentClose": es_payload.get("currentClose")},
+                spx_chart={**spx_payload, "currentClose": spx_payload.get("currentClose")},
+                spx_gamma=spx_gamma,
+                spx_flow=spx_flow,
+                session=session_status(),
+            )
+        else:
+            market_state = {"version": VERSION, "session": session_status(), "gamma": spx_gamma, "flow": spx_flow}
 
-  chartInstances[panelId] = inst;
-  attachChartNavigation(panelId, inst, data);
-}
+        gamma_levels = {
+            "call_wall": spx_gamma.get("call_wall"),
+            "put_wall": spx_gamma.get("put_wall"),
+            "active_gamma_flip": spx_gamma.get("active_gamma_flip") or spx_gamma.get("zero_gamma"),
+        }
+        if dev_mode:
+            gamma_levels["raw_zero_gamma"] = spx_gamma.get("raw_zero_gamma")
+        spx_payload["levels"] = {**spx_payload.get("levels", {}), **gamma_levels}
+        es_payload["levels"] = {**es_payload.get("levels", {})}
+        es_payload["includeRawZeroGamma"] = False
+        spx_payload["includeRawZeroGamma"] = dev_mode
 
-function visibleRange(inst, total){
-  const x = inst.options.scales.x;
-  let min = Math.max(0, Math.floor(Number(x.min ?? 0)));
-  let max = Math.min(total - 1, Math.ceil(Number(x.max ?? total - 1)));
-  if (max <= min) max = Math.min(total - 1, min + 5);
-  return {min, max};
-}
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+            "market_state": market_state,
+            "charts": {"ES": es_payload, "SPX": spx_payload},
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION}), 500
 
-function rescaleY(inst, data){
-  const bars = data.chart || [];
-  if (!bars.length) return;
-  const r = visibleRange(inst, bars.length);
-  let lo = Infinity, hi = -Infinity;
-  for (let i = r.min; i <= r.max; i++) {
-    const b = bars[i];
-    if (!b) continue;
-    lo = Math.min(lo, b.low, b.ema8 || b.low, b.ema21 || b.low, b.vwap || b.low);
-    hi = Math.max(hi, b.high, b.ema8 || b.high, b.ema21 || b.high, b.vwap || b.high);
-  }
-  [data.gammaFlip, data.callWall, data.putWall, data.hvboHigh, data.hvboLow].forEach(v => {
-    const n = Number(v);
-    if (Number.isFinite(n) && n >= lo * 0.985 && n <= hi * 1.015) { lo = Math.min(lo, n); hi = Math.max(hi, n); }
-  });
-  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return;
-  const pad = Math.max((hi - lo) * 0.18, data.currentClose * 0.0008, 2);
-  inst.options.scales.y.min = lo - pad;
-  inst.options.scales.y.max = hi + pad;
-}
-
-function setXWindow(inst, data, min, max){
-  const n = (data.chart || []).length;
-  if (!n) return;
-  const minSpan = 8;
-  let span = Math.max(max - min, minSpan);
-  if (span >= n - 1) { min = 0; max = n - 1; }
-  else {
-    if (min < 0) { max -= min; min = 0; }
-    if (max > n - 1) { min -= (max - (n - 1)); max = n - 1; }
-    min = Math.max(0, min);
-  }
-  inst.options.scales.x.min = min;
-  inst.options.scales.x.max = max;
-  rescaleY(inst, data);
-  inst.update('none');
-}
-
-function attachChartNavigation(panelId, inst, data){
-  const wrap = document.getElementById('wrap_' + panelId);
-  const panel = document.getElementById(panelId);
-  const bars = data.chart || [];
-  if (!wrap || !panel || !bars.length) return;
-  const n = bars.length;
-  const defaultSpan = Math.min(n - 1, Math.max(40, Math.floor(n * 0.45)));
-  setXWindow(inst, data, Math.max(0, n - 1 - defaultSpan), n - 1);
-
-  function pan(deltaBars){
-    const x = inst.options.scales.x;
-    setXWindow(inst, data, Number(x.min) + deltaBars, Number(x.max) + deltaBars);
-  }
-
-  wrap.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const x = inst.options.scales.x;
-    const min = Number(x.min), max = Number(x.max);
-    const span = max - min;
-    if (e.shiftKey) {
-      pan((e.deltaY > 0 ? 1 : -1) * Math.max(2, span * 0.12));
-      return;
-    }
-    const rect = wrap.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    const anchor = min + span * ratio;
-    const factor = e.deltaY > 0 ? 1.18 : 0.84;
-    const newSpan = Math.min(n - 1, Math.max(8, span * factor));
-    const newMin = anchor - newSpan * ratio;
-    const newMax = anchor + newSpan * (1 - ratio);
-    setXWindow(inst, data, newMin, newMax);
-  }, {passive:false});
-
-  let dragging = false, startX = 0, startMin = 0, startMax = 0;
-  wrap.addEventListener('pointerdown', (e) => {
-    dragging = true; startX = e.clientX;
-    startMin = Number(inst.options.scales.x.min); startMax = Number(inst.options.scales.x.max);
-    wrap.classList.add('dragging'); wrap.setPointerCapture(e.pointerId);
-  });
-  wrap.addEventListener('pointermove', (e) => {
-    if (!dragging) return;
-    const span = startMax - startMin;
-    const pxPerBar = wrap.clientWidth / Math.max(span, 1);
-    const deltaBars = -(e.clientX - startX) / Math.max(pxPerBar, 1);
-    setXWindow(inst, data, startMin + deltaBars, startMax + deltaBars);
-  });
-  function stopDrag(){ dragging = false; wrap.classList.remove('dragging'); }
-  wrap.addEventListener('pointerup', stopDrag);
-  wrap.addEventListener('pointercancel', stopDrag);
-  wrap.addEventListener('dblclick', () => setXWindow(inst, data, Math.max(0, n - 1 - defaultSpan), n - 1));
-
-  panel.querySelectorAll('.chart-tool-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.dataset.action;
-      const span = Number(inst.options.scales.x.max) - Number(inst.options.scales.x.min);
-      if (action === 'left') pan(-Math.max(5, span * 0.35));
-      if (action === 'right') pan(Math.max(5, span * 0.35));
-      if (action === 'fitLatest') setXWindow(inst, data, Math.max(0, n - 1 - defaultSpan), n - 1);
-      if (action === 'fitAll') setXWindow(inst, data, 0, n - 1);
-    });
-  });
-}
-
-// ── Fetch + render one panel ──────────────────────────────────────────────────
-async function loadPanel(panelId, ticker) {
-  const panel = document.getElementById(panelId);
-  if (!panel) return;
-  panel.innerHTML = `<div class="panel-msg">Loading ${ticker}…</div>`;
-  try {
-    const r = await fetch('/api/chart_data?ticker=' + ticker + '&days=' + activeDays + '&tf=' + activeTf, {cache:'no-store'});
-    const data = await r.json();
-    if (!r.ok || data.error) {
-      panel.innerHTML = `<div class="panel-msg err">Error loading ${ticker}: ${data.error || 'HTTP '+r.status}</div>`;
-      return;
-    }
-    buildPanel(panelId, data);
-  } catch(e) {
-    panel.innerHTML = `<div class="panel-msg err">Network error loading ${ticker}: ${e.message}</div>`;
-  }
-}
-
-
-async function loadDataBusRibbon(){
-  const el = document.getElementById('dataBusRibbon');
-  if(!el) return;
-  try{
-    const r = await fetch('/api/market_state?days=' + activeDays + '&tf=' + activeTf, {cache:'no-store'});
-    const j = await r.json();
-    if(!r.ok || !j.ok){ throw new Error(j.error || ('HTTP '+r.status)); }
-    const s = j.market_state || {};
-    const es = (s.instruments||{}).ES || {};
-    const spx = (s.instruments||{}).SPX || {};
-    const g = s.gamma || {};
-    const b = s.basis || {};
-    const basisCls = (b.points||0) >= 0 ? 'bus-green' : 'bus-red';
-    el.innerHTML = `
-      <div class="bus-card"><div class="bus-label">ES Futures</div><div class="bus-value bus-blue">$${fmt(es.price)}</div></div>
-      <div class="bus-card"><div class="bus-label">SPX Cash</div><div class="bus-value bus-blue">$${fmt(spx.price)}</div></div>
-      <div class="bus-card"><div class="bus-label">ES / SPX Basis</div><div class="bus-value ${basisCls}">${b.points!=null?(b.points>0?'+':'')+fmt(b.points):'--'} ${b.label||''}</div></div>
-      <div class="bus-card"><div class="bus-label">Call Wall</div><div class="bus-value bus-green">$${fmt(g.call_wall)}</div></div>
-      <div class="bus-card"><div class="bus-label">Put Wall</div><div class="bus-value bus-red">$${fmt(g.put_wall)}</div></div>
-      <div class="bus-card"><div class="bus-label">Zero Gamma</div><div class="bus-value bus-amber">$${fmt(g.zero_gamma)}</div></div>
-    `;
-  }catch(e){
-    el.innerHTML = `<div class="bus-card"><div class="bus-label">Data Bus</div><div class="bus-value bus-red">${e.message}</div></div>`;
-  }
-}
-
-// ── Refresh both charts ───────────────────────────────────────────────────────
-async function loadAll() {
-  document.getElementById('refreshBtn').textContent = '↻ Loading…';
-  document.getElementById('lastUpdate').textContent = '';
-  await Promise.all([
-    loadDataBusRibbon(),
-    loadPanel('panelES',  'ES'),
-    loadPanel('panelSPX', 'SPX'),
-  ]);
-  document.getElementById('refreshBtn').textContent = '↻ Refresh';
-  document.getElementById('lastUpdate').textContent =
-    'Updated: ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + ' ET';
-}
-
-// ── Day selector buttons ──────────────────────────────────────────────────────
-document.querySelectorAll('.day-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    activeDays = parseInt(btn.dataset.d);
-    // Smart default TF: 1D→5m, 2D+→15m (user can still override)
-    if (activeDays === 1 && activeTf === 15) {
-      setTf(5);
-    } else if (activeDays >= 3 && activeTf === 1) {
-      setTf(15);
-    }
-    loadAll();
-  });
-});
-
-// ── Timeframe selector buttons ────────────────────────────────────────────────
-function setTf(tf) {
-  activeTf = tf;
-  document.querySelectorAll('.tf-btn').forEach(b => {
-    b.classList.toggle('active', parseInt(b.dataset.tf) === tf);
-  });
-}
-
-document.querySelectorAll('.tf-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    setTf(parseInt(btn.dataset.tf));
-    loadAll();
-  });
-});
-
-document.getElementById('refreshBtn').addEventListener('click', loadAll);
-
-// Initial load + auto-refresh every 3 minutes during session hours
-loadAll();
-setInterval(loadAll, 180000);
-</script>
-</body>
-</html>"""
+# CHART_HTML replaced by templates/chart.html
 
 
 @app.route("/chart")
 def chart_dashboard():
     """Market Intelligence Terminal — ES and SPX side by side."""
-    return render_template_string(CHART_HTML)
+    return render_template("chart.html")
 

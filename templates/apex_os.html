@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>APEX Institutional OS</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#05080f;--surf:#0d141f;--surf2:#121c2b;--bdr:#1c2940;
+  --text:#e8f1fc;--muted:#8295b3;--faint:#5a6b87;
+  --blue:#38bdf8;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--purple:#a78bfa;
+  --mono:'JetBrains Mono',ui-monospace,monospace;--sans:'Inter',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1400px;margin:0 auto;padding:16px 16px 60px}
+.topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;padding:12px 16px;background:var(--surf);border:1px solid var(--bdr);border-radius:12px}
+.logo{font-family:var(--mono);font-size:18px;font-weight:800;color:var(--blue)}
+.logo span{font-size:12px;font-weight:400;color:var(--faint);margin-left:8px}
+.top-meta{display:flex;align-items:center;gap:16px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.spx-price{color:var(--text);font-weight:700;font-size:14px}
+.session-pill{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;border:1px solid var(--bdr)}
+.sess-open{color:var(--green);border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.08)}
+.sess-closed{color:var(--amber);border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.08)}
+.dot-live{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:pulse 1.4s ease-in-out infinite;display:inline-block;margin-right:5px}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(56,189,248,.6)}50%{box-shadow:0 0 0 6px rgba(56,189,248,0)}}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px}
+.card{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:14px 16px}
+.card-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:var(--faint);margin-bottom:10px}
+.decision-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:8px;font-weight:700;font-size:14px;margin-bottom:12px;font-family:var(--mono)}
+.badge-call{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.3)}
+.badge-put{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.3)}
+.badge-caution{background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.3)}
+.badge-neutral{background:rgba(130,149,179,.1);color:var(--muted);border:1px solid var(--bdr)}
+.readiness-num{font-size:54px;font-weight:800;line-height:1;font-family:var(--mono)}
+.num-green{color:var(--green)}
+.num-amber{color:var(--amber)}
+.num-red{color:var(--red)}
+.gate-row{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);margin:3px 0}
+.gate-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.gd-on{background:var(--green)}
+.gd-warn{background:var(--amber)}
+.gd-off{background:var(--red)}
+.decay-bar{height:4px;border-radius:2px;background:var(--surf2);overflow:hidden;margin:6px 0 2px}
+.decay-fill{height:100%;border-radius:2px;transition:width .5s;background:var(--blue)}
+.decay-meta{display:flex;justify-content:space-between;font-size:10px;color:var(--faint)}
+.story-entry{display:flex;gap:10px;align-items:flex-start;margin-bottom:8px}
+.story-time{font-family:var(--mono);font-size:10px;color:var(--faint);flex-shrink:0;width:36px;padding-top:2px}
+.story-connector{display:flex;flex-direction:column;align-items:center;flex-shrink:0}
+.s-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:2px}
+.s-line{width:1px;flex:1;min-height:14px;background:var(--bdr);margin:3px 0}
+.story-text{font-size:12px;color:var(--muted);line-height:1.6;padding-bottom:4px}
+.coach-block{font-size:13px;color:var(--muted);line-height:1.75;padding:11px 13px;background:var(--surf2);border-radius:8px;border-left:3px solid var(--blue)}
+.level-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--bdr);font-size:12px}
+.level-label{color:var(--faint)}
+.level-val{font-family:var(--mono);font-weight:500}
+.badge-small{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:700}
+.bs-bull{background:rgba(34,197,94,.12);color:var(--green)}
+.bs-bear{background:rgba(239,68,68,.12);color:var(--red)}
+.bs-neut{background:rgba(130,149,179,.1);color:var(--muted)}
+.heat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.heat-item{padding:10px;border-radius:8px;text-align:center;border:1px solid var(--bdr)}
+.heat-ticker{font-family:var(--mono);font-size:12px;font-weight:700}
+.heat-score{font-size:20px;font-weight:800;font-family:var(--mono)}
+.heat-action{font-size:10px;font-weight:700;margin-top:2px;text-transform:uppercase}
+.h-enter{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.25)}
+.h-enter .heat-ticker,.h-enter .heat-score,.h-enter .heat-action{color:var(--green)}
+.h-watch{background:rgba(56,189,248,.06);border-color:rgba(56,189,248,.2)}
+.h-watch .heat-ticker,.h-watch .heat-score,.h-watch .heat-action{color:var(--blue)}
+.h-wait{background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)}
+.h-wait .heat-ticker,.h-wait .heat-score,.h-wait .heat-action{color:var(--amber)}
+.h-no{background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2)}
+.h-no .heat-ticker,.h-no .heat-score,.h-no .heat-action{color:var(--red)}
+.planner-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pl-item{display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid var(--bdr)}
+.pl-key{color:var(--faint)}
+.pl-val{font-family:var(--mono);font-weight:500}
+.flow-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
+.flow-card{background:var(--surf2);border:1px solid var(--bdr);border-radius:8px;padding:10px 12px}
+.flow-name{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);margin-bottom:4px}
+.flow-val{font-size:17px;font-weight:700;font-family:var(--mono)}
+.flow-sub{font-size:10px;color:var(--muted);margin-top:2px}
+.action-bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.btn{font-size:11px;padding:5px 11px;border-radius:7px;border:1px solid var(--bdr);background:transparent;color:var(--muted);cursor:pointer;font-family:var(--sans);transition:all .15s}
+.btn:hover{background:var(--surf2);color:var(--text)}
+.btn-primary{border-color:rgba(56,189,248,.5);color:var(--blue);background:rgba(56,189,248,.06)}
+.btn-primary:hover{background:rgba(56,189,248,.12)}
+.conf-num{font-size:28px;font-weight:800;font-family:var(--mono)}
+.section-full{margin-bottom:10px}
+.last-updated{font-size:10px;color:var(--faint);text-align:right;margin-top:8px}
+.checklist{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+.err-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:10px 14px;color:var(--red);font-size:12px;margin-bottom:10px}
+.apex-nav{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--surf);border:1px solid var(--bdr);border-radius:12px;margin-bottom:12px;flex-wrap:wrap}
+.apex-nav .nav-logo{font-family:var(--mono);font-size:13px;font-weight:800;color:var(--blue);margin-right:10px;text-decoration:none}
+.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:var(--muted);text-decoration:none;transition:all .15s}
+.apex-nav a:hover{background:var(--surf2);color:var(--text);border-color:var(--bdr)}
+.apex-nav a.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.35)}
+.apex-nav .nav-sep{width:1px;height:18px;background:var(--bdr);margin:0 4px}
+</style>
+</head>
+<body>
+<div class="wrap" id="root">
+
+<nav class="apex-nav">
+  <a href="/" class="nav-logo">APEX</a>
+  <a href="/">Scanner</a>
+  <a href="/apex_os" class="active">Institutional OS</a>
+  <a href="/assistant">Trade Assistant</a>
+  <a href="/flow">Flow / GEX</a>
+  <a href="/chart">Charts</a>
+  <div class="nav-sep"></div>
+  <a href="/api/v45/status" target="_blank">Status</a>
+  <a href="/health" target="_blank">Health</a>
+</nav>
+
+<div class="topbar">
+  <div>
+    <div class="logo">APEX <span>Institutional OS v5.1</span></div>
+  </div>
+  <div class="top-meta">
+    <span><span class="dot-live"></span><span id="clockEl">--:--:-- ET</span></span>
+    <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
+    <span>SPX <span class="spx-price" id="spxEl">--</span></span>
+    <button class="btn btn-primary" onclick="loadOS()">↻ Refresh</button>
+  </div>
+</div>
+
+<div id="errBox" class="err-box" style="display:none">Error loading APEX data.</div>
+
+<div class="grid2">
+  <div class="card">
+    <div class="card-label">Decision engine</div>
+    <div id="decisionBadge" class="decision-badge badge-neutral">— Loading</div>
+    <div style="display:flex;gap:16px;align-items:flex-end">
+      <div>
+        <div id="confNum" class="conf-num" style="color:var(--blue)">--</div>
+        <div style="font-size:11px;color:var(--faint);margin-top:3px">Confidence</div>
+      </div>
+      <div style="flex:1">
+        <div style="font-size:10px;color:var(--faint);margin-bottom:2px">Signal decay</div>
+        <div id="decayFill" class="decay-bar"><div class="decay-fill" id="decayBar" style="width:0%"></div></div>
+        <div class="decay-meta"><span id="decayAge">--</span><span id="decayExp">--</span></div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:10px;line-height:1.6" id="decisionMsg">--</div>
+    <div style="font-size:11px;color:var(--faint);margin-top:6px;font-style:italic" id="decisionAction">--</div>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Trade readiness</div>
+    <div style="display:flex;gap:14px;align-items:flex-start">
+      <div>
+        <div class="readiness-num num-green" id="readinessNum">--</div>
+        <div style="font-size:11px;color:var(--faint)">/ 100</div>
+      </div>
+      <div class="checklist" id="gateChecks"></div>
+    </div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <div class="card-label">Institutional story</div>
+    <div id="storyWrap"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">AI trade coach</div>
+    <div id="coachText" class="coach-block">Loading institutional narrative...</div>
+    <div class="action-bar">
+      <button class="btn btn-primary" onclick="window.location.href='/api/institutional_os'">Full JSON ↗</button>
+      <button class="btn" onclick="window.location.href='/assistant'">Assistant ↗</button>
+      <button class="btn" onclick="window.location.href='/flow'">Flow dashboard ↗</button>
+    </div>
+  </div>
+</div>
+
+<div class="grid3">
+  <div class="card">
+    <div class="card-label">GEX levels</div>
+    <div id="gexRows"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Flow inputs</div>
+    <div class="flow-grid" id="flowGrid"></div>
+  </div>
+  <div class="card">
+    <div class="card-label">Trade planner</div>
+    <div id="plannerWrap"></div>
+  </div>
+</div>
+
+<div class="section-full card">
+  <div class="card-label">Institutional heat map</div>
+  <div class="heat-grid" id="heatGrid"></div>
+</div>
+
+<div class="last-updated" id="lastUpdated">--</div>
+
+</div>
+
+<script>
+let osData = null;
+
+function clock(){
+  const now = new Date();
+  const et = new Intl.DateTimeFormat('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit',hour12:true,timeZone:'America/New_York'}).format(now);
+  document.getElementById('clockEl').textContent = et + ' ET';
+}
+setInterval(clock, 1000); clock();
+
+function badgeClass(state){
+  if(!state) return 'badge-neutral';
+  if(state.includes('CALL')) return 'badge-call';
+  if(state.includes('PUT')) return 'badge-put';
+  if(state.includes('CAUTION') || state.includes('WAITING')) return 'badge-caution';
+  return 'badge-neutral';
+}
+
+function renderDecision(d){
+  if(!d) return;
+  const badge = document.getElementById('decisionBadge');
+  const state = d.state || 'WAITING';
+  badge.className = 'decision-badge ' + badgeClass(state);
+  badge.textContent = (state.includes('CALL') ? '▲ ' : state.includes('PUT') ? '▼ ' : '— ') + state.replace(/_/g,' ');
+  document.getElementById('decisionMsg').textContent = d.message || '--';
+  document.getElementById('decisionAction').textContent = d.action || '';
+
+  // Alignment / confidence
+  const align = d.institutional_alignment || 0;
+  const num = document.getElementById('confNum');
+  num.textContent = Math.round(align) + '%';
+  num.style.color = align >= 70 ? 'var(--green)' : align >= 50 ? 'var(--amber)' : 'var(--red)';
+  const rNum = document.getElementById('readinessNum');
+  const gates = d.checklist || [];
+  const passCount = gates.filter(g => g.ok).length;
+  const pct = gates.length ? Math.round(passCount / gates.length * 100) : 0;
+  rNum.textContent = pct;
+  rNum.className = 'readiness-num ' + (pct >= 75 ? 'num-green' : pct >= 50 ? 'num-amber' : 'num-red');
+  // Gates
+  const gc = document.getElementById('gateChecks');
+  gc.innerHTML = (d.checklist || []).map(g => `<div class="gate-row"><span class="gate-dot ${g.ok ? 'gd-on' : 'gd-warn'}"></span>${g.label}</div>`).join('');
+
+  // Decay
+  const secs = d.signal_seconds_remaining || 0;
+  const ttl = d.signal_ttl_seconds || 360;
+  const decPct = Math.round(secs / ttl * 100);
+  document.getElementById('decayBar').style.width = decPct + '%';
+  document.getElementById('decayAge').textContent = secs > 0 ? secs + 's left' : 'Expired';
+  document.getElementById('decayExp').textContent = secs > 0 ? 'Live' : 'No signal';
+}
+
+function renderStory(story){
+  const el = document.getElementById('storyWrap');
+  if(!story || !story.chapters || !story.chapters.length){
+    el.innerHTML = '<div style="color:var(--faint);font-size:12px">No story data yet.</div>';
+    return;
+  }
+  el.innerHTML = story.chapters.map((c, i) => `
+    <div class="story-entry">
+      <span class="story-time">${c.time || '--'}</span>
+      <div class="story-connector">
+        <span class="s-dot" style="background:${c.color || '#5a6b87'}"></span>
+        ${i < story.chapters.length - 1 ? '<span class="s-line"></span>' : ''}
+      </div>
+      <div class="story-text"><strong style="color:${c.color || 'var(--muted)'}; font-size:10px; text-transform:uppercase; letter-spacing:.6px">${c.chapter}</strong><br>${c.text}</div>
+    </div>`).join('');
+}
+
+function renderCoach(story, decision){
+  const el = document.getElementById('coachText');
+  if(story && story.full_narrative){
+    el.textContent = story.full_narrative;
+  } else if(decision){
+    el.textContent = decision.action || 'Waiting for institutional data...';
+  }
+}
+
+function renderGex(flow){
+  const el = document.getElementById('gexRows');
+  if(!flow){ el.innerHTML = ''; return; }
+  const rows = [
+    {label:'Call wall', val: flow.call_wall ? flow.call_wall.toLocaleString() : '--', cls:'bs-bull'},
+    {label:'Put wall', val: flow.put_wall ? flow.put_wall.toLocaleString() : '--', cls:'bs-bear'},
+    {label:'Zero gamma', val: flow.zero_gamma ? flow.zero_gamma.toLocaleString() : '--', cls:'bs-neut'},
+    {label:'GEX score', val: flow.gex_score != null ? flow.gex_score : '--', cls: flow.gex_score >= 60 ? 'bs-bull' : flow.gex_score <= 40 ? 'bs-bear' : 'bs-neut'},
+    {label:'Spot price', val: flow.stock_price ? flow.stock_price.toLocaleString() : '--', cls:'bs-neut'},
+  ];
+  el.innerHTML = rows.map(r => `<div class="level-row"><span class="level-label">${r.label}</span><div style="display:flex;align-items:center;gap:6px"><span class="level-val">${r.val}</span><span class="badge-small ${r.cls}">${r.val !== '--' ? '✓' : '?'}</span></div></div>`).join('');
+}
+
+function renderFlow(flow){
+  const el = document.getElementById('flowGrid');
+  if(!flow){ el.innerHTML = ''; return; }
+  const items = [
+    {name:'Net flow', val: flow.net_premium != null ? '$' + (flow.net_premium/1e6).toFixed(1)+'M' : '--', sub: flow.bias || '--'},
+    {name:'Flow score', val: flow.flow_score != null ? flow.flow_score : '--', sub: 'Inst. options'},
+    {name:'Order flow', val: flow.order_flow_score != null ? flow.order_flow_score : '--', sub: 'Sweeps: ' + (flow.sweep_count || 0)},
+    {name:'GEX score', val: flow.gex_score != null ? flow.gex_score : '--', sub: 'Gamma exposure'},
+    {name:'Alignment', val: flow.institutional_alignment != null ? Math.round(flow.institutional_alignment) + '%' : '--', sub: flow.decision_color || '--'},
+    {name:'Approved', val: flow.approved_side || '--', sub: flow.decision || ''},
+  ];
+  el.innerHTML = items.map(i => `<div class="flow-card"><div class="flow-name">${i.name}</div><div class="flow-val">${i.val}</div><div class="flow-sub">${i.sub}</div></div>`).join('');
+}
+
+function renderPlanner(plan){
+  const el = document.getElementById('plannerWrap');
+  if(!plan){ el.innerHTML = '<div style="color:var(--faint);font-size:12px">Waiting for signal...</div>'; return; }
+  const contract = plan.recommended_contract || '--';
+  const rows = [
+    {key:'Contract', val: contract},
+    {key:'Entry zone', val: plan.entry_zone || '--'},
+    {key:'Stop', val: plan.stop_price || '--'},
+    {key:'Target 1', val: plan.target_1 || '--'},
+    {key:'Target 2', val: plan.target_2 || '--'},
+    {key:'R:R', val: plan.rr_to_t1 ? plan.rr_to_t1 + ':1' : '--'},
+  ];
+  el.innerHTML = `<div style="font-size:13px;font-family:var(--mono);font-weight:700;color:var(--blue);margin-bottom:8px">${contract}</div>
+    <div class="planner-grid">${rows.map(r => `<div class="pl-item"><span class="pl-key">${r.key}</span><span class="pl-val">${r.val}</span></div>`).join('')}</div>`;
+}
+
+function renderHeatmap(heatmap){
+  const el = document.getElementById('heatGrid');
+  if(!heatmap || !heatmap.tickers){ el.innerHTML = ''; return; }
+  el.innerHTML = heatmap.tickers.map(t => {
+    const cls = t.action_class === 'enter' ? 'h-enter' : t.action_class === 'watch' ? 'h-watch' : t.action_class === 'wait' ? 'h-wait' : 'h-no';
+    return `<div class="heat-item ${cls}">
+      <div class="heat-ticker">${t.ticker}</div>
+      <div class="heat-score">${Math.round(t.score || 0)}</div>
+      <div class="heat-action">${t.action}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderSPX(flow){
+  if(flow && flow.stock_price){
+    document.getElementById('spxEl').textContent = parseFloat(flow.stock_price).toLocaleString();
+  }
+}
+
+function renderSession(session){
+  const pill = document.getElementById('sessionPill');
+  if(!session){ return; }
+  const s = session.session || '';
+  pill.textContent = s.replace('_', ' ');
+  pill.className = 'session-pill ' + (s === 'MARKET_OPEN' ? 'sess-open' : 'sess-closed');
+}
+
+async function loadOS(){
+  try{
+    const ticker = new URLSearchParams(window.location.search).get('ticker') || 'SPX';
+    const r = await fetch('/api/institutional_os?ticker=' + ticker + '&heatmap=1');
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    osData = data;
+    document.getElementById('errBox').style.display = 'none';
+
+    renderSession(data.session);
+    renderDecision(data.decision);
+    renderStory(data.story);
+    renderCoach(data.story, data.decision);
+    renderGex(data.flow);
+    renderFlow({...data.flow, institutional_alignment: data.decision?.institutional_alignment, approved_side: data.decision?.approved_side, decision_color: data.flow?.decision_color, decision: data.flow?.decision_color});
+    renderPlanner(data.decision?.trade_plan);
+    renderHeatmap(data.heatmap);
+    renderSPX(data.flow);
+    document.getElementById('lastUpdated').textContent = 'Updated: ' + (data.updated_at || '--');
+  }catch(e){
+    document.getElementById('errBox').style.display = '';
+    document.getElementById('errBox').textContent = 'Error loading APEX OS: ' + e.message;
+  }
+}
+
+loadOS();
+setInterval(loadOS, 10000);
+</script>
+</body>
+</html>
