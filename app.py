@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.1.0_TERMINAL_UI_REFINEMENT"
+VERSION = "6.1.1_SERVER_CONFIDENCE_TIMELINE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -106,6 +106,88 @@ TRADE_ASSISTANT_STATE: Dict[str, Any] = {
     "updated_at": None,
     "updated_at_et": None,
 }
+
+# ---------------------------------------------------------------------------
+# APEX 6.1.1 server-side confidence timeline
+# Keeps an intraday memory of ICI/decision snapshots for replay/review.
+# ---------------------------------------------------------------------------
+CONFIDENCE_TIMELINE_LOCK = threading.RLock()
+CONFIDENCE_TIMELINE_MAX_POINTS = int(os.getenv("CONFIDENCE_TIMELINE_MAX_POINTS", "240"))
+CONFIDENCE_TIMELINE: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def _safe_confidence_value(result: Dict[str, Any]) -> float:
+    ici_obj = result.get("ici") if isinstance(result.get("ici"), dict) else {}
+    return round(safe_float(ici_obj.get("ici") or result.get("confidence") or result.get("confidence_pct"), 0.0), 1)
+
+
+def _record_confidence_timeline_point(ticker: str, result: Dict[str, Any]) -> None:
+    """Record a compact confidence/decision snapshot.
+
+    This is intentionally server-side so the timeline survives page refreshes
+    and can become the source for replay/review without relying on browser state.
+    Duplicate consecutive points are skipped unless confidence, decision, price,
+    or flow materially changes.
+    """
+    if not isinstance(result, dict):
+        return
+    t = (ticker or result.get("ticker") or ASSISTANT_TICKER or "SPX").upper()
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    now_local = now_et()
+    ribbon = result.get("ribbon") if isinstance(result.get("ribbon"), dict) else {}
+    flow = result.get("flow") if isinstance(result.get("flow"), dict) else {}
+    gamma = result.get("gamma_regime") if isinstance(result.get("gamma_regime"), dict) else {}
+    ici_obj = result.get("ici") if isinstance(result.get("ici"), dict) else {}
+    consensus = result.get("consensus") if isinstance(result.get("consensus"), dict) else {}
+    execution = result.get("execution") if isinstance(result.get("execution"), dict) else {}
+    point = {
+        "ticker": t,
+        "time": now_local.strftime("%H:%M:%S"),
+        "time_et": now_local.strftime("%Y-%m-%d %H:%M:%S ET"),
+        "timestamp": now_utc.isoformat(),
+        "ici": _safe_confidence_value(result),
+        "grade": result.get("grade"),
+        "state": result.get("decision_state") or (result.get("decision") or {}).get("state") or result.get("recommendation") or "NO_TRADE",
+        "recommendation": result.get("recommendation"),
+        "readiness": result.get("readiness"),
+        "price": ribbon.get("spx_price") or flow.get("stock_price"),
+        "net_flow": ribbon.get("net_flow") or flow.get("net_premium"),
+        "flow_momentum": ribbon.get("flow_momentum") or flow.get("flow_momentum"),
+        "gamma_regime": gamma.get("regime_display") or gamma.get("regime_label"),
+        "zero_gamma": ribbon.get("zero_gamma") or gamma.get("zero_gamma"),
+        "consensus_direction": consensus.get("consensus_direction"),
+        "signal_fresh": execution.get("signal_fresh"),
+        "session": (result.get("session") or {}).get("session") if isinstance(result.get("session"), dict) else session_status(),
+    }
+    with CONFIDENCE_TIMELINE_LOCK:
+        rows = CONFIDENCE_TIMELINE.setdefault(t, [])
+        last = rows[-1] if rows else None
+        if last:
+            same_state = last.get("state") == point.get("state")
+            same_ici = abs(safe_float(last.get("ici"), 0) - safe_float(point.get("ici"), 0)) < 0.2
+            same_price = abs(safe_float(last.get("price"), 0) - safe_float(point.get("price"), 0)) < 0.05
+            same_flow = abs(safe_float(last.get("net_flow"), 0) - safe_float(point.get("net_flow"), 0)) < 1000
+            if same_state and same_ici and same_price and same_flow:
+                return
+        rows.append(point)
+        if len(rows) > CONFIDENCE_TIMELINE_MAX_POINTS:
+            del rows[:-CONFIDENCE_TIMELINE_MAX_POINTS]
+
+
+def _confidence_timeline_payload(ticker: str) -> Dict[str, Any]:
+    t = (ticker or ASSISTANT_TICKER or "SPX").upper()
+    with CONFIDENCE_TIMELINE_LOCK:
+        points = list(CONFIDENCE_TIMELINE.get(t, []))
+    return {
+        "ok": True,
+        "version": VERSION,
+        "ticker": t,
+        "count": len(points),
+        "points": points,
+        "latest": points[-1] if points else None,
+        "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    }
 
 
 class CircuitBreaker:
@@ -3158,6 +3240,7 @@ def api_institutional_os():
                     f"Targets: {result.get('risk', {}).get('target1', '--')} / {result.get('risk', {}).get('target2', '--')}"
                 )
 
+            _record_confidence_timeline_point(ticker, result)
             return jsonify({"ok": True, **result})
 
         except Exception as e:
@@ -3167,6 +3250,7 @@ def api_institutional_os():
                 data = build_institutional_os(ticker, include_heatmap=include_heatmap)
                 data["engine_mode"] = "FALLBACK_45"
                 data["pipeline_error"] = str(e)
+                _record_confidence_timeline_point(ticker, data)
                 return jsonify({"ok": True, **data})
             except Exception as e2:
                 return jsonify({"ok": False, "error": str(e2), "version": VERSION_45}), 500
@@ -4095,6 +4179,26 @@ def api_charts_state():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "version": VERSION}), 500
 
+
+
+@app.route("/api/confidence_timeline")
+def api_confidence_timeline():
+    ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
+    return jsonify(_confidence_timeline_payload(ticker))
+
+
+@app.route("/api/confidence_timeline/reset", methods=["POST"])
+def api_confidence_timeline_reset():
+    ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
+    with CONFIDENCE_TIMELINE_LOCK:
+        CONFIDENCE_TIMELINE[ticker] = []
+    return jsonify({
+        "ok": True,
+        "version": VERSION,
+        "ticker": ticker,
+        "message": "Confidence timeline reset",
+        "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    })
 
 
 @app.route("/api/market_health")

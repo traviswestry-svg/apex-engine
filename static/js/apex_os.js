@@ -12,7 +12,7 @@ let replayIdx    = 0;
 let replayPlaying = false;
 let replayTimer   = null;
 let reviewLog     = [];    // session review entries stored in memory
-let confidenceLog = [];    // compact ICI timeline for command center
+let confidenceLog = [];    // server-backed ICI timeline for command center
 let activeTicker  = new URLSearchParams(location.search).get('ticker') || 'SPX';
 const AUTO_INTERVAL = 12000; // ms between auto-refreshes
 
@@ -393,14 +393,52 @@ function renderCoachSnapshot(d) {
   `;
 }
 
-function renderConfidenceTimeline() {
+async function loadConfidenceTimeline() {
   const el = $('confidenceTimeline');
   if (!el) return;
-  if (!confidenceLog.length) { el.textContent = 'Waiting for snapshots...'; return; }
-  el.innerHTML = confidenceLog.slice(-10).map(p => {
+  try {
+    const r = await fetch('/api/confidence_timeline?ticker=' + activeTicker, { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || 'Timeline API error');
+    confidenceLog = (data.points || []).map(p => ({
+      ts: p.time || (p.time_et || '').slice(11,16),
+      ici: Number(p.ici || 0),
+      state: p.state || 'NO_TRADE',
+      price: p.price,
+      net_flow: p.net_flow,
+      gamma_regime: p.gamma_regime,
+      recommendation: p.recommendation
+    }));
+    renderConfidenceTimeline();
+  } catch (e) {
+    // Browser-local fallback keeps the UI useful even if the endpoint is unavailable.
+    renderConfidenceTimeline('local');
+  }
+}
+
+async function resetConfidenceTimeline() {
+  const el = $('confidenceTimeline');
+  try {
+    const r = await fetch('/api/confidence_timeline/reset?ticker=' + activeTicker, { method: 'POST', cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    confidenceLog = [];
+    if (el) el.textContent = 'Timeline reset. Waiting for next snapshot...';
+  } catch (e) {
+    if (el) el.textContent = 'Reset failed: ' + e.message;
+  }
+}
+
+function renderConfidenceTimeline(mode='server') {
+  const el = $('confidenceTimeline');
+  if (!el) return;
+  if (!confidenceLog.length) { el.textContent = 'Waiting for server snapshots...'; return; }
+  el.innerHTML = confidenceLog.slice(-14).map(p => {
     const c = p.ici >= 70 ? 'var(--green)' : p.ici >= 50 ? 'var(--amber)' : 'var(--red)';
-    return `<div class="timeline-row"><span>${esc(p.ts)}</span><div class="timeline-bar"><div style="width:${Math.max(2, Math.min(100,p.ici))}%;background:${c}"></div></div><b style="color:${c}">${fmtI(p.ici)}%</b><em>${esc(p.state.replace(/_/g,' '))}</em></div>`;
-  }).join('');
+    const nf = p.net_flow != null ? ' · ' + (p.net_flow >= 0 ? '+' : '') + '$' + fmtM(p.net_flow) : '';
+    const gr = p.gamma_regime ? ' · ' + p.gamma_regime : '';
+    return `<div class="timeline-row"><span>${esc(p.ts)}</span><div class="timeline-bar"><div style="width:${Math.max(2, Math.min(100,p.ici))}%;background:${c}"></div></div><b style="color:${c}">${fmtI(p.ici)}%</b><em title="${esc((p.state||'').replace(/_/g,' ') + nf + gr)}">${esc((p.state||'NO_TRADE').replace(/_/g,' '))}</em></div>`;
+  }).join('') + `<div class="timeline-source">${mode === 'local' ? 'Local fallback' : 'Server timeline'} · ${confidenceLog.length} snapshots</div>`;
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -773,6 +811,8 @@ function initRunScanButtons() {
   });
   const refreshScanner = $('refreshScannerBtn');
   if (refreshScanner) refreshScanner.addEventListener('click', loadScannerIdeas);
+  const resetTimeline = $('resetTimelineBtn');
+  if (resetTimeline) resetTimeline.addEventListener('click', resetConfidenceTimeline);
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -800,7 +840,7 @@ async function loadOS() {
     recordConfidencePoint(data);
     renderCommandCenter(data);
     renderCoachSnapshot(data);
-    renderConfidenceTimeline();
+    await loadConfidenceTimeline();
 
     // 6.0.4 panels
     renderFlow2(data);

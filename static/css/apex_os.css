@@ -305,3 +305,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .scan-side-put{color:var(--red);background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.25)}
 .scan-side-watch{color:var(--blue);background:rgba(56,189,248,.08);border-color:rgba(56,189,248,.25)}
 .scan-contract-cell{max-width:340px;overflow:hidden;text-overflow:ellipsis;color:var(--blue)!important;font-family:var(--mono);font-size:10px}
+
+/* APEX 6.1.1 server confidence timeline */
+.btn-mini{padding:5px 9px;font-size:10px;line-height:1}
+.timeline-source{margin-top:4px;font-size:9px;color:var(--faint);font-family:var(--mono);text-align:right;text-transform:uppercase;letter-spacing:.08em}
