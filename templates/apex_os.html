@@ -22,7 +22,7 @@
   <div class="nav-right">
     <span><span class="dot-live"></span><span id="clockEl">-- ET</span></span>
     <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
-    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">6.0.8A_SCAN_STABLE</span>
+    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">6.1.0_TERMINAL_UI</span>
   </div>
 </nav>
 
@@ -54,6 +54,57 @@
       <button class="btn btn-blue" id="refreshBtn">&#8635; Refresh</button>
       <span class="scan-status" id="scanStatusText">Scanner idle</span>
       <span class="last-upd" id="lastUpdated">--</span>
+    </div>
+  </div>
+
+  <!-- Primary workflow: scanner first, chart center, command context right -->
+  <div class="terminal-workflow sec-mb">
+    <div class="card scanner-primary">
+      <div class="scanner-card-head">
+        <div>
+          <div class="card-label">Scanner Qualified Ideas
+            <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">Live Scanner</span>
+          </div>
+          <div class="workflow-sub">Qualified ideas should appear here immediately after background/manual scans complete.</div>
+        </div>
+        <div class="scanner-actions">
+          <button class="btn btn-scan" id="runScanBtnPanel">&#9654; Run Scan</button>
+          <button class="btn" id="refreshScannerBtn">Refresh Ideas</button>
+        </div>
+      </div>
+      <div id="scannerIdeasPanel" class="scanner-ideas-panel">Loading scanner ideas...</div>
+    </div>
+
+    <div class="terminal-grid">
+      <div class="card chart-focus-card">
+        <div class="chart-focus-head">
+          <div>
+            <div class="card-label">Professional Chart Terminal
+              <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">Lightweight Charts</span>
+            </div>
+            <div class="workflow-sub">SPX / ES chart workspace with gamma and institutional overlays.</div>
+          </div>
+          <div class="chart-actions">
+            <a href="/chart" target="_blank" class="btn btn-blue">Open Full Chart &#8599;</a>
+          </div>
+        </div>
+        <iframe class="chart-terminal-frame" src="/chart" title="APEX Chart Terminal"></iframe>
+      </div>
+
+      <div class="terminal-side">
+        <div class="card command-card">
+          <div class="card-label">Command Center</div>
+          <div id="commandCenter"></div>
+        </div>
+        <div class="card command-card">
+          <div class="card-label">Confidence Timeline</div>
+          <div id="confidenceTimeline" class="confidence-timeline">Waiting for snapshots...</div>
+        </div>
+        <div class="card command-card">
+          <div class="card-label">Coach Snapshot</div>
+          <div id="coachSnapshot"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -113,23 +164,6 @@
       <div id="heatGrid" class="heat-grid"></div>
     </div>
 
-    <div class="card sec-mb">
-      <div class="scanner-card-head">
-        <div>
-          <div class="card-label">Scanner Qualified Ideas
-            <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">Scanner</span>
-          </div>
-          <div style="font-size:10px;color:var(--faint);margin-top:4px">
-            Populates from the legacy scanner state after background/manual scans complete.
-          </div>
-        </div>
-        <div class="scanner-actions">
-          <button class="btn btn-scan" id="runScanBtnPanel">&#9654; Run Scan</button>
-          <button class="btn" id="refreshScannerBtn">Refresh Ideas</button>
-        </div>
-      </div>
-      <div id="scannerIdeasPanel" class="scanner-ideas-panel">Loading scanner ideas...</div>
-    </div>
 
   </div><!-- /tab-dashboard -->
 

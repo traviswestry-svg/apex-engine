@@ -12,6 +12,7 @@ let replayIdx    = 0;
 let replayPlaying = false;
 let replayTimer   = null;
 let reviewLog     = [];    // session review entries stored in memory
+let confidenceLog = [];    // compact ICI timeline for command center
 let activeTicker  = new URLSearchParams(location.search).get('ticker') || 'SPX';
 const AUTO_INTERVAL = 12000; // ms between auto-refreshes
 
@@ -340,6 +341,68 @@ function renderHeatmap(d) {
   }).join('');
 }
 
+function recordConfidencePoint(d) {
+  if (!d) return;
+  const ici = Number((d.ici || {}).ici || d.confidence || 0);
+  const state = d.decision_state || (d.decision || {}).state || 'NO_TRADE';
+  const price = (d.ribbon || {}).spx_price || ((d.flow || {}).stock_price) || null;
+  const ts = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+  const last = confidenceLog[confidenceLog.length - 1];
+  if (last && last.state === state && Math.abs(last.ici - ici) < 0.1 && Math.abs((last.price || 0) - (price || 0)) < 0.01) return;
+  confidenceLog.push({ ts, ici, state, price });
+  if (confidenceLog.length > 20) confidenceLog.shift();
+}
+
+function renderCommandCenter(d) {
+  const el = $('commandCenter');
+  if (!el || !d) return;
+  const ici = Number((d.ici || {}).ici || d.confidence || 0);
+  const state = d.decision_state || (d.decision || {}).state || 'NO_TRADE';
+  const session = (d.session || {}).session || '--';
+  const flow = d.flow || d.flow_intelligence || {};
+  const gamma = d.gamma_regime || {};
+  const price = (d.ribbon || {}).spx_price || flow.stock_price;
+  const cls = state.includes('CALL') ? 'cmd-call' : state.includes('PUT') ? 'cmd-put' : state.includes('READY') || state.includes('WATCH') ? 'cmd-watch' : 'cmd-no';
+  const flowTxt = `${fmtI(flow.flow_score)} / ${fmtI(flow.order_flow_score)}`;
+  const netFlow = flow.net_premium != null ? '$' + fmtM(flow.net_premium) : '$' + fmtM((d.ribbon || {}).net_flow);
+  el.innerHTML = `
+    <div class="cmd-decision ${cls}">${esc(state.replace(/_/g, ' '))}</div>
+    <div class="cmd-row"><span>ICI</span><b>${fmtI(ici)}%</b></div>
+    <div class="cmd-row"><span>SPX</span><b>$${fmt(price)}</b></div>
+    <div class="cmd-row"><span>Session</span><b>${esc(session)}</b></div>
+    <div class="cmd-row"><span>Flow / Order</span><b>${flowTxt}</b></div>
+    <div class="cmd-row"><span>Net Flow</span><b>${netFlow}</b></div>
+    <div class="cmd-row"><span>Gamma</span><b>${esc(gamma.regime_display || gamma.regime_label || '--')}</b></div>
+    <div class="cmd-row"><span>Call / Put Wall</span><b>${fmt(gamma.call_wall || (d.ribbon || {}).call_wall)} / ${fmt(gamma.put_wall || (d.ribbon || {}).put_wall)}</b></div>
+  `;
+}
+
+function renderCoachSnapshot(d) {
+  const el = $('coachSnapshot');
+  if (!el || !d) return;
+  const coach = d.trade_coach || {};
+  const risk = d.risk || {};
+  const blockers = coach.blockers || [];
+  el.innerHTML = `
+    <div class="coach-snap-action">${esc(coach.action || d.executive_summary || 'Waiting for institutional alignment.')}</div>
+    <div class="cmd-row"><span>Contract</span><b>${esc(coach.contract_hint || risk.contract_hint || 'Waiting')}</b></div>
+    <div class="cmd-row"><span>Entry</span><b>${esc(coach.entry_zone || risk.entry_zone || '--')}</b></div>
+    <div class="cmd-row"><span>Stop</span><b>${risk.stop != null ? '$' + fmt(risk.stop) : esc(coach.stop || '--')}</b></div>
+    <div class="cmd-row"><span>T1 / T2</span><b>${risk.target1 != null ? '$' + fmt(risk.target1) : esc(coach.target1 || '--')} / ${risk.target2 != null ? '$' + fmt(risk.target2) : esc(coach.target2 || '--')}</b></div>
+    ${blockers.length ? `<div class="mini-blockers">${blockers.slice(0,4).map(x => `<div>• ${esc(x)}</div>`).join('')}</div>` : ''}
+  `;
+}
+
+function renderConfidenceTimeline() {
+  const el = $('confidenceTimeline');
+  if (!el) return;
+  if (!confidenceLog.length) { el.textContent = 'Waiting for snapshots...'; return; }
+  el.innerHTML = confidenceLog.slice(-10).map(p => {
+    const c = p.ici >= 70 ? 'var(--green)' : p.ici >= 50 ? 'var(--amber)' : 'var(--red)';
+    return `<div class="timeline-row"><span>${esc(p.ts)}</span><div class="timeline-bar"><div style="width:${Math.max(2, Math.min(100,p.ici))}%;background:${c}"></div></div><b style="color:${c}">${fmtI(p.ici)}%</b><em>${esc(p.state.replace(/_/g,' '))}</em></div>`;
+  }).join('');
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    SPRINT 6.0.4 — FLOW INTELLIGENCE 2.0, STORY ENGINE, REPLAY, REVIEW
    ════════════════════════════════════════════════════════════════════════════ */
@@ -637,33 +700,38 @@ function renderScannerIdeas(payload) {
     el.innerHTML = summary + `<div class="scanner-empty">No qualified scanner ideas are currently available. Run a scan or wait for the background scanner to finish.</div>`;
     return;
   }
-  el.innerHTML = summary + `<div class="scanner-grid">` + ideas.slice(0, 24).map(idea => {
+  const rows = ideas.slice(0, 30).map(idea => {
     const side = (idea.direction || idea.side || idea.approved_side || '').toUpperCase();
     const isPut = side.includes('PUT');
     const isCall = side.includes('CALL');
-    const cls = isCall ? 'scanner-call' : isPut ? 'scanner-put' : '';
+    const sideCls = isCall ? 'scan-side-call' : isPut ? 'scan-side-put' : 'scan-side-watch';
     const ticker = idea.ticker || '--';
     const grade = idea.grade || idea.alert_tier || '--';
     const score = idea.final_score ?? idea.conviction_score ?? idea.score ?? idea.breakout_probability;
     const price = idea.price ?? idea.stock_price ?? idea.spot_price;
-    const statusText = idea.status || idea.trade_permission || idea.breakout_probability_label || '';
+    const flowScore = idea.flow_score_directional ?? idea.flow_score ?? idea.order_flow_score_directional;
+    const action = idea.status || idea.trade_permission || idea.breakout_probability_label || '';
     const contract = idea.option_contract || idea.recommended_contract || idea.contract_hint || '';
-    const notes = Array.isArray(idea.notes) ? idea.notes.slice(0, 3).join(' · ') : (idea.no_trade_reason || idea.strategy || '');
-    return `<div class="scanner-idea ${cls}">
-      <div class="scanner-idea-top">
-        <div><span class="scanner-ticker">${esc(ticker)}</span><span class="scanner-side">${esc(side || 'WATCH')}</span></div>
-        <div class="scanner-grade">${esc(grade)}</div>
-      </div>
-      <div class="scanner-meta">
-        <span>Score ${score != null ? esc(Number(score).toFixed(1)) : '--'}</span>
-        <span>Price ${price != null ? '$' + fmt(price) : '--'}</span>
-        ${statusText ? `<span>${esc(statusText)}</span>` : ''}
-      </div>
-      ${contract ? `<div class="scanner-contract">${esc(contract)}</div>` : ''}
-      ${notes ? `<div class="scanner-notes">${esc(notes)}</div>` : ''}
+    return `<tr>
+      <td><b>${esc(ticker)}</b></td>
+      <td><span class="scan-side ${sideCls}">${esc(side || 'WATCH')}</span></td>
+      <td>${esc(grade)}</td>
+      <td>${score != null ? Number(score).toFixed(1) : '--'}</td>
+      <td>${flowScore != null ? Number(flowScore).toFixed(1) : '--'}</td>
+      <td>${price != null ? '$' + fmt(price) : '--'}</td>
+      <td>${esc(action || '--')}</td>
+      <td class="scan-contract-cell">${esc(contract || '--')}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = summary + `
+    <div class="scanner-table-wrap">
+      <table class="scanner-table">
+        <thead><tr><th>Ticker</th><th>Side</th><th>Grade</th><th>Score</th><th>Flow</th><th>Price</th><th>Status</th><th>Contract</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
     </div>`;
-  }).join('') + `</div>`;
 }
+
 
 async function loadScannerIdeas() {
   try {
@@ -729,6 +797,10 @@ async function loadOS() {
     renderEngineMatrix(data);
     renderSession(data);
     renderHeatmap(data);
+    recordConfidencePoint(data);
+    renderCommandCenter(data);
+    renderCoachSnapshot(data);
+    renderConfidenceTimeline();
 
     // 6.0.4 panels
     renderFlow2(data);

@@ -265,3 +265,43 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .scanner-pill.scanner-busy{color:var(--amber);background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.25)}
 .scanner-contract{font-family:var(--mono);font-size:11px;color:var(--blue);margin:4px 0 5px}
 @media(max-width:760px){.scanner-card-head{flex-direction:column}.scanner-actions{justify-content:flex-start}.scan-status{display:none}}
+
+/* APEX 6.1.0 — terminal workflow refinement */
+.terminal-workflow{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
+.workflow-sub{font-size:10px;color:var(--faint);margin-top:4px;line-height:1.45}
+.scanner-primary{border-color:rgba(34,197,94,.22);box-shadow:0 0 0 1px rgba(34,197,94,.03),0 16px 42px rgba(0,0,0,.18)}
+.terminal-grid{display:grid;grid-template-columns:minmax(0,2.25fr) minmax(320px,.8fr);gap:10px;align-items:stretch}
+@media(max-width:1100px){.terminal-grid{grid-template-columns:1fr}.terminal-side{grid-template-columns:repeat(3,1fr);display:grid;gap:10px}}
+@media(max-width:760px){.terminal-side{display:flex!important;flex-direction:column}.chart-terminal-frame{height:420px!important}}
+.chart-focus-card{padding:12px;min-height:620px;display:flex;flex-direction:column}
+.chart-focus-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:8px}
+.chart-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.chart-terminal-frame{width:100%;height:560px;flex:1;min-height:460px;border:1px solid rgba(56,189,248,.18);border-radius:10px;background:#020617;overflow:hidden}
+.terminal-side{display:flex;flex-direction:column;gap:10px}
+.command-card{padding:12px 14px}
+.cmd-decision{font-family:var(--mono);font-size:17px;font-weight:900;border-radius:10px;padding:9px 11px;margin-bottom:10px;text-align:center;border:1px solid var(--bdr);letter-spacing:.04em}
+.cmd-call{color:var(--green);background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.3)}
+.cmd-put{color:var(--red);background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3)}
+.cmd-watch{color:var(--amber);background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.3)}
+.cmd-no{color:var(--muted);background:rgba(148,163,184,.06);border-color:rgba(148,163,184,.18)}
+.cmd-row{display:flex;justify-content:space-between;gap:10px;align-items:center;border-bottom:1px solid rgba(148,163,184,.12);padding:6px 0;font-size:11px}
+.cmd-row span{color:var(--faint);text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+.cmd-row b{font-family:var(--mono);color:var(--text);font-weight:800;text-align:right}
+.coach-snap-action{font-size:12px;color:var(--text);line-height:1.55;font-weight:700;margin-bottom:8px}
+.mini-blockers{margin-top:8px;border-radius:8px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.18);padding:8px 9px;color:var(--amber);font-size:10px;line-height:1.55}
+.confidence-timeline{display:flex;flex-direction:column;gap:5px;min-height:54px;color:var(--faint);font-size:11px}
+.timeline-row{display:grid;grid-template-columns:42px 1fr 42px minmax(90px,.7fr);gap:8px;align-items:center;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.timeline-bar{height:5px;background:rgba(148,163,184,.14);border-radius:999px;overflow:hidden}
+.timeline-bar div{height:100%;border-radius:999px;transition:width .35s ease}
+.timeline-row em{font-style:normal;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.scanner-table-wrap{overflow:auto;border:1px solid rgba(148,163,184,.14);border-radius:10px;background:rgba(2,6,23,.35)}
+.scanner-table{width:100%;border-collapse:collapse;font-size:11px;min-width:760px}
+.scanner-table th{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--faint);font-weight:800;text-align:left;background:rgba(15,23,42,.84);position:sticky;top:0;z-index:1}
+.scanner-table th,.scanner-table td{padding:8px 9px;border-bottom:1px solid rgba(148,163,184,.11);white-space:nowrap}
+.scanner-table td{color:var(--muted)}
+.scanner-table tbody tr:hover{background:rgba(56,189,248,.05)}
+.scan-side{font-family:var(--mono);font-size:9px;font-weight:900;border-radius:999px;padding:3px 7px;border:1px solid rgba(148,163,184,.18)}
+.scan-side-call{color:var(--green);background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.25)}
+.scan-side-put{color:var(--red);background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.25)}
+.scan-side-watch{color:var(--blue);background:rgba(56,189,248,.08);border-color:rgba(56,189,248,.25)}
+.scan-contract-cell{max-width:340px;overflow:hidden;text-overflow:ellipsis;color:var(--blue)!important;font-family:var(--mono);font-size:10px}
