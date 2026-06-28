@@ -5,7 +5,7 @@
 <title>APEX Institutional OS</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/apex_os.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/apex_os.css') }}?v={{ asset_version or version }}">
 </head>
 <body>
 
@@ -22,7 +22,7 @@
   <div class="nav-right">
     <span><span class="dot-live"></span><span id="clockEl">-- ET</span></span>
     <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
-    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">6.2.1_TAB_ROUTING_STABILIZATION</span>
+    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">{{ version or "6.2.2_FRONTEND_ROUTE_STABILITY" }}</span>
   </div>
 </nav>
 
@@ -120,7 +120,7 @@
     <div class="grid2 sec-mb">
       <div class="card">
         <div class="card-label">Institutional Confidence Index
-          <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.0.3</span>
+          <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2.2</span>
         </div>
         <div id="iciPanel"></div>
         <div style="margin-top:10px">
@@ -154,7 +154,7 @@
 
     <div class="card sec-mb">
       <div class="card-label">AI Trade Coach
-        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.0.3</span>
+        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2.2</span>
       </div>
       <div id="tradeCoach"></div>
     </div>
@@ -175,7 +175,7 @@
 
     <div class="card sec-mb">
       <div class="card-label">Engine Health
-        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2</span>
+        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2.2</span>
       </div>
       <div id="engineHealthPanel"></div>
     </div>
@@ -187,7 +187,7 @@
   <div id="tab-flow2" class="tab-pane">
     <div class="card">
       <div class="card-label">Flow Intelligence 2.0
-        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.0.4</span>
+        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2.2</span>
       </div>
       <div id="flow2Panel"></div>
     </div>
@@ -201,7 +201,7 @@
     </div>
     <div class="card sec-mb">
       <div class="card-label">Story Engine &#8212; Chapter Timeline
-        <span class="badge-xs" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.25)">6.0.4</span>
+        <span class="badge-xs" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.25)">6.2.2</span>
       </div>
       <div id="storyPanel"></div>
     </div>
@@ -215,7 +215,7 @@
   <div id="tab-replay" class="tab-pane">
     <div class="card sec-mb">
       <div class="card-label">Session Replay
-        <span class="badge-xs" style="background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.25)">6.0.4</span>
+        <span class="badge-xs" style="background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.25)">6.2.2</span>
       </div>
       <div class="replay-controls">
         <button class="rep-btn" id="repPrev">&#9664; Prev</button>
@@ -239,7 +239,7 @@
   <div id="tab-review" class="tab-pane">
     <div class="card">
       <div class="card-label">Session Review &#8212; Actionable Signal Log
-        <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">6.0.4</span>
+        <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">6.2.2</span>
       </div>
       <div style="font-size:10px;color:var(--faint);margin-bottom:10px">
         ENTER_CALL, ENTER_PUT, and READY signals are logged automatically each refresh cycle.
@@ -259,6 +259,6 @@
 }
 </style>
 
-<script src="{{ url_for('static', filename='js/apex_os.js') }}"></script>
+<script src="{{ url_for('static', filename='js/apex_os.js') }}?v={{ asset_version or version }}"></script>
 </body>
 </html>

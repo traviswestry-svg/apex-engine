@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.2.1_TAB_ROUTING_STABILIZATION"
+VERSION = "6.2.2_FRONTEND_ROUTE_STABILITY"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -91,6 +91,19 @@ DYNAMIC_TICKERS_ENABLED = os.getenv("DYNAMIC_TICKERS_ENABLED", "true").lower() =
 MAX_DYNAMIC_TICKERS = int(os.getenv("MAX_DYNAMIC_TICKERS", "25"))
 
 app = Flask(__name__)
+
+@app.after_request
+def add_no_cache_headers(response):
+    """Keep Render/browser from serving stale dashboard JS/HTML during rapid APEX releases."""
+    try:
+        path = request.path or ""
+        if path.startswith(("/api/", "/apex_os", "/chart", "/scanner", "/health")) or path == "/":
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+    except Exception:
+        pass
+    return response
 SENT_ALERTS: set[str] = set()
 SENT_ALERTS_LOCK = threading.Lock()
 STATE_LOCK = threading.RLock()
@@ -2178,6 +2191,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
+STATIC_ASSET_VERSION = VERSION.replace(".", "_")
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -2898,7 +2912,7 @@ def build_institutional_os(ticker: str, include_heatmap: bool = True) -> Dict[st
 
 @app.route("/assistant")
 def assistant_dashboard():
-    return render_template("assistant.html")
+    return render_template("assistant.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
 
 
 @app.route("/api/session")
@@ -2948,7 +2962,7 @@ def tv_signal():
 
 @app.route("/flow")
 def flow_dashboard():
-    return render_template("flow.html")
+    return render_template("flow.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
 
 @app.route("/api/flow")
 def api_flow():
@@ -3086,7 +3100,7 @@ def health():
 @app.route("/apex_os")
 def apex_os_dashboard():
     """APEX Institutional OS — the full v4.5 dashboard."""
-    return render_template("apex_os.html")
+    return render_template("apex_os.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
 
 
 @app.route("/api/institutional_os")
@@ -4273,7 +4287,7 @@ def api_market_health():
 @app.route("/chart")
 def chart_dashboard():
     """Market Intelligence Terminal — ES and SPX side by side."""
-    return render_template("chart.html")
+    return render_template("chart.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
 
 
 # Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.

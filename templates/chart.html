@@ -2,18 +2,18 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>APEX 6.0.2 — Professional Charts</title>
+  <title>APEX {{ version or "6.2.2" }} — Professional Charts</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/charts.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/charts.css') }}?v={{ asset_version or version }}">
   <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 <nav class="apex-nav">
   <a href="/" class="nav-logo">APEX</a>
-  <a href="/">Scanner</a>
+  <a href="/scanner">Scanner</a>
   <a href="/apex_os">Institutional OS</a>
   <a href="/assistant">Trade Assistant</a>
   <a href="/flow">Flow / GEX</a>
@@ -23,7 +23,7 @@
 <main class="terminal">
   <section class="terminal-header">
     <div>
-      <div class="title">APEX 6.0.2 LIGHTWEIGHT CHART ENGINE</div>
+      <div class="title">APEX {{ version or "6.2.2_FRONTEND_ROUTE_STABILITY" }}</div>
       <div class="sub" id="lastUpdate">Loading institutional market state...</div>
     </div>
     <div class="controls">
@@ -45,6 +45,8 @@
       <label class="status"><input type="checkbox" id="devMode"> Dev</label>
     </div>
   </section>
+
+  <div id="chartError" class="chart-error" style="display:none"></div>
 
   <section class="ribbon" id="ribbon">
     <div class="tile"><div class="tile-label">ES</div><div class="tile-value muted">--</div></div>
@@ -84,11 +86,11 @@
   </section>
 </main>
 
-<script src="{{ url_for('static', filename='js/viewport.js') }}"></script>
-<script src="{{ url_for('static', filename='js/overlays.js') }}"></script>
-<script src="{{ url_for('static', filename='js/crosshair.js') }}"></script>
-<script src="{{ url_for('static', filename='js/chart_engine.js') }}"></script>
-<script src="{{ url_for('static', filename='js/chart_sync.js') }}"></script>
+<script src="{{ url_for('static', filename='js/viewport.js') }}?v={{ asset_version or version }}"></script>
+<script src="{{ url_for('static', filename='js/overlays.js') }}?v={{ asset_version or version }}"></script>
+<script src="{{ url_for('static', filename='js/crosshair.js') }}?v={{ asset_version or version }}"></script>
+<script src="{{ url_for('static', filename='js/chart_engine.js') }}?v={{ asset_version or version }}"></script>
+<script src="{{ url_for('static', filename='js/chart_sync.js') }}?v={{ asset_version or version }}"></script>
 <script>
 (function(){
   const esEngine = new ApexChartEngine('esChart', { symbol: 'ES' });
@@ -139,6 +141,7 @@
     const res = await fetch('/api/charts/state?' + params.toString(), { cache: 'no-store' });
     const data = await res.json();
     if(!data.ok) throw new Error(data.error || 'Chart endpoint failed');
+    const ce=document.getElementById('chartError'); if(ce){ce.style.display='none'; ce.textContent='';}
     const charts = data.charts || {}; const state = data.market_state || {};
     renderRibbon(state); renderHeaders(charts);
     esEngine.setData(charts.ES || {});
@@ -152,7 +155,7 @@
   document.getElementById('resetBtn').addEventListener('click', () => sync.fitLatest());
   els.tf.addEventListener('change', loadCharts); els.days.addEventListener('change', loadCharts); els.dev.addEventListener('change', loadCharts);
   window.addEventListener('resize', () => sync.resize());
-  loadCharts().catch((err)=>{ els.lastUpdate.innerHTML = '<span class="error">'+err.message+'</span>'; });
+  loadCharts().catch((err)=>{ const ce=document.getElementById('chartError'); if(ce){ce.style.display='block'; ce.textContent='Chart data error: '+err.message;} els.lastUpdate.innerHTML = '<span class="error">'+err.message+'</span>'; });
   window.setInterval(loadCharts, 60000);
 })();
 </script>
