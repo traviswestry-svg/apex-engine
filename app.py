@@ -334,8 +334,9 @@ def get_daily_bars(ticker: str, days: int = 320) -> List[dict]:
 
 
 def get_intraday_bars(ticker: str, multiplier: int = 5, limit_days: int = 3) -> List[dict]:
-    end = now_et().date()
-    start = end - dt.timedelta(days=limit_days)
+    today = now_et().date()
+    end   = today + dt.timedelta(days=7)   # future end so closed-market sessions are included
+    start = today - dt.timedelta(days=max(limit_days * 3, 10))
     url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/{multiplier}/minute/{start}/{end}"
     data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 5000}, timeout=15)
     return data.get("results", []) if data else []
@@ -4300,7 +4301,7 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
     """
     Resolve a futures symbol to the correct Polygon.io ticker format.
 
-    Polygon futures use specific contract month codes, e.g. ESU25 = ES September 2025.
+    Polygon futures use specific contract month codes, e.g. ESU26 = ES September 2026.
     Month codes: F=Jan G=Feb H=Mar J=Apr K=May M=Jun N=Jul Q=Aug U=Sep V=Oct X=Nov Z=Dec
 
     ES rolls quarterly (Mar/Jun/Sep/Dec). We compute the current active front-month
@@ -4319,24 +4320,24 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
 
     # Determine current active contract quarter
     # ES/NQ roll on 3rd Friday of Mar/Jun/Sep/Dec
-    # Simple rule: use current quarter's month if we're before roll week,
-    # otherwise use next quarter
     now = now_et()
     m = now.month
     y = now.year
 
     # Find the next/current quarterly expiry month
     quarterly = [3, 6, 9, 12]
+    exp_month = None
+    exp_year = y
     for qm in quarterly:
         if m <= qm:
             exp_month = qm
             exp_year = y
             break
-    else:
+    if exp_month is None:
         exp_month = 3
         exp_year = y + 1
 
-    # Rough roll check: if within 2 weeks of expiry month's 3rd Friday, use next quarter
+    # Check if we're past the roll date (2 weeks before 3rd Friday of expiry month)
     from calendar import monthcalendar
     cal = monthcalendar(exp_year, exp_month)
     fridays = [week[4] for week in cal if week[4] != 0]
@@ -4353,24 +4354,28 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
 
     code = MONTH_CODES.get(exp_month, 'U')
     year2 = str(exp_year)[-2:]
-    return f"{base}{code}{year2}"  # e.g. ESU25
+    return f"{base}{code}{year2}"  # e.g. ESU26
 
 
 def _chart_fetch_bars(polygon_ticker: str, days: int = 3, multiplier: int = 15) -> List[dict]:
     """
     Fetch bars for the last N trading days via Polygon.io.
     Supports 1-min, 5-min, and 15-min bars via the multiplier param.
-    ES futures use the resolved front-month contract ticker (e.g. ESU25).
-    SPX uses SPY as proxy.
+
+    Important: end date is set to today + 7 days so that when the market is
+    closed (weekends, after hours, holidays) Polygon still returns the most
+    recent completed session rather than an empty result. Polygon's intraday
+    aggregate endpoint treats the end date as exclusive, so a future end date
+    simply means "give me everything up to now."
     """
-    end = now_et().date()
-    day_buffer = max(days * 4, 14) if multiplier >= 5 else max(days * 2, 5)
-    start = end - dt.timedelta(days=day_buffer)
+    today = now_et().date()
+    end   = today + dt.timedelta(days=7)   # always ahead of today — captures last closed session
+    day_buffer = max(days * 4, 20) if multiplier >= 5 else max(days * 3, 10)
+    start = today - dt.timedelta(days=day_buffer)
     url = (f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/"
            f"{multiplier}/minute/{start}/{end}")
     data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 50000}, timeout=20)
-    results = (data or {}).get("results", [])
-    return results
+    return (data or {}).get("results", [])
 
 
 def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
@@ -4389,9 +4394,14 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     multiplier = multiplier if multiplier in (1, 5, 15) else 15
 
     symbol_upper = symbol.upper().strip()
-    if symbol_upper in ("SPX", "SPY", "$SPX"):
+    if symbol_upper in ("SPX", "$SPX"):
+        polygon_ticker = "I:SPX"   # Polygon cash index — real SPX prices
+        display_name = "SPX (Cash Index)"
+        is_futures = False
+        spx_proxy = False
+    elif symbol_upper == "SPY":
         polygon_ticker = "SPY"
-        display_name = "SPX  (via SPY)"
+        display_name = "SPY"
         is_futures = False
         spx_proxy = True
     elif symbol_upper in ("ES", "ES1!", "/ES"):
@@ -4408,12 +4418,18 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
 
     # If ES futures returned no data, Polygon plan may not include futures.
-    # Fall back to SPY as a close ES proxy and note it in the display name.
+    # Fall back to I:SPX (real SPX cash index — same price scale as ES, far better than SPY).
     if not raw_bars and is_futures:
-        polygon_ticker = "SPY"
-        display_name = f"ES → SPY proxy (futures not on plan)"
+        polygon_ticker = "I:SPX"
+        display_name = f"ES → SPX proxy (futures not on plan)"
         is_futures = False
-        spx_proxy = True
+        spx_proxy = False
+        raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
+
+    # Final fallback to SPY if I:SPX also fails
+    if not raw_bars and not is_futures and polygon_ticker == "I:SPX":
+        polygon_ticker = "SPY"
+        display_name = display_name.replace("SPX proxy", "SPY proxy")
         raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
     if not raw_bars:
         return {"error": f"No data returned for {polygon_ticker}", "symbol": symbol}
@@ -4570,6 +4586,9 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
         "strengthLabel":   strength_label,
         "chart":           chart,
         "barsCount":       len(chart),
+        # Tight y-axis bounds: 0.3% padding around the actual price range
+        "yMin":            round(recent_low  * 0.997, 2),
+        "yMax":            round(recent_high * 1.003, 2),
         "updatedAt":       now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
     }
 
@@ -4992,6 +5011,10 @@ function buildPanel(panelId, data) {
         },
         y:{
           position:'right',
+          // Tight bounds from actual price range — prevents candles from rendering
+          // as invisible slivers when the y-axis auto-scales to 0
+          min: data.yMin,
+          max: data.yMax,
           ticks:{
             color:'#5a6b87',
             font:{size:10, family:"'JetBrains Mono',monospace"},
