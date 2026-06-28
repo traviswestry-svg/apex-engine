@@ -37,11 +37,21 @@ const esc  = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').rep
 
 /* ── Tab system ───────────────────────────────────────────────────────────── */
 function initTabs() {
-  document.querySelectorAll('.tab-btn').forEach(btn => {
+  // Only bind the feature dashboard tabs. Ticker buttons also use .tab-btn for
+  // styling, but they do not have data-tab. Binding them here caused clicks on
+  // SPX/SPY/QQQ/IWM to set target=undefined and deactivate every tab pane,
+  // which made Dashboard, Flow Intelligence, Story, Replay, and Review appear
+  // broken after the 6.2.0 upgrade.
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       const target = btn.dataset.tab;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === target));
-      document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + target));
+      if (!target) return;
+      document.querySelectorAll('.tab-btn[data-tab]').forEach(b => {
+        b.classList.toggle('active', b.dataset.tab === target);
+      });
+      document.querySelectorAll('.tab-pane').forEach(p => {
+        p.classList.toggle('active', p.id === 'tab-' + target);
+      });
     });
   });
 }
@@ -960,7 +970,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initRunScanButtons();
 
   // Activate first tab
-  document.querySelectorAll('.tab-btn')[0]?.click();
+  document.querySelector('.tab-btn[data-tab="dashboard"]')?.click();
 
   loadOS();
   loadScannerIdeas();

@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.2.0_FLOW_VOTE_ENGINE"
+VERSION = "6.2.1_TAB_ROUTING_STABILIZATION"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
