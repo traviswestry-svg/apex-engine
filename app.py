@@ -4296,20 +4296,41 @@ def _chart_vwap_multiday(bars: List[dict]) -> List[float]:
     return out
 
 
+def _resolve_polygon_futures_ticker(symbol: str) -> str:
+    """
+    Resolve a futures symbol to the correct Polygon.io ticker format.
+    Polygon uses continuous contract tickers like ES1:COM, NQ1:COM.
+    Falls back to trying the current front-month contract if continuous fails.
+    """
+    # Polygon continuous contract format
+    CONTINUOUS_MAP = {
+        "ES":   "ES1:COM",
+        "ES1!": "ES1:COM",
+        "/ES":  "ES1:COM",
+        "NQ":   "NQ1:COM",
+        "NQ1!": "NQ1:COM",
+        "MES":  "MES1:COM",
+        "MNQ":  "MNQ1:COM",
+    }
+    upper = symbol.upper().strip()
+    return CONTINUOUS_MAP.get(upper, upper)
+
+
 def _chart_fetch_bars(polygon_ticker: str, days: int = 3, multiplier: int = 15) -> List[dict]:
     """
     Fetch bars for the last N trading days via Polygon.io.
     Supports 1-min, 5-min, and 15-min bars via the multiplier param.
-    ES futures use ES1!, SPX uses SPY as proxy.
+    ES futures use the Polygon continuous contract format (ES1:COM).
+    SPX uses SPY as proxy.
     """
     end = now_et().date()
-    # 1-min bars need a tighter window (Polygon free tier limits history)
     day_buffer = max(days * 4, 14) if multiplier >= 5 else max(days * 2, 5)
     start = end - dt.timedelta(days=day_buffer)
     url = (f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/"
            f"{multiplier}/minute/{start}/{end}")
     data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 50000}, timeout=20)
-    return (data or {}).get("results", [])
+    results = (data or {}).get("results", [])
+    return results
 
 
 def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
@@ -4324,22 +4345,18 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     ES uses ES1! futures ticker.
     multiplier: bar size in minutes — 1, 5, or 15.
     """
-    # Ticker routing
-    SPX_PROXY = "SPY"
-    ES_TICKER = "ES1!"
-
     # Clamp multiplier to supported values
     multiplier = multiplier if multiplier in (1, 5, 15) else 15
 
     symbol_upper = symbol.upper().strip()
     if symbol_upper in ("SPX", "SPY", "$SPX"):
-        polygon_ticker = SPX_PROXY
+        polygon_ticker = "SPY"
         display_name = "SPX  (via SPY)"
         is_futures = False
         spx_proxy = True
     elif symbol_upper in ("ES", "ES1!", "/ES"):
-        polygon_ticker = ES_TICKER
-        display_name = "ES Futures (ES1!)"
+        polygon_ticker = _resolve_polygon_futures_ticker("ES")  # → ES1:COM
+        display_name = "ES Futures"
         is_futures = True
         spx_proxy = False
     else:
@@ -4537,9 +4554,6 @@ CHART_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.1/dist/chartjs-chart-financial.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
 <style>
 :root{
   --bg:#05080f;--surf:#0d141f;--surf2:#121c2b;--bdr:#1c2940;
@@ -4762,184 +4776,182 @@ function buildPanel(panelId, data) {
   const chart = data.chart || [];
   if (!chart.length) return;
 
-  // Build Chart.js dataset
-  // candlestick dataset (financial plugin format: {x, o, h, l, c})
-  const candleData = chart.map((b, i) => ({
-    x: i,
-    o: b.open, h: b.high, l: b.low, c: b.close,
-  }));
+  // ── Plugin-free candlestick rendering ────────────────────────────────────
+  // Uses Chart.js floating bar chart (native) to draw OHLC candles.
+  // No external plugin required.
+  //
+  // Each candle = two bars stacked on the same x position:
+  //   1. Wick bar:  [low, high]  — thin, same color as body
+  //   2. Body bar:  [open, close] — thicker, green or red
+  //
+  // We use a custom plugin to draw wicks as lines over the body bars.
 
-  const ema8Data  = chart.map((b, i) => b.ema8  != null ? {x:i, y:b.ema8}  : null).filter(Boolean);
-  const ema21Data = chart.map((b, i) => b.ema21 != null ? {x:i, y:b.ema21} : null).filter(Boolean);
-  const vwapData  = chart.map((b, i) => ({x:i, y:b.vwap}));
+  const labels = chart.map((_, i) => i);
+  const bulls  = chart.map(b => b.close >= b.open ? [b.open, b.close] : [null, null]);
+  const bears  = chart.map(b => b.close <  b.open ? [b.close, b.open] : [null, null]);
+  const wicks  = chart.map(b => [b.low, b.high]);
 
-  // Horizontal level lines
+  const ema8pts  = chart.map((b,i) => b.ema8  != null ? {x:i, y:b.ema8}  : null);
+  const ema21pts = chart.map((b,i) => b.ema21 != null ? {x:i, y:b.ema21} : null);
+  const vwapPts  = chart.map((b,i) => ({x:i, y:b.vwap}));
   const n = chart.length;
+
   const levelLine = (val, color, dash=[]) => ({
-    type: 'line',
-    data: [{x:0,y:val},{x:n-1,y:val}],
-    borderColor: color,
-    borderWidth: 1,
-    borderDash: dash,
-    pointRadius: 0,
-    fill: false,
-    tension: 0,
-    order: 10,
+    type:'line',
+    data: Array(n).fill(val),
+    borderColor: color, borderWidth:1, borderDash:dash,
+    pointRadius:0, fill:false, tension:0, order:10,
   });
 
-  // HVBO shaded band (via two filled datasets)
-  const hvboHigh = data.hvboHigh;
-  const hvboLow  = data.hvboLow;
-
-  const xLabels = chart.map((_, i) => i);
+  // Custom plugin: draws wicks (thin lines from low→high through body)
+  const wickPlugin = {
+    id:'wicks',
+    afterDatasetsDraw(chartInst) {
+      const {ctx, scales:{x,y}} = chartInst;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(130,149,179,0.8)';
+      ctx.lineWidth = 1;
+      chart.forEach((b, i) => {
+        const xPos  = x.getPixelForValue(i);
+        const yHigh = y.getPixelForValue(b.high);
+        const yLow  = y.getPixelForValue(b.low);
+        const yOpen = y.getPixelForValue(b.open);
+        const yCls  = y.getPixelForValue(b.close);
+        const col   = b.close >= b.open ? '#22c55e' : '#ef4444';
+        ctx.strokeStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(xPos, yHigh);
+        ctx.lineTo(xPos, Math.min(yOpen, yCls));
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(xPos, yLow);
+        ctx.lineTo(xPos, Math.max(yOpen, yCls));
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
+  };
 
   const ctx = document.getElementById('canvas_' + panelId);
   if (!ctx) return;
 
+  const hvboHigh = data.hvboHigh;
+  const hvboLow  = data.hvboLow;
+
   const inst = new Chart(ctx, {
-    type: 'candlestick',
+    type: 'bar',
+    plugins: [wickPlugin],
     data: {
-      labels: xLabels,
+      labels,
       datasets: [
+        // Bull bodies (open→close, green)
         {
-          label: 'Price',
-          type: 'candlestick',
-          data: candleData,
-          color: {
-            up:   '#22c55e',
-            down: '#ef4444',
-            unchanged: '#8295b3',
-          },
-          borderColor: {
-            up:   '#22c55e',
-            down: '#ef4444',
-            unchanged: '#8295b3',
-          },
-          order: 1,
+          type:'bar', label:'Bull',
+          data: bulls,
+          backgroundColor:'rgba(34,197,94,0.85)',
+          borderColor:'rgba(34,197,94,1)',
+          borderWidth:0, borderSkipped:false,
+          barPercentage:0.6, categoryPercentage:0.8,
+          order:2,
         },
-        // HVBO band (filled between hvboLow and hvboHigh)
+        // Bear bodies (close→open, red)
         {
-          label: 'HVBO Band',
-          type: 'line',
-          data: chart.map((_,i) => ({x:i, y:hvboHigh})),
-          borderColor: 'rgba(167,139,250,0.35)',
-          backgroundColor: 'rgba(167,139,250,0.07)',
-          borderWidth: 1,
-          pointRadius: 0,
-          fill: '+1',
-          tension: 0,
-          order: 9,
+          type:'bar', label:'Bear',
+          data: bears,
+          backgroundColor:'rgba(239,68,68,0.85)',
+          borderColor:'rgba(239,68,68,1)',
+          borderWidth:0, borderSkipped:false,
+          barPercentage:0.6, categoryPercentage:0.8,
+          order:2,
         },
+        // HVBO band top
         {
-          label: 'HVBO Low',
-          type: 'line',
-          data: chart.map((_,i) => ({x:i, y:hvboLow})),
-          borderColor: 'rgba(167,139,250,0.35)',
-          backgroundColor: 'rgba(167,139,250,0.07)',
-          borderWidth: 1,
-          pointRadius: 0,
-          fill: false,
-          tension: 0,
-          order: 9,
+          type:'line', label:'HVBO High',
+          data: Array(n).fill(hvboHigh),
+          borderColor:'rgba(167,139,250,0.4)', borderWidth:1,
+          backgroundColor:'rgba(167,139,250,0.06)',
+          pointRadius:0, fill:'+1', tension:0, order:9,
+        },
+        // HVBO band bottom
+        {
+          type:'line', label:'HVBO Low',
+          data: Array(n).fill(hvboLow),
+          borderColor:'rgba(167,139,250,0.4)', borderWidth:1,
+          backgroundColor:'rgba(167,139,250,0.06)',
+          pointRadius:0, fill:false, tension:0, order:9,
         },
         // EMA 8
         {
-          label: 'EMA 8',
-          type: 'line',
-          data: ema8Data,
-          borderColor: '#34d399',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          fill: false,
-          tension: 0.2,
-          order: 2,
+          type:'line', label:'EMA 8',
+          data: ema8pts, borderColor:'#34d399', borderWidth:1.5,
+          pointRadius:0, fill:false, tension:0.2, order:3,
         },
         // EMA 21
         {
-          label: 'EMA 21',
-          type: 'line',
-          data: ema21Data,
-          borderColor: '#818cf8',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          fill: false,
-          tension: 0.2,
-          order: 3,
+          type:'line', label:'EMA 21',
+          data: ema21pts, borderColor:'#818cf8', borderWidth:1.5,
+          pointRadius:0, fill:false, tension:0.2, order:3,
         },
         // VWAP
         {
-          label: 'VWAP',
-          type: 'line',
-          data: vwapData,
-          borderColor: '#f59e0b',
-          borderWidth: 1.5,
-          borderDash: [4, 3],
-          pointRadius: 0,
-          fill: false,
-          tension: 0,
-          order: 4,
+          type:'line', label:'VWAP',
+          data: vwapPts, borderColor:'#f59e0b', borderWidth:1.5,
+          borderDash:[4,3], pointRadius:0, fill:false, tension:0, order:4,
         },
-        // Gamma Flip
-        levelLine(data.gammaFlip, 'rgba(245,158,11,0.6)', [6,3]),
-        // Call Wall
-        levelLine(data.callWall,  'rgba(34,197,94,0.5)',  [4,2]),
-        // Put Wall
-        levelLine(data.putWall,   'rgba(239,68,68,0.5)',  [4,2]),
-        // Resistance
-        levelLine(data.resistance,'rgba(239,68,68,0.35)', [2,2]),
-        // Major Support
-        levelLine(data.majorSupport,'rgba(239,68,68,0.35)',[2,2]),
+        // Level lines
+        levelLine(data.gammaFlip,  'rgba(245,158,11,0.65)', [6,3]),
+        levelLine(data.callWall,   'rgba(34,197,94,0.55)',  [4,2]),
+        levelLine(data.putWall,    'rgba(239,68,68,0.55)',  [4,2]),
+        levelLine(data.resistance, 'rgba(239,68,68,0.3)',   [2,2]),
+        levelLine(data.majorSupport,'rgba(239,68,68,0.3)',  [2,2]),
       ],
     },
     options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#0d141f',
-          borderColor: '#1c2940',
-          borderWidth: 1,
-          titleColor: '#e8f1fc',
-          bodyColor: '#8295b3',
-          callbacks: {
-            label(ctx) {
-              const raw = ctx.raw;
-              if (raw && raw.o != null) {
-                return `O: ${fmt(raw.o)}  H: ${fmt(raw.h)}  L: ${fmt(raw.l)}  C: ${fmt(raw.c)}`;
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction:{mode:'index', intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'#0d141f', borderColor:'#1c2940', borderWidth:1,
+          titleColor:'#e8f1fc', bodyColor:'#8295b3',
+          callbacks:{
+            title(items){ const b=chart[items[0].dataIndex]; return b ? b.time : ''; },
+            label(item){
+              const b=chart[item.dataIndex];
+              if(!b) return '';
+              if(item.datasetIndex===0||item.datasetIndex===1){
+                return `O:${fmt(b.open)} H:${fmt(b.high)} L:${fmt(b.low)} C:${fmt(b.close)}`;
               }
-              return ctx.dataset.label + ': ' + fmt(raw?.y ?? raw);
+              if(item.dataset.label==='EMA 8')  return `EMA 8: ${fmt(item.raw?.y)}`;
+              if(item.dataset.label==='EMA 21') return `EMA 21: ${fmt(item.raw?.y)}`;
+              if(item.dataset.label==='VWAP')   return `VWAP: ${fmt(item.raw?.y)}`;
+              return null;
             },
-          },
-        },
+            filter(item){ return item.datasetIndex<=6; }
+          }
+        }
       },
-      scales: {
-        x: {
-          type: 'linear',
-          ticks: {
-            maxTicksLimit: 8,
-            color: '#5a6b87',
-            font: { size: 10, family: "'JetBrains Mono', monospace" },
-            callback(val) {
-              const b = chart[Math.round(val)];
-              return b ? b.time : '';
-            },
+      scales:{
+        x:{
+          type:'linear', min:0, max:n-1,
+          ticks:{
+            maxTicksLimit:8, color:'#5a6b87',
+            font:{size:10, family:"'JetBrains Mono',monospace"},
+            callback(val){ const b=chart[Math.round(val)]; return b?b.time:''; }
           },
-          grid: { color: 'rgba(28,41,64,0.6)' },
+          grid:{color:'rgba(28,41,64,0.5)'}
         },
-        y: {
-          position: 'right',
-          ticks: {
-            color: '#5a6b87',
-            font: { size: 10, family: "'JetBrains Mono', monospace" },
-            callback: v => '$' + fmt(v),
+        y:{
+          position:'right',
+          ticks:{
+            color:'#5a6b87',
+            font:{size:10, family:"'JetBrains Mono',monospace"},
+            callback:v=>'$'+fmt(v)
           },
-          grid: { color: 'rgba(28,41,64,0.6)' },
-        },
-      },
-    },
+          grid:{color:'rgba(28,41,64,0.5)'}
+        }
+      }
+    }
   });
 
   chartInstances[panelId] = inst;
