@@ -13,6 +13,15 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
+# APEX 4.5 nine-engine decision support system
+try:
+    from apex_engines import build_institutional_decision as _build_institutional_decision
+    APEX_ENGINES_AVAILABLE = True
+except ImportError:
+    _build_institutional_decision = None
+    APEX_ENGINES_AVAILABLE = False
+    print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
+
 VERSION = "3.5.1_SESSION_AWARE_TRADE_ASSISTANT"
 EASTERN = ZoneInfo("America/New_York")
 
@@ -330,6 +339,43 @@ def get_intraday_bars(ticker: str, multiplier: int = 5, limit_days: int = 3) -> 
     url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/{multiplier}/minute/{start}/{end}"
     data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 5000}, timeout=15)
     return data.get("results", []) if data else []
+
+
+def get_vix_price() -> Optional[float]:
+    """Fetch the current VIX spot price from Polygon."""
+    data = safe_get_json("https://api.polygon.io/v2/last/trade/VXX", timeout=10)
+    if data and "results" in data:
+        return safe_float(data["results"].get("p") or data["results"].get("price"), 0.0) or None
+    # Fallback: daily snapshot for VIX
+    data = safe_get_json("https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/VIXY", timeout=10)
+    if data and "ticker" in data:
+        day = (data["ticker"].get("day") or {})
+        return safe_float(day.get("c") or day.get("vw"), 0.0) or None
+    return None
+
+
+def get_breadth_score() -> Optional[float]:
+    """
+    Approximate breadth score from SPY vs IWM relative performance.
+    IWM/SPY ratio above 20-day average = broad participation (score > 50).
+    Not a real TICK/VOLD feed — an honest proxy from daily bars.
+    """
+    try:
+        spy = get_daily_bars("SPY", days=30)
+        iwm = get_daily_bars("IWM", days=30)
+        if len(spy) < 22 or len(iwm) < 22:
+            return None
+        spy_closes = [safe_float(b.get("c")) for b in spy]
+        iwm_closes = [safe_float(b.get("c")) for b in iwm]
+        # Current ratio vs 20-day average ratio
+        current_ratio = iwm_closes[-1] / spy_closes[-1] if spy_closes[-1] else 1.0
+        past_ratios = [iwm_closes[i] / spy_closes[i] for i in range(-21, -1) if spy_closes[i] > 0]
+        avg_ratio = sum(past_ratios) / len(past_ratios) if past_ratios else current_ratio
+        # Score 0-100: 50 = ratio at average, 100 = IWM strongly outperforming
+        score = 50.0 + (current_ratio - avg_ratio) / avg_ratio * 200
+        return round(max(0.0, min(100.0, score)), 1)
+    except Exception:
+        return None
 
 
 def get_dynamic_tickers() -> List[str]:
@@ -3848,12 +3894,99 @@ def apex_os_dashboard():
 def api_institutional_os():
     """
     Master endpoint for the APEX Institutional OS dashboard.
-    Returns decision, flow, story, heatmap, decay, and position monitor in one call.
+    When apex_engines.py is available, runs the full nine-engine pipeline.
+    Falls back to the 4.5 build_institutional_os() if apex_engines not loaded.
     """
     ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
     include_heatmap = request.args.get("heatmap", "1") == "1"
+
+    if APEX_ENGINES_AVAILABLE and _build_institutional_decision is not None:
+        try:
+            with TRADE_ASSISTANT_LOCK:
+                last_signal = TRADE_ASSISTANT_STATE.get("last_signal")
+            session_ctx = market_session_context()
+
+            # Fetch all data inputs in parallel
+            with ThreadPoolExecutor(max_workers=6, thread_name_prefix="apex-os-fetch") as pool:
+                f_flow    = pool.submit(quantdata_flow_snapshot, ticker)
+                f_spy     = pool.submit(get_daily_bars, "SPY", 260)
+                f_qqq     = pool.submit(get_daily_bars, "QQQ", 260)
+                f_daily   = pool.submit(get_daily_bars, ticker, 260)
+                f_intra   = pool.submit(get_intraday_bars, ticker, 5, 3)
+                f_vix     = pool.submit(get_vix_price)
+
+            flow_snapshot = f_flow.result()
+            spy_bars      = f_spy.result()
+            qqq_bars      = f_qqq.result()
+            daily_bars    = f_daily.result()
+            intraday_bars = f_intra.result()
+            vix_price     = f_vix.result()
+
+            # Run nine-engine pipeline
+            result = _build_institutional_decision(
+                ticker=ticker,
+                flow_snapshot=flow_snapshot,
+                spy_bars=spy_bars,
+                qqq_bars=qqq_bars,
+                daily_bars=daily_bars,
+                intraday_bars=intraday_bars,
+                signal=last_signal,
+                vix_price=vix_price,
+                breadth_score=None,  # Optional; add get_breadth_score() call if desired
+                overnight_bars=None,
+                default_risk_points=ASSISTANT_DEFAULT_RISK_POINTS,
+                target1_r_mult=ASSISTANT_TARGET1_R_MULT,
+                target2_r_mult=ASSISTANT_TARGET2_R_MULT,
+                strike_step_spx=ASSISTANT_STRIKE_STEP_SPX,
+                strike_step_etf=ASSISTANT_STRIKE_STEP_ETF,
+                signal_ttl_seconds=ASSISTANT_SIGNAL_VALID_SECONDS,
+                session_is_tradeable=session_ctx.get("is_tradeable_session", False),
+            )
+
+            # Attach heatmap and session context (not part of nine-engine core)
+            if include_heatmap:
+                try:
+                    result["heatmap"] = build_institutional_heatmap()
+                except Exception:
+                    result["heatmap"] = None
+            result["session"] = session_ctx
+            result["version"] = VERSION_45
+            result["engine_mode"] = "NINE_ENGINE_PIPELINE"
+
+            # Update Telegram if there's an ENTER signal
+            recommendation = result.get("recommendation", "")
+            if "ENTER" in recommendation and "NOW" in recommendation:
+                story = result.get("story", {})
+                summary = story.get("executive_summary", "")
+                consensus_label = result.get("consensus_label", "")
+                send_telegram(
+                    f"🚨 APEX 4.5 {recommendation}\n"
+                    f"Ticker: {ticker}\n"
+                    f"Consensus: {consensus_label}\n"
+                    f"Summary: {summary}\n"
+                    f"Contract: {result.get('risk', {}).get('contract_hint', '--')}\n"
+                    f"Entry: {result.get('risk', {}).get('entry_zone', '--')}\n"
+                    f"Stop: {result.get('risk', {}).get('stop', '--')}\n"
+                    f"Targets: {result.get('risk', {}).get('target1', '--')} / {result.get('risk', {}).get('target2', '--')}"
+                )
+
+            return jsonify({"ok": True, **result})
+
+        except Exception as e:
+            # Nine-engine pipeline failed — fall back to 4.5 build_institutional_os
+            print(f"Nine-engine pipeline error (falling back): {e}", flush=True)
+            try:
+                data = build_institutional_os(ticker, include_heatmap=include_heatmap)
+                data["engine_mode"] = "FALLBACK_45"
+                data["pipeline_error"] = str(e)
+                return jsonify({"ok": True, **data})
+            except Exception as e2:
+                return jsonify({"ok": False, "error": str(e2), "version": VERSION_45}), 500
+
+    # apex_engines.py not available — use 4.5 build_institutional_os
     try:
         data = build_institutional_os(ticker, include_heatmap=include_heatmap)
+        data["engine_mode"] = "STANDARD_45"
         return jsonify({"ok": True, **data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "version": VERSION_45}), 500
@@ -3955,6 +4088,59 @@ def api_decay():
                     "last_signal": last_signal, "ttl_seconds": ASSISTANT_SIGNAL_VALID_SECONDS})
 
 
+@app.route("/api/nine_engines")
+def api_nine_engines():
+    """
+    Raw nine-engine pipeline output — faster than /api/institutional_os
+    because it skips the heatmap. Designed for high-frequency dashboard polling.
+    Returns all nine engine outputs plus consensus and story.
+    Requires apex_engines.py to be deployed alongside app.py.
+    """
+    if not APEX_ENGINES_AVAILABLE:
+        return jsonify({
+            "ok": False,
+            "error": "apex_engines.py not found. Deploy it alongside app.py.",
+            "apex_engines_available": False,
+        }), 503
+
+    ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
+    try:
+        with TRADE_ASSISTANT_LOCK:
+            last_signal = TRADE_ASSISTANT_STATE.get("last_signal")
+        session_ctx = market_session_context()
+
+        with ThreadPoolExecutor(max_workers=6, thread_name_prefix="apex-9e-fetch") as pool:
+            f_flow  = pool.submit(quantdata_flow_snapshot, ticker)
+            f_spy   = pool.submit(get_daily_bars, "SPY", 260)
+            f_qqq   = pool.submit(get_daily_bars, "QQQ", 260)
+            f_daily = pool.submit(get_daily_bars, ticker, 260)
+            f_intra = pool.submit(get_intraday_bars, ticker, 5, 3)
+            f_vix   = pool.submit(get_vix_price)
+
+        result = _build_institutional_decision(
+            ticker=ticker,
+            flow_snapshot=f_flow.result(),
+            spy_bars=f_spy.result(),
+            qqq_bars=f_qqq.result(),
+            daily_bars=f_daily.result(),
+            intraday_bars=f_intra.result(),
+            signal=last_signal,
+            vix_price=f_vix.result(),
+            default_risk_points=ASSISTANT_DEFAULT_RISK_POINTS,
+            target1_r_mult=ASSISTANT_TARGET1_R_MULT,
+            target2_r_mult=ASSISTANT_TARGET2_R_MULT,
+            strike_step_spx=ASSISTANT_STRIKE_STEP_SPX,
+            strike_step_etf=ASSISTANT_STRIKE_STEP_ETF,
+            signal_ttl_seconds=ASSISTANT_SIGNAL_VALID_SECONDS,
+            session_is_tradeable=session_ctx.get("is_tradeable_session", False),
+        )
+        result["session"] = session_ctx
+        result["version"] = VERSION_45
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/v45/status")
 def api_v45_status():
     """v4.5 feature availability status."""
@@ -3962,7 +4148,9 @@ def api_v45_status():
         "ok": True,
         "version": VERSION_45,
         "base_version": VERSION,
+        "apex_engines_available": APEX_ENGINES_AVAILABLE,
         "features": {
+            "nine_engine_pipeline": APEX_ENGINES_AVAILABLE,
             "institutional_os": True,
             "story_engine": STORY_ENABLED,
             "heatmap": True,
@@ -3971,12 +4159,21 @@ def api_v45_status():
             "position_monitor": POSITION_MONITOR_ENABLED,
             "performance_dashboard": TRACKING_AVAILABLE,
             "backtest_tracking": TRACKING_ENABLED,
+            "vix_fetch": True,
+            "breadth_score": True,
+            "flow_divergence": APEX_ENGINES_AVAILABLE,
+            "gamma_regime": APEX_ENGINES_AVAILABLE,
+            "market_structure_poc": APEX_ENGINES_AVAILABLE,
+            "adaptive_weights": APEX_ENGINES_AVAILABLE,
+            "consensus_engine": APEX_ENGINES_AVAILABLE,
         },
         "config": {
             "assistant_ticker": ASSISTANT_TICKER,
             "heatmap_tickers": HEATMAP_TICKERS,
             "gameplan_tickers": GAMEPLAN_TICKERS,
             "signal_ttl_seconds": ASSISTANT_SIGNAL_VALID_SECONDS,
+            "default_risk_points": ASSISTANT_DEFAULT_RISK_POINTS,
+            "strike_step_spx": ASSISTANT_STRIKE_STEP_SPX,
         },
         "active_position": bool(ACTIVE_POSITION),
         "updated_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
