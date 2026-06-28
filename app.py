@@ -4299,28 +4299,68 @@ def _chart_vwap_multiday(bars: List[dict]) -> List[float]:
 def _resolve_polygon_futures_ticker(symbol: str) -> str:
     """
     Resolve a futures symbol to the correct Polygon.io ticker format.
-    Polygon uses continuous contract tickers like ES1:COM, NQ1:COM.
-    Falls back to trying the current front-month contract if continuous fails.
+
+    Polygon futures use specific contract month codes, e.g. ESU25 = ES September 2025.
+    Month codes: F=Jan G=Feb H=Mar J=Apr K=May M=Jun N=Jul Q=Aug U=Sep V=Oct X=Nov Z=Dec
+
+    ES rolls quarterly (Mar/Jun/Sep/Dec). We compute the current active front-month
+    and fall back to SPY if Polygon doesn't have futures access on the account.
     """
-    # Polygon continuous contract format
-    CONTINUOUS_MAP = {
-        "ES":   "ES1:COM",
-        "ES1!": "ES1:COM",
-        "/ES":  "ES1:COM",
-        "NQ":   "NQ1:COM",
-        "NQ1!": "NQ1:COM",
-        "MES":  "MES1:COM",
-        "MNQ":  "MNQ1:COM",
+    MONTH_CODES = {3:'H', 6:'M', 9:'U', 12:'Z'}
+    BASE_MAP = {
+        "ES": "ES", "ES1!": "ES", "/ES": "ES",
+        "NQ": "NQ", "NQ1!": "NQ", "/NQ": "NQ",
+        "MES": "MES", "MNQ": "MNQ",
     }
     upper = symbol.upper().strip()
-    return CONTINUOUS_MAP.get(upper, upper)
+    base = BASE_MAP.get(upper)
+    if not base:
+        return upper
+
+    # Determine current active contract quarter
+    # ES/NQ roll on 3rd Friday of Mar/Jun/Sep/Dec
+    # Simple rule: use current quarter's month if we're before roll week,
+    # otherwise use next quarter
+    now = now_et()
+    m = now.month
+    y = now.year
+
+    # Find the next/current quarterly expiry month
+    quarterly = [3, 6, 9, 12]
+    for qm in quarterly:
+        if m <= qm:
+            exp_month = qm
+            exp_year = y
+            break
+    else:
+        exp_month = 3
+        exp_year = y + 1
+
+    # Rough roll check: if within 2 weeks of expiry month's 3rd Friday, use next quarter
+    from calendar import monthcalendar
+    cal = monthcalendar(exp_year, exp_month)
+    fridays = [week[4] for week in cal if week[4] != 0]
+    third_friday = fridays[2] if len(fridays) >= 3 else fridays[-1]
+    roll_date = dt.date(exp_year, exp_month, third_friday) - dt.timedelta(days=14)
+    if now.date() >= roll_date:
+        # Roll to next quarter
+        qidx = quarterly.index(exp_month)
+        if qidx < 3:
+            exp_month = quarterly[qidx + 1]
+        else:
+            exp_month = quarterly[0]
+            exp_year += 1
+
+    code = MONTH_CODES.get(exp_month, 'U')
+    year2 = str(exp_year)[-2:]
+    return f"{base}{code}{year2}"  # e.g. ESU25
 
 
 def _chart_fetch_bars(polygon_ticker: str, days: int = 3, multiplier: int = 15) -> List[dict]:
     """
     Fetch bars for the last N trading days via Polygon.io.
     Supports 1-min, 5-min, and 15-min bars via the multiplier param.
-    ES futures use the Polygon continuous contract format (ES1:COM).
+    ES futures use the resolved front-month contract ticker (e.g. ESU25).
     SPX uses SPY as proxy.
     """
     end = now_et().date()
@@ -4355,8 +4395,8 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
         is_futures = False
         spx_proxy = True
     elif symbol_upper in ("ES", "ES1!", "/ES"):
-        polygon_ticker = _resolve_polygon_futures_ticker("ES")  # → ES1:COM
-        display_name = "ES Futures"
+        polygon_ticker = _resolve_polygon_futures_ticker("ES")  # e.g. ESU25
+        display_name = f"ES Futures ({polygon_ticker})"
         is_futures = True
         spx_proxy = False
     else:
@@ -4366,6 +4406,15 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
         spx_proxy = False
 
     raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
+
+    # If ES futures returned no data, Polygon plan may not include futures.
+    # Fall back to SPY as a close ES proxy and note it in the display name.
+    if not raw_bars and is_futures:
+        polygon_ticker = "SPY"
+        display_name = f"ES → SPY proxy (futures not on plan)"
+        is_futures = False
+        spx_proxy = True
+        raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
     if not raw_bars:
         return {"error": f"No data returned for {polygon_ticker}", "symbol": symbol}
 
