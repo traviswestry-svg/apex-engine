@@ -252,26 +252,6 @@ def safe_float(x: Any, default: float = 0.0) -> float:
         return default
 
 
-
-
-def normalize_price_level_to_spot(level: Any, spot: Any) -> Optional[float]:
-    """Normalize compressed index levels to the same scale as the live spot price.
-
-    QuantData can return SPX index strikes/walls in compressed chain notation
-    on some responses (example: 75, 730, 67.5) while the chart is on the
-    full SPX scale (example: 7354). This function does not invent a level; it
-    selects the power-of-10 representation closest to the live spot.
-    """
-    raw = safe_float(level, 0.0)
-    px = safe_float(spot, 0.0)
-    if raw <= 0:
-        return None
-    if px <= 0 or px < 1000:
-        return raw
-    candidates = [raw, raw * 10.0, raw * 100.0, raw * 1000.0]
-    best = min(candidates, key=lambda v: abs(v - px))
-    return round(best, 2)
-
 def safe_get_json(url: str, params: Optional[dict] = None, headers: Optional[dict] = None, timeout: Optional[int] = None) -> Optional[dict]:
     params = dict(params or {})
     if "polygon.io" in url and POLYGON_API_KEY:
@@ -298,6 +278,55 @@ def safe_post_json(url: str, payload: dict, headers: Optional[dict] = None, time
         print(f"POST {url} exception: {e}", flush=True)
         return None
 
+
+
+def normalize_index_level(value: Any, reference_price: Optional[float] = None, ticker: str = "") -> Optional[float]:
+    """Normalize compressed index strikes without inventing new levels.
+
+    QuantData may return SPX strike keys as 75, 730, 750, etc. while the
+    live chart price is 7300+. This function only scales by powers of 10 and
+    only when a real reference price shows the value is compressed.
+    """
+    v = safe_float(value, 0.0)
+    ref = safe_float(reference_price, 0.0)
+    if v <= 0:
+        return None
+    t = (ticker or "").upper()
+    # Only normalize index-scale products. ETF prices such as SPY must remain intact.
+    index_like = t in {"SPX", "SPXW", "I:SPX", "ES", "ES1!", "/ES"} or ref >= 1000
+    if not index_like or ref <= 0:
+        return round(v, 2)
+    # Bring compressed values into the same order of magnitude as the reference.
+    original = v
+    for _ in range(4):
+        if v >= ref * 0.45:
+            break
+        v *= 10.0
+    for _ in range(4):
+        if v <= ref * 2.20:
+            break
+        v /= 10.0
+    # If scaling made it less plausible, keep the original.
+    if abs(v - ref) > abs(original - ref) and original >= ref * 0.45:
+        v = original
+    return round(v, 2)
+
+
+def normalize_gamma_levels(levels: Dict[str, Any], reference_price: Optional[float], ticker: str = "SPX") -> Dict[str, Any]:
+    """Return gamma levels normalized to the displayed instrument price scale."""
+    out = dict(levels or {})
+    ref = safe_float(reference_price or out.get("stock_price"), 0.0)
+    for key in ("stock_price", "call_wall", "put_wall", "zero_gamma", "gammaFlip", "callWall", "putWall"):
+        if key in out and out.get(key) is not None:
+            nv = normalize_index_level(out.get(key), ref or reference_price, ticker)
+            if nv is not None:
+                out[key] = nv
+    out["gamma_scale_diagnostics"] = {
+        "reference_price": ref or reference_price,
+        "ticker": ticker,
+        "normalization": "power_of_10_only",
+    }
+    return out
 
 def ema(values: List[float], period: int) -> Optional[float]:
     vals = [safe_float(v) for v in values if v is not None]
@@ -686,11 +715,13 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
             for strike_raw, cell in strikes.items():
                 if not isinstance(cell, dict):
                     continue
-                strike = safe_float(strike_raw, None)
-                if strike is None:
+                raw_strike = safe_float(strike_raw, None)
+                if raw_strike is None:
                     continue
-                normalized_strike = normalize_price_level_to_spot(strike, stock_price)
-                strike = normalized_strike if normalized_strike is not None else strike
+                # Normalize compressed SPX/ES strike keys (75 → 7500, 730 → 7300)
+                # against QuantData stockPrice when available. This fixes the dashboard
+                # showing two/three digit gamma levels while SPX is trading four digits.
+                strike = normalize_index_level(raw_strike, stock_price, ticker) or raw_strike
                 bucket = by_strike.setdefault(strike, {"call": 0.0, "put": 0.0, "net": 0.0})
                 call_exp = safe_float(cell.get("callExposure"), 0.0)
                 put_exp = safe_float(cell.get("putExposure"), 0.0)
@@ -705,6 +736,7 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
     if not stock_price or stock_price <= 0:
         sorted_all = sorted(by_strike.keys())
         stock_price = sorted_all[len(sorted_all) // 2]
+    stock_price = normalize_index_level(stock_price, stock_price, ticker) or stock_price
 
     # Wall levels should be relevant to the current trading area, not far OTM/LEAPS strikes.
     # SPX can have wider strike maps, so keep a 10% band around spot by default.
@@ -759,16 +791,24 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
     score = max(0, min(100, 50 + net_ratio * 50))
     status = "POSITIVE GAMMA / PIN RISK" if score >= 60 else "NEGATIVE GAMMA / TREND RISK" if score <= 40 else "MIXED GAMMA"
 
+    normalized_gamma = normalize_gamma_levels({
+        "call_wall": call_wall,
+        "put_wall": put_wall,
+        "zero_gamma": zero_gamma,
+        "stock_price": stock_price,
+    }, stock_price, ticker)
+
     return {
         "gex_score": round(score, 1),
         "gex_status": status,
-        "call_wall": round(call_wall, 2),
-        "put_wall": round(put_wall, 2),
-        "zero_gamma": round(zero_gamma, 2),
-        "stock_price": round(stock_price, 2) if stock_price else None,
+        "call_wall": normalized_gamma.get("call_wall"),
+        "put_wall": normalized_gamma.get("put_wall"),
+        "zero_gamma": normalized_gamma.get("zero_gamma"),
+        "stock_price": normalized_gamma.get("stock_price"),
         "net_gamma_ratio": round(net_ratio, 4),
         "strike_count": len(filtered),
         "raw_strike_count": len(by_strike),
+        "gamma_scale_diagnostics": normalized_gamma.get("gamma_scale_diagnostics"),
         "gex_notes": [
             f"Call wall {call_wall:.2f}",
             f"Put wall {put_wall:.2f}",
@@ -4599,23 +4639,42 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     call_wall    = round(round(current_close / step) * step + step, 2)
     put_wall     = round(round(current_close / step) * step - step, 2)
 
-    # Try to get real gamma levels from QuantData if available.
-    # If the ES panel is actually using the SPX fallback/proxy, force SPX GEX.
+    # Try to get real gamma levels from QuantData if available
+    gamma_diagnostics = {}
     try:
-        using_spx_scale = (polygon_ticker == "I:SPX") or ("SPX" in display_name.upper()) or spx_proxy
-        gex_ticker = "SPX" if using_spx_scale else "ES"
+        # SPX and ES panels should both use SPX/SPXW gamma because the active
+        # 0DTE options book is SPX. Do not request ES gamma for the ES panel.
+        gex_ticker = "SPX" if symbol_upper in ("SPX", "$SPX", "SPY", "ES", "ES1!", "/ES") else symbol_upper
         flow_snap  = quantdata_flow_snapshot(gex_ticker)
-        normalized_call = normalize_price_level_to_spot(flow_snap.get("call_wall"), current_close)
-        normalized_put  = normalize_price_level_to_spot(flow_snap.get("put_wall"), current_close)
-        normalized_zero = normalize_price_level_to_spot(flow_snap.get("zero_gamma"), current_close)
-        if normalized_call:
-            call_wall = normalized_call
-        if normalized_put:
-            put_wall = normalized_put
-        if normalized_zero:
-            gamma_flip = normalized_zero
-    except Exception:
-        pass
+        normalized = normalize_gamma_levels({
+            "callWall": flow_snap.get("call_wall"),
+            "putWall": flow_snap.get("put_wall"),
+            "gammaFlip": flow_snap.get("zero_gamma"),
+            "stock_price": flow_snap.get("stock_price"),
+        }, current_close, gex_ticker)
+        if normalized.get("callWall"):
+            call_wall  = safe_float(normalized["callWall"], call_wall)
+        if normalized.get("putWall"):
+            put_wall   = safe_float(normalized["putWall"], put_wall)
+        if normalized.get("gammaFlip"):
+            gamma_flip = safe_float(normalized["gammaFlip"], gamma_flip)
+        gamma_diagnostics = {
+            "gexTicker": gex_ticker,
+            "raw": {
+                "callWall": flow_snap.get("call_wall"),
+                "putWall": flow_snap.get("put_wall"),
+                "zeroGamma": flow_snap.get("zero_gamma"),
+                "stockPrice": flow_snap.get("stock_price"),
+            },
+            "normalized": {
+                "callWall": call_wall,
+                "putWall": put_wall,
+                "zeroGamma": gamma_flip,
+                "referencePrice": current_close,
+            },
+        }
+    except Exception as gamma_exc:
+        gamma_diagnostics = {"error": str(gamma_exc)}
 
     major_support     = round(recent_low, 2)
     secondary_support = round(recent_low - (step * 3), 2)
@@ -4681,6 +4740,7 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
         "yMin":            round(recent_low  * 0.997, 2),
         "yMax":            round(recent_high * 1.003, 2),
         "updatedAt":       now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "gammaDiagnostics": gamma_diagnostics,
     }
 
 
@@ -4713,7 +4773,6 @@ CHART_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 :root{
   --bg:#05080f;--surf:#0d141f;--surf2:#121c2b;--bdr:#1c2940;
@@ -4730,8 +4789,8 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .apex-nav a:hover{background:var(--surf2);color:var(--text);border-color:var(--bdr)}
 .apex-nav a.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.35)}
 .apex-nav .nav-sep{width:1px;height:18px;background:var(--bdr);margin:0 4px}
-.wrap{padding:14px;height:calc(100vh - 42px);overflow:hidden;display:flex;flex-direction:column}
-.page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;flex:0 0 auto}
+.wrap{padding:14px 14px 60px}
+.page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
 .page-title{font-family:var(--mono);font-size:16px;font-weight:800;color:var(--blue)}
 .page-sub{font-size:12px;color:var(--muted);margin-top:2px}
 .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -4748,15 +4807,15 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .ctrl-sep{width:1px;height:20px;background:var(--bdr);margin:0 2px}
 
 /* Side-by-side chart panels */
-.charts-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;flex:1;min-height:0;overflow:hidden}
-@media(max-width:900px){.charts-row{grid-template-columns:1fr;overflow:auto}}
-.chart-panel{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;min-width:0;min-height:0}
-.chart-panel-inner{display:flex;gap:0;flex:1;min-height:0;min-width:0}
-.chart-main{flex:1;min-width:0;min-height:0;padding:10px 12px 8px;display:flex;flex-direction:column}
-.chart-sidebar{width:132px;flex-shrink:0;border-left:1px solid var(--bdr);padding:10px 8px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:none;min-height:0}
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+@media(max-width:900px){.charts-row{grid-template-columns:1fr}}
+.chart-panel{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;overflow:hidden}
+.chart-panel-inner{display:flex;gap:0}
+.chart-main{flex:1;min-width:0;padding:12px}
+.chart-sidebar{width:148px;flex-shrink:0;border-left:1px solid var(--bdr);padding:10px 8px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:420px}
 
 /* Regime banner */
-.regime-bar{padding:8px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;gap:8px;flex:0 0 auto}
+.regime-bar{padding:8px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;gap:8px}
 .regime-label{font-size:12px;font-weight:700;font-family:var(--mono)}
 .regime-bullish{color:var(--bullish)}
 .regime-bearish{color:var(--bearish)}
@@ -4765,12 +4824,16 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .strength-pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surf2);color:var(--muted);font-family:var(--mono)}
 
 /* Canvas */
-.chart-canvas-wrap{position:relative;flex:1;min-height:220px;height:auto;cursor:grab;touch-action:none}
-.chart-canvas-wrap:active{cursor:grabbing}
-canvas{display:block;width:100%!important;height:100%!important}
+.chart-canvas-wrap{position:relative;height:420px;cursor:grab}
+.chart-canvas-wrap.dragging{cursor:grabbing}
+.chart-tools{display:flex;align-items:center;gap:6px;padding:8px 0 4px;flex-wrap:wrap}
+.chart-tool-btn{font-family:var(--mono);font-size:10px;font-weight:800;padding:4px 8px;border-radius:6px;border:1px solid var(--bdr);background:var(--surf2);color:var(--muted);cursor:pointer}
+.chart-tool-btn:hover{color:var(--blue);border-color:rgba(56,189,248,.45)}
+.chart-hint{font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:auto}
+canvas{display:block}
 
 /* Legend */
-.chart-legend{display:flex;align-items:center;gap:12px;padding:6px 12px 8px;border-top:1px solid var(--bdr);flex-wrap:wrap;flex:0 0 auto}
+.chart-legend{display:flex;align-items:center;gap:12px;padding:6px 12px 8px;border-top:1px solid var(--bdr);flex-wrap:wrap}
 .leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
 .leg-dot{width:10px;height:3px;border-radius:2px;flex-shrink:0}
 
@@ -4795,16 +4858,10 @@ canvas{display:block;width:100%!important;height:100%!important}
 .sidebar-title{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:700;padding:2px 0 4px;border-bottom:1px solid var(--bdr);margin-bottom:4px}
 
 /* Symbol header */
-.symbol-head{padding:8px 12px 0;display:flex;align-items:baseline;gap:8px;flex:0 0 auto}
+.symbol-head{padding:10px 12px 0;display:flex;align-items:baseline;gap:8px}
 .symbol-name{font-family:var(--mono);font-size:14px;font-weight:800;color:var(--text)}
 .symbol-price{font-family:var(--mono);font-size:22px;font-weight:800;color:var(--blue)}
 .symbol-date{font-size:10px;color:var(--faint);font-family:var(--mono)}
-
-
-.chart-tools{display:flex;align-items:center;gap:6px;padding:6px 0 8px;flex:0 0 auto}
-.chart-tool-btn{font-family:var(--mono);font-size:10px;font-weight:800;padding:4px 8px;border-radius:6px;border:1px solid var(--bdr);background:rgba(18,28,43,.85);color:var(--muted);cursor:pointer}
-.chart-tool-btn:hover{color:var(--blue);border-color:rgba(56,189,248,.45)}
-.chart-help{font-size:10px;color:var(--faint);font-family:var(--mono);margin-left:auto}
 
 /* Error / loading */
 .panel-msg{padding:40px;text-align:center;color:var(--muted);font-size:13px}
@@ -4894,52 +4951,6 @@ function sidebarHTML(d){
   `;
 }
 
-// ── Zoom / pan helpers ───────────────────────────────────────────────────────
-function clamp(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
-
-function visibleWindow(chartInst, n){
-  const xs = chartInst.options.scales.x || {};
-  const min = Math.floor(xs.min == null ? 0 : Number(xs.min));
-  const max = Math.ceil(xs.max == null ? n - 1 : Number(xs.max));
-  return {min: clamp(min, 0, n - 1), max: clamp(max, 0, n - 1)};
-}
-
-function rescaleYToVisible(chartInst, bars, data){
-  if (!chartInst || !bars || !bars.length) return;
-  const w = visibleWindow(chartInst, bars.length);
-  const slice = bars.slice(w.min, w.max + 1);
-  if (!slice.length) return;
-  let lows = slice.map(b => Number(b.low)).filter(Number.isFinite);
-  let highs = slice.map(b => Number(b.high)).filter(Number.isFinite);
-  [data.hvboHigh, data.hvboLow, data.gammaFlip, data.callWall, data.putWall, data.resistance, data.majorSupport].forEach(v => {
-    const n = Number(v);
-    if (Number.isFinite(n)) { lows.push(n); highs.push(n); }
-  });
-  const lo = Math.min(...lows), hi = Math.max(...highs);
-  const pad = Math.max((hi - lo) * 0.12, Number(data.currentClose || hi || 1) * 0.0015, 1);
-  chartInst.options.scales.y.min = lo - pad;
-  chartInst.options.scales.y.max = hi + pad;
-}
-
-function setXWindow(chartInst, bars, min, max, updateMode='none'){
-  if (!chartInst || !bars || !bars.length) return;
-  const n = bars.length;
-  const span = Math.max(10, max - min);
-  min = clamp(min, 0, Math.max(0, n - span));
-  max = clamp(min + span, span, n - 1);
-  chartInst.options.scales.x.min = min;
-  chartInst.options.scales.x.max = max;
-  rescaleYToVisible(chartInst, bars, chartInst.$apexData || {});
-  chartInst.update(updateMode);
-}
-
-function panX(chartInst, bars, direction){
-  const w = visibleWindow(chartInst, bars.length);
-  const span = Math.max(10, w.max - w.min);
-  const step = Math.max(5, Math.round(span * 0.35));
-  setXWindow(chartInst, bars, w.min + direction * step, w.max + direction * step);
-}
-
 // ── Build one chart panel ─────────────────────────────────────────────────────
 function buildPanel(panelId, data) {
   const panel = document.getElementById(panelId);
@@ -4972,13 +4983,13 @@ function buildPanel(panelId, data) {
     <div class="chart-panel-inner">
       <div class="chart-main">
         <div class="chart-tools">
-          <button class="chart-tool-btn" data-reset="${panelId}">Reset Zoom</button>
-          <button class="chart-tool-btn" data-fit="${panelId}">Fit Latest</button>
-          <button class="chart-tool-btn" data-left="${panelId}">◀</button>
-          <button class="chart-tool-btn" data-right="${panelId}">▶</button>
-          <span class="chart-help">wheel zoom · drag pan · Shift+wheel scroll</span>
+          <button class="chart-tool-btn" data-action="left">◀</button>
+          <button class="chart-tool-btn" data-action="right">▶</button>
+          <button class="chart-tool-btn" data-action="fitLatest">Fit Latest</button>
+          <button class="chart-tool-btn" data-action="fitAll">Fit All</button>
+          <span class="chart-hint">Wheel zoom · Drag pan · Shift+wheel scroll</span>
         </div>
-        <div class="chart-canvas-wrap">
+        <div class="chart-canvas-wrap" id="wrap_${panelId}">
           <canvas id="canvas_${panelId}"></canvas>
         </div>
         <div class="chart-legend">
@@ -5027,11 +5038,15 @@ function buildPanel(panelId, data) {
   const wickPlugin = {
     id:'wicks',
     afterDatasetsDraw(chartInst) {
-      const {ctx, scales:{x,y}} = chartInst;
+      const {ctx, scales:{x,y}, chartArea} = chartInst;
       ctx.save();
+      ctx.beginPath();
+      ctx.rect(chartArea.left, chartArea.top, chartArea.right-chartArea.left, chartArea.bottom-chartArea.top);
+      ctx.clip();
       ctx.strokeStyle = 'rgba(130,149,179,0.8)';
       ctx.lineWidth = 1;
       chart.forEach((b, i) => {
+        if (i < x.min - 2 || i > x.max + 2) return;
         const xPos  = x.getPixelForValue(i);
         const yHigh = y.getPixelForValue(b.high);
         const yLow  = y.getPixelForValue(b.low);
@@ -5129,14 +5144,8 @@ function buildPanel(panelId, data) {
     options: {
       responsive:true, maintainAspectRatio:false, animation:false,
       interaction:{mode:'index', intersect:false},
-      normalized:true,
       plugins:{
         legend:{display:false},
-        zoom:{
-          limits:{x:{min:0,max:n-1,minRange:Math.max(12, Math.floor(n*0.04))}},
-          pan:{enabled:true, mode:'x', threshold:4, onPan({chart}){ rescaleYToVisible(chart, chart.$apexBars || [], chart.$apexData || {}); chart.update('none'); }},
-          zoom:{wheel:{enabled:true, speed:0.08, modifierKey:null}, pinch:{enabled:true}, drag:{enabled:false}, mode:'x', onZoom({chart}){ rescaleYToVisible(chart, chart.$apexBars || [], chart.$apexData || {}); chart.update('none'); }}
-        },
         tooltip:{
           backgroundColor:'#0d141f', borderColor:'#1c2940', borderWidth:1,
           titleColor:'#e8f1fc', bodyColor:'#8295b3',
@@ -5184,33 +5193,117 @@ function buildPanel(panelId, data) {
     }
   });
 
-  inst.$apexBars = chart;
-  inst.$apexData = data;
   chartInstances[panelId] = inst;
-  rescaleYToVisible(inst, chart, data);
-  inst.update('none');
+  attachChartNavigation(panelId, inst, data);
+}
 
-  const resetBtn = panel.querySelector(`[data-reset="${panelId}"]`);
-  const fitBtn = panel.querySelector(`[data-fit="${panelId}"]`);
-  const leftBtn = panel.querySelector(`[data-left="${panelId}"]`);
-  const rightBtn = panel.querySelector(`[data-right="${panelId}"]`);
-  if (resetBtn) resetBtn.addEventListener('click', () => { setXWindow(inst, chart, 0, n - 1); });
-  if (fitBtn) fitBtn.addEventListener('click', () => {
-    const visible = activeTf === 1 ? 220 : activeTf === 5 ? 180 : 140;
-    const max = n - 1;
-    const min = Math.max(0, max - visible);
-    setXWindow(inst, chart, min, max);
-  });
-  if (leftBtn) leftBtn.addEventListener('click', () => panX(inst, chart, -1));
-  if (rightBtn) rightBtn.addEventListener('click', () => panX(inst, chart, 1));
-  const canvasWrap = panel.querySelector('.chart-canvas-wrap');
-  if (canvasWrap) {
-    canvasWrap.addEventListener('wheel', (ev) => {
-      if (!ev.shiftKey) return;
-      ev.preventDefault();
-      panX(inst, chart, ev.deltaY > 0 ? 1 : -1);
-    }, {passive:false});
+function visibleRange(inst, total){
+  const x = inst.options.scales.x;
+  let min = Math.max(0, Math.floor(Number(x.min ?? 0)));
+  let max = Math.min(total - 1, Math.ceil(Number(x.max ?? total - 1)));
+  if (max <= min) max = Math.min(total - 1, min + 5);
+  return {min, max};
+}
+
+function rescaleY(inst, data){
+  const bars = data.chart || [];
+  if (!bars.length) return;
+  const r = visibleRange(inst, bars.length);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = r.min; i <= r.max; i++) {
+    const b = bars[i];
+    if (!b) continue;
+    lo = Math.min(lo, b.low, b.ema8 || b.low, b.ema21 || b.low, b.vwap || b.low);
+    hi = Math.max(hi, b.high, b.ema8 || b.high, b.ema21 || b.high, b.vwap || b.high);
   }
+  [data.gammaFlip, data.callWall, data.putWall, data.hvboHigh, data.hvboLow].forEach(v => {
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= lo * 0.985 && n <= hi * 1.015) { lo = Math.min(lo, n); hi = Math.max(hi, n); }
+  });
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return;
+  const pad = Math.max((hi - lo) * 0.18, data.currentClose * 0.0008, 2);
+  inst.options.scales.y.min = lo - pad;
+  inst.options.scales.y.max = hi + pad;
+}
+
+function setXWindow(inst, data, min, max){
+  const n = (data.chart || []).length;
+  if (!n) return;
+  const minSpan = 8;
+  let span = Math.max(max - min, minSpan);
+  if (span >= n - 1) { min = 0; max = n - 1; }
+  else {
+    if (min < 0) { max -= min; min = 0; }
+    if (max > n - 1) { min -= (max - (n - 1)); max = n - 1; }
+    min = Math.max(0, min);
+  }
+  inst.options.scales.x.min = min;
+  inst.options.scales.x.max = max;
+  rescaleY(inst, data);
+  inst.update('none');
+}
+
+function attachChartNavigation(panelId, inst, data){
+  const wrap = document.getElementById('wrap_' + panelId);
+  const panel = document.getElementById(panelId);
+  const bars = data.chart || [];
+  if (!wrap || !panel || !bars.length) return;
+  const n = bars.length;
+  const defaultSpan = Math.min(n - 1, Math.max(40, Math.floor(n * 0.45)));
+  setXWindow(inst, data, Math.max(0, n - 1 - defaultSpan), n - 1);
+
+  function pan(deltaBars){
+    const x = inst.options.scales.x;
+    setXWindow(inst, data, Number(x.min) + deltaBars, Number(x.max) + deltaBars);
+  }
+
+  wrap.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const x = inst.options.scales.x;
+    const min = Number(x.min), max = Number(x.max);
+    const span = max - min;
+    if (e.shiftKey) {
+      pan((e.deltaY > 0 ? 1 : -1) * Math.max(2, span * 0.12));
+      return;
+    }
+    const rect = wrap.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const anchor = min + span * ratio;
+    const factor = e.deltaY > 0 ? 1.18 : 0.84;
+    const newSpan = Math.min(n - 1, Math.max(8, span * factor));
+    const newMin = anchor - newSpan * ratio;
+    const newMax = anchor + newSpan * (1 - ratio);
+    setXWindow(inst, data, newMin, newMax);
+  }, {passive:false});
+
+  let dragging = false, startX = 0, startMin = 0, startMax = 0;
+  wrap.addEventListener('pointerdown', (e) => {
+    dragging = true; startX = e.clientX;
+    startMin = Number(inst.options.scales.x.min); startMax = Number(inst.options.scales.x.max);
+    wrap.classList.add('dragging'); wrap.setPointerCapture(e.pointerId);
+  });
+  wrap.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const span = startMax - startMin;
+    const pxPerBar = wrap.clientWidth / Math.max(span, 1);
+    const deltaBars = -(e.clientX - startX) / Math.max(pxPerBar, 1);
+    setXWindow(inst, data, startMin + deltaBars, startMax + deltaBars);
+  });
+  function stopDrag(){ dragging = false; wrap.classList.remove('dragging'); }
+  wrap.addEventListener('pointerup', stopDrag);
+  wrap.addEventListener('pointercancel', stopDrag);
+  wrap.addEventListener('dblclick', () => setXWindow(inst, data, Math.max(0, n - 1 - defaultSpan), n - 1));
+
+  panel.querySelectorAll('.chart-tool-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      const span = Number(inst.options.scales.x.max) - Number(inst.options.scales.x.min);
+      if (action === 'left') pan(-Math.max(5, span * 0.35));
+      if (action === 'right') pan(Math.max(5, span * 0.35));
+      if (action === 'fitLatest') setXWindow(inst, data, Math.max(0, n - 1 - defaultSpan), n - 1);
+      if (action === 'fitAll') setXWindow(inst, data, 0, n - 1);
+    });
+  });
 }
 
 // ── Fetch + render one panel ──────────────────────────────────────────────────
