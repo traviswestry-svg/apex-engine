@@ -1,5 +1,5 @@
 """
-apex_engines.py — APEX 4.5 Nine-Engine Institutional Decision Support System
+apex_engines.py — APEX 5.0 Nine-Engine Institutional Decision Support System
 
 This module implements the nine-engine pipeline that replaces the ad-hoc scoring
 model in app.py. Import this into app.py and call build_institutional_decision()
@@ -12,12 +12,19 @@ Pipeline order (each engine feeds the next):
   4. Market Structure Engine     → VWAP, POC, value area, overnight/PDH levels
   5. Trend Engine                → price-only: EMA slope, ATR regime, compression
   6. Execution Engine            → Pine webhook confirmation
-  7. Consensus Engine            → tallies engine agreement, produces ENTER/WATCH/WAIT
+  7. Consensus Engine            → conviction-weighted votes, produces ENTER/WATCH/WAIT
   8. Risk Engine                 → entry zone, stop, targets adapted to gamma regime
   9. Story Engine                → prose narrative from all eight upstream engines
 
+APEX 5.0 improvements over 4.5:
+  - Flow cache TTL reduced to 90s, comparison window tightened to 2×TTL
+  - Divergence signals expire automatically and downgrade A+→B if price moves
+  - Absorption detection requires price-stalling confirmation (3-bar range check)
+  - Consensus engine uses conviction-weighted votes (weight × strength per engine)
+  - Institutional Confidence Index (ICI): single 0–100 primary dashboard number
+
 Adaptive weight table:
-  Gamma regime shifts which engines get the most vote-weight in the consensus.
+  Gamma regime shifts which engines get the most conviction-weight.
   Negative gamma → flow and momentum dominate.
   Positive gamma → structure and mean-reversion dominate.
 """
@@ -37,7 +44,23 @@ EASTERN = ZoneInfo("America/New_York")
 # ---------------------------------------------------------------------------
 _FLOW_CACHE: Dict[str, Dict[str, Any]] = {}
 _FLOW_CACHE_LOCK = threading.Lock()
-_FLOW_CACHE_TTL_SECONDS = 180  # 3 minutes between snapshots
+# 90s TTL: enough gap to detect a genuine flip between polling cycles,
+# but not so stale that we compare to a snapshot from a different session
+# context. Comparison window = TTL × 2 (max 3 min lookback).
+_FLOW_CACHE_TTL_SECONDS = 90
+
+# ---------------------------------------------------------------------------
+# Divergence signal cache (per-ticker)
+# Tracks the active divergence signal with its trigger time and the price
+# level at which it fired. On each subsequent call the geometric condition
+# is re-evaluated — if price has moved away from the trigger level by more
+# than the DIVERGENCE_DECAY_THRESHOLD, the signal downgrades from A+ → B.
+# If it has been active longer than DIVERGENCE_MAX_AGE_SECONDS it expires.
+# ---------------------------------------------------------------------------
+_DIVERGENCE_CACHE: Dict[str, Dict[str, Any]] = {}
+_DIVERGENCE_CACHE_LOCK = threading.Lock()
+DIVERGENCE_MAX_AGE_SECONDS = 240   # 4 minutes: A+ divergence must resolve or expire
+DIVERGENCE_DECAY_THRESHOLD = 0.003  # 0.3% away from trigger level → downgrade to B
 
 
 def _now_et() -> dt.datetime:
@@ -431,16 +454,118 @@ def engine_gamma_regime(
 
 def _update_flow_cache(ticker: str, snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
-    Stores the current flow snapshot and returns the previous one (if within TTL).
-    Used to detect flow momentum flips between snapshots.
+    Stores the current flow snapshot and returns the previous one if it falls
+    within the comparison window (TTL × 2, max 3 minutes).
+
+    The previous snapshot is only returned if it is:
+    - Newer than TTL seconds (meaning a genuine fresh comparison is possible)
+    - Older than 0 seconds (the very first call for a ticker has no previous)
+
+    This prevents comparing against a stale snapshot from a different session
+    period, which could produce phantom flip signals.
     """
     now_ts = dt.datetime.now(dt.timezone.utc).timestamp()
     with _FLOW_CACHE_LOCK:
         prev = _FLOW_CACHE.get(ticker)
         _FLOW_CACHE[ticker] = {**snapshot, "_cached_at": now_ts}
-    if prev and (now_ts - _safe_float(prev.get("_cached_at"), 0)) <= _FLOW_CACHE_TTL_SECONDS * 4:
-        return prev
+    if prev:
+        age = now_ts - _safe_float(prev.get("_cached_at"), 0)
+        # Accept prev snapshot if it is within the comparison window (TTL × 2)
+        # but old enough to have been from a genuinely different poll cycle (> 5s)
+        if 5 < age <= _FLOW_CACHE_TTL_SECONDS * 2:
+            return prev
     return None
+
+
+def _record_divergence(
+    ticker: str,
+    divergence_type: str,
+    divergence_direction: str,
+    trigger_price: float,
+    trigger_level: float,   # session high/low or rolling high/low that fired
+) -> None:
+    """Record a new divergence signal with its trigger context."""
+    now_ts = dt.datetime.now(dt.timezone.utc).timestamp()
+    with _DIVERGENCE_CACHE_LOCK:
+        _DIVERGENCE_CACHE[ticker] = {
+            "divergence_type": divergence_type,
+            "divergence_direction": divergence_direction,
+            "trigger_price": trigger_price,
+            "trigger_level": trigger_level,
+            "fired_at": now_ts,
+        }
+
+
+def _evaluate_divergence_persistence(
+    ticker: str,
+    current_price: float,
+    current_flow_score: float,
+    session_high: Optional[float],
+    session_low: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    """
+    Re-evaluates the cached divergence signal on each call.
+
+    Returns the (possibly downgraded) divergence dict if still active,
+    or None if it has expired or been invalidated by price movement.
+
+    Downgrade logic:
+    - If price has moved more than DIVERGENCE_DECAY_THRESHOLD from the trigger
+      level, A+ downgrades to B (still a caution, not a block).
+    - If age > DIVERGENCE_MAX_AGE_SECONDS, signal expires completely.
+    - If flow has recovered in the opposite direction (score crosses 50 back),
+      the bearish signal is invalidated (and vice versa).
+    """
+    now_ts = dt.datetime.now(dt.timezone.utc).timestamp()
+    with _DIVERGENCE_CACHE_LOCK:
+        cached = _DIVERGENCE_CACHE.get(ticker)
+    if not cached:
+        return None
+
+    age = now_ts - _safe_float(cached.get("fired_at"), 0)
+    if age > DIVERGENCE_MAX_AGE_SECONDS:
+        with _DIVERGENCE_CACHE_LOCK:
+            _DIVERGENCE_CACHE.pop(ticker, None)
+        return None
+
+    direction = cached.get("divergence_direction", "")
+    trigger_level = _safe_float(cached.get("trigger_level"), 0.0)
+    div_type = cached.get("divergence_type", "B")
+
+    # Check geometric persistence: is price still near the trigger level?
+    geo_valid = False
+    if trigger_level > 0 and current_price > 0:
+        dist_from_trigger = abs(current_price - trigger_level) / current_price
+        geo_valid = dist_from_trigger <= DIVERGENCE_DECAY_THRESHOLD * 3  # Allow wider range for persistence
+
+    # Check flow persistence: has flow recovered against the signal?
+    flow_invalidated = False
+    if direction == "BEARISH" and current_flow_score >= 62:
+        flow_invalidated = True  # Flow recovered bullish — bearish divergence invalidated
+    elif direction == "BULLISH" and current_flow_score <= 38:
+        flow_invalidated = True  # Flow recovered bearish — bullish divergence invalidated
+
+    if flow_invalidated:
+        with _DIVERGENCE_CACHE_LOCK:
+            _DIVERGENCE_CACHE.pop(ticker, None)
+        return None
+
+    # Downgrade: A+ → B if price has moved away from level
+    effective_type = div_type
+    if div_type == "A_PLUS" and not geo_valid:
+        effective_type = "B"
+
+    seconds_remaining = max(0, int(DIVERGENCE_MAX_AGE_SECONDS - age))
+    return {
+        "divergence_type": effective_type,
+        "divergence_direction": direction,
+        "divergence_strength": "STRONG" if effective_type == "A_PLUS" else "EARLY_WARNING",
+        "divergence_age_seconds": int(age),
+        "divergence_seconds_remaining": seconds_remaining,
+        "divergence_downgraded": effective_type != div_type,
+        "trigger_level": trigger_level,
+        "geo_valid": geo_valid,
+    }
 
 
 def engine_institutional_flow(
@@ -530,12 +655,23 @@ def engine_institutional_flow(
             rolling_low = min(r_lows) if r_lows else None
 
     # ── Flow Divergence Detection ──
-    # A+ divergence: price AT or ABOVE session high, flow bearish/flipping
-    # B divergence: price AT or ABOVE rolling 5-min high, flow weakening
+    # Check for a persisting cached divergence first (it may have been downgraded
+    # from A+ to B since it fired, or it may have expired entirely).
+    persisted_divergence = _evaluate_divergence_persistence(
+        ticker=ticker,
+        current_price=price,
+        current_flow_score=flow_score,
+        session_high=session_high,
+        session_low=session_low,
+    )
+
     divergence_type = None
     divergence_direction = None
     divergence_strength = None
     divergence_description = None
+    divergence_age_seconds = None
+    divergence_seconds_remaining = None
+    divergence_downgraded = False
     at_gamma_level = False
 
     if price > 0 and session_high and session_high > 0:
@@ -550,7 +686,10 @@ def engine_institutional_flow(
 
         # A+ BEARISH divergence: price at/above session high, flow turning negative
         at_or_above_session_high = dist_to_session_high_pct <= 0.15
-        if at_or_above_session_high and (flow_flip_direction == "BEARISH" or (flow_score <= 38 and prev_flow_score and prev_flow_score >= 55)):
+        if at_or_above_session_high and (
+            flow_flip_direction == "BEARISH" or
+            (flow_score <= 38 and prev_flow_score and prev_flow_score >= 55)
+        ):
             divergence_type = "A_PLUS"
             divergence_direction = "BEARISH"
             divergence_strength = "STRONG" if at_gamma_level else "MODERATE"
@@ -561,10 +700,12 @@ def engine_institutional_flow(
                 f"Aggressive sellers have taken control at the highs."
             )
             notes.append(f"⚠️ A+ BEARISH DIVERGENCE at session high {session_high:.2f}")
+            _record_divergence(ticker, "A_PLUS", "BEARISH", price, session_high)
 
         # A+ BULLISH divergence: price at/below session low, flow turning positive
         elif dist_to_session_low_pct is not None and dist_to_session_low_pct <= 0.15 and (
-            flow_flip_direction == "BULLISH" or (flow_score >= 62 and prev_flow_score and prev_flow_score <= 45)
+            flow_flip_direction == "BULLISH" or
+            (flow_score >= 62 and prev_flow_score and prev_flow_score <= 45)
         ):
             divergence_type = "A_PLUS"
             divergence_direction = "BULLISH"
@@ -576,8 +717,30 @@ def engine_institutional_flow(
                 f"Aggressive buyers have absorbed the selling at the lows."
             )
             notes.append(f"⚠️ A+ BULLISH DIVERGENCE at session low {session_low:.2f}")
+            _record_divergence(ticker, "A_PLUS", "BULLISH", price, session_low)
+
+    # If no fresh divergence fired, check whether a prior one is still persisting
+    if divergence_type is None and persisted_divergence:
+        divergence_type = persisted_divergence["divergence_type"]
+        divergence_direction = persisted_divergence["divergence_direction"]
+        divergence_strength = persisted_divergence["divergence_strength"]
+        divergence_age_seconds = persisted_divergence["divergence_age_seconds"]
+        divergence_seconds_remaining = persisted_divergence["divergence_seconds_remaining"]
+        divergence_downgraded = persisted_divergence["divergence_downgraded"]
+        trigger_level = persisted_divergence.get("trigger_level", 0.0)
+        status_note = "downgraded A+→B" if divergence_downgraded else f"{divergence_age_seconds}s old"
+        divergence_description = (
+            f"{'A+' if divergence_type == 'A_PLUS' else 'B'} {divergence_direction} Divergence persisting "
+            f"({status_note}, {divergence_seconds_remaining}s remaining). "
+            f"Flow has not recovered — signal still active."
+        )
+        if divergence_type == "A_PLUS":
+            notes.append(f"⚠️ PERSISTING A+ {divergence_direction} DIVERGENCE ({divergence_age_seconds}s old)")
+        else:
+            notes.append(f"Persisting B divergence ({divergence_direction}, {divergence_age_seconds}s old)")
 
     # B divergences: rolling high/low with flow weakening (not full flip)
+    # Only fire if no A+ or persisted divergence is already active
     if divergence_type is None and rolling_high and price > 0:
         at_rolling_high = abs(price - rolling_high) / price <= 0.002
         at_rolling_low = rolling_low and abs(price - rolling_low) / price <= 0.002
@@ -591,6 +754,7 @@ def engine_institutional_flow(
                 f"flow weakening to {flow_score:.0f}. Not yet a full reversal signal — treat as caution."
             )
             notes.append(f"Early warning: flow weakening at 30-min rolling high {rolling_high:.2f}")
+            _record_divergence(ticker, "B", "BEARISH", price, rolling_high)
 
         elif at_rolling_low and flow_momentum in ("STRENGTHENING_BULLISH", "FLIPPED_BULLISH", "RECOVERING_BEARISH") and flow_score >= 52:
             divergence_type = "B"
@@ -601,21 +765,54 @@ def engine_institutional_flow(
                 f"flow recovering to {flow_score:.0f}. Early absorption signal."
             )
             notes.append(f"Early warning: flow recovering at 30-min rolling low {rolling_low:.2f}")
+            _record_divergence(ticker, "B", "BULLISH", price, rolling_low)
 
-    # ── Absorption detection ──
-    # Absorption: price at key gamma level, flow opposing the price direction,
-    # sweep count elevated (institutions defending the level)
+    # ── Absorption detection (Fix 3: price-stalling confirmation) ──
+    # Absorption requires THREE conditions to all be true simultaneously:
+    # 1. Price is at a key gamma level (call wall, put wall, or zero-gamma)
+    # 2. Options flow opposes the price direction (net premium against the wall)
+    # 3. Sweep count elevated (institutional urgency defending the level)
+    # 4. NEW: Price is stalling — last 3 bars' range < 40% of session avg range
     absorption = False
     absorption_description = None
-    if at_gamma_level and sweep_count >= 3:
+    price_stalling = False
+
+    # Compute price-stall condition from intraday bars
+    if intraday_bars and len(intraday_bars) >= 4:
+        recent_3 = intraday_bars[-3:]
+        all_bars = intraday_bars
+        def _bar_range(b: dict) -> float:
+            return _safe_float(b.get("h"), 0.0) - _safe_float(b.get("l"), 0.0)
+        recent_ranges = [_bar_range(b) for b in recent_3 if _bar_range(b) > 0]
+        all_ranges = [_bar_range(b) for b in all_bars if _bar_range(b) > 0]
+        if recent_ranges and all_ranges:
+            avg_recent = sum(recent_ranges) / len(recent_ranges)
+            avg_session = sum(all_ranges) / len(all_ranges)
+            if avg_session > 0:
+                price_stalling = avg_recent / avg_session <= 0.40
+                if price_stalling:
+                    notes.append(f"Price stalling: recent bar range {avg_recent:.2f} is {avg_recent/avg_session:.0%} of session avg {avg_session:.2f}.")
+
+    if at_gamma_level and sweep_count >= 3 and price_stalling:
         if at_call_wall and net_premium < 0:
             absorption = True
-            absorption_description = f"Absorption at call wall {cw}: institutions selling into {sweep_count:.0f} sweeps at the ceiling."
-            notes.append(f"Absorption detected at call wall {cw:.2f}")
+            absorption_description = (
+                f"Absorption confirmed at call wall {cw:.2f}: "
+                f"institutions selling into {int(sweep_count)} sweeps at the ceiling "
+                f"while price stalls. High probability rejection zone."
+            )
+            notes.append(f"Absorption CONFIRMED at call wall {cw:.2f} (price stalling + sweep pressure)")
         elif at_put_wall and net_premium > 0:
             absorption = True
-            absorption_description = f"Absorption at put wall {pw}: institutions buying into selling at the floor."
-            notes.append(f"Absorption detected at put wall {pw:.2f}")
+            absorption_description = (
+                f"Absorption confirmed at put wall {pw:.2f}: "
+                f"institutions buying into selling pressure at the floor "
+                f"while price stalls. High probability support zone."
+            )
+            notes.append(f"Absorption CONFIRMED at put wall {pw:.2f} (price stalling + institutional defense)")
+    elif at_gamma_level and sweep_count >= 3 and not price_stalling:
+        # Conditions partially met but stall not confirmed yet — note it
+        notes.append(f"Partial absorption setup at gamma level — price not yet stalling.")
 
     # ── Sweep aggression classification ──
     if sweep_count >= 12:
@@ -707,15 +904,19 @@ def engine_institutional_flow(
         "flow_momentum": flow_momentum,
         "flow_delta": round(flow_delta, 1),
         "prev_flow_score": round(prev_flow_score, 1) if prev_flow_score is not None else None,
-        # Divergence
+        # Divergence (includes persistence/expiry tracking from cache)
         "divergence_type": divergence_type,
         "divergence_direction": divergence_direction,
         "divergence_strength": divergence_strength,
         "divergence_description": divergence_description,
+        "divergence_age_seconds": divergence_age_seconds,
+        "divergence_seconds_remaining": divergence_seconds_remaining,
+        "divergence_downgraded": divergence_downgraded,
         "at_gamma_level": at_gamma_level,
-        # Absorption
+        # Absorption (now requires price-stalling confirmation)
         "absorption": absorption,
         "absorption_description": absorption_description,
+        "price_stalling": price_stalling,
         # Session levels used
         "session_high": round(session_high, 2) if session_high else None,
         "session_low": round(session_low, 2) if session_low else None,
@@ -1215,14 +1416,22 @@ def engine_consensus(
     target_side: Optional[str] = None,  # If set, score only for this side
 ) -> Dict[str, Any]:
     """
-    Institutional Consensus Engine.
+    Institutional Consensus Engine — APEX 5.0 conviction-weighted version.
 
     Each engine casts a directional vote (BULLISH / BEARISH / NEUTRAL).
-    Votes are weighted by the adaptive weight table for the current gamma regime.
-    The Consensus Engine produces a score (0–100), a consensus label, and a
-    recommendation that is more readable than a raw numeric score.
+    Votes are weighted by BOTH the adaptive weight table (which engine matters
+    more in this gamma regime) AND the engine's own vote_strength (how
+    convinced that engine is). A 0.99-strength flow vote in a negative-gamma
+    regime contributes far more than a 0.51-strength trend vote.
 
-    The output maps directly to the dashboard's "N of 6 engines agree" display.
+    Conviction score bands (0–100):
+      ≥ 75  → ENTER
+      55–74 → WATCH
+      35–54 → WAIT
+      < 35  → NO_TRADE
+
+    The dashboard also shows the simple "N of 6 engines agree" count so
+    you can see at a glance which engines are aligned vs. dissenting.
     """
     weights = get_adaptive_weights(gamma_regime_label)
 
@@ -1235,7 +1444,7 @@ def engine_consensus(
         "execution": execution,
     }
 
-    # Build vote table
+    # Build vote table — weighted_bull/bear accumulate weight × strength per engine
     vote_table: List[Dict[str, Any]] = []
     weighted_bull = 0.0
     weighted_bear = 0.0
@@ -1243,18 +1452,22 @@ def engine_consensus(
 
     for name, engine_data in engines.items():
         vote = (engine_data.get("vote") or "NEUTRAL").upper()
-        strength = _safe_float(engine_data.get("vote_strength"), 0.5)
+        strength = _safe_float(engine_data.get("vote_strength"), 0.0)
         weight = weights.get(name, 0.15)
         engine_label = engine_data.get("engine", name.upper())
 
+        # Conviction contribution = weight × strength (not just weight)
+        conviction_contribution = weight * strength
+
         if vote == "BULLISH":
-            weighted_bull += weight * strength
+            weighted_bull += conviction_contribution
             vote_emoji = "✅"
         elif vote == "BEARISH":
-            weighted_bear += weight * strength
+            weighted_bear += conviction_contribution
             vote_emoji = "❌"
         else:
             vote_emoji = "—"
+            conviction_contribution = 0.0
 
         total_weight += weight
         vote_table.append({
@@ -1262,37 +1475,50 @@ def engine_consensus(
             "vote": vote,
             "strength": round(strength, 2),
             "weight": round(weight, 2),
+            "conviction_contribution": round(conviction_contribution, 3),
             "emoji": vote_emoji,
         })
 
-    # Normalize
+    # Normalize to 0–100 conviction scores
+    # Max possible weighted_bull = sum of all weights × 1.0 = total_weight
     if total_weight > 0:
-        bull_score = weighted_bull / total_weight * 100
-        bear_score = weighted_bear / total_weight * 100
+        bull_conviction = round(weighted_bull / total_weight * 100, 1)
+        bear_conviction = round(weighted_bear / total_weight * 100, 1)
     else:
-        bull_score = bear_score = 0.0
+        bull_conviction = bear_conviction = 0.0
 
-    # Count simple votes (for the "N of 6 engines agree" display)
+    # Simple vote counts for the "N of 6 agree" display (unchanged from 4.5)
     n_bull = sum(1 for v in vote_table if v["vote"] == "BULLISH")
     n_bear = sum(1 for v in vote_table if v["vote"] == "BEARISH")
     n_neutral = sum(1 for v in vote_table if v["vote"] == "NEUTRAL")
     n_total = len(vote_table)
 
-    # Gate override from flow divergence (can block regardless of vote count)
+    # Determine leading direction by conviction score
+    if bull_conviction > bear_conviction:
+        leading_direction = "BULLISH"
+        leading_conviction = bull_conviction
+    elif bear_conviction > bull_conviction:
+        leading_direction = "BEARISH"
+        leading_conviction = bear_conviction
+    else:
+        leading_direction = "NEUTRAL"
+        leading_conviction = 0.0
+
+    # Gate override from flow divergence (bypasses conviction thresholds)
     gate_override = flow.get("gate_override")
 
-    # Determine consensus direction and recommendation
+    # ── Recommendation via conviction bands ──
     if gate_override and "BEARISH" in gate_override:
-        # A+ bearish divergence — override to CAUTION or BLOCKED regardless of bull count
         consensus_direction = "BEARISH"
         if "BLOCKED" in gate_override:
             recommendation = "NO_TRADE_DIVERGENCE"
-            consensus_label = f"BLOCKED — A+ Bearish Divergence"
+            consensus_label = "BLOCKED — A+ Bearish Divergence"
             action = "Do not enter calls. A+ bearish divergence detected at session high."
         else:
             recommendation = "CAUTION"
             consensus_label = "CAUTION — Bearish Divergence Warning"
-            action = "Reduce size. Bearish divergence signal — wait for cleaner structure."
+            action = "Reduce size. Bearish divergence — wait for cleaner structure."
+
     elif gate_override and "BULLISH" in gate_override:
         consensus_direction = "BULLISH"
         if "BLOCKED" in gate_override:
@@ -1303,39 +1529,45 @@ def engine_consensus(
             recommendation = "CAUTION"
             consensus_label = "CAUTION — Bullish Divergence Warning"
             action = "Reduce size. Bullish divergence — potential reversal building."
-    elif n_bull >= 5:
-        consensus_direction = "BULLISH"
-        recommendation = "ENTER_CALL"
-        consensus_label = f"{n_bull} of {n_total} engines agree — ENTER CALL"
-        action = "Strong institutional consensus for calls. Enter if Pine confirms."
-    elif n_bull == 4:
-        consensus_direction = "BULLISH"
-        recommendation = "WATCH_CALLS"
-        consensus_label = f"{n_bull} of {n_total} engines agree — WATCH CALLS"
-        action = "Good alignment for calls. Wait for execution confirmation."
-    elif n_bear >= 5:
-        consensus_direction = "BEARISH"
-        recommendation = "ENTER_PUT"
-        consensus_label = f"{n_bear} of {n_total} engines agree — ENTER PUT"
-        action = "Strong institutional consensus for puts. Enter if Pine confirms."
-    elif n_bear == 4:
-        consensus_direction = "BEARISH"
-        recommendation = "WATCH_PUTS"
-        consensus_label = f"{n_bear} of {n_total} engines agree — WATCH PUTS"
-        action = "Good alignment for puts. Wait for execution confirmation."
-    elif n_bull == 3 or n_bear == 3:
-        consensus_direction = "BULLISH" if n_bull > n_bear else "BEARISH"
+
+    elif leading_conviction >= 75:
+        consensus_direction = leading_direction
+        side = "CALL" if leading_direction == "BULLISH" else "PUT"
+        recommendation = f"ENTER_{side}"
+        consensus_label = (
+            f"ENTER {side} — {n_bull if leading_direction == 'BULLISH' else n_bear} of {n_total} agree "
+            f"({leading_conviction:.0f}% conviction)"
+        )
+        action = f"Strong conviction for {side.lower()}s ({leading_conviction:.0f}/100). Enter if Pine confirms."
+
+    elif leading_conviction >= 55:
+        consensus_direction = leading_direction
+        side = "CALLS" if leading_direction == "BULLISH" else "PUTS"
+        recommendation = f"WATCH_{side.rstrip('S')}"
+        consensus_label = (
+            f"WATCH {side} — {n_bull if leading_direction == 'BULLISH' else n_bear} of {n_total} agree "
+            f"({leading_conviction:.0f}% conviction)"
+        )
+        action = f"Good conviction for {side.lower()} ({leading_conviction:.0f}/100). Wait for execution confirmation."
+
+    elif leading_conviction >= 35:
+        consensus_direction = leading_direction
         recommendation = "WAIT"
-        consensus_label = f"Only {max(n_bull, n_bear)} of {n_total} agree — WAIT"
-        action = "Insufficient consensus. Sit out until more engines align."
+        consensus_label = (
+            f"WAIT — Low conviction ({leading_conviction:.0f}/100), "
+            f"{n_bull} bull / {n_bear} bear / {n_neutral} neutral"
+        )
+        action = "Insufficient conviction. Sit out until engines align more strongly."
+
     else:
         consensus_direction = "NEUTRAL"
         recommendation = "NO_TRADE"
-        consensus_label = f"No consensus ({n_bull} bull / {n_bear} bear / {n_neutral} neutral)"
-        action = "No institutional agreement. Do not trade."
+        consensus_label = f"NO TRADE — No conviction ({bull_conviction:.0f}% bull / {bear_conviction:.0f}% bear)"
+        action = "No institutional conviction. Do not trade."
 
-    # Override recommendation if execution confirmed
-    if execution.get("execution_state", "").startswith("CONFIRMED_") and recommendation in ("WATCH_CALLS", "WATCH_PUTS", "ENTER_CALL", "ENTER_PUT"):
+    # Override to ENTER_NOW if execution engine confirmed + conviction already at WATCH+
+    if (execution.get("execution_state", "").startswith("CONFIRMED_") and
+            recommendation in ("WATCH_CALL", "WATCH_PUT", "ENTER_CALL", "ENTER_PUT")):
         side = execution.get("signal_side", "")
         if (side == "CALL" and consensus_direction == "BULLISH") or (side == "PUT" and consensus_direction == "BEARISH"):
             recommendation = f"ENTER_{side}_NOW"
@@ -1348,12 +1580,18 @@ def engine_consensus(
         "action": action,
         "consensus_direction": consensus_direction,
         "vote_table": vote_table,
+        # Conviction scores (0–100, the primary decision metric in 5.0)
+        "bull_conviction": bull_conviction,
+        "bear_conviction": bear_conviction,
+        "leading_conviction": round(leading_conviction, 1),
+        # Simple vote counts (for the "N of 6 agree" display)
         "n_bullish": n_bull,
         "n_bearish": n_bear,
         "n_neutral": n_neutral,
         "n_engines": n_total,
-        "bull_score": round(bull_score, 1),
-        "bear_score": round(bear_score, 1),
+        # Legacy fields kept for backward compatibility
+        "bull_score": bull_conviction,
+        "bear_score": bear_conviction,
         "gate_override": gate_override,
         "gamma_regime_label": gamma_regime_label,
         "weights_used": gamma_regime_label,
@@ -1790,6 +2028,173 @@ def engine_story(
 
 
 # ===========================================================================
+# INSTITUTIONAL CONFIDENCE INDEX (ICI)
+# APEX 5.0 — the single primary number on the dashboard.
+# Synthesizes consensus conviction, signal freshness, gamma regime stability,
+# and flow momentum into one 0–100 score that decays in real time.
+# ===========================================================================
+
+def compute_institutional_confidence_index(
+    consensus: Dict[str, Any],
+    execution: Dict[str, Any],
+    gamma_regime: Dict[str, Any],
+    flow: Dict[str, Any],
+    signal_ttl_seconds: int = 360,
+) -> Dict[str, Any]:
+    """
+    Institutional Confidence Index (ICI) — APEX 5.0.
+
+    Component weights:
+      50% — Consensus conviction score (bull or bear, whichever leads)
+      20% — Signal freshness and TTL remaining
+      15% — Gamma regime stability (positive gamma = more stable = higher score)
+      15% — Flow momentum quality
+
+    The raw ICI decays in real time between refreshes using an exponential
+    curve tied to signal age, so the number reflects the current moment
+    rather than the last snapshot.
+
+    Color bands:
+      ≥ 75 → GREEN  (high confidence — conditions for entry)
+      50–74 → AMBER  (moderate — watch, wait for confirmation)
+      < 50  → RED    (low — sit out)
+    """
+    # ── Component 1: Consensus conviction (50%) ──
+    leading_conviction = _safe_float(consensus.get("leading_conviction"), 0.0)
+    # Normalize from 0–100 conviction scale
+    conviction_component = leading_conviction  # already 0–100
+
+    # ── Component 2: Signal freshness (20%) ──
+    sig_seconds_remaining = _safe_float(execution.get("signal_seconds_remaining"), 0.0)
+    signal_fresh = execution.get("signal_fresh", False)
+    signal_matches = execution.get("signal_matches_flow", False)
+    if signal_fresh and signal_matches and sig_seconds_remaining > 0:
+        freshness_pct = sig_seconds_remaining / max(signal_ttl_seconds, 1)
+        # Peak freshness: 100 when just fired, decays to 0 at expiry
+        # Non-linear: 1 - (elapsed_ratio ^ 0.6), same curve as confidence_decay
+        elapsed_ratio = 1.0 - freshness_pct
+        freshness_component = max(0.0, (1.0 - elapsed_ratio ** 0.6)) * 100
+    elif signal_fresh and not signal_matches:
+        freshness_component = 20.0  # Signal present but opposing — reduce
+    else:
+        freshness_component = 0.0   # No signal or expired — contributes nothing
+
+    # ── Component 3: Gamma regime stability (15%) ──
+    gamma_label = gamma_regime.get("regime_label", "MIXED_GAMMA")
+    gex_score = _safe_float(gamma_regime.get("gex_score"), 50.0)
+    flip_risk = gamma_regime.get("flip_risk", False)
+    if gamma_label == "POSITIVE_GAMMA" and not flip_risk:
+        gamma_component = 80.0  # Stable positive gamma — lower vol, more predictable
+    elif gamma_label == "NEGATIVE_GAMMA" and not flip_risk:
+        gamma_component = 55.0  # Negative gamma — higher vol, but tradeable with conviction
+    elif flip_risk:
+        gamma_component = 25.0  # Near flip point — regime unstable
+    else:
+        gamma_component = 50.0  # Mixed — neutral contribution
+
+    # ── Component 4: Flow momentum quality (15%) ──
+    flow_momentum = flow.get("flow_momentum", "STABLE")
+    intelligence_score = _safe_float(flow.get("intelligence_score"), 50.0)
+    flow_flip = flow.get("flow_flip", False)
+    divergence_type = flow.get("divergence_type")
+    absorption = flow.get("absorption", False)
+
+    if divergence_type == "A_PLUS":
+        # A+ divergence is high-quality information regardless of direction
+        momentum_component = 90.0
+    elif absorption:
+        momentum_component = 80.0  # Confirmed absorption = high quality setup
+    elif flow_momentum in ("FLIPPED_BULLISH", "FLIPPED_BEARISH"):
+        momentum_component = 75.0  # Fresh flip = strong momentum signal
+    elif flow_momentum in ("STRENGTHENING_BULLISH", "ACCELERATING_BEARISH"):
+        momentum_component = 65.0
+    elif flow_momentum == "STABLE" and abs(intelligence_score - 50) >= 20:
+        momentum_component = 55.0  # Stable but directional
+    elif flow_momentum in ("WEAKENING_BULLISH", "RECOVERING_BEARISH"):
+        momentum_component = 30.0  # Flow weakening = lower quality
+    else:
+        momentum_component = 45.0  # Mixed
+
+    # ── Composite ICI ──
+    raw_ici = (
+        conviction_component * 0.50 +
+        freshness_component * 0.20 +
+        gamma_component * 0.15 +
+        momentum_component * 0.15
+    )
+    ici = round(max(0.0, min(100.0, raw_ici)), 1)
+
+    # ── Color band and status ──
+    if ici >= 75:
+        ici_color = "GREEN"
+        ici_label = "HIGH"
+        ici_status = _build_ici_status(consensus, execution, flow, "high")
+    elif ici >= 50:
+        ici_color = "AMBER"
+        ici_label = "MODERATE"
+        ici_status = _build_ici_status(consensus, execution, flow, "moderate")
+    else:
+        ici_color = "RED"
+        ici_label = "LOW"
+        ici_status = _build_ici_status(consensus, execution, flow, "low")
+
+    return {
+        "ici": ici,
+        "ici_color": ici_color,
+        "ici_label": ici_label,
+        "ici_status": ici_status,
+        "components": {
+            "conviction": round(conviction_component, 1),
+            "freshness": round(freshness_component, 1),
+            "gamma_stability": round(gamma_component, 1),
+            "flow_momentum": round(momentum_component, 1),
+        },
+        "weights": {"conviction": 0.50, "freshness": 0.20, "gamma": 0.15, "momentum": 0.15},
+    }
+
+
+def _build_ici_status(
+    consensus: Dict[str, Any],
+    execution: Dict[str, Any],
+    flow: Dict[str, Any],
+    level: str,
+) -> str:
+    """Builds the one-line ICI status description."""
+    n_bull = consensus.get("n_bullish", 0)
+    n_bear = consensus.get("n_bearish", 0)
+    n_total = consensus.get("n_engines", 6)
+    direction = consensus.get("consensus_direction", "NEUTRAL")
+    leading = consensus.get("leading_conviction", 0.0)
+    pine_state = execution.get("execution_state", "WAITING_FOR_PINE")
+    divergence = flow.get("divergence_type")
+    absorption = flow.get("absorption", False)
+
+    align_count = n_bull if direction == "BULLISH" else n_bear
+    side_word = "calls" if direction == "BULLISH" else "puts" if direction == "BEARISH" else "no side"
+
+    if level == "high":
+        pine_note = "Pine confirmed." if "CONFIRMED" in pine_state else "Awaiting Pine trigger."
+        return (
+            f"Institutional conviction strong — {align_count} of {n_total} engines aligned for {side_word} "
+            f"({leading:.0f}% conviction). {pine_note}"
+        )
+    elif level == "moderate":
+        if divergence:
+            return f"{divergence.replace('_', '+')} divergence active — monitor carefully before entry."
+        if absorption:
+            return f"Absorption setup forming at key level — {align_count} of {n_total} engines support {side_word}."
+        return (
+            f"Partial alignment for {side_word} ({align_count} of {n_total} engines, "
+            f"{leading:.0f}% conviction). Wait for stronger confirmation."
+        )
+    else:
+        return (
+            f"Low institutional conviction ({leading:.0f}/100). "
+            f"Sit out until more engines align."
+        )
+
+
+# ===========================================================================
 # MASTER PIPELINE FUNCTION
 # Runs all nine engines in order and returns the full institutional OS state.
 # Called by app.py's /api/institutional_os endpoint.
@@ -1937,7 +2342,17 @@ def build_institutional_decision(
         risk=risk,
     )
 
+    # ── Institutional Confidence Index (APEX 5.0) ──
+    ici = compute_institutional_confidence_index(
+        consensus=consensus,
+        execution=execution,
+        gamma_regime=gamma_regime,
+        flow=flow_intelligence,
+        signal_ttl_seconds=signal_ttl_seconds,
+    )
+
     return {
+        "version": "5.0.0_INSTITUTIONAL_OS",
         "ticker": ticker,
         "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "updated_at_et": _now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
@@ -1951,6 +2366,8 @@ def build_institutional_decision(
         "consensus": consensus,
         "risk": risk,
         "story": story,
+        # Institutional Confidence Index — the primary dashboard number
+        "ici": ici,
         # Top-level convenience fields for the dashboard
         "recommendation": consensus.get("recommendation"),
         "consensus_label": consensus.get("consensus_label"),
@@ -1958,7 +2375,9 @@ def build_institutional_decision(
         "approved_side": consensus.get("consensus_direction"),
         "n_engines_agree": max(consensus.get("n_bullish", 0), consensus.get("n_bearish", 0)),
         "n_engines_total": consensus.get("n_engines", 6),
+        "leading_conviction": consensus.get("leading_conviction", 0.0),
         "gamma_regime_label": gamma_label,
         "divergence_type": flow_intelligence.get("divergence_type"),
         "divergence_direction": flow_intelligence.get("divergence_direction"),
+        "divergence_seconds_remaining": flow_intelligence.get("divergence_seconds_remaining"),
     }
