@@ -128,11 +128,17 @@ def _parse_exposure_map(exposure_map: Any, ticker: str, stock_price: Optional[fl
     return by_strike, examples
 
 
+
 def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX") -> Dict[str, Any]:
     """Production gamma parser/normalizer for APEX 6.0.1.
 
-    Returns a single contract for dashboard/API use and includes full raw ->
-    normalized -> engine diagnostics so scaling bugs are visible immediately.
+    6.0.1a improvement:
+    - Preserves the full-curve zero-gamma value as raw_zero_gamma.
+    - Adds active_gamma_flip: the nearest useful intraday/local gamma reference
+      around current SPX spot, derived from the same QuantData exposure curve.
+    - The dashboard-facing zero_gamma uses active_gamma_flip when it has a
+      usable local curve reading. Diagnostics keep both values so we never hide
+      the source-derived full-curve result.
     """
     trace = DiagnosticsTrace("gamma")
     trace.add("raw_response_summary", {
@@ -169,6 +175,8 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         normalized_stock_price = sorted_all[len(sorted_all) // 2]
         trace.add("stock_price_fallback", {"method": "median_normalized_strike", "value": normalized_stock_price})
 
+    # Keep the source curve wide enough for diagnostics, but do not let a far-tail
+    # zero crossing become the primary intraday dashboard flip.
     band_pct = 0.15 if (ticker or "").upper() in {"SPX", "SPXW", "I:SPX", "$SPX"} else 0.12
     low_bound = normalized_stock_price * (1 - band_pct)
     high_bound = normalized_stock_price * (1 + band_pct)
@@ -188,7 +196,13 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
 
     call_wall = max(call_pool.items(), key=lambda kv: abs(kv[1].get("call", 0.0)))[0]
     put_wall = max(put_pool.items(), key=lambda kv: abs(kv[1].get("put", 0.0)))[0]
-    zero_gamma = _calculate_zero_gamma(filtered, normalized_stock_price)
+
+    zero_details = _calculate_zero_gamma_details(filtered, normalized_stock_price)
+    raw_zero_gamma = zero_details["raw_zero_gamma"]
+    active_gamma_flip = zero_details["active_gamma_flip"]
+    # Dashboard-facing gamma flip. Prefer the local/tradable flip if available;
+    # keep raw_zero_gamma separately for diagnostics and source audit.
+    zero_gamma = active_gamma_flip if active_gamma_flip is not None else raw_zero_gamma
 
     total_net = sum(v["net"] for v in filtered.values())
     total_abs = sum(abs(v["call"]) + abs(v["put"]) for v in filtered.values()) or 1.0
@@ -196,11 +210,15 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
     score = max(0.0, min(100.0, 50.0 + net_ratio * 50.0))
     status = "POSITIVE GAMMA / PIN RISK" if score >= 60 else "NEGATIVE GAMMA / TREND RISK" if score <= 40 else "MIXED GAMMA"
 
+    trace.add("zero_gamma_selection", zero_details)
     trace.add("engine_output", {
         "stockPrice": normalized_stock_price,
         "callWall": call_wall,
         "putWall": put_wall,
-        "zeroGamma": zero_gamma,
+        "rawZeroGamma": raw_zero_gamma,
+        "activeGammaFlip": active_gamma_flip,
+        "displayZeroGamma": zero_gamma,
+        "zeroGammaMethod": zero_details.get("active_method"),
         "gexScore": round(score, 1),
         "netGammaRatio": round(net_ratio, 4),
         "filteredStrikeCount": len(filtered),
@@ -215,8 +233,12 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         quality_flags.append("CALL_WALL_BELOW_SPOT_FALLBACK_USED")
     if put_wall > normalized_stock_price:
         quality_flags.append("PUT_WALL_ABOVE_SPOT_FALLBACK_USED")
-    if abs((zero_gamma or normalized_stock_price) - normalized_stock_price) / normalized_stock_price > 0.12:
-        quality_flags.append("ZERO_GAMMA_FAR_FROM_SPOT_SOURCE_CONFIRMED")
+    if raw_zero_gamma and abs(raw_zero_gamma - normalized_stock_price) / normalized_stock_price > 0.12:
+        quality_flags.append("RAW_ZERO_GAMMA_FAR_FROM_SPOT_SOURCE_CONFIRMED")
+    if active_gamma_flip is not None and raw_zero_gamma != active_gamma_flip:
+        quality_flags.append("ACTIVE_GAMMA_FLIP_USED_FOR_DASHBOARD")
+    if zero_details.get("active_confidence") == "LOW":
+        quality_flags.append("ACTIVE_GAMMA_FLIP_LOW_CONFIDENCE")
 
     return {
         "gex_score": round(score, 1),
@@ -224,16 +246,21 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "call_wall": _round_level(call_wall),
         "put_wall": _round_level(put_wall),
         "zero_gamma": _round_level(zero_gamma),
+        "active_gamma_flip": _round_level(active_gamma_flip),
+        "raw_zero_gamma": _round_level(raw_zero_gamma),
         "stock_price": _round_level(normalized_stock_price),
         "raw_stock_price": raw_stock_price,
         "net_gamma_ratio": round(net_ratio, 4),
         "strike_count": len(filtered),
         "raw_strike_count": len(by_strike),
+        "zero_gamma_method": zero_details.get("active_method"),
+        "zero_gamma_confidence": zero_details.get("active_confidence"),
         "quality_flags": quality_flags,
         "gex_notes": [
             f"Call wall {call_wall:.2f}",
             f"Put wall {put_wall:.2f}",
-            f"Zero gamma {zero_gamma:.2f}",
+            f"Active gamma flip {zero_gamma:.2f}",
+            f"Raw full-curve zero gamma {raw_zero_gamma:.2f}",
             f"Spot {normalized_stock_price:.2f}",
             f"Filtered strikes {len(filtered)}/{len(by_strike)} within {low_bound:.2f}-{high_bound:.2f}",
         ],
@@ -241,25 +268,76 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
     }
 
 
-def _calculate_zero_gamma(filtered: Dict[float, Dict[str, float]], spot: float) -> float:
+def _calculate_zero_gamma_details(filtered: Dict[float, Dict[str, float]], spot: float) -> Dict[str, Any]:
+    """Return both full-curve and active/local gamma flip references.
+
+    raw_zero_gamma is the traditional full filtered-curve cumulative crossing.
+    active_gamma_flip is the nearest locally meaningful intraday reference within
+    6% of spot. If no local crossing exists, it uses the local minimum absolute
+    cumulative exposure level as a tradable approximation and marks confidence.
+    """
     sorted_rows = sorted(filtered.items(), key=lambda kv: kv[0])
     cumulative = 0.0
     prev_strike: Optional[float] = None
     prev_cum: Optional[float] = None
-    crossing_candidates: List[float] = []
+    crossings: List[float] = []
+    cumulative_points: List[Dict[str, float]] = []
     best_abs: Optional[float] = None
     best_zero = sorted_rows[0][0]
+
     for strike, vals in sorted_rows:
         cumulative += vals["net"]
         if prev_cum is not None and ((prev_cum <= 0 <= cumulative) or (prev_cum >= 0 >= cumulative)):
-            crossing_candidates.append((prev_strike + strike) / 2 if prev_strike is not None else strike)
+            crossings.append((prev_strike + strike) / 2 if prev_strike is not None else strike)
         abs_cum = abs(cumulative)
+        cumulative_points.append({"strike": strike, "cumulative": cumulative, "abs": abs_cum})
         if best_abs is None or abs_cum < best_abs:
             best_abs = abs_cum
             best_zero = strike
         prev_strike = strike
         prev_cum = cumulative
-    return min(crossing_candidates, key=lambda x: abs(x - spot)) if crossing_candidates else best_zero
+
+    raw_zero = min(crossings, key=lambda x: abs(x - spot)) if crossings else best_zero
+
+    local_band_pct = 0.06
+    local_low = spot * (1 - local_band_pct)
+    local_high = spot * (1 + local_band_pct)
+    local_crossings = [x for x in crossings if local_low <= x <= local_high]
+    local_points = [p for p in cumulative_points if local_low <= p["strike"] <= local_high]
+
+    active = None
+    active_method = "unavailable"
+    confidence = "LOW"
+    if local_crossings:
+        active = min(local_crossings, key=lambda x: abs(x - spot))
+        active_method = "nearest_local_zero_crossing"
+        confidence = "HIGH"
+    elif local_points:
+        best_local = min(local_points, key=lambda p: (p["abs"], abs(p["strike"] - spot)))
+        active = best_local["strike"]
+        active_method = "local_minimum_absolute_cumulative_gamma"
+        distance_pct = abs(active - spot) / spot if spot else 1.0
+        confidence = "MEDIUM" if distance_pct <= 0.025 else "LOW"
+    else:
+        active = raw_zero
+        active_method = "raw_full_curve_fallback"
+        confidence = "LOW"
+
+    return {
+        "raw_zero_gamma": _round_level(raw_zero),
+        "active_gamma_flip": _round_level(active),
+        "active_method": active_method,
+        "active_confidence": confidence,
+        "local_band_pct": local_band_pct,
+        "local_bounds": [_round_level(local_low), _round_level(local_high)],
+        "crossing_count": len(crossings),
+        "local_crossing_count": len(local_crossings),
+        "nearest_crossings": [_round_level(x) for x in sorted(crossings, key=lambda x: abs(x - spot))[:8]],
+    }
+
+
+def _calculate_zero_gamma(filtered: Dict[float, Dict[str, float]], spot: float) -> float:
+    return float(_calculate_zero_gamma_details(filtered, spot).get("raw_zero_gamma") or spot)
 
 
 def _empty_gamma(status: str, note: str, trace: DiagnosticsTrace, stock_price: Optional[float] = None) -> Dict[str, Any]:
@@ -269,11 +347,15 @@ def _empty_gamma(status: str, note: str, trace: DiagnosticsTrace, stock_price: O
         "call_wall": None,
         "put_wall": None,
         "zero_gamma": None,
+        "active_gamma_flip": None,
+        "raw_zero_gamma": None,
         "stock_price": stock_price,
         "raw_stock_price": None,
         "net_gamma_ratio": 0.0,
         "strike_count": 0,
         "raw_strike_count": 0,
+        "zero_gamma_method": None,
+        "zero_gamma_confidence": None,
         "quality_flags": ["NO_USABLE_GAMMA"],
         "gex_notes": [note],
         "diagnostics": trace.to_dict(),

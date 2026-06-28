@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.0.1_DATA_BUS_GAMMA_DIAGNOSTICS"
+VERSION = "6.0.1A_GAMMA_FLIP_ES_SEPARATION"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -1083,6 +1083,10 @@ def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
         "call_wall": gex.get("call_wall"),
         "put_wall": gex.get("put_wall"),
         "zero_gamma": gex.get("zero_gamma"),
+        "active_gamma_flip": gex.get("active_gamma_flip"),
+        "raw_zero_gamma": gex.get("raw_zero_gamma"),
+        "zero_gamma_method": gex.get("zero_gamma_method"),
+        "zero_gamma_confidence": gex.get("zero_gamma_confidence"),
         "stock_price": gex.get("stock_price"),
         "raw_stock_price": gex.get("raw_stock_price"),
         "quality_flags": gex.get("quality_flags", []),
@@ -4558,12 +4562,20 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
                 "callWall": flow_snap.get("call_wall"),
                 "putWall": flow_snap.get("put_wall"),
                 "zeroGamma": flow_snap.get("zero_gamma"),
+                "activeGammaFlip": flow_snap.get("active_gamma_flip"),
+                "rawZeroGamma": flow_snap.get("raw_zero_gamma"),
+                "zeroGammaMethod": flow_snap.get("zero_gamma_method"),
+                "zeroGammaConfidence": flow_snap.get("zero_gamma_confidence"),
                 "stockPrice": flow_snap.get("stock_price"),
             },
             "normalized": {
                 "callWall": call_wall,
                 "putWall": put_wall,
                 "zeroGamma": gamma_flip,
+                "rawZeroGamma": flow_snap.get("raw_zero_gamma"),
+                "activeGammaFlip": flow_snap.get("active_gamma_flip"),
+                "zeroGammaMethod": flow_snap.get("zero_gamma_method"),
+                "zeroGammaConfidence": flow_snap.get("zero_gamma_confidence"),
                 "referencePrice": current_close,
             },
         }
@@ -4678,6 +4690,10 @@ def api_market_state():
             "call_wall": spx_flow.get("call_wall"),
             "put_wall": spx_flow.get("put_wall"),
             "zero_gamma": spx_flow.get("zero_gamma"),
+            "active_gamma_flip": spx_flow.get("active_gamma_flip"),
+            "raw_zero_gamma": spx_flow.get("raw_zero_gamma"),
+            "zero_gamma_method": spx_flow.get("zero_gamma_method"),
+            "zero_gamma_confidence": spx_flow.get("zero_gamma_confidence"),
             "gex_score": spx_flow.get("gex_score"),
             "gex_status": spx_flow.get("gex_status"),
             "quality_flags": spx_flow.get("quality_flags", []),
@@ -4720,6 +4736,10 @@ def api_gamma_diagnostics():
                 "call_wall": snap.get("call_wall"),
                 "put_wall": snap.get("put_wall"),
                 "zero_gamma": snap.get("zero_gamma"),
+                "active_gamma_flip": snap.get("active_gamma_flip"),
+                "raw_zero_gamma": snap.get("raw_zero_gamma"),
+                "zero_gamma_method": snap.get("zero_gamma_method"),
+                "zero_gamma_confidence": snap.get("zero_gamma_confidence"),
                 "gex_score": snap.get("gex_score"),
                 "gex_status": snap.get("gex_status"),
                 "quality_flags": snap.get("quality_flags", []),
