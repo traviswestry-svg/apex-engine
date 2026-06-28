@@ -10,8 +10,8 @@
 <body>
 
 <nav class="apex-nav">
-  <a href="/" class="nav-logo">APEX</a>
-  <a href="/">Scanner</a>
+  <a href="/apex_os" class="nav-logo">APEX</a>
+  <a href="/scanner">Scanner</a>
   <a href="/apex_os" class="active">Institutional OS</a>
   <a href="/assistant">Trade Assistant</a>
   <a href="/flow">Flow / GEX</a>
@@ -22,7 +22,7 @@
   <div class="nav-right">
     <span><span class="dot-live"></span><span id="clockEl">-- ET</span></span>
     <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
-    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">6.0.4_FLOW2_STORY</span>
+    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">6.0.7_FLOW2_STORY</span>
   </div>
 </nav>
 
@@ -49,8 +49,10 @@
       <button class="tab-btn" data-tab="replay">Replay</button>
       <button class="tab-btn" data-tab="review">Review</button>
     </div>
-    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+      <button class="btn btn-amber" id="scanBtn" title="Run the scanner now">&#9889; Run Scan</button>
       <button class="btn btn-blue" id="refreshBtn">&#8635; Refresh</button>
+      <span class="scan-status" id="scanStatus">Scanner idle</span>
       <span class="last-upd" id="lastUpdated">--</span>
     </div>
   </div>

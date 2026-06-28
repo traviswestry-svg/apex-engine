@@ -2889,6 +2889,11 @@ def api_flow():
 def api_flow_ticker(ticker: str):
     return jsonify(quantdata_flow_snapshot(ticker.upper()))
 
+@app.route("/scanner")
+def scanner_dashboard():
+    """Legacy scanner dashboard with manual scan button."""
+    return render_template("dashboard.html")
+
 @app.route("/")
 def dashboard():
     with STATE_LOCK:

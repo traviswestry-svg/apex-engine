@@ -231,3 +231,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .h-wait{background:rgba(245,158,11,.06);border-color:rgba(245,158,11,.2)} .h-wait .heat-ticker,.h-wait .heat-score,.h-wait .heat-action{color:var(--amber)}
 .h-no{background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2)} .h-no .heat-ticker,.h-no .heat-score,.h-no .heat-action{color:var(--red)}
 .version-tag{font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:auto}
+
+.btn-amber{border-color:rgba(245,158,11,.45);color:var(--amber);background:rgba(245,158,11,.06)}
+.btn-amber:hover{background:rgba(245,158,11,.14);color:#ffd48a}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+.scan-status{font-family:var(--mono);font-size:10px;color:var(--faint);min-width:130px;text-align:left}
+.scan-status.scanning{color:var(--amber)}
+.scan-status.ok{color:var(--green)}
+.scan-status.error{color:var(--red)}
