@@ -2936,6 +2936,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
   <a href="/apex_os" class="active">Institutional OS</a>
   <a href="/assistant">Trade Assistant</a>
   <a href="/flow">Flow / GEX</a>
+  <a href="/chart">Charts</a>
   <div class="nav-sep"></div>
   <a href="/api/v45/status" target="_blank">Status</a>
   <a href="/health" target="_blank">Health</a>
@@ -3334,6 +3335,7 @@ footer{margin-top:28px;color:var(--faint);font-size:11px;font-family:var(--mono)
     <a href="/apex_os">Institutional OS</a>
     <a href="/assistant">Trade Assistant</a>
     <a href="/flow">Flow / GEX</a>
+    <a href="/chart">Charts</a>
     <div class="nav-sep"></div>
     <a href="/api/v45/status" target="_blank">Status</a>
     <a href="/health" target="_blank">Health</a>
@@ -3684,6 +3686,7 @@ FLOW_HTML = """
   <a href="/apex_os">Institutional OS</a>
   <a href="/assistant">Trade Assistant</a>
   <a href="/flow" class="active">Flow / GEX</a>
+  <a href="/chart">Charts</a>
   <div class="nav-sep"></div>
   <a href="/api/v45/status" target="_blank">Status</a>
   <a href="/health" target="_blank">Health</a>
@@ -3759,6 +3762,7 @@ ASSISTANT_HTML = """
   <a href="/apex_os">Institutional OS</a>
   <a href="/assistant" class="active">Trade Assistant</a>
   <a href="/flow">Flow / GEX</a>
+  <a href="/chart">Charts</a>
   <div class="nav-sep"></div>
   <a href="/api/v45/status" target="_blank">Status</a>
   <a href="/health" target="_blank">Health</a>
@@ -4248,4 +4252,728 @@ def api_v45_status():
         "active_position": bool(ACTIVE_POSITION),
         "updated_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
     })
+
+
+# =============================================================================
+# APEX 5.0 — MARKET INTELLIGENCE TERMINAL
+# Live ES and SPX side-by-side candlestick charts with EMA 8/21, VWAP,
+# HVBO zone, gamma levels, and key price levels sidebar.
+# Data source: Polygon.io (already configured in APEX).
+# Routes: GET /chart  →  dashboard HTML
+#         GET /api/chart_data?ticker=ES1!&days=3  →  JSON payload
+# =============================================================================
+
+def _chart_ema(values: List[float], period: int) -> List[Optional[float]]:
+    """EMA returning a value for every bar (None for warm-up bars)."""
+    if not values or len(values) < period:
+        return [None] * len(values)
+    k = 2.0 / (period + 1)
+    out: List[Optional[float]] = [None] * (period - 1)
+    e = sum(values[:period]) / period
+    out.append(round(e, 4))
+    for v in values[period:]:
+        e = v * k + e * (1 - k)
+        out.append(round(e, 4))
+    return out
+
+
+def _chart_vwap_multiday(bars: List[dict]) -> List[float]:
+    """VWAP that resets each calendar day (matches original dashboard logic)."""
+    out: List[float] = []
+    cpv = cv = 0.0
+    current_day: Optional[str] = None
+    for b in bars:
+        ts = safe_float(b.get("t"), 0.0)
+        day_key = dt.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d") if ts else None
+        if day_key != current_day:
+            cpv = cv = 0.0
+            current_day = day_key
+        tp = (safe_float(b.get("h")) + safe_float(b.get("l")) + safe_float(b.get("c"))) / 3
+        vol = safe_float(b.get("v"), 0.0)
+        cpv += tp * vol
+        cv += vol
+        out.append(round(cpv / cv if cv > 0 else safe_float(b.get("c")), 4))
+    return out
+
+
+def _chart_fetch_bars(polygon_ticker: str, days: int = 3) -> List[dict]:
+    """
+    Fetch 15-min bars for the last N trading days via Polygon.io.
+    ES futures use ES1!, SPX uses SPY as proxy (same logic as original dashboard).
+    """
+    end = now_et().date()
+    start = end - dt.timedelta(days=max(days * 4, 14))  # buffer for weekends/holidays
+    url = (f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/"
+           f"15/minute/{start}/{end}")
+    data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 50000}, timeout=20)
+    return (data or {}).get("results", [])
+
+
+def build_chart_data(symbol: str, days: int = 3) -> dict:
+    """
+    Build the full Market Intelligence Terminal payload for one symbol.
+
+    Ported from the original training dashboard's build_market_intelligence()
+    and fetch_multi_day_bars(). Data comes from Polygon.io, which is already
+    configured in APEX.
+
+    SPX is proxied via SPY (10× scale labels shown in UI).
+    ES uses ES1! futures ticker.
+    """
+    # Ticker routing
+    SPX_PROXY = "SPY"
+    ES_TICKER = "ES1!"
+
+    symbol_upper = symbol.upper().strip()
+    if symbol_upper in ("SPX", "SPY", "$SPX"):
+        polygon_ticker = SPX_PROXY
+        display_name = "SPX  (via SPY)"
+        is_futures = False
+        spx_proxy = True
+    elif symbol_upper in ("ES", "ES1!", "/ES"):
+        polygon_ticker = ES_TICKER
+        display_name = "ES Futures (ES1!)"
+        is_futures = True
+        spx_proxy = False
+    else:
+        polygon_ticker = symbol_upper
+        display_name = symbol_upper
+        is_futures = False
+        spx_proxy = False
+
+    raw_bars = _chart_fetch_bars(polygon_ticker, days=days)
+    if not raw_bars:
+        return {"error": f"No data returned for {polygon_ticker}", "symbol": symbol}
+
+    # Group bars by trading day, keep last N days
+    from collections import defaultdict
+    days_map: dict = defaultdict(list)
+    for b in raw_bars:
+        ts = safe_float(b.get("t"), 0.0)
+        day_key = dt.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d") if ts else "unknown"
+        days_map[day_key].append(b)
+
+    sorted_days = sorted(days_map.keys())[-days:]
+    bars: List[dict] = []
+    for d in sorted_days:
+        bars.extend(days_map[d])
+
+    if not bars:
+        return {"error": "No bars after day filtering", "symbol": symbol}
+
+    # Compute indicators
+    closes  = [safe_float(b.get("c")) for b in bars]
+    highs   = [safe_float(b.get("h")) for b in bars]
+    lows    = [safe_float(b.get("l")) for b in bars]
+    volumes = [safe_float(b.get("v"), 0.0) for b in bars]
+
+    ema8v  = _chart_ema(closes, 8)
+    ema21v = _chart_ema(closes, 21)
+    vwapv  = _chart_vwap_multiday(bars)
+    avg_vol = sum(volumes) / max(len(volumes), 1)
+
+    # Build chart array (matches original dashboard shape)
+    chart = []
+    for i, b in enumerate(bars):
+        ts = safe_float(b.get("t"), 0.0)
+        dt_utc = dt.datetime.utcfromtimestamp(ts / 1000) if ts else dt.datetime.utcnow()
+        # ET approximation (UTC-4 EDT, UTC-5 EST) — good enough for bar labels
+        et_hour = dt_utc.hour - 4
+        try:
+            label = dt_utc.replace(hour=max(0, et_hour)).strftime("%-I:%M %p")
+        except ValueError:
+            label = dt_utc.replace(hour=max(0, et_hour)).strftime("%I:%M %p").lstrip("0")
+        day_label = dt_utc.strftime("%b %d")
+
+        chart.append({
+            "ts":     int(ts),
+            "time":   f"{day_label} {label}",
+            "day":    day_label,
+            "open":   round(safe_float(b.get("o")), 2),
+            "high":   round(safe_float(b.get("h")), 2),
+            "low":    round(safe_float(b.get("l")), 2),
+            "close":  round(safe_float(b.get("c")), 2),
+            "volume": round(volumes[i], 0),
+            "ema8":   ema8v[i],
+            "ema21":  ema21v[i],
+            "vwap":   round(vwapv[i], 2),
+            "relVol": round(volumes[i] / avg_vol, 2) if avg_vol > 0 else 1.0,
+        })
+
+    if not chart:
+        return {"error": "Chart array empty after processing", "symbol": symbol}
+
+    current_close = closes[-1]
+    recent_high   = max(highs)
+    recent_low    = min(lows)
+
+    # HVBO zone — bars where volume ≥ 1.5× average
+    hv_bars = [chart[i] for i, v in enumerate(volumes) if v >= avg_vol * 1.5]
+    if hv_bars:
+        hv_prices = [b["close"] for b in hv_bars]
+        hvbo_low  = round(min(hv_prices), 2)
+        hvbo_high = round(max(hv_prices), 2)
+    else:
+        hvbo_low  = round(current_close - 1.0, 2)
+        hvbo_high = round(current_close + 1.0, 2)
+
+    # Gamma levels — estimated from price structure
+    # (Real GEX comes from QuantData; these are the same approximations the original uses)
+    gamma_flip   = round((recent_high + current_close) / 2, 2)
+    step = 5 if is_futures else 1  # SPY $1 steps, ES 5-point steps
+    call_wall    = round(round(current_close / step) * step + step, 2)
+    put_wall     = round(round(current_close / step) * step - step, 2)
+
+    # Try to get real gamma levels from QuantData if available
+    try:
+        gex_ticker = "SPX" if spx_proxy else "ES"
+        flow_snap  = quantdata_flow_snapshot(gex_ticker)
+        if flow_snap.get("call_wall"):
+            call_wall  = safe_float(flow_snap["call_wall"], call_wall)
+        if flow_snap.get("put_wall"):
+            put_wall   = safe_float(flow_snap["put_wall"], put_wall)
+        if flow_snap.get("zero_gamma"):
+            gamma_flip = safe_float(flow_snap["zero_gamma"], gamma_flip)
+    except Exception:
+        pass
+
+    major_support     = round(recent_low, 2)
+    secondary_support = round(recent_low - (step * 3), 2)
+    resistance        = round(recent_high, 2)
+
+    # Regime detection
+    last = chart[-1]
+    above_vwap  = current_close > last["vwap"]
+    trend_ok    = (last["ema8"] or 0) > (last["ema21"] or 0) and current_close > (last["ema8"] or 0)
+    below_gamma = current_close < gamma_flip
+
+    if trend_ok and above_vwap:
+        regime = "Bullish Continuation"
+        regime_color = "bullish"
+    elif trend_ok and not above_vwap:
+        regime = "Bullish — Momentum Fading"
+        regime_color = "caution"
+    elif not above_vwap and not trend_ok:
+        regime = "Bearish / Weak Structure"
+        regime_color = "bearish"
+    elif below_gamma:
+        regime = "Below Gamma Flip — Cautious"
+        regime_color = "caution"
+    else:
+        regime = "Balanced / Range"
+        regime_color = "neutral"
+
+    strength = sum([trend_ok, above_vwap, not below_gamma,
+                    current_close > major_support, current_close > secondary_support])
+    strength_label = (
+        "Very Strong" if strength == 5 else
+        "Strong"      if strength >= 4 else
+        "Moderate"    if strength >= 3 else
+        "Weak"        if strength >= 2 else "Very Weak"
+    )
+
+    return {
+        "symbol":          display_name,
+        "rawSymbol":       symbol_upper,
+        "polygonTicker":   polygon_ticker,
+        "isFutures":       is_futures,
+        "spxProxy":        spx_proxy,
+        "tradingDays":     sorted_days,
+        "barInterval":     "15-min",
+        "currentClose":    round(current_close, 2),
+        "recentHigh":      round(recent_high, 2),
+        "recentLow":       round(recent_low, 2),
+        "gammaFlip":       gamma_flip,
+        "callWall":        call_wall,
+        "putWall":         put_wall,
+        "hvboLow":         hvbo_low,
+        "hvboHigh":        hvbo_high,
+        "majorSupport":    major_support,
+        "secondarySupport":secondary_support,
+        "resistance":      resistance,
+        "regime":          regime,
+        "regimeColor":     regime_color,
+        "strength":        strength,
+        "strengthLabel":   strength_label,
+        "chart":           chart,
+        "barsCount":       len(chart),
+        "updatedAt":       now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    }
+
+
+@app.route("/api/chart_data")
+def api_chart_data():
+    """
+    Market Intelligence Terminal data endpoint.
+    GET /api/chart_data?ticker=SPX&days=3
+    GET /api/chart_data?ticker=ES&days=3
+    """
+    ticker = request.args.get("ticker", "SPX").strip().upper()
+    days   = max(1, min(int(request.args.get("days", "3")), 5))
+    try:
+        data = build_chart_data(ticker, days=days)
+        if "error" in data:
+            return jsonify({"ok": False, **data}), 500
+        return jsonify({"ok": True, **data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "ticker": ticker}), 500
+
+
+CHART_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>APEX — Market Intelligence Terminal</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.1/dist/chartjs-chart-financial.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1/dist/chartjs-adapter-luxon.umd.min.js"></script>
+<style>
+:root{
+  --bg:#05080f;--surf:#0d141f;--surf2:#121c2b;--bdr:#1c2940;
+  --text:#e8f1fc;--muted:#8295b3;--faint:#5a6b87;
+  --blue:#38bdf8;--green:#22c55e;--amber:#f59e0b;--red:#ef4444;--purple:#a78bfa;
+  --bullish:#22c55e;--bearish:#ef4444;--caution:#f59e0b;--neutral:#8295b3;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+.apex-nav{display:flex;align-items:center;gap:6px;padding:10px 16px;background:var(--surf);border-bottom:1px solid var(--bdr);flex-wrap:wrap}
+.apex-nav .nav-logo{font-family:var(--mono);font-size:13px;font-weight:800;color:var(--blue);margin-right:10px;text-decoration:none}
+.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:var(--muted);text-decoration:none;transition:all .15s}
+.apex-nav a:hover{background:var(--surf2);color:var(--text);border-color:var(--bdr)}
+.apex-nav a.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.35)}
+.apex-nav .nav-sep{width:1px;height:18px;background:var(--bdr);margin:0 4px}
+.wrap{padding:14px 14px 60px}
+.page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.page-title{font-family:var(--mono);font-size:16px;font-weight:800;color:var(--blue)}
+.page-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.day-btn{font-family:var(--mono);font-size:11px;font-weight:700;padding:5px 12px;border-radius:7px;border:1px solid var(--bdr);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
+.day-btn:hover{background:var(--surf2);color:var(--text)}
+.day-btn.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.4)}
+.refresh-btn{font-family:var(--sans);font-size:11px;font-weight:600;padding:5px 13px;border-radius:7px;border:1px solid rgba(56,189,248,.4);background:rgba(56,189,248,.06);color:var(--blue);cursor:pointer;transition:all .15s}
+.refresh-btn:hover{background:rgba(56,189,248,.12)}
+.last-update{font-size:10px;color:var(--faint);font-family:var(--mono)}
+
+/* Side-by-side chart panels */
+.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+@media(max-width:900px){.charts-row{grid-template-columns:1fr}}
+.chart-panel{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;overflow:hidden}
+.chart-panel-inner{display:flex;gap:0}
+.chart-main{flex:1;min-width:0;padding:12px}
+.chart-sidebar{width:148px;flex-shrink:0;border-left:1px solid var(--bdr);padding:10px 8px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:420px}
+
+/* Regime banner */
+.regime-bar{padding:8px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.regime-label{font-size:12px;font-weight:700;font-family:var(--mono)}
+.regime-bullish{color:var(--bullish)}
+.regime-bearish{color:var(--bearish)}
+.regime-caution{color:var(--caution)}
+.regime-neutral{color:var(--neutral)}
+.strength-pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surf2);color:var(--muted);font-family:var(--mono)}
+
+/* Canvas */
+.chart-canvas-wrap{position:relative;height:340px}
+canvas{display:block}
+
+/* Legend */
+.chart-legend{display:flex;align-items:center;gap:12px;padding:6px 12px 8px;border-top:1px solid var(--bdr);flex-wrap:wrap}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
+.leg-dot{width:10px;height:3px;border-radius:2px;flex-shrink:0}
+
+/* Sidebar level cards */
+.level-card{padding:5px 6px;border-radius:6px;background:var(--surf2);margin-bottom:2px}
+.level-card-label{font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:var(--faint);font-weight:700}
+.level-card-val{font-family:var(--mono);font-size:13px;font-weight:800;margin-top:1px}
+.lc-resistance{border-left:2px solid var(--red)}
+.lc-resistance .level-card-val{color:var(--red)}
+.lc-gamma{border-left:2px solid var(--amber)}
+.lc-gamma .level-card-val{color:var(--amber)}
+.lc-hvbo{border-left:2px solid var(--purple)}
+.lc-hvbo .level-card-val{color:var(--purple)}
+.lc-call{border-left:2px solid var(--green)}
+.lc-call .level-card-val{color:var(--green)}
+.lc-price{border-left:2px solid var(--blue)}
+.lc-price .level-card-val{color:var(--blue)}
+.lc-support{border-left:2px solid rgba(239,68,68,.5)}
+.lc-support .level-card-val{color:rgba(239,68,68,.8)}
+.lc-put{border-left:2px solid rgba(239,68,68,.7)}
+.lc-put .level-card-val{color:var(--red)}
+.sidebar-title{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:700;padding:2px 0 4px;border-bottom:1px solid var(--bdr);margin-bottom:4px}
+
+/* Symbol header */
+.symbol-head{padding:10px 12px 0;display:flex;align-items:baseline;gap:8px}
+.symbol-name{font-family:var(--mono);font-size:14px;font-weight:800;color:var(--text)}
+.symbol-price{font-family:var(--mono);font-size:22px;font-weight:800;color:var(--blue)}
+.symbol-date{font-size:10px;color:var(--faint);font-family:var(--mono)}
+
+/* Error / loading */
+.panel-msg{padding:40px;text-align:center;color:var(--muted);font-size:13px}
+.err{color:var(--red)}
+</style>
+</head>
+<body>
+<nav class="apex-nav">
+  <a href="/" class="nav-logo">APEX</a>
+  <a href="/">Scanner</a>
+  <a href="/apex_os">Institutional OS</a>
+  <a href="/assistant">Trade Assistant</a>
+  <a href="/flow">Flow / GEX</a>
+  <a href="/chart" class="active">Charts</a>
+  <div class="nav-sep"></div>
+  <a href="/api/v45/status" target="_blank">Status</a>
+  <a href="/health" target="_blank">Health</a>
+</nav>
+
+<div class="wrap">
+  <div class="page-header">
+    <div>
+      <div class="page-title">Market Intelligence Terminal</div>
+      <div class="page-sub">ES Futures &amp; SPX — 15-min candlesticks · EMA 8/21 · VWAP · HVBO · Gamma levels</div>
+    </div>
+    <div class="controls">
+      <button class="day-btn" data-d="1">1D</button>
+      <button class="day-btn active" data-d="2">2D</button>
+      <button class="day-btn" data-d="3">3D</button>
+      <button class="day-btn" data-d="5">5D</button>
+      <button class="refresh-btn" id="refreshBtn">↻ Refresh</button>
+      <span class="last-update" id="lastUpdate">--</span>
+    </div>
+  </div>
+
+  <div class="charts-row" id="chartsRow">
+    <div class="chart-panel" id="panelES">
+      <div class="panel-msg">Loading ES…</div>
+    </div>
+    <div class="chart-panel" id="panelSPX">
+      <div class="panel-msg">Loading SPX…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────────
+let activeDays = 2;
+let chartInstances = {};
+
+// ── Utilities ────────────────────────────────────────────────────────────────
+function fmt(v){ return v != null ? Number(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) : '--'; }
+function fmtV(v){ if(!v) return '--'; if(v>=1e6) return (v/1e6).toFixed(1)+'M'; if(v>=1e3) return (v/1e3).toFixed(0)+'K'; return v.toFixed(0); }
+
+function regimeClass(color){
+  return color === 'bullish' ? 'regime-bullish' :
+         color === 'bearish' ? 'regime-bearish' :
+         color === 'caution' ? 'regime-caution' : 'regime-neutral';
+}
+
+// ── Sidebar levels HTML ───────────────────────────────────────────────────────
+function sidebarHTML(d){
+  const card = (cls, label, val) =>
+    `<div class="level-card ${cls}">
+       <div class="level-card-label">${label}</div>
+       <div class="level-card-val">$${fmt(val)}</div>
+     </div>`;
+  return `
+    <div class="sidebar-title">Key Levels</div>
+    ${card('lc-resistance','Recent High ↑',d.recentHigh)}
+    ${card('lc-gamma','Gamma Flip ⚡',d.gammaFlip)}
+    ${card('lc-hvbo','HVBO High ▲',d.hvboHigh)}
+    ${card('lc-call','Call Wall ☑',d.callWall)}
+    ${card('lc-price','Current Close',d.currentClose)}
+    ${card('lc-hvbo','HVBO Low ▼',d.hvboLow)}
+    ${card('lc-support','Major Support ↓',d.majorSupport)}
+    ${card('lc-support','Secondary Sup.',d.secondarySupport)}
+    ${card('lc-put','Put Wall ☒',d.putWall)}
+  `;
+}
+
+// ── Build one chart panel ─────────────────────────────────────────────────────
+function buildPanel(panelId, data) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+
+  // Destroy any existing Chart.js instance
+  if (chartInstances[panelId]) {
+    chartInstances[panelId].destroy();
+    delete chartInstances[panelId];
+  }
+
+  const rc = regimeClass(data.regimeColor);
+  const dateRange = data.tradingDays && data.tradingDays.length
+    ? `${data.tradingDays[0]} – ${data.tradingDays[data.tradingDays.length-1]}`
+    : '';
+
+  panel.innerHTML = `
+    <div class="regime-bar">
+      <div>
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:700">MARKET REGIME</div>
+        <div class="regime-label ${rc}">${data.regime}</div>
+      </div>
+      <div class="strength-pill">${data.strengthLabel} · ${data.strength}/5</div>
+    </div>
+    <div class="symbol-head">
+      <div class="symbol-name">${data.symbol}</div>
+      <div class="symbol-price">$${fmt(data.currentClose)}</div>
+      <div class="symbol-date">${data.barInterval} · ${dateRange}</div>
+    </div>
+    <div class="chart-panel-inner">
+      <div class="chart-main">
+        <div class="chart-canvas-wrap">
+          <canvas id="canvas_${panelId}"></canvas>
+        </div>
+        <div class="chart-legend">
+          <div class="leg-item"><div class="leg-dot" style="background:#22c55e"></div>Bull candle</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#ef4444"></div>Bear candle</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#34d399;height:2px"></div>EMA 8</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#818cf8;height:2px"></div>EMA 21</div>
+          <div class="leg-item"><div class="leg-dot" style="background:#f59e0b;height:2px"></div>VWAP</div>
+        </div>
+      </div>
+      <div class="chart-sidebar">${sidebarHTML(data)}</div>
+    </div>
+  `;
+
+  const chart = data.chart || [];
+  if (!chart.length) return;
+
+  // Build Chart.js dataset
+  // candlestick dataset (financial plugin format: {x, o, h, l, c})
+  const candleData = chart.map((b, i) => ({
+    x: i,
+    o: b.open, h: b.high, l: b.low, c: b.close,
+  }));
+
+  const ema8Data  = chart.map((b, i) => b.ema8  != null ? {x:i, y:b.ema8}  : null).filter(Boolean);
+  const ema21Data = chart.map((b, i) => b.ema21 != null ? {x:i, y:b.ema21} : null).filter(Boolean);
+  const vwapData  = chart.map((b, i) => ({x:i, y:b.vwap}));
+
+  // Horizontal level lines
+  const n = chart.length;
+  const levelLine = (val, color, dash=[]) => ({
+    type: 'line',
+    data: [{x:0,y:val},{x:n-1,y:val}],
+    borderColor: color,
+    borderWidth: 1,
+    borderDash: dash,
+    pointRadius: 0,
+    fill: false,
+    tension: 0,
+    order: 10,
+  });
+
+  // HVBO shaded band (via two filled datasets)
+  const hvboHigh = data.hvboHigh;
+  const hvboLow  = data.hvboLow;
+
+  const xLabels = chart.map((_, i) => i);
+
+  const ctx = document.getElementById('canvas_' + panelId);
+  if (!ctx) return;
+
+  const inst = new Chart(ctx, {
+    type: 'candlestick',
+    data: {
+      labels: xLabels,
+      datasets: [
+        {
+          label: 'Price',
+          type: 'candlestick',
+          data: candleData,
+          color: {
+            up:   '#22c55e',
+            down: '#ef4444',
+            unchanged: '#8295b3',
+          },
+          borderColor: {
+            up:   '#22c55e',
+            down: '#ef4444',
+            unchanged: '#8295b3',
+          },
+          order: 1,
+        },
+        // HVBO band (filled between hvboLow and hvboHigh)
+        {
+          label: 'HVBO Band',
+          type: 'line',
+          data: chart.map((_,i) => ({x:i, y:hvboHigh})),
+          borderColor: 'rgba(167,139,250,0.35)',
+          backgroundColor: 'rgba(167,139,250,0.07)',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: '+1',
+          tension: 0,
+          order: 9,
+        },
+        {
+          label: 'HVBO Low',
+          type: 'line',
+          data: chart.map((_,i) => ({x:i, y:hvboLow})),
+          borderColor: 'rgba(167,139,250,0.35)',
+          backgroundColor: 'rgba(167,139,250,0.07)',
+          borderWidth: 1,
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+          order: 9,
+        },
+        // EMA 8
+        {
+          label: 'EMA 8',
+          type: 'line',
+          data: ema8Data,
+          borderColor: '#34d399',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.2,
+          order: 2,
+        },
+        // EMA 21
+        {
+          label: 'EMA 21',
+          type: 'line',
+          data: ema21Data,
+          borderColor: '#818cf8',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          fill: false,
+          tension: 0.2,
+          order: 3,
+        },
+        // VWAP
+        {
+          label: 'VWAP',
+          type: 'line',
+          data: vwapData,
+          borderColor: '#f59e0b',
+          borderWidth: 1.5,
+          borderDash: [4, 3],
+          pointRadius: 0,
+          fill: false,
+          tension: 0,
+          order: 4,
+        },
+        // Gamma Flip
+        levelLine(data.gammaFlip, 'rgba(245,158,11,0.6)', [6,3]),
+        // Call Wall
+        levelLine(data.callWall,  'rgba(34,197,94,0.5)',  [4,2]),
+        // Put Wall
+        levelLine(data.putWall,   'rgba(239,68,68,0.5)',  [4,2]),
+        // Resistance
+        levelLine(data.resistance,'rgba(239,68,68,0.35)', [2,2]),
+        // Major Support
+        levelLine(data.majorSupport,'rgba(239,68,68,0.35)',[2,2]),
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#0d141f',
+          borderColor: '#1c2940',
+          borderWidth: 1,
+          titleColor: '#e8f1fc',
+          bodyColor: '#8295b3',
+          callbacks: {
+            label(ctx) {
+              const raw = ctx.raw;
+              if (raw && raw.o != null) {
+                return `O: ${fmt(raw.o)}  H: ${fmt(raw.h)}  L: ${fmt(raw.l)}  C: ${fmt(raw.c)}`;
+              }
+              return ctx.dataset.label + ': ' + fmt(raw?.y ?? raw);
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          ticks: {
+            maxTicksLimit: 8,
+            color: '#5a6b87',
+            font: { size: 10, family: "'JetBrains Mono', monospace" },
+            callback(val) {
+              const b = chart[Math.round(val)];
+              return b ? b.time : '';
+            },
+          },
+          grid: { color: 'rgba(28,41,64,0.6)' },
+        },
+        y: {
+          position: 'right',
+          ticks: {
+            color: '#5a6b87',
+            font: { size: 10, family: "'JetBrains Mono', monospace" },
+            callback: v => '$' + fmt(v),
+          },
+          grid: { color: 'rgba(28,41,64,0.6)' },
+        },
+      },
+    },
+  });
+
+  chartInstances[panelId] = inst;
+}
+
+// ── Fetch + render one panel ──────────────────────────────────────────────────
+async function loadPanel(panelId, ticker) {
+  const panel = document.getElementById(panelId);
+  if (!panel) return;
+  panel.innerHTML = `<div class="panel-msg">Loading ${ticker}…</div>`;
+  try {
+    const r = await fetch('/api/chart_data?ticker=' + ticker + '&days=' + activeDays, {cache:'no-store'});
+    const data = await r.json();
+    if (!r.ok || data.error) {
+      panel.innerHTML = `<div class="panel-msg err">Error loading ${ticker}: ${data.error || 'HTTP '+r.status}</div>`;
+      return;
+    }
+    buildPanel(panelId, data);
+  } catch(e) {
+    panel.innerHTML = `<div class="panel-msg err">Network error loading ${ticker}: ${e.message}</div>`;
+  }
+}
+
+// ── Refresh both charts ───────────────────────────────────────────────────────
+async function loadAll() {
+  document.getElementById('refreshBtn').textContent = '↻ Loading…';
+  document.getElementById('lastUpdate').textContent = '';
+  await Promise.all([
+    loadPanel('panelES',  'ES'),
+    loadPanel('panelSPX', 'SPX'),
+  ]);
+  document.getElementById('refreshBtn').textContent = '↻ Refresh';
+  document.getElementById('lastUpdate').textContent =
+    'Updated: ' + new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}) + ' ET';
+}
+
+// ── Day selector buttons ──────────────────────────────────────────────────────
+document.querySelectorAll('.day-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeDays = parseInt(btn.dataset.d);
+    loadAll();
+  });
+});
+document.getElementById('refreshBtn').addEventListener('click', loadAll);
+
+// Initial load + auto-refresh every 3 minutes during session hours
+loadAll();
+setInterval(loadAll, 180000);
+</script>
+</body>
+</html>"""
+
+
+@app.route("/chart")
+def chart_dashboard():
+    """Market Intelligence Terminal — ES and SPX side by side."""
+    return render_template_string(CHART_HTML)
 
