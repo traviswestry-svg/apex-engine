@@ -252,6 +252,26 @@ def safe_float(x: Any, default: float = 0.0) -> float:
         return default
 
 
+
+
+def normalize_price_level_to_spot(level: Any, spot: Any) -> Optional[float]:
+    """Normalize compressed index levels to the same scale as the live spot price.
+
+    QuantData can return SPX index strikes/walls in compressed chain notation
+    on some responses (example: 75, 730, 67.5) while the chart is on the
+    full SPX scale (example: 7354). This function does not invent a level; it
+    selects the power-of-10 representation closest to the live spot.
+    """
+    raw = safe_float(level, 0.0)
+    px = safe_float(spot, 0.0)
+    if raw <= 0:
+        return None
+    if px <= 0 or px < 1000:
+        return raw
+    candidates = [raw, raw * 10.0, raw * 100.0, raw * 1000.0]
+    best = min(candidates, key=lambda v: abs(v - px))
+    return round(best, 2)
+
 def safe_get_json(url: str, params: Optional[dict] = None, headers: Optional[dict] = None, timeout: Optional[int] = None) -> Optional[dict]:
     params = dict(params or {})
     if "polygon.io" in url and POLYGON_API_KEY:
@@ -669,6 +689,8 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
                 strike = safe_float(strike_raw, None)
                 if strike is None:
                     continue
+                normalized_strike = normalize_price_level_to_spot(strike, stock_price)
+                strike = normalized_strike if normalized_strike is not None else strike
                 bucket = by_strike.setdefault(strike, {"call": 0.0, "put": 0.0, "net": 0.0})
                 call_exp = safe_float(cell.get("callExposure"), 0.0)
                 put_exp = safe_float(cell.get("putExposure"), 0.0)
@@ -4577,16 +4599,21 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     call_wall    = round(round(current_close / step) * step + step, 2)
     put_wall     = round(round(current_close / step) * step - step, 2)
 
-    # Try to get real gamma levels from QuantData if available
+    # Try to get real gamma levels from QuantData if available.
+    # If the ES panel is actually using the SPX fallback/proxy, force SPX GEX.
     try:
-        gex_ticker = "SPX" if spx_proxy else "ES"
+        using_spx_scale = (polygon_ticker == "I:SPX") or ("SPX" in display_name.upper()) or spx_proxy
+        gex_ticker = "SPX" if using_spx_scale else "ES"
         flow_snap  = quantdata_flow_snapshot(gex_ticker)
-        if flow_snap.get("call_wall"):
-            call_wall  = safe_float(flow_snap["call_wall"], call_wall)
-        if flow_snap.get("put_wall"):
-            put_wall   = safe_float(flow_snap["put_wall"], put_wall)
-        if flow_snap.get("zero_gamma"):
-            gamma_flip = safe_float(flow_snap["zero_gamma"], gamma_flip)
+        normalized_call = normalize_price_level_to_spot(flow_snap.get("call_wall"), current_close)
+        normalized_put  = normalize_price_level_to_spot(flow_snap.get("put_wall"), current_close)
+        normalized_zero = normalize_price_level_to_spot(flow_snap.get("zero_gamma"), current_close)
+        if normalized_call:
+            call_wall = normalized_call
+        if normalized_put:
+            put_wall = normalized_put
+        if normalized_zero:
+            gamma_flip = normalized_zero
     except Exception:
         pass
 
@@ -4738,7 +4765,8 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .strength-pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surf2);color:var(--muted);font-family:var(--mono)}
 
 /* Canvas */
-.chart-canvas-wrap{position:relative;flex:1;min-height:220px;height:auto}
+.chart-canvas-wrap{position:relative;flex:1;min-height:220px;height:auto;cursor:grab;touch-action:none}
+.chart-canvas-wrap:active{cursor:grabbing}
 canvas{display:block;width:100%!important;height:100%!important}
 
 /* Legend */
@@ -4866,6 +4894,52 @@ function sidebarHTML(d){
   `;
 }
 
+// ── Zoom / pan helpers ───────────────────────────────────────────────────────
+function clamp(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
+
+function visibleWindow(chartInst, n){
+  const xs = chartInst.options.scales.x || {};
+  const min = Math.floor(xs.min == null ? 0 : Number(xs.min));
+  const max = Math.ceil(xs.max == null ? n - 1 : Number(xs.max));
+  return {min: clamp(min, 0, n - 1), max: clamp(max, 0, n - 1)};
+}
+
+function rescaleYToVisible(chartInst, bars, data){
+  if (!chartInst || !bars || !bars.length) return;
+  const w = visibleWindow(chartInst, bars.length);
+  const slice = bars.slice(w.min, w.max + 1);
+  if (!slice.length) return;
+  let lows = slice.map(b => Number(b.low)).filter(Number.isFinite);
+  let highs = slice.map(b => Number(b.high)).filter(Number.isFinite);
+  [data.hvboHigh, data.hvboLow, data.gammaFlip, data.callWall, data.putWall, data.resistance, data.majorSupport].forEach(v => {
+    const n = Number(v);
+    if (Number.isFinite(n)) { lows.push(n); highs.push(n); }
+  });
+  const lo = Math.min(...lows), hi = Math.max(...highs);
+  const pad = Math.max((hi - lo) * 0.12, Number(data.currentClose || hi || 1) * 0.0015, 1);
+  chartInst.options.scales.y.min = lo - pad;
+  chartInst.options.scales.y.max = hi + pad;
+}
+
+function setXWindow(chartInst, bars, min, max, updateMode='none'){
+  if (!chartInst || !bars || !bars.length) return;
+  const n = bars.length;
+  const span = Math.max(10, max - min);
+  min = clamp(min, 0, Math.max(0, n - span));
+  max = clamp(min + span, span, n - 1);
+  chartInst.options.scales.x.min = min;
+  chartInst.options.scales.x.max = max;
+  rescaleYToVisible(chartInst, bars, chartInst.$apexData || {});
+  chartInst.update(updateMode);
+}
+
+function panX(chartInst, bars, direction){
+  const w = visibleWindow(chartInst, bars.length);
+  const span = Math.max(10, w.max - w.min);
+  const step = Math.max(5, Math.round(span * 0.35));
+  setXWindow(chartInst, bars, w.min + direction * step, w.max + direction * step);
+}
+
 // ── Build one chart panel ─────────────────────────────────────────────────────
 function buildPanel(panelId, data) {
   const panel = document.getElementById(panelId);
@@ -4900,7 +4974,9 @@ function buildPanel(panelId, data) {
         <div class="chart-tools">
           <button class="chart-tool-btn" data-reset="${panelId}">Reset Zoom</button>
           <button class="chart-tool-btn" data-fit="${panelId}">Fit Latest</button>
-          <span class="chart-help">wheel/trackpad zoom · drag to pan</span>
+          <button class="chart-tool-btn" data-left="${panelId}">◀</button>
+          <button class="chart-tool-btn" data-right="${panelId}">▶</button>
+          <span class="chart-help">wheel zoom · drag pan · Shift+wheel scroll</span>
         </div>
         <div class="chart-canvas-wrap">
           <canvas id="canvas_${panelId}"></canvas>
@@ -5057,9 +5133,9 @@ function buildPanel(panelId, data) {
       plugins:{
         legend:{display:false},
         zoom:{
-          limits:{x:{min:0,max:n-1,minRange:Math.max(20, Math.floor(n*0.08))}},
-          pan:{enabled:true, mode:'x'},
-          zoom:{wheel:{enabled:true, speed:0.08}, pinch:{enabled:true}, drag:{enabled:true, backgroundColor:'rgba(56,189,248,0.12)', borderColor:'rgba(56,189,248,0.35)', borderWidth:1}, mode:'x'}
+          limits:{x:{min:0,max:n-1,minRange:Math.max(12, Math.floor(n*0.04))}},
+          pan:{enabled:true, mode:'x', threshold:4, onPan({chart}){ rescaleYToVisible(chart, chart.$apexBars || [], chart.$apexData || {}); chart.update('none'); }},
+          zoom:{wheel:{enabled:true, speed:0.08, modifierKey:null}, pinch:{enabled:true}, drag:{enabled:false}, mode:'x', onZoom({chart}){ rescaleYToVisible(chart, chart.$apexBars || [], chart.$apexData || {}); chart.update('none'); }}
         },
         tooltip:{
           backgroundColor:'#0d141f', borderColor:'#1c2940', borderWidth:1,
@@ -5108,17 +5184,33 @@ function buildPanel(panelId, data) {
     }
   });
 
+  inst.$apexBars = chart;
+  inst.$apexData = data;
   chartInstances[panelId] = inst;
+  rescaleYToVisible(inst, chart, data);
+  inst.update('none');
 
   const resetBtn = panel.querySelector(`[data-reset="${panelId}"]`);
   const fitBtn = panel.querySelector(`[data-fit="${panelId}"]`);
-  if (resetBtn) resetBtn.addEventListener('click', () => inst.resetZoom ? inst.resetZoom() : null);
+  const leftBtn = panel.querySelector(`[data-left="${panelId}"]`);
+  const rightBtn = panel.querySelector(`[data-right="${panelId}"]`);
+  if (resetBtn) resetBtn.addEventListener('click', () => { setXWindow(inst, chart, 0, n - 1); });
   if (fitBtn) fitBtn.addEventListener('click', () => {
-    const visible = activeTf === 1 ? 180 : activeTf === 5 ? 156 : 120;
+    const visible = activeTf === 1 ? 220 : activeTf === 5 ? 180 : 140;
     const max = n - 1;
     const min = Math.max(0, max - visible);
-    if (inst.zoomScale) inst.zoomScale('x', {min, max}, 'none');
+    setXWindow(inst, chart, min, max);
   });
+  if (leftBtn) leftBtn.addEventListener('click', () => panX(inst, chart, -1));
+  if (rightBtn) rightBtn.addEventListener('click', () => panX(inst, chart, 1));
+  const canvasWrap = panel.querySelector('.chart-canvas-wrap');
+  if (canvasWrap) {
+    canvasWrap.addEventListener('wheel', (ev) => {
+      if (!ev.shiftKey) return;
+      ev.preventDefault();
+      panX(inst, chart, ev.deltaY > 0 ? 1 : -1);
+    }, {passive:false});
+  }
 }
 
 // ── Fetch + render one panel ──────────────────────────────────────────────────
