@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.0.7_FUTURES_API_FIX"
+VERSION = "6.0.8_SCANNER_RESULTS_PATCH"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -2891,13 +2891,18 @@ def api_flow_ticker(ticker: str):
 
 @app.route("/scanner")
 def scanner_dashboard():
-    """Legacy scanner dashboard with manual scan button."""
-    return render_template("dashboard.html")
+    """Legacy scanner dashboard with manual scan button and current scanner STATE.
+
+    The dashboard.html template expects a `data` object for its initial JSON
+    payload. Rendering it without that object can raise a template/tojson error
+    and produce a 500 page. Always pass a STATE snapshot.
+    """
+    with STATE_LOCK:
+        data = dict(STATE)
+    return render_template("dashboard.html", data=data)
 
 @app.route("/")
 def dashboard():
-    with STATE_LOCK:
-        data = dict(STATE)
     return redirect("/apex_os", code=302)
 
 @app.route("/dashboard.json")
@@ -2909,6 +2914,26 @@ def dashboard_json():
 def api_status():
     with STATE_LOCK:
         return jsonify(dict(STATE))
+
+
+@app.route("/api/scanner_ideas")
+def api_scanner_ideas():
+    """Compact scanner results for the Institutional OS panel."""
+    with STATE_LOCK:
+        ideas = list(STATE.get("ideas", []))
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "session": STATE.get("session"),
+            "updated_at": STATE.get("updated_at"),
+            "updated_at_et": STATE.get("updated_at_et"),
+            "scan_in_progress": STATE.get("scan_in_progress"),
+            "last_scan_status": STATE.get("last_scan_status"),
+            "last_error": STATE.get("last_error"),
+            "idea_count": len(ideas),
+            "ideas": ideas,
+        })
+
 
 @app.route("/api/run", methods=["GET", "POST"])
 def api_run():

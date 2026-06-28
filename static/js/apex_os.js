@@ -638,42 +638,16 @@ function initTickerSelect() {
       activeTicker = btn.dataset.ticker;
       document.querySelectorAll('.ticker-btn').forEach(b => b.classList.toggle('active', b.dataset.ticker === activeTicker));
       loadOS();
+  loadScannerIdeas();
     });
   });
-}
-
-
-/* ── Manual scanner trigger ──────────────────────────────────────────────── */
-async function runManualScan() {
-  const btn = $('scanBtn');
-  const status = $('scanStatus');
-  const oldText = btn ? btn.textContent : '';
-  try {
-    if (btn) { btn.disabled = true; btn.textContent = 'Scanning...'; }
-    if (status) { status.textContent = 'Scanner running...'; status.className = 'scan-status scanning'; }
-    const r = await fetch('/api/run', { method: 'POST', cache: 'no-store' });
-    const data = await r.json();
-    if (!r.ok || data.ok === false) throw new Error(data.status || data.error || ('HTTP ' + r.status));
-    if (status) { status.textContent = data.status || ('Scan complete · ideas ' + (data.ideas ?? '--')); status.className = 'scan-status ok'; }
-    await loadOS();
-  } catch (e) {
-    if (status) { status.textContent = 'Scan failed: ' + e.message; status.className = 'scan-status error'; }
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = oldText || '⚡ Run Scan'; }
-  }
-}
-
-function initScanBtn() {
-  const btn = $('scanBtn');
-  if (!btn) return;
-  btn.addEventListener('click', runManualScan);
 }
 
 /* ── Refresh button ───────────────────────────────────────────────────────── */
 function initRefreshBtn() {
   const btn = $('refreshBtn');
   if (!btn) return;
-  btn.addEventListener('click', loadOS);
+  btn.addEventListener('click', async () => { await loadOS(); await loadScannerIdeas(); });
 }
 
 /* ── Init ─────────────────────────────────────────────────────────────────── */
@@ -682,11 +656,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initReplayControls();
   initTickerSelect();
   initRefreshBtn();
-  initScanBtn();
 
   // Activate first tab
   document.querySelectorAll('.tab-btn')[0]?.click();
 
   loadOS();
+  loadScannerIdeas();
   setInterval(loadOS, AUTO_INTERVAL);
+setInterval(loadScannerIdeas, 30000);
 });

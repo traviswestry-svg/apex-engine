@@ -232,10 +232,20 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .h-no{background:rgba(239,68,68,.06);border-color:rgba(239,68,68,.2)} .h-no .heat-ticker,.h-no .heat-score,.h-no .heat-action{color:var(--red)}
 .version-tag{font-family:var(--mono);font-size:9px;color:var(--faint);margin-left:auto}
 
-.btn-amber{border-color:rgba(245,158,11,.45);color:var(--amber);background:rgba(245,158,11,.06)}
-.btn-amber:hover{background:rgba(245,158,11,.14);color:#ffd48a}
-.btn:disabled{opacity:.55;cursor:not-allowed}
-.scan-status{font-family:var(--mono);font-size:10px;color:var(--faint);min-width:130px;text-align:left}
-.scan-status.scanning{color:var(--amber)}
-.scan-status.ok{color:var(--green)}
-.scan-status.error{color:var(--red)}
+
+/* Scanner qualified ideas panel */
+.scanner-ideas-panel{min-height:52px}
+.scanner-summary{font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:8px}
+.scanner-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px}
+.scanner-idea{border:1px solid var(--bdr);background:rgba(15,23,42,.78);border-radius:10px;padding:10px}
+.scanner-idea.scanner-call{border-color:rgba(34,197,94,.35)}
+.scanner-idea.scanner-put{border-color:rgba(239,68,68,.35)}
+.scanner-idea-top{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:6px}
+.scanner-ticker{font-family:var(--mono);font-weight:800;color:var(--text)}
+.scanner-side{font-family:var(--mono);font-size:10px;color:var(--faint);margin-left:6px}
+.scanner-grade{font-family:var(--mono);font-size:11px;color:var(--blue);font-weight:800}
+.scanner-meta{display:flex;flex-wrap:wrap;gap:6px;font-size:10px;color:var(--muted);margin-bottom:6px}
+.scanner-meta span{border:1px solid rgba(148,163,184,.16);background:rgba(148,163,184,.06);border-radius:999px;padding:3px 6px}
+.scanner-notes{font-size:10px;color:var(--faint);line-height:1.45}
+.scanner-empty{font-size:11px;color:var(--muted);border:1px dashed rgba(148,163,184,.22);border-radius:10px;padding:12px;background:rgba(15,23,42,.45)}
+.scanner-error{color:var(--red);border-color:rgba(239,68,68,.35)}
