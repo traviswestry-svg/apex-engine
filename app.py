@@ -2945,7 +2945,7 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 
 <div class="topbar">
   <div>
-    <div class="logo">APEX <span>Institutional OS v4.5</span></div>
+    <div class="logo">APEX <span>Institutional OS v5.1</span></div>
   </div>
   <div class="top-meta">
     <span><span class="dot-live"></span><span id="clockEl">--:--:-- ET</span></span>
@@ -4025,8 +4025,72 @@ def api_institutional_os():
                 except Exception:
                     result["heatmap"] = None
             result["session"] = session_ctx
-            result["version"] = VERSION_45
             result["engine_mode"] = "NINE_ENGINE_PIPELINE"
+
+            # APEX 5.1 dashboard compatibility contract. The engine returns the
+            # institutional OS fields directly; this normalizes them into the
+            # older dashboard sections without discarding the new ribbon/ICI fields.
+            flow_intel = result.get("flow_intelligence", {}) or {}
+            gamma = result.get("gamma_regime", {}) or {}
+            structure = result.get("structure", {}) or {}
+            risk = result.get("risk", {}) or {}
+            consensus = result.get("consensus", {}) or {}
+            ribbon = result.get("ribbon", {}) or {}
+            ici = result.get("ici", {}) or {}
+
+            result.setdefault("flow", {
+                "ticker": ticker,
+                "bias": "CALL" if consensus.get("consensus_direction") == "BULLISH" else "PUT" if consensus.get("consensus_direction") == "BEARISH" else "NEUTRAL",
+                "decision_color": "GREEN" if result.get("decision_state") in ("READY", "ENTER_CALL", "ENTER_PUT") else "YELLOW" if str(result.get("decision_state", "")).startswith("WATCH") else "RED",
+                "flow_score": flow_intel.get("flow_score"),
+                "order_flow_score": flow_intel.get("order_flow_score"),
+                "net_premium": ribbon.get("net_flow"),
+                "call_premium": ribbon.get("call_flow"),
+                "put_premium": ribbon.get("put_flow"),
+                "sweep_count": flow_intel.get("sweep_count"),
+                "flow_momentum": flow_intel.get("flow_momentum"),
+                "gex_score": gamma.get("gex_score"),
+                "gamma_regime": gamma.get("regime_label"),
+                "call_wall": gamma.get("call_wall"),
+                "put_wall": gamma.get("put_wall"),
+                "zero_gamma": gamma.get("zero_gamma"),
+                "stock_price": ribbon.get("spx_price") or structure.get("current_price"),
+                "vwap": structure.get("vwap"),
+                "poc": structure.get("session_poc"),
+                "institutional_alignment": result.get("confidence"),
+                "approved_side": risk.get("approved_side"),
+                "notes": flow_intel.get("notes", [])[:6],
+            })
+            result["decision"] = {
+                **(result.get("decision") or {}),
+                "state": result.get("decision_state"),
+                "priority": ici.get("ici_color"),
+                "message": result.get("executive_summary"),
+                "action": consensus.get("action"),
+                "approved_side": risk.get("approved_side"),
+                "institutional_alignment": result.get("confidence"),
+                "confidence": result.get("confidence"),
+                "grade": result.get("grade"),
+                "readiness": result.get("readiness"),
+                "fresh_signal": (result.get("execution") or {}).get("signal_fresh"),
+                "signal_seconds_remaining": (result.get("execution") or {}).get("signal_seconds_remaining"),
+                "signal_ttl_seconds": ASSISTANT_SIGNAL_VALID_SECONDS,
+                "checklist": [
+                    {"label": "ICI >= 70", "ok": safe_float(result.get("confidence"), 0) >= 70},
+                    {"label": "Consensus directional", "ok": consensus.get("consensus_direction") in ("BULLISH", "BEARISH")},
+                    {"label": "Fresh Pine confirmation", "ok": (result.get("execution") or {}).get("signal_matches_flow") is True},
+                    {"label": "No A+ divergence block", "ok": flow_intel.get("divergence_type") != "A_PLUS"},
+                ],
+                "trade_plan": {
+                    "recommended_contract": risk.get("contract_hint"),
+                    "entry_zone": risk.get("entry_zone"),
+                    "stop_price": risk.get("stop"),
+                    "target_1": risk.get("target1"),
+                    "target_2": risk.get("target2"),
+                    "rr_to_t1": risk.get("rr_to_t1"),
+                    "execution_summary": consensus.get("action"),
+                },
+            }
 
             # Update Telegram if there's an ENTER signal
             recommendation = result.get("recommendation", "")

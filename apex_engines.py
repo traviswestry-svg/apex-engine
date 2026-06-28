@@ -2194,6 +2194,185 @@ def _build_ici_status(
         )
 
 
+
+
+# ===========================================================================
+# APEX 5.1 DECISION STATE / RIBBON / TRADE COACH LAYER
+# Production dashboard contract for Institutional OS.
+# This layer does not invent data; it normalizes outputs already produced by
+# the nine engines into the fields the live dashboard needs.
+# ===========================================================================
+
+VALID_DECISION_STATES = {
+    "PREPARING", "WATCH_CALLS", "WATCH_PUTS", "READY", "ENTER_CALL", "ENTER_PUT",
+    "HOLD", "SCALE_OUT", "EXIT", "NO_TRADE",
+}
+
+
+def _grade_from_confidence(value: float) -> str:
+    v = _safe_float(value, 0.0)
+    if v >= 92: return "A+"
+    if v >= 85: return "A"
+    if v >= 78: return "B+"
+    if v >= 70: return "B"
+    if v >= 60: return "C"
+    return "D"
+
+
+def _readiness_from_state(state: str, confidence: float, execution: Dict[str, Any]) -> str:
+    if state in ("ENTER_CALL", "ENTER_PUT"):
+        return "EXECUTION_READY"
+    if state == "READY":
+        return "READY_WAITING_FOR_TRIGGER"
+    if state in ("WATCH_CALLS", "WATCH_PUTS"):
+        return "WATCHING_FOR_CONFIRMATION"
+    if state in ("HOLD", "SCALE_OUT", "EXIT"):
+        return "POSITION_MANAGEMENT"
+    if confidence < 50:
+        return "NOT_READY"
+    if execution.get("execution_state") == "OUTSIDE_MARKET_HOURS":
+        return "SESSION_NOT_TRADEABLE"
+    return "PREPARING"
+
+
+def derive_decision_state(consensus: Dict[str, Any], execution: Dict[str, Any], risk: Dict[str, Any], ici: Dict[str, Any]) -> str:
+    recommendation = str(consensus.get("recommendation") or "").upper()
+    direction = str(consensus.get("consensus_direction") or "NEUTRAL").upper()
+    confidence = _safe_float(ici.get("ici"), 0.0)
+    exec_state = str(execution.get("execution_state") or "").upper()
+
+    if "NO_TRADE" in recommendation or "DIVERGENCE" in recommendation or direction == "NEUTRAL":
+        return "NO_TRADE"
+    if exec_state == "SIGNAL_REJECTED_FLOW_MISMATCH":
+        return "NO_TRADE"
+    if exec_state.startswith("CONFIRMED_CALL") and direction == "BULLISH" and confidence >= 70:
+        return "ENTER_CALL"
+    if exec_state.startswith("CONFIRMED_PUT") and direction == "BEARISH" and confidence >= 70:
+        return "ENTER_PUT"
+    if recommendation == "ENTER_CALL" and confidence >= 72:
+        return "READY"
+    if recommendation == "ENTER_PUT" and confidence >= 72:
+        return "READY"
+    if direction == "BULLISH" and confidence >= 50:
+        return "WATCH_CALLS"
+    if direction == "BEARISH" and confidence >= 50:
+        return "WATCH_PUTS"
+    return "PREPARING"
+
+
+def build_engine_contributions(*, market_regime: Dict[str, Any], gamma_regime: Dict[str, Any], flow: Dict[str, Any], structure: Dict[str, Any], trend: Dict[str, Any], execution: Dict[str, Any], consensus: Dict[str, Any], ici: Dict[str, Any]) -> List[Dict[str, Any]]:
+    vote_by_engine = {str(v.get("engine", "")).upper(): v for v in consensus.get("vote_table", []) if isinstance(v, dict)}
+    sources = [
+        ("Market Regime", "MARKET_REGIME", market_regime.get("composite_score"), market_regime.get("regime"), market_regime.get("notes", [])),
+        ("Gamma", "GAMMA_REGIME", gamma_regime.get("gex_score"), gamma_regime.get("regime_display"), gamma_regime.get("notes", [])),
+        ("Flow Intelligence", "FLOW", flow.get("intelligence_score"), flow.get("flow_momentum"), flow.get("notes", [])),
+        ("Structure", "STRUCTURE", structure.get("structure_score"), structure.get("structure_bias"), structure.get("notes", [])),
+        ("Trend", "TREND", trend.get("trend_score"), trend.get("trend_direction"), trend.get("notes", [])),
+        ("Execution", "EXECUTION", execution.get("signal_score"), execution.get("execution_state"), execution.get("notes", [])),
+    ]
+    out: List[Dict[str, Any]] = []
+    components = ici.get("components", {}) if isinstance(ici, dict) else {}
+    for label, key, score, status, notes in sources:
+        vote = vote_by_engine.get(key, {})
+        out.append({
+            "engine": key.lower(),
+            "label": label,
+            "score": round(_safe_float(score, 0.0), 1) if score is not None else None,
+            "status": status,
+            "vote": vote.get("vote"),
+            "weight": vote.get("weight"),
+            "strength": vote.get("strength"),
+            "contribution": vote.get("conviction_contribution"),
+            "ici_component": components.get("flow_momentum") if key == "FLOW" else components.get("gamma_stability") if key == "GAMMA_REGIME" else components.get("freshness") if key == "EXECUTION" else components.get("conviction"),
+            "notes": list(notes or [])[:3],
+        })
+    return out
+
+
+def build_status_ribbon(*, ticker: str, flow_snapshot: Dict[str, Any], gamma_regime: Dict[str, Any], flow: Dict[str, Any], structure: Dict[str, Any], ici: Dict[str, Any], decision_state: str) -> Dict[str, Any]:
+    price = None
+    for src in (flow_snapshot, structure, flow):
+        if isinstance(src, dict):
+            price = src.get("stock_price") or src.get("current_price") or src.get("price") or price
+    call_premium = _safe_float(flow_snapshot.get("call_premium"), 0.0)
+    put_premium = _safe_float(flow_snapshot.get("put_premium"), 0.0)
+    net_flow = _safe_float(flow_snapshot.get("net_premium"), call_premium - put_premium)
+    if net_flow == 0 and (call_premium or put_premium):
+        net_flow = call_premium - put_premium
+    return {
+        "ticker": ticker,
+        "spx_price": round(_safe_float(price), 2) if price is not None else None,
+        "call_flow": round(call_premium, 0),
+        "put_flow": round(put_premium, 0),
+        "net_flow": round(net_flow, 0),
+        "flow_momentum": flow.get("flow_momentum"),
+        "gamma_regime": gamma_regime.get("regime_display") or gamma_regime.get("regime_label"),
+        "call_wall": gamma_regime.get("call_wall"),
+        "put_wall": gamma_regime.get("put_wall"),
+        "zero_gamma": gamma_regime.get("zero_gamma"),
+        "vwap": structure.get("vwap"),
+        "poc": structure.get("session_poc") or structure.get("poc"),
+        "institutional_confidence": ici.get("ici"),
+        "grade": _grade_from_confidence(_safe_float(ici.get("ici"), 0.0)),
+        "decision": decision_state,
+        "updated_at_et": _now_et().strftime("%H:%M:%S ET"),
+    }
+
+
+def build_trade_coach(*, decision_state: str, consensus: Dict[str, Any], execution: Dict[str, Any], risk: Dict[str, Any], gamma_regime: Dict[str, Any], flow: Dict[str, Any], structure: Dict[str, Any], ici: Dict[str, Any]) -> Dict[str, Any]:
+    confidence = _safe_float(ici.get("ici"), 0.0)
+    side = risk.get("approved_side") or ("CALL" if consensus.get("consensus_direction") == "BULLISH" else "PUT" if consensus.get("consensus_direction") == "BEARISH" else "NONE")
+    blockers: List[str] = []
+    if execution.get("execution_state") in ("WAITING_FOR_PINE", "SIGNAL_EXPIRED"):
+        blockers.append("Fresh Pine confirmation missing")
+    if flow.get("divergence_type") == "A_PLUS":
+        blockers.append(f"A+ {flow.get('divergence_direction')} flow divergence active")
+    if gamma_regime.get("flip_risk"):
+        blockers.append("Price is near zero-gamma flip; regime can change fast")
+    if confidence < 50:
+        blockers.append("Institutional Confidence below 50")
+
+    if decision_state in ("ENTER_CALL", "ENTER_PUT"):
+        action = f"Enter {side.lower()} only within the planned zone; manage from the stop and targets."
+    elif decision_state == "READY":
+        action = f"Setup is ready for {side.lower()}s. Wait for fresh Pine confirmation before entering."
+    elif decision_state in ("WATCH_CALLS", "WATCH_PUTS"):
+        action = f"Watch {side.lower()}s, but do not front-run confirmation."
+    elif decision_state == "NO_TRADE":
+        action = "No trade. Wait for flow, structure, gamma, and execution to align."
+    else:
+        action = "Prepare only. Let the engines build cleaner alignment."
+
+    return {
+        "state": decision_state,
+        "action": action,
+        "approved_side": side,
+        "contract_hint": risk.get("contract_hint"),
+        "entry_zone": risk.get("entry_zone"),
+        "stop": risk.get("stop"),
+        "target1": risk.get("target1"),
+        "target2": risk.get("target2"),
+        "gamma_management": gamma_regime.get("trade_rules", {}).get("expected_behavior"),
+        "blockers": blockers,
+        "next_confirmation": "Fresh Pine trigger matching institutional side" if execution.get("execution_state") != f"CONFIRMED_{side}" and side in ("CALL", "PUT") else "Manage active decision from risk plan",
+    }
+
+
+def build_story_timeline(story: Dict[str, Any]) -> List[Dict[str, Any]]:
+    timeline: List[Dict[str, Any]] = []
+    for idx, chapter in enumerate(story.get("chapters", []) if isinstance(story, dict) else [], start=1):
+        if not isinstance(chapter, dict):
+            continue
+        timeline.append({
+            "step": idx,
+            "title": chapter.get("title") or chapter.get("chapter") or f"Step {idx}",
+            "text": chapter.get("text") or chapter.get("narrative") or chapter.get("summary") or "",
+        })
+    if not timeline and story.get("executive_summary"):
+        timeline.append({"step": 1, "title": "Institutional Story", "text": story.get("executive_summary")})
+    return timeline
+
+
 # ===========================================================================
 # MASTER PIPELINE FUNCTION
 # Runs all nine engines in order and returns the full institutional OS state.
@@ -2351,8 +2530,43 @@ def build_institutional_decision(
         signal_ttl_seconds=signal_ttl_seconds,
     )
 
+    decision_state = derive_decision_state(consensus, execution, risk, ici)
+    confidence_value = _safe_float(ici.get("ici"), 0.0)
+    grade = _grade_from_confidence(confidence_value)
+    readiness = _readiness_from_state(decision_state, confidence_value, execution)
+    engine_contributions = build_engine_contributions(
+        market_regime=market_regime,
+        gamma_regime=gamma_regime,
+        flow=flow_intelligence,
+        structure=structure,
+        trend=trend,
+        execution=execution,
+        consensus=consensus,
+        ici=ici,
+    )
+    ribbon = build_status_ribbon(
+        ticker=ticker,
+        flow_snapshot=flow_snapshot,
+        gamma_regime=gamma_regime,
+        flow=flow_intelligence,
+        structure=structure,
+        ici=ici,
+        decision_state=decision_state,
+    )
+    trade_coach = build_trade_coach(
+        decision_state=decision_state,
+        consensus=consensus,
+        execution=execution,
+        risk=risk,
+        gamma_regime=gamma_regime,
+        flow=flow_intelligence,
+        structure=structure,
+        ici=ici,
+    )
+    story_timeline = build_story_timeline(story)
+
     return {
-        "version": "5.0.0_INSTITUTIONAL_OS",
+        "version": "5.1.0_INSTITUTIONAL_OS",
         "ticker": ticker,
         "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "updated_at_et": _now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
@@ -2368,6 +2582,24 @@ def build_institutional_decision(
         "story": story,
         # Institutional Confidence Index — the primary dashboard number
         "ici": ici,
+        "confidence": confidence_value,
+        "confidence_pct": confidence_value,
+        "grade": grade,
+        "readiness": readiness,
+        "decision_state": decision_state,
+        "decision": {
+            "state": decision_state,
+            "confidence": confidence_value,
+            "grade": grade,
+            "readiness": readiness,
+            "approved_side": risk.get("approved_side"),
+            "recommendation": consensus.get("recommendation"),
+            "action": consensus.get("action"),
+        },
+        "engine_contributions": engine_contributions,
+        "ribbon": ribbon,
+        "trade_coach": trade_coach,
+        "story_timeline": story_timeline,
         # Top-level convenience fields for the dashboard
         "recommendation": consensus.get("recommendation"),
         "consensus_label": consensus.get("consensus_label"),
