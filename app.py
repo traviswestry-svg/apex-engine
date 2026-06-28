@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.0.6_ROUTE_VERSION_HEALTH_PATCH"
+VERSION = "6.0.7_FUTURES_API_FIX"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -3435,43 +3435,89 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
     return f"{base}{code}{year2}"  # e.g. ESU26
 
 
+def _futures_fetch_bars(ticker: str, days: int, multiplier: int) -> List[dict]:
+    """
+    Fetch intraday bars from the Polygon/Massive Futures API.
+
+    Futures use a completely different endpoint from stocks/indices:
+      GET https://api.polygon.io/futures/v1/aggs/{ticker}
+          ?resolution=5min
+          &window_start.gte=YYYY-MM-DD
+          &window_start.lte=YYYY-MM-DD
+          &limit=50000
+          &sort=window_start.asc
+
+    Response fields: open/high/low/close/volume/window_start (nanoseconds).
+    NOT the same as the stocks /v2/aggs endpoint (which uses t in ms).
+
+    Futures Basic plan ($0/m): access granted, 8-hour historical delay, 2-year history.
+    """
+    today = now_et().date()
+    day_buffer = max(days * 4, 20) if multiplier >= 5 else max(days * 3, 10)
+    start = today - dt.timedelta(days=day_buffer)
+    end   = today + dt.timedelta(days=1)
+
+    url = f"https://api.polygon.io/futures/v1/aggs/{ticker}"
+    params = {
+        "resolution":       f"{multiplier}min",
+        "window_start.gte": str(start),
+        "window_start.lte": str(end),
+        "limit":            50000,
+        "sort":             "window_start.asc",
+    }
+    data = safe_get_json(url, params=params, timeout=20)
+    raw_results = (data or {}).get("results", [])
+    if not raw_results:
+        return []
+
+    # Normalize futures response → stock-style {o, h, l, c, v, t}
+    # window_start is nanoseconds; convert to milliseconds
+    bars = []
+    for r in raw_results:
+        ws = r.get("window_start")
+        if not ws:
+            continue
+        bars.append({
+            "t": int(ws) // 1_000_000,
+            "o": r.get("open"),
+            "h": r.get("high"),
+            "l": r.get("low"),
+            "c": r.get("close"),
+            "v": r.get("volume", 0),
+        })
+    return bars
+
+
 def _resolve_es_bars_with_probe(days: int, multiplier: int) -> tuple:
     """
-    Try multiple Polygon ticker formats for ES futures until one returns data.
+    Fetch ES futures bars using the correct Polygon Futures API endpoint,
+    with fallback to SPX cash if the futures API returns nothing.
 
-    Polygon supports futures on certain plan tiers. The ticker format has varied
-    over time. This probe chain tries the most common formats in order:
-      1. Front-month contract  (e.g. ESU26)        — standard futures aggs
-      2. Continuous contract   (e.g. ES1!)          — some plan tiers support this
-      3. Futures prefix format (e.g. /ES)           — alternate format
-      4. MES micro contract    (e.g. MESU26)        — micro E-mini, same price scale
-      5. I:SPX cash index                           — guaranteed fallback, same price scale
+    Polygon/Massive Futures Basic plan ($0/m) uses:
+      GET /futures/v1/aggs/{ticker}?resolution=5min&window_start.gte=...
+    NOT the stocks /v2/aggs endpoint — that endpoint returns empty for futures tickers.
 
     Returns (bars, ticker_used, display_name, is_futures, is_fallback)
     """
-    now = now_et()
-
-    # Build candidate list
     front_month = _resolve_polygon_futures_ticker("ES")  # e.g. ESU26
     mes_front   = "MES" + front_month[2:]               # e.g. MESU26
 
-    candidates = [
-        (front_month,  f"ES Futures ({front_month})",   True),
-        ("ES1!",       "ES Futures (continuous ES1!)",  True),
-        (mes_front,    f"MES Micro ({mes_front})",       True),
-    ]
+    # Try front-month ES via the futures-specific API
+    bars = _futures_fetch_bars(front_month, days=days, multiplier=multiplier)
+    if bars:
+        return bars, front_month, f"ES Futures ({front_month})", True, False
 
-    for ticker, display, is_fut in candidates:
-        bars = _chart_fetch_bars(ticker, days=days, multiplier=multiplier)
-        if bars:
-            return bars, ticker, display, is_fut, False
+    # Try MES micro via the futures API (same price scale as ES)
+    bars = _futures_fetch_bars(mes_front, days=days, multiplier=multiplier)
+    if bars:
+        return bars, mes_front, f"MES Micro Futures ({mes_front})", True, False
 
-    # All futures formats failed — fall back to SPX cash index
+    # Futures API returned nothing — fall back to SPX cash index
     spx_bars = _chart_fetch_bars("I:SPX", days=days, multiplier=multiplier)
     if spx_bars:
-        return spx_bars, "I:SPX", "ES panel — SPX Cash (futures unavailable on this Polygon plan)", False, True
+        return spx_bars, "I:SPX", "ES panel — SPX Cash (futures API returned no data)", False, True
 
-    return [], front_month, f"ES Futures unavailable — no data returned for {front_month}", False, True
+    return [], front_month, f"ES Futures unavailable ({front_month})", False, True
 
 
 def _chart_fetch_bars(polygon_ticker: str, days: int = 3, multiplier: int = 15) -> List[dict]:
@@ -3838,8 +3884,11 @@ def api_gamma_diagnostics():
 @app.route("/api/diagnostics/es_ticker")
 def api_es_ticker_diagnostics():
     """
-    Probe all ES ticker formats and report which ones return data on this Polygon plan.
+    Probe ES ticker sources and report which return data.
     GET /api/diagnostics/es_ticker?tf=5&days=1
+
+    Tests the Polygon Futures API (/futures/v1/aggs/) — the correct endpoint
+    for Futures Basic plan holders — as well as the SPX cash fallback.
     """
     multiplier = int(request.args.get("tf", "5"))
     multiplier = multiplier if multiplier in (1, 5, 15) else 5
@@ -3849,29 +3898,32 @@ def api_es_ticker_diagnostics():
     mes_front   = "MES" + front_month[2:]
 
     candidates = [
-        ("Front-month contract",   front_month, True),
-        ("Continuous ES1!",        "ES1!",      True),
-        ("Micro front-month",      mes_front,   True),
-        ("SPX cash index (I:SPX)", "I:SPX",     False),
+        ("ES futures API (front-month)", front_month, True,  "futures_api"),
+        ("MES futures API (micro)",      mes_front,   True,  "futures_api"),
+        ("SPX cash index (I:SPX)",       "I:SPX",     False, "stocks_api"),
     ]
 
     results = []
     winning_ticker = None
-    for label, ticker, is_fut in candidates:
+    for label, ticker, is_fut, api_type in candidates:
         try:
-            bars = _chart_fetch_bars(ticker, days=days, multiplier=multiplier)
+            if api_type == "futures_api":
+                bars = _futures_fetch_bars(ticker, days=days, multiplier=multiplier)
+            else:
+                bars = _chart_fetch_bars(ticker, days=days, multiplier=multiplier)
             bar_count = len(bars)
-            has_data = bar_count > 0
+            has_data  = bar_count > 0
             last_close = bars[-1].get("c") if bars else None
             if has_data and winning_ticker is None:
                 winning_ticker = ticker
-        except Exception as ex:
-            bar_count = 0
-            has_data = False
+        except Exception:
+            bar_count  = 0
+            has_data   = False
             last_close = None
         results.append({
             "label":      label,
             "ticker":     ticker,
+            "api":        f"GET /futures/v1/aggs/{ticker}" if api_type == "futures_api" else f"GET /v2/aggs/ticker/{ticker}",
             "is_futures": is_fut,
             "bars":       bar_count,
             "has_data":   has_data,
@@ -3880,26 +3932,25 @@ def api_es_ticker_diagnostics():
 
     any_futures = any(r["has_data"] and r["is_futures"] for r in results)
     return jsonify({
-        "ok": True,
+        "ok":                   True,
         "resolved_front_month": front_month,
-        "winning_ticker": winning_ticker,
-        "futures_available": any_futures,
+        "winning_ticker":       winning_ticker,
+        "futures_available":    any_futures,
         "diagnosis": (
-            f"Futures data AVAILABLE on this Polygon plan. Using {winning_ticker}."
+            f"Futures data AVAILABLE via /futures/v1/aggs/ endpoint. Using {winning_ticker}."
             if any_futures else
-            "Futures data NOT available on this Polygon plan. "
-            "ES panel will show SPX Cash (I:SPX) as a fallback. "
-            "To get real ES futures bars, upgrade to Polygon Futures (Massive) at polygon.io/pricing."
+            "Futures API returned no data for ES or MES. "
+            "ES panel will use SPX Cash (I:SPX) as fallback. "
+            "Futures Basic plan is active — data may be end-of-day only outside market hours."
         ),
-        "polygon_plan_note": (
-            "Polygon futures data (ESU26, ES1!, MES) requires the Futures add-on "
-            "sold separately as Massive. Standard Starter/Options plans include equities, "
-            "indices (I:SPX), and options -- not CME futures."
+        "api_note": (
+            "Polygon futures bars use GET /futures/v1/aggs/{ticker}?resolution=5min "
+            "NOT /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}. "
+            "Response fields: open/high/low/close/volume/window_start(nanoseconds)."
         ),
-        "candidates": results,
-        "updated_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "candidates":   results,
+        "updated_at":   now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
     })
-
 
 def _chart_payload_for_lightweight(symbol: str, days: int, multiplier: int) -> Dict[str, Any]:
     """Convert existing APEX chart data into Lightweight Charts payload."""
