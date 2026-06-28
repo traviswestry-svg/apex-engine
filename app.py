@@ -4686,6 +4686,7 @@ CHART_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 :root{
   --bg:#05080f;--surf:#0d141f;--surf2:#121c2b;--bdr:#1c2940;
@@ -4702,8 +4703,8 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .apex-nav a:hover{background:var(--surf2);color:var(--text);border-color:var(--bdr)}
 .apex-nav a.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.35)}
 .apex-nav .nav-sep{width:1px;height:18px;background:var(--bdr);margin:0 4px}
-.wrap{padding:14px 14px 60px}
-.page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.wrap{padding:14px;height:calc(100vh - 42px);overflow:hidden;display:flex;flex-direction:column}
+.page-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;flex:0 0 auto}
 .page-title{font-family:var(--mono);font-size:16px;font-weight:800;color:var(--blue)}
 .page-sub{font-size:12px;color:var(--muted);margin-top:2px}
 .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -4720,15 +4721,15 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .ctrl-sep{width:1px;height:20px;background:var(--bdr);margin:0 2px}
 
 /* Side-by-side chart panels */
-.charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
-@media(max-width:900px){.charts-row{grid-template-columns:1fr}}
-.chart-panel{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;overflow:hidden}
-.chart-panel-inner{display:flex;gap:0}
-.chart-main{flex:1;min-width:0;padding:12px}
-.chart-sidebar{width:148px;flex-shrink:0;border-left:1px solid var(--bdr);padding:10px 8px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:420px}
+.charts-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;flex:1;min-height:0;overflow:hidden}
+@media(max-width:900px){.charts-row{grid-template-columns:1fr;overflow:auto}}
+.chart-panel{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;min-width:0;min-height:0}
+.chart-panel-inner{display:flex;gap:0;flex:1;min-height:0;min-width:0}
+.chart-main{flex:1;min-width:0;min-height:0;padding:10px 12px 8px;display:flex;flex-direction:column}
+.chart-sidebar{width:132px;flex-shrink:0;border-left:1px solid var(--bdr);padding:10px 8px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;max-height:none;min-height:0}
 
 /* Regime banner */
-.regime-bar{padding:8px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.regime-bar{padding:8px 12px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;gap:8px;flex:0 0 auto}
 .regime-label{font-size:12px;font-weight:700;font-family:var(--mono)}
 .regime-bullish{color:var(--bullish)}
 .regime-bearish{color:var(--bearish)}
@@ -4737,11 +4738,11 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .strength-pill{font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surf2);color:var(--muted);font-family:var(--mono)}
 
 /* Canvas */
-.chart-canvas-wrap{position:relative;height:340px}
-canvas{display:block}
+.chart-canvas-wrap{position:relative;flex:1;min-height:220px;height:auto}
+canvas{display:block;width:100%!important;height:100%!important}
 
 /* Legend */
-.chart-legend{display:flex;align-items:center;gap:12px;padding:6px 12px 8px;border-top:1px solid var(--bdr);flex-wrap:wrap}
+.chart-legend{display:flex;align-items:center;gap:12px;padding:6px 12px 8px;border-top:1px solid var(--bdr);flex-wrap:wrap;flex:0 0 auto}
 .leg-item{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted)}
 .leg-dot{width:10px;height:3px;border-radius:2px;flex-shrink:0}
 
@@ -4766,10 +4767,16 @@ canvas{display:block}
 .sidebar-title{font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:700;padding:2px 0 4px;border-bottom:1px solid var(--bdr);margin-bottom:4px}
 
 /* Symbol header */
-.symbol-head{padding:10px 12px 0;display:flex;align-items:baseline;gap:8px}
+.symbol-head{padding:8px 12px 0;display:flex;align-items:baseline;gap:8px;flex:0 0 auto}
 .symbol-name{font-family:var(--mono);font-size:14px;font-weight:800;color:var(--text)}
 .symbol-price{font-family:var(--mono);font-size:22px;font-weight:800;color:var(--blue)}
 .symbol-date{font-size:10px;color:var(--faint);font-family:var(--mono)}
+
+
+.chart-tools{display:flex;align-items:center;gap:6px;padding:6px 0 8px;flex:0 0 auto}
+.chart-tool-btn{font-family:var(--mono);font-size:10px;font-weight:800;padding:4px 8px;border-radius:6px;border:1px solid var(--bdr);background:rgba(18,28,43,.85);color:var(--muted);cursor:pointer}
+.chart-tool-btn:hover{color:var(--blue);border-color:rgba(56,189,248,.45)}
+.chart-help{font-size:10px;color:var(--faint);font-family:var(--mono);margin-left:auto}
 
 /* Error / loading */
 .panel-msg{padding:40px;text-align:center;color:var(--muted);font-size:13px}
@@ -4890,6 +4897,11 @@ function buildPanel(panelId, data) {
     </div>
     <div class="chart-panel-inner">
       <div class="chart-main">
+        <div class="chart-tools">
+          <button class="chart-tool-btn" data-reset="${panelId}">Reset Zoom</button>
+          <button class="chart-tool-btn" data-fit="${panelId}">Fit Latest</button>
+          <span class="chart-help">wheel/trackpad zoom · drag to pan</span>
+        </div>
         <div class="chart-canvas-wrap">
           <canvas id="canvas_${panelId}"></canvas>
         </div>
@@ -5041,8 +5053,14 @@ function buildPanel(panelId, data) {
     options: {
       responsive:true, maintainAspectRatio:false, animation:false,
       interaction:{mode:'index', intersect:false},
+      normalized:true,
       plugins:{
         legend:{display:false},
+        zoom:{
+          limits:{x:{min:0,max:n-1,minRange:Math.max(20, Math.floor(n*0.08))}},
+          pan:{enabled:true, mode:'x'},
+          zoom:{wheel:{enabled:true, speed:0.08}, pinch:{enabled:true}, drag:{enabled:true, backgroundColor:'rgba(56,189,248,0.12)', borderColor:'rgba(56,189,248,0.35)', borderWidth:1}, mode:'x'}
+        },
         tooltip:{
           backgroundColor:'#0d141f', borderColor:'#1c2940', borderWidth:1,
           titleColor:'#e8f1fc', bodyColor:'#8295b3',
@@ -5091,6 +5109,16 @@ function buildPanel(panelId, data) {
   });
 
   chartInstances[panelId] = inst;
+
+  const resetBtn = panel.querySelector(`[data-reset="${panelId}"]`);
+  const fitBtn = panel.querySelector(`[data-fit="${panelId}"]`);
+  if (resetBtn) resetBtn.addEventListener('click', () => inst.resetZoom ? inst.resetZoom() : null);
+  if (fitBtn) fitBtn.addEventListener('click', () => {
+    const visible = activeTf === 1 ? 180 : activeTf === 5 ? 156 : 120;
+    const max = n - 1;
+    const min = Math.max(0, max - visible);
+    if (inst.zoomScale) inst.zoomScale('x', {min, max}, 'none');
+  });
 }
 
 // ── Fetch + render one panel ──────────────────────────────────────────────────
