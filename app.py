@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.0.2_LIGHTWEIGHT_CHART_ENGINE"
+VERSION = "6.0.5_MARKET_HEALTH_INTEGRATION"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -2950,6 +2950,214 @@ def health():
             "last_scan_duration_seconds": STATE.get("last_scan_duration_seconds"),
             "sources": STATE.get("data_sources"),
         })
+
+
+# =============================================================================
+# APEX 6.0.5 Market Health Diagnostics
+# =============================================================================
+
+def _health_status(ok: bool, waiting: bool = False) -> str:
+    if ok:
+        return "OK"
+    return "WAITING_FOR_SESSION" if waiting else "CHECK_REQUIRED"
+
+
+def _component(name: str, status: str, reason: str = "", details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "ok": status == "OK",
+        "reason": reason,
+        "details": details or {},
+    }
+
+
+@app.route("/api/market_health")
+def api_market_health():
+    """Market/data readiness diagnostic for APEX Institutional OS.
+
+    Purpose:
+    - Separate normal closed-market nulls from real integration bugs.
+    - Show whether each engine has the data it needs before live trading.
+    - Keep this endpoint diagnostic-only; it does not create trade signals.
+    """
+    session_ctx = market_session_context()
+    session = session_ctx.get("session") or session_status()
+    tradeable = bool(session_ctx.get("is_tradeable_session"))
+    waiting_for_session = not tradeable
+
+    components: Dict[str, Any] = {}
+    overall_flags: List[str] = []
+
+    try:
+        # Reuse the same canonical sources the dashboard uses.
+        es_chart = build_chart_data("ES", days=1, multiplier=5)
+        spx_chart = build_chart_data("SPX", days=1, multiplier=5)
+        spx_flow = quantdata_flow_snapshot("SPX")
+
+        spx_price = (
+            safe_float(spx_chart.get("currentClose"), 0.0)
+            or safe_float(spx_flow.get("stock_price"), 0.0)
+            or safe_float(spx_flow.get("raw_stock_price"), 0.0)
+        )
+        es_is_futures = bool(es_chart.get("isFutures"))
+        es_price = safe_float(es_chart.get("currentClose"), 0.0)
+
+        gamma_ok = all(safe_float(spx_flow.get(k), 0.0) > 0 for k in ("call_wall", "put_wall", "zero_gamma"))
+        flow_ok = spx_flow.get("flow_score") is not None and spx_flow.get("order_flow_score") is not None
+        charts_ok = bool(spx_chart.get("chart")) or bool(spx_chart.get("currentClose"))
+        es_ok = es_is_futures and es_price > 0
+        risk_price_ok = spx_price > 0
+
+        # Session-dependent fields are allowed to wait while closed/premarket.
+        # They should be considered broken only when the live session is open.
+        structure_fields = {
+            "vwap": None,
+            "session_high": None,
+            "session_low": None,
+            "opening_range": None,
+        }
+        chart_rows = spx_chart.get("chart") or []
+        if chart_rows:
+            last_row = chart_rows[-1] or {}
+            structure_fields["vwap"] = last_row.get("vwap") or spx_chart.get("vwap")
+            highs = [safe_float(r.get("high"), 0.0) for r in chart_rows if safe_float(r.get("high"), 0.0) > 0]
+            lows = [safe_float(r.get("low"), 0.0) for r in chart_rows if safe_float(r.get("low"), 0.0) > 0]
+            structure_fields["session_high"] = max(highs) if highs else None
+            structure_fields["session_low"] = min(lows) if lows else None
+        structure_ok = any(v is not None for v in structure_fields.values())
+
+        components["session"] = _component(
+            "Session",
+            "OK" if tradeable else "MARKET_CLOSED",
+            session_ctx.get("banner_message", ""),
+            {"session": session, "tradeable": tradeable, "assistant_mode": session_ctx.get("assistant_mode")},
+        )
+        components["polygon"] = _component(
+            "Polygon",
+            _health_status(bool(POLYGON_API_KEY)),
+            "POLYGON_API_KEY configured" if POLYGON_API_KEY else "POLYGON_API_KEY missing",
+        )
+        components["quantdata"] = _component(
+            "QuantData",
+            _health_status(bool(QUANTDATA_API_KEY)),
+            "QUANTDATA_API_KEY configured" if QUANTDATA_API_KEY else "QUANTDATA_API_KEY missing",
+        )
+        components["charts"] = _component(
+            "Charts",
+            _health_status(charts_ok),
+            "SPX chart data available" if charts_ok else "SPX chart data unavailable",
+            {"spx_price": spx_price, "spx_rows": len(spx_chart.get("chart") or [])},
+        )
+        components["es_feed"] = _component(
+            "ES Feed",
+            "OK" if es_ok else "ES_UNAVAILABLE",
+            "True ES futures feed available" if es_ok else "ES futures unavailable; dashboard may show SPX fallback and basis is invalid.",
+            {"es_price": es_price or None, "is_futures": es_is_futures, "polygon_ticker": es_chart.get("polygonTicker")},
+        )
+        components["gamma"] = _component(
+            "Gamma",
+            _health_status(gamma_ok),
+            "Gamma walls and active gamma flip available" if gamma_ok else "Gamma values missing or incomplete",
+            {
+                "call_wall": spx_flow.get("call_wall"),
+                "put_wall": spx_flow.get("put_wall"),
+                "zero_gamma": spx_flow.get("zero_gamma"),
+                "active_gamma_flip": spx_flow.get("active_gamma_flip"),
+                "raw_zero_gamma": spx_flow.get("raw_zero_gamma"),
+                "zero_gamma_confidence": spx_flow.get("zero_gamma_confidence"),
+                "quality_flags": spx_flow.get("quality_flags", []),
+            },
+        )
+        components["flow"] = _component(
+            "Flow",
+            _health_status(flow_ok),
+            "QuantData flow/order-flow scores available" if flow_ok else "Flow or order-flow unavailable",
+            {
+                "flow_score": spx_flow.get("flow_score"),
+                "order_flow_score": spx_flow.get("order_flow_score"),
+                "net_premium": spx_flow.get("net_premium"),
+                "sweep_count": spx_flow.get("sweep_count"),
+            },
+        )
+        components["structure"] = _component(
+            "Structure",
+            _health_status(structure_ok, waiting=waiting_for_session),
+            "Live/session structure normally fills during the cash session." if waiting_for_session else "Market structure data available" if structure_ok else "Market structure missing during live session",
+            structure_fields,
+        )
+        components["trend"] = _component(
+            "Trend",
+            _health_status(bool(spx_chart.get("chart")), waiting=waiting_for_session),
+            "Trend may be limited outside live session or without sufficient daily bars." if waiting_for_session else "Trend input available" if spx_chart.get("chart") else "Trend input unavailable",
+            {"bars": len(spx_chart.get("chart") or [])},
+        )
+        components["risk"] = _component(
+            "Risk",
+            _health_status(risk_price_ok),
+            "Canonical SPX price available for risk calculations" if risk_price_ok else "No canonical SPX price available",
+            {"canonical_price": spx_price or None, "source_order": ["SPX chart currentClose", "QuantData stock_price", "QuantData raw_stock_price"]},
+        )
+        components["execution"] = _component(
+            "Execution",
+            "WAITING_FOR_PINE" if waiting_for_session else "WAITING_FOR_PINE",
+            "No live entry is valid without a fresh Pine trigger during market hours.",
+            {"tradeable_session": tradeable, "signal_ttl_seconds": ASSISTANT_SIGNAL_VALID_SECONDS},
+        )
+
+        if not gamma_ok:
+            overall_flags.append("GAMMA_INCOMPLETE")
+        if not flow_ok:
+            overall_flags.append("FLOW_INCOMPLETE")
+        if not charts_ok:
+            overall_flags.append("CHARTS_INCOMPLETE")
+        if not es_ok:
+            overall_flags.append("ES_FEED_UNAVAILABLE")
+        if not risk_price_ok:
+            overall_flags.append("RISK_PRICE_MISSING")
+        if waiting_for_session:
+            overall_flags.append("MARKET_CLOSED_OR_NOT_TRADEABLE")
+
+        critical_ok = gamma_ok and flow_ok and charts_ok and risk_price_ok
+        if tradeable and critical_ok and es_ok:
+            overall = "READY_FOR_LIVE_SESSION"
+        elif critical_ok and waiting_for_session:
+            overall = "READY_FOR_OPEN"
+        elif critical_ok:
+            overall = "READY_WITH_WARNINGS"
+        else:
+            overall = "NEEDS_ATTENTION"
+
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+            "overall": overall,
+            "flags": overall_flags,
+            "session": session_ctx,
+            "components": components,
+            "guidance": {
+                "market_closed": waiting_for_session,
+                "expected_closed_market_nulls": [
+                    "opening_range_high/low",
+                    "session_high/low",
+                    "session_poc/vah/val",
+                    "fresh Pine trigger",
+                    "live execution readiness",
+                ],
+                "should_not_be_null_if_sources_ok": [
+                    "SPX price",
+                    "gamma call/put wall",
+                    "active gamma flip",
+                    "flow score",
+                    "order-flow score",
+                    "chart candles",
+                ],
+            },
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "version": VERSION, "error": str(e)}), 500
 
 # Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.
 # CLI imports, tests, and library imports stay clean by default and will not start

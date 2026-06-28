@@ -888,6 +888,10 @@ def engine_institutional_flow(
 
     return {
         "intelligence_score": intelligence_score,
+        # Canonical underlying price from QuantData/flow snapshot.
+        # Risk, Coach, and dashboard consumers use this when market-structure
+        # current_price is unavailable during closed-market sessions.
+        "stock_price": round(price, 2) if price > 0 else None,
         "flow_score": round(flow_score, 1),
         "order_flow_score": round(order_score, 1),
         "net_premium": net_premium,
