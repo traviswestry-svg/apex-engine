@@ -593,6 +593,120 @@ function renderReview() {
   }).join('');
 }
 
+
+/* ── Scanner Ideas + Manual Scan ──────────────────────────────────────────── */
+function setScanStatus(text, tone = 'muted') {
+  const el = $('scanStatusText');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'scan-status scan-' + tone;
+}
+
+function setScanButtons(disabled) {
+  ['runScanBtn', 'runScanBtnPanel'].forEach(id => {
+    const b = $(id);
+    if (b) {
+      b.disabled = !!disabled;
+      b.classList.toggle('is-loading', !!disabled);
+      b.textContent = disabled ? 'Scanning...' : '▶ Run Scan';
+    }
+  });
+}
+
+function renderScannerIdeas(payload) {
+  const el = $('scannerIdeasPanel');
+  if (!el) return;
+  if (!payload || payload.ok === false) {
+    el.innerHTML = `<div class="scanner-empty scanner-error">Scanner data unavailable${payload && payload.error ? ': ' + esc(payload.error) : ''}</div>`;
+    return;
+  }
+  const ideas = Array.isArray(payload.ideas) ? payload.ideas : [];
+  const count = payload.idea_count != null ? payload.idea_count : ideas.length;
+  const status = payload.last_scan_status || 'Scanner status unavailable';
+  const updated = payload.updated_at_et || '--';
+  const inProgress = !!payload.scan_in_progress;
+  setScanStatus(inProgress ? 'Scan running...' : `${count} qualified ideas`, inProgress ? 'busy' : (count > 0 ? 'good' : 'muted'));
+  const summary = `
+    <div class="scanner-summary">
+      <span class="scanner-pill ${inProgress ? 'scanner-busy' : 'scanner-ok'}">${inProgress ? 'RUNNING' : 'READY'}</span>
+      <span>${esc(status)}</span>
+      <span>Ideas: ${count}</span>
+      <span>Updated: ${esc(updated)}</span>
+    </div>`;
+  if (!ideas.length) {
+    el.innerHTML = summary + `<div class="scanner-empty">No qualified scanner ideas are currently available. Run a scan or wait for the background scanner to finish.</div>`;
+    return;
+  }
+  el.innerHTML = summary + `<div class="scanner-grid">` + ideas.slice(0, 24).map(idea => {
+    const side = (idea.direction || idea.side || idea.approved_side || '').toUpperCase();
+    const isPut = side.includes('PUT');
+    const isCall = side.includes('CALL');
+    const cls = isCall ? 'scanner-call' : isPut ? 'scanner-put' : '';
+    const ticker = idea.ticker || '--';
+    const grade = idea.grade || idea.alert_tier || '--';
+    const score = idea.final_score ?? idea.conviction_score ?? idea.score ?? idea.breakout_probability;
+    const price = idea.price ?? idea.stock_price ?? idea.spot_price;
+    const statusText = idea.status || idea.trade_permission || idea.breakout_probability_label || '';
+    const contract = idea.option_contract || idea.recommended_contract || idea.contract_hint || '';
+    const notes = Array.isArray(idea.notes) ? idea.notes.slice(0, 3).join(' · ') : (idea.no_trade_reason || idea.strategy || '');
+    return `<div class="scanner-idea ${cls}">
+      <div class="scanner-idea-top">
+        <div><span class="scanner-ticker">${esc(ticker)}</span><span class="scanner-side">${esc(side || 'WATCH')}</span></div>
+        <div class="scanner-grade">${esc(grade)}</div>
+      </div>
+      <div class="scanner-meta">
+        <span>Score ${score != null ? esc(Number(score).toFixed(1)) : '--'}</span>
+        <span>Price ${price != null ? '$' + fmt(price) : '--'}</span>
+        ${statusText ? `<span>${esc(statusText)}</span>` : ''}
+      </div>
+      ${contract ? `<div class="scanner-contract">${esc(contract)}</div>` : ''}
+      ${notes ? `<div class="scanner-notes">${esc(notes)}</div>` : ''}
+    </div>`;
+  }).join('') + `</div>`;
+}
+
+async function loadScannerIdeas() {
+  try {
+    const r = await fetch('/api/scanner_ideas', { cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    renderScannerIdeas(data);
+    return data;
+  } catch (e) {
+    const el = $('scannerIdeasPanel');
+    if (el) el.innerHTML = `<div class="scanner-empty scanner-error">Scanner ideas failed to load: ${esc(e.message)}</div>`;
+    setScanStatus('Scanner load failed', 'bad');
+    return null;
+  }
+}
+
+async function runManualScan() {
+  setScanButtons(true);
+  setScanStatus('Starting scan...', 'busy');
+  try {
+    const r = await fetch('/api/run', { method: 'POST', cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const ideas = data.ideas != null ? data.ideas : 0;
+    setScanStatus(data.ok ? `Scan complete · ${ideas} ideas` : (data.status || 'Scan already running'), data.ok ? 'good' : 'busy');
+    await loadScannerIdeas();
+    await loadOS();
+  } catch (e) {
+    setScanStatus('Scan failed: ' + e.message, 'bad');
+  } finally {
+    setScanButtons(false);
+  }
+}
+
+function initRunScanButtons() {
+  ['runScanBtn', 'runScanBtnPanel'].forEach(id => {
+    const b = $(id);
+    if (b) b.addEventListener('click', runManualScan);
+  });
+  const refreshScanner = $('refreshScannerBtn');
+  if (refreshScanner) refreshScanner.addEventListener('click', loadScannerIdeas);
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    MASTER LOAD
    ════════════════════════════════════════════════════════════════════════════ */
@@ -638,7 +752,7 @@ function initTickerSelect() {
       activeTicker = btn.dataset.ticker;
       document.querySelectorAll('.ticker-btn').forEach(b => b.classList.toggle('active', b.dataset.ticker === activeTicker));
       loadOS();
-  loadScannerIdeas();
+      loadScannerIdeas();
     });
   });
 }
@@ -656,6 +770,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initReplayControls();
   initTickerSelect();
   initRefreshBtn();
+  initRunScanButtons();
 
   // Activate first tab
   document.querySelectorAll('.tab-btn')[0]?.click();
@@ -663,5 +778,5 @@ document.addEventListener('DOMContentLoaded', () => {
   loadOS();
   loadScannerIdeas();
   setInterval(loadOS, AUTO_INTERVAL);
-setInterval(loadScannerIdeas, 30000);
+  setInterval(loadScannerIdeas, 30000);
 });

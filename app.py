@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.0.8_SCANNER_RESULTS_PATCH"
+VERSION = "6.0.8A_SCAN_BUTTON_STABILIZATION"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()

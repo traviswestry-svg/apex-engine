@@ -11,7 +11,7 @@
 
 <nav class="apex-nav">
   <a href="/" class="nav-logo">APEX</a>
-  <a href="/">Scanner</a>
+  <a href="/scanner">Scanner</a>
   <a href="/apex_os" class="active">Institutional OS</a>
   <a href="/assistant">Trade Assistant</a>
   <a href="/flow">Flow / GEX</a>
@@ -22,7 +22,7 @@
   <div class="nav-right">
     <span><span class="dot-live"></span><span id="clockEl">-- ET</span></span>
     <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
-    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">6.0.4_FLOW2_STORY</span>
+    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">6.0.8A_SCAN_STABLE</span>
   </div>
 </nav>
 
@@ -50,7 +50,9 @@
       <button class="tab-btn" data-tab="review">Review</button>
     </div>
     <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <button class="btn btn-scan" id="runScanBtn" title="Run scanner now">&#9654; Run Scan</button>
       <button class="btn btn-blue" id="refreshBtn">&#8635; Refresh</button>
+      <span class="scan-status" id="scanStatusText">Scanner idle</span>
       <span class="last-upd" id="lastUpdated">--</span>
     </div>
   </div>
@@ -112,11 +114,19 @@
     </div>
 
     <div class="card sec-mb">
-      <div class="card-label">Scanner Qualified Ideas
-        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">Scanner</span>
-      </div>
-      <div style="font-size:10px;color:var(--faint);margin-bottom:10px">
-        Populates from the legacy scanner state after background/manual scans complete.
+      <div class="scanner-card-head">
+        <div>
+          <div class="card-label">Scanner Qualified Ideas
+            <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">Scanner</span>
+          </div>
+          <div style="font-size:10px;color:var(--faint);margin-top:4px">
+            Populates from the legacy scanner state after background/manual scans complete.
+          </div>
+        </div>
+        <div class="scanner-actions">
+          <button class="btn btn-scan" id="runScanBtnPanel">&#9654; Run Scan</button>
+          <button class="btn" id="refreshScannerBtn">Refresh Ideas</button>
+        </div>
       </div>
       <div id="scannerIdeasPanel" class="scanner-ideas-panel">Loading scanner ideas...</div>
     </div>
