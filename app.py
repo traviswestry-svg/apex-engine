@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, redirect
 
 # APEX Institutional OS 6.0.1 modular engines
 try:
@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.0.2_LIGHTWEIGHT_CHART_ENGINE"
+VERSION = "6.0.6_ROUTE_VERSION_HEALTH_PATCH"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -162,7 +162,7 @@ STATE: Dict[str, Any] = {
     "session": "STARTING",
     "ideas": [],
     "scan_debug": [],
-    "last_scan_status": "Starting APEX 3.5.1 scanner...",
+    "last_scan_status": f"Starting APEX {VERSION} scanner...",
     "last_error": None,
     "scan_in_progress": False,
     "scan_started_at": None,
@@ -382,10 +382,25 @@ def atr(bars: List[dict], period: int = 14) -> Optional[float]:
     return sum(trs[-period:]) / period
 
 
+
+
+def polygon_bar_ticker(ticker: str) -> str:
+    """Return the Polygon ticker used for historical bars.
+
+    SPX cash index must be requested as I:SPX on Polygon. Keeping this
+    mapping centralized prevents the OS engines from getting empty bars while
+    the chart endpoint has valid SPX candles.
+    """
+    t = (ticker or "").upper().strip()
+    if t in {"SPX", "$SPX", "SPXW"}:
+        return "I:SPX"
+    return ticker
+
 def get_daily_bars(ticker: str, days: int = 320) -> List[dict]:
     end = now_et().date()
     start = end - dt.timedelta(days=days * 2)
-    url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/1/day/{start}/{end}"
+    polygon_ticker = polygon_bar_ticker(ticker)
+    url = f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/1/day/{start}/{end}"
     data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 5000}, timeout=20)
     return data.get("results", []) if data else []
 
@@ -394,7 +409,8 @@ def get_intraday_bars(ticker: str, multiplier: int = 5, limit_days: int = 3) -> 
     today = now_et().date()
     end   = today + dt.timedelta(days=7)   # future end so closed-market sessions are included
     start = today - dt.timedelta(days=max(limit_days * 3, 10))
-    url = f"https://api.polygon.io/v2/aggs/ticker/{ticker}/range/{multiplier}/minute/{start}/{end}"
+    polygon_ticker = polygon_bar_ticker(ticker)
+    url = f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/{multiplier}/minute/{start}/{end}"
     data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 5000}, timeout=15)
     return data.get("results", []) if data else []
 
@@ -2079,7 +2095,7 @@ def start_background_scanner() -> None:
 # Additive layer on top of 3.5.1. All existing functions preserved above.
 # =============================================================================
 
-VERSION_45 = "4.5.0_INSTITUTIONAL_OS"
+VERSION_45 = VERSION
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -2877,7 +2893,7 @@ def api_flow_ticker(ticker: str):
 def dashboard():
     with STATE_LOCK:
         data = dict(STATE)
-    return render_template("dashboard.html", data=data)
+    return redirect("/apex_os", code=302)
 
 @app.route("/dashboard.json")
 def dashboard_json():
@@ -2951,27 +2967,6 @@ def health():
             "sources": STATE.get("data_sources"),
         })
 
-# Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.
-# CLI imports, tests, and library imports stay clean by default and will not start
-# a background scanner or send Telegram alerts accidentally.
-try:
-    init_tracking_db()  # idempotent CREATE TABLE IF NOT EXISTS -- safe to run on every import.
-    # Belt-and-suspenders: init_tracking_db() already catches its own exceptions and
-    # sets TRACKING_AVAILABLE=False on failure, but this wrapper exists so that even a
-    # future bug inside it can never again prevent gunicorn from importing this module.
-except Exception as e:
-    print(f"Unexpected error during tracking init (app continues, tracking disabled): {e}", flush=True)
-if RUN_SCANNER_ON_IMPORT:
-    start_background_scanner()
-
-if __name__ == "__main__":
-    print(f"Starting APEX {VERSION}", flush=True)
-    if os.getenv("RUN_SCANNER_ON_IMPORT", "false").lower() != "true":
-        print("Background scanner disabled for direct app.py execution. Set RUN_SCANNER_ON_IMPORT=true to enable it.", flush=True)
-    port = int(os.getenv("PORT", "10000"))
-    app.run(host="0.0.0.0", port=port)
-
-
 # =============================================================================
 # APEX 4.5 NEW API ROUTES
 # =============================================================================
@@ -3043,6 +3038,7 @@ def api_institutional_os():
                     result["heatmap"] = None
             result["session"] = session_ctx
             result["engine_mode"] = "NINE_ENGINE_PIPELINE"
+            result["version"] = VERSION
 
             # APEX 5.1 dashboard compatibility contract. The engine returns the
             # institutional OS fields directly; this normalizes them into the
@@ -3051,6 +3047,12 @@ def api_institutional_os():
             gamma = result.get("gamma_regime", {}) or {}
             structure = result.get("structure", {}) or {}
             risk = result.get("risk", {}) or {}
+            if (risk.get("price") is None or risk.get("error") == "No price available") and safe_float(flow_snapshot.get("stock_price"), 0) > 0:
+                risk["price"] = flow_snapshot.get("stock_price")
+                risk["error"] = None
+                if risk.get("contract_hint") == "Waiting for price data":
+                    risk["contract_hint"] = "Waiting for directional consensus"
+                result["risk"] = risk
             consensus = result.get("consensus", {}) or {}
             ribbon = result.get("ribbon", {}) or {}
             ici = result.get("ici", {}) or {}
@@ -3116,7 +3118,7 @@ def api_institutional_os():
                 summary = story.get("executive_summary", "")
                 consensus_label = result.get("consensus_label", "")
                 send_telegram(
-                    f"🚨 APEX 4.5 {recommendation}\n"
+                    f"🚨 APEX {VERSION} {recommendation}\n"
                     f"Ticker: {ticker}\n"
                     f"Consensus: {consensus_label}\n"
                     f"Summary: {summary}\n"
@@ -4012,6 +4014,74 @@ def api_charts_state():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "version": VERSION}), 500
 
+
+
+@app.route("/api/market_health")
+def api_market_health():
+    """Readiness report for live/pre-market/closed-session diagnostics."""
+    try:
+        session_ctx = market_session_context()
+        charts = api_charts_state().get_json(silent=True) if hasattr(api_charts_state(), "__call__") else None
+    except Exception:
+        charts = None
+        session_ctx = market_session_context()
+
+    try:
+        flow = quantdata_flow_snapshot("SPX")
+    except Exception as e:
+        flow = {"error": str(e)}
+
+    gamma_ok = bool(flow.get("call_wall") and flow.get("put_wall") and flow.get("zero_gamma"))
+    flow_ok = flow.get("flow_score") is not None and flow.get("order_flow_score") is not None
+    chart_payload = charts or {}
+    chart_spx = ((chart_payload.get("charts") or {}).get("SPX") or {}) if isinstance(chart_payload, dict) else {}
+    chart_es = ((chart_payload.get("charts") or {}).get("ES") or {}) if isinstance(chart_payload, dict) else {}
+    spx_candles = len(chart_spx.get("candles") or [])
+    es_available = bool(chart_es.get("isFutures") and chart_es.get("dataAvailable"))
+    spx_chart_ok = spx_candles > 0
+
+    market_open = bool(session_ctx.get("is_tradeable_session"))
+    trend_status = "OK" if market_open and spx_chart_ok else "WAITING_FOR_SESSION" if not market_open else "DATA_MISSING"
+    structure_status = "OK" if market_open and spx_chart_ok else "WAITING_FOR_SESSION" if not market_open else "DATA_MISSING"
+    execution_status = "WAITING_FOR_PINE" if market_open else "MARKET_CLOSED"
+    risk_status = "OK" if safe_float(flow.get("stock_price"), 0) > 0 else "PRICE_MISSING"
+
+    checks = {
+        "session": session_ctx.get("session"),
+        "gamma": "OK" if gamma_ok else "DATA_MISSING",
+        "flow": "OK" if flow_ok else "DATA_MISSING",
+        "charts_spx": "OK" if spx_chart_ok else "DATA_MISSING",
+        "es_feed": "OK" if es_available else "ES_UNAVAILABLE",
+        "risk": risk_status,
+        "trend": trend_status,
+        "structure": structure_status,
+        "execution": execution_status,
+    }
+    blocking = [k for k, v in checks.items() if v in {"DATA_MISSING", "PRICE_MISSING"}]
+    overall = "READY_FOR_OPEN" if not market_open and gamma_ok and flow_ok and spx_chart_ok else "READY" if market_open and not blocking else "CHECK_WARNINGS"
+    return jsonify({
+        "ok": True,
+        "version": VERSION,
+        "overall": overall,
+        "checks": checks,
+        "session_context": session_ctx,
+        "notes": [
+            "Closed-market nulls are expected for opening range, session POC, fresh Pine execution, and live session structure.",
+            "ES_UNAVAILABLE means Polygon futures data is unavailable and the ES panel may use SPX fallback.",
+        ],
+        "data": {
+            "spx_price": flow.get("stock_price") or chart_spx.get("currentClose"),
+            "call_wall": flow.get("call_wall"),
+            "put_wall": flow.get("put_wall"),
+            "zero_gamma": flow.get("zero_gamma"),
+            "spx_candles": spx_candles,
+            "es_symbol": chart_es.get("symbol"),
+        },
+        "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    })
+
+
 # CHART_HTML replaced by templates/chart.html
 
 
@@ -4020,3 +4090,20 @@ def chart_dashboard():
     """Market Intelligence Terminal — ES and SPX side by side."""
     return render_template("chart.html")
 
+
+# Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.
+# Placed after all route registrations so direct `python app.py` and Gunicorn
+# expose the same endpoints.
+try:
+    init_tracking_db()
+except Exception as e:
+    print(f"Unexpected error during tracking init (app continues, tracking disabled): {e}", flush=True)
+if RUN_SCANNER_ON_IMPORT:
+    start_background_scanner()
+
+if __name__ == "__main__":
+    print(f"Starting APEX {VERSION}", flush=True)
+    if os.getenv("RUN_SCANNER_ON_IMPORT", "false").lower() != "true":
+        print("Background scanner disabled for direct app.py execution. Set RUN_SCANNER_ON_IMPORT=true to enable it.", flush=True)
+    port = int(os.getenv("PORT", "10000"))
+    app.run(host="0.0.0.0", port=port)

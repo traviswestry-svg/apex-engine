@@ -893,6 +893,11 @@ def engine_institutional_flow(
         "net_premium": net_premium,
         "call_premium": call_premium,
         "put_premium": put_premium,
+        "stock_price": round(price, 2) if price else None,
+        "call_wall": cw or None,
+        "put_wall": pw or None,
+        "zero_gamma": zg or None,
+        "gamma_regime": gamma_regime_label,
         "bias": bias,
         "sweep_count": int(sweep_count),
         "sweep_aggression": sweep_aggression,
@@ -2566,7 +2571,7 @@ def build_institutional_decision(
     story_timeline = build_story_timeline(story)
 
     return {
-        "version": "5.1.0_INSTITUTIONAL_OS",
+        "version": "6.0.6_ROUTE_VERSION_HEALTH_PATCH",
         "ticker": ticker,
         "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "updated_at_et": _now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
