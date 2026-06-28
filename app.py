@@ -34,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.0.5_MARKET_HEALTH_INTEGRATION"
+VERSION = "6.0.2_LIGHTWEIGHT_CHART_ENGINE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -2951,214 +2951,6 @@ def health():
             "sources": STATE.get("data_sources"),
         })
 
-
-# =============================================================================
-# APEX 6.0.5 Market Health Diagnostics
-# =============================================================================
-
-def _health_status(ok: bool, waiting: bool = False) -> str:
-    if ok:
-        return "OK"
-    return "WAITING_FOR_SESSION" if waiting else "CHECK_REQUIRED"
-
-
-def _component(name: str, status: str, reason: str = "", details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    return {
-        "name": name,
-        "status": status,
-        "ok": status == "OK",
-        "reason": reason,
-        "details": details or {},
-    }
-
-
-@app.route("/api/market_health")
-def api_market_health():
-    """Market/data readiness diagnostic for APEX Institutional OS.
-
-    Purpose:
-    - Separate normal closed-market nulls from real integration bugs.
-    - Show whether each engine has the data it needs before live trading.
-    - Keep this endpoint diagnostic-only; it does not create trade signals.
-    """
-    session_ctx = market_session_context()
-    session = session_ctx.get("session") or session_status()
-    tradeable = bool(session_ctx.get("is_tradeable_session"))
-    waiting_for_session = not tradeable
-
-    components: Dict[str, Any] = {}
-    overall_flags: List[str] = []
-
-    try:
-        # Reuse the same canonical sources the dashboard uses.
-        es_chart = build_chart_data("ES", days=1, multiplier=5)
-        spx_chart = build_chart_data("SPX", days=1, multiplier=5)
-        spx_flow = quantdata_flow_snapshot("SPX")
-
-        spx_price = (
-            safe_float(spx_chart.get("currentClose"), 0.0)
-            or safe_float(spx_flow.get("stock_price"), 0.0)
-            or safe_float(spx_flow.get("raw_stock_price"), 0.0)
-        )
-        es_is_futures = bool(es_chart.get("isFutures"))
-        es_price = safe_float(es_chart.get("currentClose"), 0.0)
-
-        gamma_ok = all(safe_float(spx_flow.get(k), 0.0) > 0 for k in ("call_wall", "put_wall", "zero_gamma"))
-        flow_ok = spx_flow.get("flow_score") is not None and spx_flow.get("order_flow_score") is not None
-        charts_ok = bool(spx_chart.get("chart")) or bool(spx_chart.get("currentClose"))
-        es_ok = es_is_futures and es_price > 0
-        risk_price_ok = spx_price > 0
-
-        # Session-dependent fields are allowed to wait while closed/premarket.
-        # They should be considered broken only when the live session is open.
-        structure_fields = {
-            "vwap": None,
-            "session_high": None,
-            "session_low": None,
-            "opening_range": None,
-        }
-        chart_rows = spx_chart.get("chart") or []
-        if chart_rows:
-            last_row = chart_rows[-1] or {}
-            structure_fields["vwap"] = last_row.get("vwap") or spx_chart.get("vwap")
-            highs = [safe_float(r.get("high"), 0.0) for r in chart_rows if safe_float(r.get("high"), 0.0) > 0]
-            lows = [safe_float(r.get("low"), 0.0) for r in chart_rows if safe_float(r.get("low"), 0.0) > 0]
-            structure_fields["session_high"] = max(highs) if highs else None
-            structure_fields["session_low"] = min(lows) if lows else None
-        structure_ok = any(v is not None for v in structure_fields.values())
-
-        components["session"] = _component(
-            "Session",
-            "OK" if tradeable else "MARKET_CLOSED",
-            session_ctx.get("banner_message", ""),
-            {"session": session, "tradeable": tradeable, "assistant_mode": session_ctx.get("assistant_mode")},
-        )
-        components["polygon"] = _component(
-            "Polygon",
-            _health_status(bool(POLYGON_API_KEY)),
-            "POLYGON_API_KEY configured" if POLYGON_API_KEY else "POLYGON_API_KEY missing",
-        )
-        components["quantdata"] = _component(
-            "QuantData",
-            _health_status(bool(QUANTDATA_API_KEY)),
-            "QUANTDATA_API_KEY configured" if QUANTDATA_API_KEY else "QUANTDATA_API_KEY missing",
-        )
-        components["charts"] = _component(
-            "Charts",
-            _health_status(charts_ok),
-            "SPX chart data available" if charts_ok else "SPX chart data unavailable",
-            {"spx_price": spx_price, "spx_rows": len(spx_chart.get("chart") or [])},
-        )
-        components["es_feed"] = _component(
-            "ES Feed",
-            "OK" if es_ok else "ES_UNAVAILABLE",
-            "True ES futures feed available" if es_ok else "ES futures unavailable; dashboard may show SPX fallback and basis is invalid.",
-            {"es_price": es_price or None, "is_futures": es_is_futures, "polygon_ticker": es_chart.get("polygonTicker")},
-        )
-        components["gamma"] = _component(
-            "Gamma",
-            _health_status(gamma_ok),
-            "Gamma walls and active gamma flip available" if gamma_ok else "Gamma values missing or incomplete",
-            {
-                "call_wall": spx_flow.get("call_wall"),
-                "put_wall": spx_flow.get("put_wall"),
-                "zero_gamma": spx_flow.get("zero_gamma"),
-                "active_gamma_flip": spx_flow.get("active_gamma_flip"),
-                "raw_zero_gamma": spx_flow.get("raw_zero_gamma"),
-                "zero_gamma_confidence": spx_flow.get("zero_gamma_confidence"),
-                "quality_flags": spx_flow.get("quality_flags", []),
-            },
-        )
-        components["flow"] = _component(
-            "Flow",
-            _health_status(flow_ok),
-            "QuantData flow/order-flow scores available" if flow_ok else "Flow or order-flow unavailable",
-            {
-                "flow_score": spx_flow.get("flow_score"),
-                "order_flow_score": spx_flow.get("order_flow_score"),
-                "net_premium": spx_flow.get("net_premium"),
-                "sweep_count": spx_flow.get("sweep_count"),
-            },
-        )
-        components["structure"] = _component(
-            "Structure",
-            _health_status(structure_ok, waiting=waiting_for_session),
-            "Live/session structure normally fills during the cash session." if waiting_for_session else "Market structure data available" if structure_ok else "Market structure missing during live session",
-            structure_fields,
-        )
-        components["trend"] = _component(
-            "Trend",
-            _health_status(bool(spx_chart.get("chart")), waiting=waiting_for_session),
-            "Trend may be limited outside live session or without sufficient daily bars." if waiting_for_session else "Trend input available" if spx_chart.get("chart") else "Trend input unavailable",
-            {"bars": len(spx_chart.get("chart") or [])},
-        )
-        components["risk"] = _component(
-            "Risk",
-            _health_status(risk_price_ok),
-            "Canonical SPX price available for risk calculations" if risk_price_ok else "No canonical SPX price available",
-            {"canonical_price": spx_price or None, "source_order": ["SPX chart currentClose", "QuantData stock_price", "QuantData raw_stock_price"]},
-        )
-        components["execution"] = _component(
-            "Execution",
-            "WAITING_FOR_PINE" if waiting_for_session else "WAITING_FOR_PINE",
-            "No live entry is valid without a fresh Pine trigger during market hours.",
-            {"tradeable_session": tradeable, "signal_ttl_seconds": ASSISTANT_SIGNAL_VALID_SECONDS},
-        )
-
-        if not gamma_ok:
-            overall_flags.append("GAMMA_INCOMPLETE")
-        if not flow_ok:
-            overall_flags.append("FLOW_INCOMPLETE")
-        if not charts_ok:
-            overall_flags.append("CHARTS_INCOMPLETE")
-        if not es_ok:
-            overall_flags.append("ES_FEED_UNAVAILABLE")
-        if not risk_price_ok:
-            overall_flags.append("RISK_PRICE_MISSING")
-        if waiting_for_session:
-            overall_flags.append("MARKET_CLOSED_OR_NOT_TRADEABLE")
-
-        critical_ok = gamma_ok and flow_ok and charts_ok and risk_price_ok
-        if tradeable and critical_ok and es_ok:
-            overall = "READY_FOR_LIVE_SESSION"
-        elif critical_ok and waiting_for_session:
-            overall = "READY_FOR_OPEN"
-        elif critical_ok:
-            overall = "READY_WITH_WARNINGS"
-        else:
-            overall = "NEEDS_ATTENTION"
-
-        return jsonify({
-            "ok": True,
-            "version": VERSION,
-            "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
-            "overall": overall,
-            "flags": overall_flags,
-            "session": session_ctx,
-            "components": components,
-            "guidance": {
-                "market_closed": waiting_for_session,
-                "expected_closed_market_nulls": [
-                    "opening_range_high/low",
-                    "session_high/low",
-                    "session_poc/vah/val",
-                    "fresh Pine trigger",
-                    "live execution readiness",
-                ],
-                "should_not_be_null_if_sources_ok": [
-                    "SPX price",
-                    "gamma call/put wall",
-                    "active gamma flip",
-                    "flow score",
-                    "order-flow score",
-                    "chart candles",
-                ],
-            },
-        })
-    except Exception as e:
-        return jsonify({"ok": False, "version": VERSION, "error": str(e)}), 500
-
 # Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.
 # CLI imports, tests, and library imports stay clean by default and will not start
 # a background scanner or send Telegram alerts accidentally.
@@ -3593,8 +3385,8 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
     Polygon futures use specific contract month codes, e.g. ESU26 = ES September 2026.
     Month codes: F=Jan G=Feb H=Mar J=Apr K=May M=Jun N=Jul Q=Aug U=Sep V=Oct X=Nov Z=Dec
 
-    ES rolls quarterly (Mar/Jun/Sep/Dec). We compute the current active front-month
-    and fall back to SPY if Polygon doesn't have futures access on the account.
+    ES rolls quarterly (Mar/Jun/Sep/Dec). We compute the current active front-month.
+    Returns the front-month contract ticker (e.g. ESU26).
     """
     MONTH_CODES = {3:'H', 6:'M', 9:'U', 12:'Z'}
     BASE_MAP = {
@@ -3607,13 +3399,10 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
     if not base:
         return upper
 
-    # Determine current active contract quarter
-    # ES/NQ roll on 3rd Friday of Mar/Jun/Sep/Dec
     now = now_et()
     m = now.month
     y = now.year
 
-    # Find the next/current quarterly expiry month
     quarterly = [3, 6, 9, 12]
     exp_month = None
     exp_year = y
@@ -3626,14 +3415,12 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
         exp_month = 3
         exp_year = y + 1
 
-    # Check if we're past the roll date (2 weeks before 3rd Friday of expiry month)
     from calendar import monthcalendar
     cal = monthcalendar(exp_year, exp_month)
     fridays = [week[4] for week in cal if week[4] != 0]
     third_friday = fridays[2] if len(fridays) >= 3 else fridays[-1]
     roll_date = dt.date(exp_year, exp_month, third_friday) - dt.timedelta(days=14)
     if now.date() >= roll_date:
-        # Roll to next quarter
         qidx = quarterly.index(exp_month)
         if qidx < 3:
             exp_month = quarterly[qidx + 1]
@@ -3644,6 +3431,45 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
     code = MONTH_CODES.get(exp_month, 'U')
     year2 = str(exp_year)[-2:]
     return f"{base}{code}{year2}"  # e.g. ESU26
+
+
+def _resolve_es_bars_with_probe(days: int, multiplier: int) -> tuple:
+    """
+    Try multiple Polygon ticker formats for ES futures until one returns data.
+
+    Polygon supports futures on certain plan tiers. The ticker format has varied
+    over time. This probe chain tries the most common formats in order:
+      1. Front-month contract  (e.g. ESU26)        — standard futures aggs
+      2. Continuous contract   (e.g. ES1!)          — some plan tiers support this
+      3. Futures prefix format (e.g. /ES)           — alternate format
+      4. MES micro contract    (e.g. MESU26)        — micro E-mini, same price scale
+      5. I:SPX cash index                           — guaranteed fallback, same price scale
+
+    Returns (bars, ticker_used, display_name, is_futures, is_fallback)
+    """
+    now = now_et()
+
+    # Build candidate list
+    front_month = _resolve_polygon_futures_ticker("ES")  # e.g. ESU26
+    mes_front   = "MES" + front_month[2:]               # e.g. MESU26
+
+    candidates = [
+        (front_month,  f"ES Futures ({front_month})",   True),
+        ("ES1!",       "ES Futures (continuous ES1!)",  True),
+        (mes_front,    f"MES Micro ({mes_front})",       True),
+    ]
+
+    for ticker, display, is_fut in candidates:
+        bars = _chart_fetch_bars(ticker, days=days, multiplier=multiplier)
+        if bars:
+            return bars, ticker, display, is_fut, False
+
+    # All futures formats failed — fall back to SPX cash index
+    spx_bars = _chart_fetch_bars("I:SPX", days=days, multiplier=multiplier)
+    if spx_bars:
+        return spx_bars, "I:SPX", "ES panel — SPX Cash (futures unavailable on this Polygon plan)", False, True
+
+    return [], front_month, f"ES Futures unavailable — no data returned for {front_month}", False, True
 
 
 def _chart_fetch_bars(polygon_ticker: str, days: int = 3, multiplier: int = 15) -> List[dict]:
@@ -3694,28 +3520,17 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
         is_futures = False
         spx_proxy = True
     elif symbol_upper in ("ES", "ES1!", "/ES"):
-        polygon_ticker = _resolve_polygon_futures_ticker("ES")  # e.g. ESU25
-        display_name = f"ES Futures ({polygon_ticker})"
-        is_futures = True
-        spx_proxy = False
+        # Use the probe chain — tries ESU26, ES1!, MESU26, then I:SPX in order
+        raw_bars, polygon_ticker, display_name, is_futures, spx_proxy = \
+            _resolve_es_bars_with_probe(days, multiplier)
     else:
         polygon_ticker = symbol_upper
         display_name = symbol_upper
         is_futures = False
         spx_proxy = False
-
-    raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
-
-    # If ES futures returned no data, Polygon plan may not include futures.
-    # Fall back to I:SPX (real SPX cash index — same price scale as ES, far better than SPY).
-    if not raw_bars and is_futures:
-        polygon_ticker = "I:SPX"
-        display_name = f"ES Futures unavailable — SPX Cash fallback"
-        is_futures = False
-        spx_proxy = False
         raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
 
-    # Final fallback to SPY if I:SPX also fails
+    # Final fallback to SPY if I:SPX also fails (non-ES path)
     if not raw_bars and not is_futures and polygon_ticker == "I:SPX":
         polygon_ticker = "SPY"
         display_name = display_name.replace("SPX proxy", "SPY proxy")
@@ -4014,6 +3829,72 @@ def api_gamma_diagnostics():
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "ticker": ticker}), 500
 
+
+
+@app.route("/api/diagnostics/es_ticker")
+def api_es_ticker_diagnostics():
+    """
+    Probe all ES ticker formats and report which ones return data on this Polygon plan.
+    GET /api/diagnostics/es_ticker?tf=5&days=1
+    """
+    multiplier = int(request.args.get("tf", "5"))
+    multiplier = multiplier if multiplier in (1, 5, 15) else 5
+    days = max(1, min(int(request.args.get("days", "1")), 2))
+
+    front_month = _resolve_polygon_futures_ticker("ES")
+    mes_front   = "MES" + front_month[2:]
+
+    candidates = [
+        ("Front-month contract",   front_month, True),
+        ("Continuous ES1!",        "ES1!",      True),
+        ("Micro front-month",      mes_front,   True),
+        ("SPX cash index (I:SPX)", "I:SPX",     False),
+    ]
+
+    results = []
+    winning_ticker = None
+    for label, ticker, is_fut in candidates:
+        try:
+            bars = _chart_fetch_bars(ticker, days=days, multiplier=multiplier)
+            bar_count = len(bars)
+            has_data = bar_count > 0
+            last_close = bars[-1].get("c") if bars else None
+            if has_data and winning_ticker is None:
+                winning_ticker = ticker
+        except Exception as ex:
+            bar_count = 0
+            has_data = False
+            last_close = None
+        results.append({
+            "label":      label,
+            "ticker":     ticker,
+            "is_futures": is_fut,
+            "bars":       bar_count,
+            "has_data":   has_data,
+            "last_close": last_close,
+        })
+
+    any_futures = any(r["has_data"] and r["is_futures"] for r in results)
+    return jsonify({
+        "ok": True,
+        "resolved_front_month": front_month,
+        "winning_ticker": winning_ticker,
+        "futures_available": any_futures,
+        "diagnosis": (
+            f"Futures data AVAILABLE on this Polygon plan. Using {winning_ticker}."
+            if any_futures else
+            "Futures data NOT available on this Polygon plan. "
+            "ES panel will show SPX Cash (I:SPX) as a fallback. "
+            "To get real ES futures bars, upgrade to Polygon Futures (Massive) at polygon.io/pricing."
+        ),
+        "polygon_plan_note": (
+            "Polygon futures data (ESU26, ES1!, MES) requires the Futures add-on "
+            "sold separately as Massive. Standard Starter/Options plans include equities, "
+            "indices (I:SPX), and options -- not CME futures."
+        ),
+        "candidates": results,
+        "updated_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+    })
 
 
 def _chart_payload_for_lightweight(symbol: str, days: int, multiplier: int) -> Dict[str, Any]:
