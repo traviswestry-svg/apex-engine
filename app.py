@@ -3514,11 +3514,13 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
         display_name = "SPX (Cash Index)"
         is_futures = False
         spx_proxy = False
+        raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
     elif symbol_upper == "SPY":
         polygon_ticker = "SPY"
         display_name = "SPY"
         is_futures = False
         spx_proxy = True
+        raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
     elif symbol_upper in ("ES", "ES1!", "/ES"):
         # Use the probe chain — tries ESU26, ES1!, MESU26, then I:SPX in order
         raw_bars, polygon_ticker, display_name, is_futures, spx_proxy = \
