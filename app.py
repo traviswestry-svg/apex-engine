@@ -4296,20 +4296,23 @@ def _chart_vwap_multiday(bars: List[dict]) -> List[float]:
     return out
 
 
-def _chart_fetch_bars(polygon_ticker: str, days: int = 3) -> List[dict]:
+def _chart_fetch_bars(polygon_ticker: str, days: int = 3, multiplier: int = 15) -> List[dict]:
     """
-    Fetch 15-min bars for the last N trading days via Polygon.io.
-    ES futures use ES1!, SPX uses SPY as proxy (same logic as original dashboard).
+    Fetch bars for the last N trading days via Polygon.io.
+    Supports 1-min, 5-min, and 15-min bars via the multiplier param.
+    ES futures use ES1!, SPX uses SPY as proxy.
     """
     end = now_et().date()
-    start = end - dt.timedelta(days=max(days * 4, 14))  # buffer for weekends/holidays
+    # 1-min bars need a tighter window (Polygon free tier limits history)
+    day_buffer = max(days * 4, 14) if multiplier >= 5 else max(days * 2, 5)
+    start = end - dt.timedelta(days=day_buffer)
     url = (f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/"
-           f"15/minute/{start}/{end}")
+           f"{multiplier}/minute/{start}/{end}")
     data = safe_get_json(url, params={"adjusted": "true", "sort": "asc", "limit": 50000}, timeout=20)
     return (data or {}).get("results", [])
 
 
-def build_chart_data(symbol: str, days: int = 3) -> dict:
+def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     """
     Build the full Market Intelligence Terminal payload for one symbol.
 
@@ -4319,10 +4322,14 @@ def build_chart_data(symbol: str, days: int = 3) -> dict:
 
     SPX is proxied via SPY (10× scale labels shown in UI).
     ES uses ES1! futures ticker.
+    multiplier: bar size in minutes — 1, 5, or 15.
     """
     # Ticker routing
     SPX_PROXY = "SPY"
     ES_TICKER = "ES1!"
+
+    # Clamp multiplier to supported values
+    multiplier = multiplier if multiplier in (1, 5, 15) else 15
 
     symbol_upper = symbol.upper().strip()
     if symbol_upper in ("SPX", "SPY", "$SPX"):
@@ -4341,7 +4348,7 @@ def build_chart_data(symbol: str, days: int = 3) -> dict:
         is_futures = False
         spx_proxy = False
 
-    raw_bars = _chart_fetch_bars(polygon_ticker, days=days)
+    raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
     if not raw_bars:
         return {"error": f"No data returned for {polygon_ticker}", "symbol": symbol}
 
@@ -4479,7 +4486,7 @@ def build_chart_data(symbol: str, days: int = 3) -> dict:
         "isFutures":       is_futures,
         "spxProxy":        spx_proxy,
         "tradingDays":     sorted_days,
-        "barInterval":     "15-min",
+        "barInterval":     f"{multiplier}-min",
         "currentClose":    round(current_close, 2),
         "recentHigh":      round(recent_high, 2),
         "recentLow":       round(recent_low, 2),
@@ -4505,13 +4512,16 @@ def build_chart_data(symbol: str, days: int = 3) -> dict:
 def api_chart_data():
     """
     Market Intelligence Terminal data endpoint.
-    GET /api/chart_data?ticker=SPX&days=3
-    GET /api/chart_data?ticker=ES&days=3
+    GET /api/chart_data?ticker=SPX&days=3&tf=15
+    GET /api/chart_data?ticker=ES&days=1&tf=1
+    tf = timeframe in minutes: 1, 5, or 15 (default 15)
     """
-    ticker = request.args.get("ticker", "SPX").strip().upper()
-    days   = max(1, min(int(request.args.get("days", "3")), 5))
+    ticker     = request.args.get("ticker", "SPX").strip().upper()
+    days       = max(1, min(int(request.args.get("days", "3")), 5))
+    multiplier = int(request.args.get("tf", "15"))
+    multiplier = multiplier if multiplier in (1, 5, 15) else 15
     try:
-        data = build_chart_data(ticker, days=days)
+        data = build_chart_data(ticker, days=days, multiplier=multiplier)
         if "error" in data:
             return jsonify({"ok": False, **data}), 500
         return jsonify({"ok": True, **data})
@@ -4554,9 +4564,14 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .day-btn{font-family:var(--mono);font-size:11px;font-weight:700;padding:5px 12px;border-radius:7px;border:1px solid var(--bdr);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
 .day-btn:hover{background:var(--surf2);color:var(--text)}
 .day-btn.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.4)}
+.tf-btn{font-family:var(--mono);font-size:11px;font-weight:700;padding:5px 10px;border-radius:7px;border:1px solid var(--bdr);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s}
+.tf-btn:hover{background:var(--surf2);color:var(--text)}
+.tf-btn.active{background:rgba(167,139,250,.1);color:var(--purple);border-color:rgba(167,139,250,.4)}
 .refresh-btn{font-family:var(--sans);font-size:11px;font-weight:600;padding:5px 13px;border-radius:7px;border:1px solid rgba(56,189,248,.4);background:rgba(56,189,248,.06);color:var(--blue);cursor:pointer;transition:all .15s}
 .refresh-btn:hover{background:rgba(56,189,248,.12)}
 .last-update{font-size:10px;color:var(--faint);font-family:var(--mono)}
+.ctrl-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-family:var(--mono)}
+.ctrl-sep{width:1px;height:20px;background:var(--bdr);margin:0 2px}
 
 /* Side-by-side chart panels */
 .charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
@@ -4632,13 +4647,20 @@ canvas{display:block}
   <div class="page-header">
     <div>
       <div class="page-title">Market Intelligence Terminal</div>
-      <div class="page-sub">ES Futures &amp; SPX — 15-min candlesticks · EMA 8/21 · VWAP · HVBO · Gamma levels</div>
+      <div class="page-sub">ES Futures &amp; SPX — EMA 8/21 · VWAP · HVBO · Gamma levels</div>
     </div>
     <div class="controls">
+      <span class="ctrl-label">DAYS</span>
       <button class="day-btn" data-d="1">1D</button>
       <button class="day-btn active" data-d="2">2D</button>
       <button class="day-btn" data-d="3">3D</button>
       <button class="day-btn" data-d="5">5D</button>
+      <div class="ctrl-sep"></div>
+      <span class="ctrl-label">TF</span>
+      <button class="tf-btn" data-tf="1">1m</button>
+      <button class="tf-btn" data-tf="5">5m</button>
+      <button class="tf-btn active" data-tf="15">15m</button>
+      <div class="ctrl-sep"></div>
       <button class="refresh-btn" id="refreshBtn">↻ Refresh</button>
       <span class="last-update" id="lastUpdate">--</span>
     </div>
@@ -4657,6 +4679,7 @@ canvas{display:block}
 <script>
 // ── State ────────────────────────────────────────────────────────────────────
 let activeDays = 2;
+let activeTf   = 15;   // timeframe in minutes: 1, 5, or 15
 let chartInstances = {};
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -4928,7 +4951,7 @@ async function loadPanel(panelId, ticker) {
   if (!panel) return;
   panel.innerHTML = `<div class="panel-msg">Loading ${ticker}…</div>`;
   try {
-    const r = await fetch('/api/chart_data?ticker=' + ticker + '&days=' + activeDays, {cache:'no-store'});
+    const r = await fetch('/api/chart_data?ticker=' + ticker + '&days=' + activeDays + '&tf=' + activeTf, {cache:'no-store'});
     const data = await r.json();
     if (!r.ok || data.error) {
       panel.innerHTML = `<div class="panel-msg err">Error loading ${ticker}: ${data.error || 'HTTP '+r.status}</div>`;
@@ -4959,9 +4982,31 @@ document.querySelectorAll('.day-btn').forEach(btn => {
     document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     activeDays = parseInt(btn.dataset.d);
+    // Smart default TF: 1D→5m, 2D+→15m (user can still override)
+    if (activeDays === 1 && activeTf === 15) {
+      setTf(5);
+    } else if (activeDays >= 3 && activeTf === 1) {
+      setTf(15);
+    }
     loadAll();
   });
 });
+
+// ── Timeframe selector buttons ────────────────────────────────────────────────
+function setTf(tf) {
+  activeTf = tf;
+  document.querySelectorAll('.tf-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.tf) === tf);
+  });
+}
+
+document.querySelectorAll('.tf-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    setTf(parseInt(btn.dataset.tf));
+    loadAll();
+  });
+});
+
 document.getElementById('refreshBtn').addEventListener('click', loadAll);
 
 // Initial load + auto-refresh every 3 minutes during session hours
