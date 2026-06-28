@@ -2919,10 +2919,27 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .last-updated{font-size:10px;color:var(--faint);text-align:right;margin-top:8px}
 .checklist{display:flex;flex-direction:column;gap:5px;margin-top:8px}
 .err-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:10px 14px;color:var(--red);font-size:12px;margin-bottom:10px}
+.apex-nav{display:flex;align-items:center;gap:6px;padding:8px 14px;background:var(--surf);border:1px solid var(--bdr);border-radius:12px;margin-bottom:12px;flex-wrap:wrap}
+.apex-nav .nav-logo{font-family:var(--mono);font-size:13px;font-weight:800;color:var(--blue);margin-right:10px;text-decoration:none}
+.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:var(--muted);text-decoration:none;transition:all .15s}
+.apex-nav a:hover{background:var(--surf2);color:var(--text);border-color:var(--bdr)}
+.apex-nav a.active{background:rgba(56,189,248,.1);color:var(--blue);border-color:rgba(56,189,248,.35)}
+.apex-nav .nav-sep{width:1px;height:18px;background:var(--bdr);margin:0 4px}
 </style>
 </head>
 <body>
 <div class="wrap" id="root">
+
+<nav class="apex-nav">
+  <a href="/" class="nav-logo">APEX</a>
+  <a href="/">Scanner</a>
+  <a href="/apex_os" class="active">Institutional OS</a>
+  <a href="/assistant">Trade Assistant</a>
+  <a href="/flow">Flow / GEX</a>
+  <div class="nav-sep"></div>
+  <a href="/api/v45/status" target="_blank">Status</a>
+  <a href="/health" target="_blank">Health</a>
+</nav>
 
 <div class="topbar">
   <div>
@@ -3301,8 +3318,26 @@ details:focus-within summary{outline:2px solid var(--accent);outline-offset:2px}
 footer{margin-top:28px;color:var(--faint);font-size:11px;font-family:var(--mono);text-align:center}
 </style>
 </head>
+<style>
+.apex-nav{display:flex;align-items:center;gap:6px;padding:8px 14px;background:#0d141f;border:1px solid #1c2940;border-radius:12px;margin-bottom:12px;flex-wrap:wrap}
+.apex-nav .nav-logo{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:800;color:#38bdf8;margin-right:10px;text-decoration:none}
+.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:#8295b3;text-decoration:none;transition:all .15s;font-family:'Inter',sans-serif}
+.apex-nav a:hover{background:#121c2b;color:#e8f1fc;border-color:#1c2940}
+.apex-nav a.active{background:rgba(56,189,248,.1);color:#38bdf8;border-color:rgba(56,189,248,.35)}
+.apex-nav .nav-sep{width:1px;height:18px;background:#1c2940;margin:0 4px}
+</style>
 <body>
 <div class="wrap">
+  <nav class="apex-nav">
+    <a href="/" class="nav-logo">APEX</a>
+    <a href="/" class="active">Scanner</a>
+    <a href="/apex_os">Institutional OS</a>
+    <a href="/assistant">Trade Assistant</a>
+    <a href="/flow">Flow / GEX</a>
+    <div class="nav-sep"></div>
+    <a href="/api/v45/status" target="_blank">Status</a>
+    <a href="/health" target="_blank">Health</a>
+  </nav>
   <div class="topbar">
     <div class="brand"><h1>APEX Institutional Forecast Engine</h1><span class="ver" id="ver"></span></div>
     <span class="session-pill" id="sessionPill">--</span>
@@ -3630,16 +3665,31 @@ FLOW_HTML = """
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>APEX QuantData Flow Dashboard</title>
+<title>APEX Flow / GEX Dashboard</title>
 <style>
-:root{--bg:#090d14;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#8fa0b8;--accent:#6ee7f9;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);font-family:Arial,Helvetica,sans-serif;color:var(--text)}header{display:flex;gap:16px;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--border);background:#0b101a;position:sticky;top:0;z-index:3}.brand{font-size:20px;font-weight:800}.sub{color:var(--muted);font-size:13px;margin-top:4px}.nav a{color:var(--accent);text-decoration:none;margin-left:14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;padding:18px}.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.28)}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.ticker{font-size:26px;font-weight:900}.badge{padding:6px 10px;border-radius:999px;font-size:12px;font-weight:800;background:#263244}.BULLISH{color:var(--good)}.BEARISH{color:var(--bad)}.MIXED{color:var(--warn)}.decision{border-radius:14px;padding:14px;margin:10px 0 14px;border:1px solid var(--border);background:#0a111d}.decisionTitle{font-size:24px;font-weight:900;letter-spacing:.2px}.decisionSub{font-size:13px;color:var(--muted);margin-top:4px}.GREENBOX{border-color:rgba(34,197,94,.65);box-shadow:0 0 0 1px rgba(34,197,94,.16) inset}.YELLOWBOX{border-color:rgba(245,158,11,.65);box-shadow:0 0 0 1px rgba(245,158,11,.16) inset}.REDBOX{border-color:rgba(239,68,68,.65);box-shadow:0 0 0 1px rgba(239,68,68,.16) inset}.GREEN{color:var(--good)}.YELLOW{color:var(--warn)}.RED{color:var(--bad)}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.metric{background:#0a111d;border:1px solid #223047;border-radius:12px;padding:10px}.label{font-size:12px;color:var(--muted)}.value{font-size:20px;font-weight:800;margin-top:5px}.wide{grid-column:1/-1}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.notes{font-size:12px;color:var(--muted);line-height:1.5;margin-top:12px}.status{padding:0 18px 8px;color:var(--muted);font-size:13px}.btn{background:#10243a;color:var(--text);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.btn:hover{border-color:var(--accent)}@media(max-width:600px){.metrics,.levels{grid-template-columns:1fr}header{display:block}.nav{margin-top:8px}.nav a{margin-left:0;margin-right:12px}}
+:root{--bg:#090d14;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#8fa0b8;--accent:#6ee7f9;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--border:#263244}*{box-sizing:border-box}body{margin:0;background:#090d14;font-family:Arial,Helvetica,sans-serif;color:var(--text)}
+.apex-nav{display:flex;align-items:center;gap:6px;padding:10px 16px;background:#101827;border-bottom:1px solid #263244;flex-wrap:wrap}
+.apex-nav .nav-logo{font-family:monospace;font-size:13px;font-weight:800;color:#6ee7f9;margin-right:10px;text-decoration:none}
+.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:#8fa0b8;text-decoration:none;transition:all .15s}
+.apex-nav a:hover{background:#131f32;color:#eef4ff;border-color:#263244}
+.apex-nav a.active{background:rgba(110,231,249,.08);color:#6ee7f9;border-color:rgba(110,231,249,.3)}
+.apex-nav .nav-sep{width:1px;height:18px;background:#263244;margin:0 4px}
+.brand{font-size:20px;font-weight:800;padding:14px 18px 0}.sub-title{color:var(--muted);font-size:13px;padding:2px 18px 10px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px;padding:18px}.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--border);border-radius:16px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.28)}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.ticker{font-size:26px;font-weight:900}.badge{padding:6px 10px;border-radius:999px;font-size:12px;font-weight:800;background:#263244}.BULLISH{color:var(--good)}.BEARISH{color:var(--bad)}.MIXED{color:var(--warn)}.decision{border-radius:14px;padding:14px;margin:10px 0 14px;border:1px solid var(--border);background:#0a111d}.decisionTitle{font-size:24px;font-weight:900;letter-spacing:.2px}.decisionSub{font-size:13px;color:var(--muted);margin-top:4px}.GREENBOX{border-color:rgba(34,197,94,.65);box-shadow:0 0 0 1px rgba(34,197,94,.16) inset}.YELLOWBOX{border-color:rgba(245,158,11,.65);box-shadow:0 0 0 1px rgba(245,158,11,.16) inset}.REDBOX{border-color:rgba(239,68,68,.65);box-shadow:0 0 0 1px rgba(239,68,68,.16) inset}.GREEN{color:var(--good)}.YELLOW{color:var(--warn)}.RED{color:var(--bad)}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.metric{background:#0a111d;border:1px solid #223047;border-radius:12px;padding:10px}.label{font-size:12px;color:var(--muted)}.value{font-size:20px;font-weight:800;margin-top:5px}.wide{grid-column:1/-1}.levels{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}.notes{font-size:12px;color:var(--muted);line-height:1.5;margin-top:12px}.status{padding:0 18px 8px;color:var(--muted);font-size:13px}.btn{background:#10243a;color:var(--text);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.btn:hover{border-color:var(--accent)}@media(max-width:600px){.metrics,.levels{grid-column:1fr}}
 </style>
 </head>
 <body>
-<header>
-  <div><div class="brand">APEX QuantData Flow / GEX</div><div class="sub">Net flow, sweeps, call/put premium and gamma levels from QuantData</div></div>
-  <div class="nav"><button class="btn" onclick="loadFlow()">Refresh</button><a href="/assistant">State Assistant</a><a href="/">APEX Dashboard</a><a href="/api/flow">JSON</a></div>
-</header>
+<nav class="apex-nav">
+  <a href="/" class="nav-logo">APEX</a>
+  <a href="/">Scanner</a>
+  <a href="/apex_os">Institutional OS</a>
+  <a href="/assistant">Trade Assistant</a>
+  <a href="/flow" class="active">Flow / GEX</a>
+  <div class="nav-sep"></div>
+  <a href="/api/v45/status" target="_blank">Status</a>
+  <a href="/health" target="_blank">Health</a>
+</nav>
+<div class="brand">APEX Flow / GEX</div>
+<div class="sub-title">Net flow, sweeps, call/put premium and gamma levels from QuantData &nbsp;·&nbsp; <button class="btn" onclick="loadFlow()" style="font-size:12px;padding:4px 10px">Refresh</button></div>
 <div class="status" id="status">Loading flow data...</div>
 <div class="grid" id="grid"></div>
 <script>
@@ -3679,7 +3729,7 @@ async function loadFlow(){
    const r=await fetch('/api/flow',{cache:'no-store'}); const data=await r.json();
    if(!r.ok) throw new Error(data.error||('HTTP '+r.status));
    grid.innerHTML=(data.items||[]).map(card).join('') || '<div class="card">No flow rows returned.</div>';
-   status.textContent=`Updated ${data.updated_at_et || data.updated_at || ''} · Sources: QuantData ${data.quantdata_configured?'configured':'not configured'}`;
+   status.textContent=`Updated ${data.updated_at_et || data.updated_at || ''} · QuantData ${data.quantdata_configured?'configured':'not configured'}`;
  }catch(e){ status.textContent='Flow dashboard error: '+e.message; }
 }
 loadFlow(); setInterval(loadFlow, 60000);
@@ -3692,10 +3742,30 @@ loadFlow(); setInterval(loadFlow, 60000);
 ASSISTANT_HTML = """
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>APEX 3.5.1 Trade Assistant</title>
+<title>APEX Trade Assistant</title>
 <style>
-:root{--bg:#070a10;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:linear-gradient(180deg,#070a10,#0d1320);color:var(--text);font-family:Arial,Helvetica,sans-serif}.wrap{max-width:1180px;margin:0 auto;padding:18px}header{display:flex;justify-content:space-between;gap:12px;align-items:center;border-bottom:1px solid var(--border);padding:14px 0 18px}.brand{font-size:27px;font-weight:900}.sub{color:var(--muted);margin-top:5px}.nav a,.btn{color:var(--cyan);text-decoration:none;margin-left:12px}.btn{background:#10243a;border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:18px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.banner{border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:12px;background:#09111d}.banner.GREEN{border-color:rgba(34,197,94,.5)}.banner.YELLOW{border-color:rgba(245,158,11,.55)}.banner.RED{border-color:rgba(239,68,68,.55)}.banner-title{font-weight:900;font-size:16px}.banner-msg{color:var(--muted);margin-top:4px;font-size:13px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:10px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:20px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}.planner{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.bigplan{background:#07111f;border:1px solid #2b405d;border-radius:16px;padding:16px}.summary{font-size:22px;font-weight:900;line-height:1.25}.countdown{font-size:34px;font-weight:1000}.check{display:flex;align-items:center;gap:8px;margin:7px 0;color:#cbd8ea}.ok{color:var(--good)}.no{color:var(--bad)}.rules{margin-top:10px;color:#b7c7dd;line-height:1.5}.stale{border-color:rgba(245,158,11,.7)}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}@media(max-width:820px){header{display:block}.nav{margin-top:10px}.planner{grid-template-columns:1fr}.state{font-size:34px}}
-</style></head><body><div class="wrap"><header><div><div class="brand">APEX 3.5.1 Session-Aware Trade Assistant</div><div class="sub">Session-aware Flow/GEX bias + Pine trigger + execution plan + countdown</div></div><div class="nav"><button class="btn" onclick="loadAssistant()">Refresh</button><a href="/flow">Flow/GEX</a><a href="/api/assistant">JSON</a></div></header><div id="app" class="panel">Loading...</div></div>
+:root{--bg:#070a10;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:#070a10;color:var(--text);font-family:Arial,Helvetica,sans-serif}
+.apex-nav{display:flex;align-items:center;gap:6px;padding:10px 16px;background:#101827;border-bottom:1px solid #263244;flex-wrap:wrap}
+.apex-nav .nav-logo{font-family:monospace;font-size:13px;font-weight:800;color:#6ee7f9;margin-right:10px;text-decoration:none}
+.apex-nav a{font-size:12px;font-weight:600;padding:5px 12px;border-radius:7px;border:1px solid transparent;color:#91a4bd;text-decoration:none;transition:all .15s}
+.apex-nav a:hover{background:#131f32;color:#eef4ff;border-color:#263244}
+.apex-nav a.active{background:rgba(110,231,249,.08);color:#6ee7f9;border-color:rgba(110,231,249,.3)}
+.apex-nav .nav-sep{width:1px;height:18px;background:#263244;margin:0 4px}
+.wrap{max-width:1180px;margin:0 auto;padding:18px}.sub-header{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0 18px}.brand{font-size:22px;font-weight:900}.sub{color:var(--muted);margin-top:5px;font-size:13px}.btn{background:#10243a;color:var(--cyan);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:4px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.banner{border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:12px;background:#09111d}.banner.GREEN{border-color:rgba(34,197,94,.5)}.banner.YELLOW{border-color:rgba(245,158,11,.55)}.banner.RED{border-color:rgba(239,68,68,.55)}.banner-title{font-weight:900;font-size:16px}.banner-msg{color:var(--muted);margin-top:4px;font-size:13px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:10px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:20px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}.planner{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.bigplan{background:#07111f;border:1px solid #2b405d;border-radius:16px;padding:16px}.summary{font-size:22px;font-weight:900;line-height:1.25}.countdown{font-size:34px;font-weight:1000}.check{display:flex;align-items:center;gap:8px;margin:7px 0;color:#cbd8ea}.ok{color:var(--good)}.no{color:var(--bad)}.rules{margin-top:10px;color:#b7c7dd;line-height:1.5}.stale{border-color:rgba(245,158,11,.7)}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}@media(max-width:820px){.planner{grid-template-columns:1fr}.state{font-size:34px}}
+</style></head><body>
+<nav class="apex-nav">
+  <a href="/" class="nav-logo">APEX</a>
+  <a href="/">Scanner</a>
+  <a href="/apex_os">Institutional OS</a>
+  <a href="/assistant" class="active">Trade Assistant</a>
+  <a href="/flow">Flow / GEX</a>
+  <div class="nav-sep"></div>
+  <a href="/api/v45/status" target="_blank">Status</a>
+  <a href="/health" target="_blank">Health</a>
+</nav>
+<div class="wrap">
+<div class="sub-header"><div><div class="brand">APEX Trade Assistant</div><div class="sub">Session-aware Flow/GEX bias + Pine trigger + execution plan</div></div><div><button class="btn" onclick="loadAssistant()">Refresh</button></div></div>
+<div id="app" class="panel">Loading...</div></div>
 <script>
 function cls(p){ if(p==='URGENT') return 'good flash'; if(p==='BLOCKED') return 'bad'; if(p==='WARNING') return 'warn'; if(p==='INFO') return 'info'; return 'warn';}
 function money(v){if(v==null)return'--';let n=Number(v),s=n<0?'-':'',a=Math.abs(n);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';return s+'$'+a.toFixed(0)}
