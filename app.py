@@ -13,6 +13,18 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template_string, request
 
+# APEX Institutional OS 6.0.1 modular engines
+try:
+    from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
+    from engine.data_bus import build_market_state as build_market_state_v6
+    APEX_OS_601_AVAILABLE = True
+except Exception as _apex601_import_error:
+    build_gamma_from_quantdata_response = None
+    normalize_index_level_v6 = None
+    build_market_state_v6 = None
+    APEX_OS_601_AVAILABLE = False
+    print(f"APEX 6.0.1 engines unavailable: {_apex601_import_error}", flush=True)
+
 # APEX 4.5 nine-engine decision support system
 try:
     from apex_engines import build_institutional_decision as _build_institutional_decision
@@ -22,7 +34,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "3.5.1_SESSION_AWARE_TRADE_ASSISTANT"
+VERSION = "6.0.1_DATA_BUS_GAMMA_DIAGNOSTICS"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -280,37 +292,33 @@ def safe_post_json(url: str, payload: dict, headers: Optional[dict] = None, time
 
 
 
-def normalize_index_level(value: Any, reference_price: Optional[float] = None, ticker: str = "") -> Optional[float]:
-    """Normalize compressed index strikes without inventing new levels.
-
-    QuantData may return SPX strike keys as 75, 730, 750, etc. while the
-    live chart price is 7300+. This function only scales by powers of 10 and
-    only when a real reference price shows the value is compressed.
-    """
+def normalize_index_level(value: Any, reference_price: Optional[float], ticker: str = "SPX") -> Optional[float]:
+    """Backward-compatible wrapper around APEX 6.0.1 index normalizer."""
+    if normalize_index_level_v6 is not None:
+        return normalize_index_level_v6(value, ticker=ticker, reference_price=reference_price)
     v = safe_float(value, 0.0)
     ref = safe_float(reference_price, 0.0)
     if v <= 0:
         return None
     t = (ticker or "").upper()
-    # Only normalize index-scale products. ETF prices such as SPY must remain intact.
-    index_like = t in {"SPX", "SPXW", "I:SPX", "ES", "ES1!", "/ES"} or ref >= 1000
-    if not index_like or ref <= 0:
+    index_like = t in {"SPX", "SPXW", "I:SPX", "$SPX", "ES", "ES1!", "/ES"} or ref >= 1000
+    if not index_like:
         return round(v, 2)
-    # Bring compressed values into the same order of magnitude as the reference.
-    original = v
-    for _ in range(4):
-        if v >= ref * 0.45:
-            break
+    if ref >= 1000:
+        for _ in range(6):
+            if v >= ref * 0.45:
+                break
+            v *= 10.0
+        for _ in range(6):
+            if v <= ref * 2.20:
+                break
+            v /= 10.0
+        return round(v, 2)
+    if v < 100:
+        v *= 100.0
+    elif v < 1000:
         v *= 10.0
-    for _ in range(4):
-        if v <= ref * 2.20:
-            break
-        v /= 10.0
-    # If scaling made it less plausible, keep the original.
-    if abs(v - ref) > abs(original - ref) and original >= ref * 0.45:
-        v = original
     return round(v, 2)
-
 
 def normalize_gamma_levels(levels: Dict[str, Any], reference_price: Optional[float], ticker: str = "SPX") -> Dict[str, Any]:
     """Return gamma levels normalized to the displayed instrument price scale."""
@@ -669,155 +677,38 @@ def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
 
 
 def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
-    """QuantData gamma exposure-by-strike layer.
-
-    Uses QuantData's /options/tool/exposure-by-strike endpoint with greekMode=GAMMA
-    and representationMode=RAW.
-
-    v3.4.5 fix:
-    - Filters strike selection around current spot before choosing walls.
-    - Chooses call wall from strikes at/above spot and put wall from strikes at/below spot.
-    - Uses absolute exposure magnitude so negative put exposure is handled correctly.
-    - Calculates zero-gamma from cumulative filtered net exposure instead of grabbing an
-      extreme far-away strike with the smallest single-row net value.
-    """
-    empty = {"gex_score": 50.0, "gex_status": "NEUTRAL - GEX NOT CONFIGURED", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["Set QUANTDATA_API_KEY and GEX_ENABLED=true to enable gamma exposure."]}
+    """APEX 6.0.1 QuantData gamma layer with raw → normalized → engine diagnostics."""
+    empty = {
+        "gex_score": 50.0,
+        "gex_status": "NEUTRAL - GEX NOT CONFIGURED",
+        "call_wall": None,
+        "put_wall": None,
+        "zero_gamma": None,
+        "stock_price": None,
+        "quality_flags": ["QUANTDATA_NOT_CONFIGURED"],
+        "gex_notes": ["Set QUANTDATA_API_KEY and GEX_ENABLED=true to enable gamma exposure."],
+        "diagnostics": None,
+    }
     if not QUANTDATA_API_KEY or not GEX_ENABLED:
         return empty
     if BREAKER.is_open("quantdata_gex"):
         BREAKER.record_skip("quantdata_gex")
-        return {"gex_score": 50.0, "gex_status": "NEUTRAL - CIRCUIT OPEN", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["quantdata_gex skipped after repeated failures this scan cycle."]}
+        return {**empty, "gex_status": "NEUTRAL - CIRCUIT OPEN", "quality_flags": ["QUANTDATA_GEX_CIRCUIT_OPEN"], "gex_notes": ["quantdata_gex skipped after repeated failures this scan cycle."]}
 
     headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
-    payload = {"greekMode": "GAMMA", "representationMode": "RAW", "filter": {"ticker": ticker}}
+    # SPXW maps to the same index options complex for dashboard purposes.
+    qd_ticker = "SPX" if ticker.upper() in {"SPXW", "$SPX", "I:SPX"} else ticker.upper()
+    payload = {"greekMode": "GAMMA", "representationMode": "RAW", "filter": {"ticker": qd_ticker}}
     data = safe_post_json(f"{QUANTDATA_BASE_URL}/options/tool/exposure-by-strike", payload, headers=headers, timeout=20)
     BREAKER.record_failure("quantdata_gex") if data is None else BREAKER.record_success("quantdata_gex")
-    if not isinstance(data, dict):
-        return {"gex_score": 50.0, "gex_status": "NEUTRAL - NO GEX RETURNED", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["QuantData exposure-by-strike returned no usable response."]}
+    if data is None:
+        return {**empty, "gex_status": "NEUTRAL - NO GEX RETURNED", "quality_flags": ["NO_GEX_RESPONSE"], "gex_notes": ["QuantData exposure-by-strike returned no usable response."]}
 
-    ticker_data = (data.get("data") or {}).get(ticker) if isinstance(data.get("data"), dict) else None
-    if not isinstance(ticker_data, dict):
-        for k, v in (data.get("data") or {}).items() if isinstance(data.get("data"), dict) else []:
-            if str(k).upper() == ticker.upper() and isinstance(v, dict):
-                ticker_data = v
-                break
-    if not isinstance(ticker_data, dict):
-        return {"gex_score": 50.0, "gex_status": "NEUTRAL - NO GEX MAP", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": None, "gex_notes": ["No exposureMap found for ticker."]}
+    if build_gamma_from_quantdata_response is not None:
+        return build_gamma_from_quantdata_response(data, qd_ticker)
 
-    exposure_map = ticker_data.get("exposureMap") or {}
-    stock_price = safe_float(ticker_data.get("stockPrice"), None)
-    by_strike: Dict[float, Dict[str, float]] = {}
-
-    if isinstance(exposure_map, dict):
-        for _exp, strikes in exposure_map.items():
-            if not isinstance(strikes, dict):
-                continue
-            for strike_raw, cell in strikes.items():
-                if not isinstance(cell, dict):
-                    continue
-                raw_strike = safe_float(strike_raw, None)
-                if raw_strike is None:
-                    continue
-                # Normalize compressed SPX/ES strike keys (75 → 7500, 730 → 7300)
-                # against QuantData stockPrice when available. This fixes the dashboard
-                # showing two/three digit gamma levels while SPX is trading four digits.
-                strike = normalize_index_level(raw_strike, stock_price, ticker) or raw_strike
-                bucket = by_strike.setdefault(strike, {"call": 0.0, "put": 0.0, "net": 0.0})
-                call_exp = safe_float(cell.get("callExposure"), 0.0)
-                put_exp = safe_float(cell.get("putExposure"), 0.0)
-                bucket["call"] += call_exp
-                bucket["put"] += put_exp
-                bucket["net"] += call_exp + put_exp
-
-    if not by_strike:
-        return {"gex_score": 50.0, "gex_status": "NEUTRAL - EMPTY GEX MAP", "call_wall": None, "put_wall": None, "zero_gamma": None, "stock_price": stock_price, "gex_notes": ["Exposure map contained no strike rows."]}
-
-    # If QuantData does not provide a spot price, use the median strike as a defensive fallback.
-    if not stock_price or stock_price <= 0:
-        sorted_all = sorted(by_strike.keys())
-        stock_price = sorted_all[len(sorted_all) // 2]
-    stock_price = normalize_index_level(stock_price, stock_price, ticker) or stock_price
-
-    # Wall levels should be relevant to the current trading area, not far OTM/LEAPS strikes.
-    # SPX can have wider strike maps, so keep a 10% band around spot by default.
-    band_pct = 0.10 if ticker.upper() in ("SPX", "SPXW") else 0.12
-    low_bound = stock_price * (1 - band_pct)
-    high_bound = stock_price * (1 + band_pct)
-    filtered = {k: v for k, v in by_strike.items() if low_bound <= k <= high_bound}
-
-    # If the band is too sparse, widen once before falling back to all strikes.
-    if len(filtered) < 10:
-        wide_low = stock_price * 0.80
-        wide_high = stock_price * 1.20
-        filtered = {k: v for k, v in by_strike.items() if wide_low <= k <= wide_high}
-        low_bound, high_bound = wide_low, wide_high
-    if not filtered:
-        filtered = by_strike
-        low_bound, high_bound = min(by_strike.keys()), max(by_strike.keys())
-
-    calls_above = {k: v for k, v in filtered.items() if k >= stock_price}
-    puts_below = {k: v for k, v in filtered.items() if k <= stock_price}
-
-    # Use absolute exposure magnitude. Put exposure is commonly negative, so min() alone can be misleading.
-    call_pool = calls_above or filtered
-    put_pool = puts_below or filtered
-    call_wall = max(call_pool.items(), key=lambda kv: abs(kv[1]["call"]))[0]
-    put_wall = max(put_pool.items(), key=lambda kv: abs(kv[1]["put"]))[0]
-
-    # Approximate zero-gamma from cumulative net exposure across the filtered strike curve.
-    # Prefer the cumulative zero crossing closest to spot; fallback to closest cumulative value.
-    sorted_rows = sorted(filtered.items(), key=lambda kv: kv[0])
-    cumulative = 0.0
-    prev_strike = None
-    prev_cum = None
-    crossing_candidates: List[float] = []
-    best_abs = None
-    best_zero = sorted_rows[0][0]
-    for strike, vals in sorted_rows:
-        cumulative += vals["net"]
-        if prev_cum is not None and ((prev_cum <= 0 <= cumulative) or (prev_cum >= 0 >= cumulative)):
-            crossing_candidates.append((prev_strike + strike) / 2 if prev_strike is not None else strike)
-        abs_cum = abs(cumulative)
-        if best_abs is None or abs_cum < best_abs:
-            best_abs = abs_cum
-            best_zero = strike
-        prev_strike = strike
-        prev_cum = cumulative
-    zero_gamma = min(crossing_candidates, key=lambda x: abs(x - stock_price)) if crossing_candidates else best_zero
-
-    total_net = sum(v["net"] for v in filtered.values())
-    total_abs = sum(abs(v["call"]) + abs(v["put"]) for v in filtered.values()) or 1.0
-    net_ratio = total_net / total_abs
-    score = max(0, min(100, 50 + net_ratio * 50))
-    status = "POSITIVE GAMMA / PIN RISK" if score >= 60 else "NEGATIVE GAMMA / TREND RISK" if score <= 40 else "MIXED GAMMA"
-
-    normalized_gamma = normalize_gamma_levels({
-        "call_wall": call_wall,
-        "put_wall": put_wall,
-        "zero_gamma": zero_gamma,
-        "stock_price": stock_price,
-    }, stock_price, ticker)
-
-    return {
-        "gex_score": round(score, 1),
-        "gex_status": status,
-        "call_wall": normalized_gamma.get("call_wall"),
-        "put_wall": normalized_gamma.get("put_wall"),
-        "zero_gamma": normalized_gamma.get("zero_gamma"),
-        "stock_price": normalized_gamma.get("stock_price"),
-        "net_gamma_ratio": round(net_ratio, 4),
-        "strike_count": len(filtered),
-        "raw_strike_count": len(by_strike),
-        "gamma_scale_diagnostics": normalized_gamma.get("gamma_scale_diagnostics"),
-        "gex_notes": [
-            f"Call wall {call_wall:.2f}",
-            f"Put wall {put_wall:.2f}",
-            f"Approx zero-gamma {zero_gamma:.2f}",
-            f"Spot {stock_price:.2f}",
-            f"Filtered strikes {len(filtered)}/{len(by_strike)} within {low_bound:.2f}-{high_bound:.2f}",
-        ],
-    }
-
+    # Defensive fallback if the modular package did not import.
+    return {**empty, "gex_status": "NEUTRAL - GAMMA ENGINE UNAVAILABLE", "quality_flags": ["APEX_601_ENGINE_IMPORT_FAILED"], "gex_notes": ["APEX 6.0.1 gamma module was not importable."]}
 
 def flow_decision_gate(bias: str, net_premium: float, flow_score: float, order_flow_score: float, gex_score: float) -> Dict[str, Any]:
     """Fast traffic-light decision gate for the Flow/GEX dashboard.
@@ -1193,6 +1084,9 @@ def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
         "put_wall": gex.get("put_wall"),
         "zero_gamma": gex.get("zero_gamma"),
         "stock_price": gex.get("stock_price"),
+        "raw_stock_price": gex.get("raw_stock_price"),
+        "quality_flags": gex.get("quality_flags", []),
+        "gamma_diagnostics": gex.get("diagnostics"),
         "notes": (decision.get("decision_reasons") or []) + (flow.get("flow_notes") or []) + (order.get("order_flow_notes") or []) + (gex.get("gex_notes") or []),
     }
 
@@ -4547,7 +4441,7 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     # Fall back to I:SPX (real SPX cash index — same price scale as ES, far better than SPY).
     if not raw_bars and is_futures:
         polygon_ticker = "I:SPX"
-        display_name = f"ES → SPX proxy (futures not on plan)"
+        display_name = f"ES Futures unavailable — SPX Cash fallback"
         is_futures = False
         spx_proxy = False
         raw_bars = _chart_fetch_bars(polygon_ticker, days=days, multiplier=multiplier)
@@ -4765,6 +4659,77 @@ def api_chart_data():
         return jsonify({"ok": False, "error": str(e), "ticker": ticker}), 500
 
 
+@app.route("/api/market_state")
+def api_market_state():
+    """APEX 6.0.1 unified Data Bus endpoint.
+
+    Returns one validated market_state object separating ES futures from SPX cash,
+    anchoring gamma to SPX, and exposing diagnostics for raw→normalized→display values.
+    """
+    days = max(1, min(int(request.args.get("days", "1")), 5))
+    multiplier = int(request.args.get("tf", "5"))
+    multiplier = multiplier if multiplier in (1, 5, 15) else 5
+    try:
+        es_chart = build_chart_data("ES", days=days, multiplier=multiplier)
+        spx_chart = build_chart_data("SPX", days=days, multiplier=multiplier)
+        spx_flow = quantdata_flow_snapshot("SPX")
+        spx_gamma = {
+            "stock_price": spx_flow.get("stock_price"),
+            "call_wall": spx_flow.get("call_wall"),
+            "put_wall": spx_flow.get("put_wall"),
+            "zero_gamma": spx_flow.get("zero_gamma"),
+            "gex_score": spx_flow.get("gex_score"),
+            "gex_status": spx_flow.get("gex_status"),
+            "quality_flags": spx_flow.get("quality_flags", []),
+            "diagnostics": spx_flow.get("gamma_diagnostics"),
+        }
+        if build_market_state_v6 is not None:
+            state = build_market_state_v6(
+                es_chart=es_chart,
+                spx_chart=spx_chart,
+                spx_gamma=spx_gamma,
+                spx_flow=spx_flow,
+                session=session_status(),
+            )
+        else:
+            state = {
+                "version": VERSION,
+                "session": session_status(),
+                "instruments": {"ES": es_chart, "SPX": spx_chart},
+                "gamma": spx_gamma,
+                "flow": spx_flow,
+                "diagnostics": {"error": "APEX 6.0.1 data bus unavailable"},
+            }
+        return jsonify({"ok": True, "market_state": state})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/diagnostics/gamma")
+def api_gamma_diagnostics():
+    """Developer diagnostics for SPX gamma scaling and wall selection."""
+    ticker = request.args.get("ticker", "SPX").strip().upper()
+    try:
+        snap = quantdata_flow_snapshot("SPX" if ticker in {"ES", "ES1!", "/ES", "$SPX", "I:SPX"} else ticker)
+        return jsonify({
+            "ok": True,
+            "ticker": ticker,
+            "gamma": {
+                "stock_price": snap.get("stock_price"),
+                "raw_stock_price": snap.get("raw_stock_price"),
+                "call_wall": snap.get("call_wall"),
+                "put_wall": snap.get("put_wall"),
+                "zero_gamma": snap.get("zero_gamma"),
+                "gex_score": snap.get("gex_score"),
+                "gex_status": snap.get("gex_status"),
+                "quality_flags": snap.get("quality_flags", []),
+            },
+            "diagnostics": snap.get("gamma_diagnostics"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "ticker": ticker}), 500
+
+
 CHART_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4805,6 +4770,14 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .last-update{font-size:10px;color:var(--faint);font-family:var(--mono)}
 .ctrl-label{font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-family:var(--mono)}
 .ctrl-sep{width:1px;height:20px;background:var(--bdr);margin:0 2px}
+
+
+.data-bus-ribbon{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin:0 0 12px}
+.bus-card{background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:9px 10px}
+.bus-label{font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint);font-weight:800}
+.bus-value{font-family:var(--mono);font-size:16px;font-weight:900;color:var(--text);margin-top:3px}
+.bus-green{color:var(--green)}.bus-red{color:var(--red)}.bus-blue{color:var(--blue)}.bus-amber{color:var(--amber)}
+@media(max-width:900px){.data-bus-ribbon{grid-template-columns:repeat(2,1fr)}}
 
 /* Side-by-side chart panels */
 .charts-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
@@ -4902,6 +4875,10 @@ canvas{display:block}
       <button class="refresh-btn" id="refreshBtn">↻ Refresh</button>
       <span class="last-update" id="lastUpdate">--</span>
     </div>
+  </div>
+
+  <div class="data-bus-ribbon" id="dataBusRibbon">
+    <div class="bus-card"><div class="bus-label">Data Bus</div><div class="bus-value bus-blue">Loading…</div></div>
   </div>
 
   <div class="charts-row" id="chartsRow">
@@ -5324,11 +5301,39 @@ async function loadPanel(panelId, ticker) {
   }
 }
 
+
+async function loadDataBusRibbon(){
+  const el = document.getElementById('dataBusRibbon');
+  if(!el) return;
+  try{
+    const r = await fetch('/api/market_state?days=' + activeDays + '&tf=' + activeTf, {cache:'no-store'});
+    const j = await r.json();
+    if(!r.ok || !j.ok){ throw new Error(j.error || ('HTTP '+r.status)); }
+    const s = j.market_state || {};
+    const es = (s.instruments||{}).ES || {};
+    const spx = (s.instruments||{}).SPX || {};
+    const g = s.gamma || {};
+    const b = s.basis || {};
+    const basisCls = (b.points||0) >= 0 ? 'bus-green' : 'bus-red';
+    el.innerHTML = `
+      <div class="bus-card"><div class="bus-label">ES Futures</div><div class="bus-value bus-blue">$${fmt(es.price)}</div></div>
+      <div class="bus-card"><div class="bus-label">SPX Cash</div><div class="bus-value bus-blue">$${fmt(spx.price)}</div></div>
+      <div class="bus-card"><div class="bus-label">ES / SPX Basis</div><div class="bus-value ${basisCls}">${b.points!=null?(b.points>0?'+':'')+fmt(b.points):'--'} ${b.label||''}</div></div>
+      <div class="bus-card"><div class="bus-label">Call Wall</div><div class="bus-value bus-green">$${fmt(g.call_wall)}</div></div>
+      <div class="bus-card"><div class="bus-label">Put Wall</div><div class="bus-value bus-red">$${fmt(g.put_wall)}</div></div>
+      <div class="bus-card"><div class="bus-label">Zero Gamma</div><div class="bus-value bus-amber">$${fmt(g.zero_gamma)}</div></div>
+    `;
+  }catch(e){
+    el.innerHTML = `<div class="bus-card"><div class="bus-label">Data Bus</div><div class="bus-value bus-red">${e.message}</div></div>`;
+  }
+}
+
 // ── Refresh both charts ───────────────────────────────────────────────────────
 async function loadAll() {
   document.getElementById('refreshBtn').textContent = '↻ Loading…';
   document.getElementById('lastUpdate').textContent = '';
   await Promise.all([
+    loadDataBusRibbon(),
     loadPanel('panelES',  'ES'),
     loadPanel('panelSPX', 'SPX'),
   ]);
