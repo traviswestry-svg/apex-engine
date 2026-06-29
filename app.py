@@ -3739,8 +3739,8 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
             exp_year += 1
 
     code = MONTH_CODES.get(exp_month, 'U')
-    year2 = str(exp_year)[-2:]
-    return f"{base}{code}{year2}"  # e.g. ESU26
+    year1 = str(exp_year)[-1:]   # Single digit: ESU6 not ESU26 (per Massive docs format)
+    return f"{base}{code}{year1}"  # e.g. ESU6, ESZ6, ESH7
 
 
 def _futures_fetch_bars(ticker: str, days: int, multiplier: int) -> List[dict]:
