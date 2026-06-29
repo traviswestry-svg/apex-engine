@@ -67,6 +67,15 @@ except Exception as _on_err:
     OVERNIGHT_ENGINE_AVAILABLE = False
     print(f"APEX overnight engine unavailable: {_on_err}", flush=True)
 
+# APEX Auction Intelligence Suite
+try:
+    from engine.auction_intelligence import build_auction_intelligence
+    AUCTION_INTEL_AVAILABLE = True
+except Exception as _ai_err:
+    build_auction_intelligence = None  # type: ignore[assignment]
+    AUCTION_INTEL_AVAILABLE = False
+    print(f"APEX auction intelligence unavailable: {_ai_err}", flush=True)
+
 # APEX 4.5 nine-engine decision support system
 try:
     from apex_engines import build_institutional_decision as _build_institutional_decision
@@ -3291,6 +3300,36 @@ def api_diagnostics():
             "closest_to_qualifying": STATE.get("scan_debug", []),
         })
 
+@app.route("/api/auction_intelligence")
+def api_auction_intelligence():
+    """GET /api/auction_intelligence?ticker=SPX — full auction intelligence read."""
+    ticker = request.args.get("ticker", "SPX").upper()
+    if not AUCTION_INTEL_AVAILABLE or build_auction_intelligence is None:
+        return jsonify({"ok": False, "error": "Auction intelligence engine not available."}), 503
+    try:
+        volume_bundle = _volume_profile_bundle(ticker=ticker, days=1, multiplier=5)
+        vp_cur   = volume_bundle.get("profile") or {}
+        vp_pri   = volume_bundle.get("prior_profile") or {}
+        flow_snap= quantdata_flow_snapshot(ticker)
+        price    = _sf((vp_cur.get("levels") or {}).get("poc")) or _sf(flow_snap.get("stock_price"))
+        intel    = build_auction_intelligence(
+            current_profile=vp_cur, prior_profile=vp_pri, earlier_poc=None,
+            current_price=price or 0.0,
+            flow_bias=flow_snap.get("bias", "MIXED"),
+            flow_momentum="STABLE", sweep_count=0,
+            gamma_regime="MIXED",
+            call_wall=_sf(flow_snap.get("call_wall")),
+            put_wall=_sf(flow_snap.get("put_wall")),
+        )
+        intel["ok"] = True
+        intel["ticker"] = ticker
+        intel["version"] = VERSION
+        intel["updated_at_et"] = now_et().strftime("%Y-%m-%d %H:%M:%S ET")
+        return jsonify(intel)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/market_status")
 def api_market_status():
     """GET /api/market_status — current session state and per-component status panel."""
@@ -3520,6 +3559,7 @@ def api_institutional_os():
                         flow_tape_summary=tape_summary,
                         session_state=_session_state_for_story,
                         market_state=canonical_ms or None,
+                        auction_intel=auction_intel or None,
                     )
                     result["story"] = story_v3
                     result["executive_summary"] = story_v3.get("executive_summary", result.get("executive_summary", ""))
@@ -3595,7 +3635,54 @@ def api_institutional_os():
             except Exception:
                 pass
 
-            # ── APEX Overnight Game Plan ──
+            # ── APEX Auction Intelligence ──
+            auction_intel: Dict[str, Any] = {}
+            if AUCTION_INTEL_AVAILABLE and build_auction_intelligence is not None:
+                try:
+                    _vp_cur  = volume_bundle.get("profile") or {}
+                    _vp_pri  = volume_bundle.get("prior_profile") or {}
+                    _vp_lvls = (_vp_cur.get("levels") or {})
+                    _au_obj  = volume_bundle.get("auction") or {}
+                    _fl_obj  = result.get("flow_intelligence") or {}
+                    _gm_obj  = result.get("gamma_regime") or {}
+                    _cur_price = canonical_ms.get("price") or _sf((flow_snapshot or {}).get("stock_price"))
+                    _minutes_o = canonical_ms.get("minutes_open", 0) or 0
+
+                    # Track POC history in the STATE_STORE across calls
+                    _poc_key = f"poc_history_{ticker}"
+                    with STATE_LOCK:
+                        _poc_hist = SCANNER_STATE.get(_poc_key) or []
+                    _cur_poc = _sf(_vp_lvls.get("poc"))
+                    _prior_poc_ai = _sf((_vp_pri.get("levels") or {}).get("poc"))
+                    _earlier_poc  = _poc_hist[-1] if len(_poc_hist) >= 1 else None
+                    if _cur_poc > 0:
+                        with STATE_LOCK:
+                            _poc_hist.append(_cur_poc)
+                            SCANNER_STATE[_poc_key] = _poc_hist[-20:]  # keep last 20
+
+                    auction_intel = build_auction_intelligence(
+                        current_profile  = _vp_cur,
+                        prior_profile    = _vp_pri,
+                        earlier_poc      = _earlier_poc,
+                        current_price    = _cur_price or 0.0,
+                        flow_bias        = _fl_obj.get("bias", "MIXED"),
+                        flow_momentum    = _fl_obj.get("flow_momentum", "STABLE"),
+                        sweep_count      = int(_sf(_fl_obj.get("sweep_count"))),
+                        gamma_regime     = canonical_ms.get("gamma_regime", "MIXED"),
+                        call_wall        = _sf(canonical_ms.get("call_wall")),
+                        put_wall         = _sf(canonical_ms.get("put_wall")),
+                        prev_day_poc     = _sf(_au_obj.get("previous_day_poc")),
+                        prev_day_vah     = 0.0,
+                        prev_day_val     = 0.0,
+                        minutes_open     = _minutes_o,
+                        bars_above_vah   = 0,  # would require bar-level state tracking
+                        bars_below_val   = 0,
+                        bars_above_poc   = 0,
+                        bars_below_poc   = 0,
+                    )
+                    result["auction_intelligence"] = auction_intel
+                except Exception as _ai_err2:
+                    print(f"Auction intelligence error (non-fatal): {_ai_err2}", flush=True)
             _session_state_now = session_ctx.get("session_state", "MARKET_OPEN")
             if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:
                 try:
