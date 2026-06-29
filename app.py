@@ -49,6 +49,15 @@ except Exception as _sc_err:
     STORY_COACH_V3_AVAILABLE = False
     print(f"APEX 6.3.4/6.3.5 story/coach v3 unavailable: {_sc_err}", flush=True)
 
+# APEX 6.4.1 — Canonical Market State
+try:
+    from engine.market_state import build_canonical_market_state
+    CANONICAL_MARKET_STATE_AVAILABLE = True
+except Exception as _cms_err:
+    build_canonical_market_state = None  # type: ignore[assignment]
+    CANONICAL_MARKET_STATE_AVAILABLE = False
+    print(f"APEX 6.4.1 canonical market state unavailable: {_cms_err}", flush=True)
+
 # APEX 4.5 nine-engine decision support system
 try:
     from apex_engines import build_institutional_decision as _build_institutional_decision
@@ -58,7 +67,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.4.0_APEX_TERMINAL_1_0"
+VERSION = "6.4.1_APEX_TERMINAL_CONSOLIDATION"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -3277,7 +3286,7 @@ def api_institutional_os():
                 },
             }
 
-            # ── APEX 6.3.2 — Enrich with flow tape summary ──
+            # ── APEX 6.3.2 — Flow tape summary ──
             tape_summary: Dict[str, Any] = {}
             if FLOW_TAPE_AVAILABLE and build_flow_tape is not None and QUANTDATA_API_KEY and ORDER_FLOW_ENABLED:
                 try:
@@ -3290,7 +3299,22 @@ def api_institutional_os():
                 except Exception:
                     pass
 
-            # ── APEX 6.3.4 / 6.3.5 — Story 3.0 + Trade Coach 3.0 ──
+            # ── APEX 6.4.1 — Canonical Market State ──
+            canonical_ms: Dict[str, Any] = {}
+            if CANONICAL_MARKET_STATE_AVAILABLE and build_canonical_market_state is not None:
+                try:
+                    canonical_ms = build_canonical_market_state(
+                        flow_snapshot=flow_snapshot,
+                        volume_bundle=volume_bundle,
+                        result=result,
+                        tape_summary=tape_summary,
+                        session_ctx=session_ctx,
+                    )
+                    result["market_state"] = canonical_ms
+                except Exception as _cms_err:
+                    print(f"Canonical market state error (non-fatal): {_cms_err}", flush=True)
+
+            # ── APEX 6.3.4 / 6.4.1 — Story Engine 3.1 ──
             _session_state_for_story = session_ctx.get("session_state", "MARKET_OPEN")
             if STORY_COACH_V3_AVAILABLE and build_story_v3 is not None:
                 try:
@@ -3308,12 +3332,14 @@ def api_institutional_os():
                         volume_profile=volume_bundle.get("profile"),
                         flow_tape_summary=tape_summary,
                         session_state=_session_state_for_story,
+                        market_state=canonical_ms or None,
                     )
                     result["story"] = story_v3
                     result["executive_summary"] = story_v3.get("executive_summary", result.get("executive_summary", ""))
                 except Exception as _sv3_err:
                     print(f"Story v3 error (using v2 fallback): {_sv3_err}", flush=True)
 
+            # ── APEX 6.3.5 / 6.4.1 — Trade Coach 3.1 ──
             if STORY_COACH_V3_AVAILABLE and build_trade_coach_v3 is not None:
                 try:
                     from engine.trade_coach import build_trade_coach_v3 as _btcv3
@@ -3329,24 +3355,54 @@ def api_institutional_os():
                         auction=volume_bundle.get("auction"),
                         volume_profile=volume_bundle.get("profile"),
                         flow_tape_summary=tape_summary,
+                        market_state=canonical_ms or None,
                     )
                     result["trade_coach"] = coach_v3
                 except Exception as _cv3_err:
                     print(f"Trade coach v3 error (using v2 fallback): {_cv3_err}", flush=True)
 
-            # ── Record replay frame ──
+            # ── APEX 6.4.1 — Enriched replay frame ──
             try:
+                story_snap = result.get("story") or {}
+                coach_snap = result.get("trade_coach") or {}
                 _replay_snap = {
-                    "decision_state": result.get("decision_state"),
-                    "confidence": result.get("confidence"),
-                    "stock_price": (result.get("flow") or {}).get("stock_price"),
-                    "recommendation": result.get("recommendation"),
-                    "grade": result.get("grade"),
-                    "poc": vp_levels.get("poc"),
-                    "vah": vp_levels.get("vah"),
-                    "val": vp_levels.get("val"),
-                    "auction_state": (volume_bundle.get("auction") or {}).get("auction_state"),
-                    "tape_bias": tape_summary.get("tape_bias"),
+                    # Decision
+                    "decision_state":    result.get("decision_state"),
+                    "ici":               result.get("confidence"),
+                    "grade":             result.get("grade"),
+                    "approved_side":     (result.get("risk") or {}).get("approved_side"),
+                    # Price / structure
+                    "stock_price":       canonical_ms.get("price") or (result.get("flow") or {}).get("stock_price"),
+                    "vwap":              canonical_ms.get("vwap"),
+                    "poc":               canonical_ms.get("poc"),
+                    "vah":               canonical_ms.get("vah"),
+                    "val":               canonical_ms.get("val"),
+                    "poc_migration":     canonical_ms.get("poc_migration"),
+                    "price_vs_poc":      canonical_ms.get("price_vs_poc"),
+                    "price_vs_va":       canonical_ms.get("price_vs_va"),
+                    "poc_vwap_confluent":canonical_ms.get("poc_vwap_confluent"),
+                    # Auction
+                    "auction_state":     canonical_ms.get("auction_state"),
+                    # Gamma
+                    "gamma_regime":      canonical_ms.get("gamma_regime"),
+                    "call_wall":         canonical_ms.get("call_wall"),
+                    "put_wall":          canonical_ms.get("put_wall"),
+                    "flip_risk":         canonical_ms.get("flip_risk"),
+                    # Flow / tape
+                    "flow_bias":         canonical_ms.get("flow_bias"),
+                    "tape_bias":         canonical_ms.get("tape_bias"),
+                    "tape_sweeps":       canonical_ms.get("tape_sweeps"),
+                    # Pine
+                    "pine_state":        canonical_ms.get("pine_state"),
+                    "signal_secs":       canonical_ms.get("signal_secs"),
+                    # Story snapshot (the key addition for replay quality)
+                    "executive_summary": story_snap.get("executive_summary", ""),
+                    "coach_action":      coach_snap.get("action", ""),
+                    "coach_entry":       coach_snap.get("entry_zone"),
+                    "coach_stop":        coach_snap.get("stop"),
+                    "coach_t1":          coach_snap.get("target1"),
+                    "coach_t2":          coach_snap.get("target2"),
+                    "recommendation":    result.get("recommendation"),
                 }
                 _record_replay_frame(ticker, _replay_snap)
             except Exception:

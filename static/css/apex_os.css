@@ -433,3 +433,102 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);-webkit-font
 .rs-green { color: var(--green); }
 .rs-red   { color: var(--red);   }
 .rs-blue  { color: var(--blue);  }
+
+/* ══════════════════════════════════════════════════════════════
+   APEX 6.4.1 — Trade Coach 3.1 Decision Center
+   ══════════════════════════════════════════════════════════════ */
+
+/* Main action block — color matches decision state */
+.coach-action-block {
+  padding: 10px 12px; border-radius: 8px; font-size: 12px;
+  line-height: 1.55; margin-bottom: 10px; font-weight: 500;
+  border: 1px solid transparent;
+}
+.coach-action-block.db-green {
+  background: rgba(12,163,12,.08); border-color: rgba(12,163,12,.2); color: var(--green);
+}
+.coach-action-block.db-amber {
+  background: rgba(245,158,11,.07); border-color: rgba(245,158,11,.2); color: var(--amber);
+}
+.coach-action-block.db-red {
+  background: rgba(239,68,68,.07); border-color: rgba(239,68,68,.2); color: var(--muted);
+}
+
+/* 2×4 grid for key levels */
+.coach-levels-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; margin-bottom: 8px;
+}
+.cl-item { display:flex; flex-direction:column; }
+.cl-label { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing:.06em; }
+.cl-val   { font-size: 12px; font-family: var(--mono); font-weight: 600; margin-top:1px; }
+
+/* Readiness bar */
+.coach-readiness {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.cr-label { font-size: 10px; color: var(--faint); min-width: 64px; }
+.cr-bar-wrap {
+  flex: 1; height: 5px; background: rgba(100,116,139,.2); border-radius: 3px; overflow:hidden;
+}
+.cr-bar { height: 100%; background: var(--blue); border-radius: 3px; transition: width .3s; }
+.cr-num { font-size: 11px; font-family: var(--mono); font-weight: 600; min-width: 32px; text-align:right; }
+
+/* Scale-out plan */
+.coach-scale-plan {
+  margin-bottom: 8px; padding: 7px 9px;
+  background: rgba(15,23,42,.5); border-radius: 7px;
+  border: 1px solid rgba(56,189,248,.1);
+}
+.scale-step { font-size: 11px; color: var(--muted); line-height: 1.55; }
+
+/* Do-not-trade conditions */
+.coach-dont-trade {
+  margin-bottom: 8px; padding: 7px 9px;
+  background: rgba(239,68,68,.05); border-radius: 7px;
+  border: 1px solid rgba(239,68,68,.15);
+}
+.dont-label { font-size: 9px; color: var(--red); text-transform:uppercase; letter-spacing:.07em; margin-bottom:3px; }
+.dont-item  { font-size: 11px; color: var(--muted); line-height: 1.5; }
+
+/* Checklist */
+.coach-checklist { display:flex; flex-direction:column; gap:3px; }
+.check-item {
+  display: flex; align-items: baseline; gap: 5px;
+  font-size: 10px; line-height: 1.45;
+}
+.check-met  { color: var(--muted); }
+.check-miss { color: var(--faint); }
+.check-icon { font-size: 11px; min-width: 12px; }
+.check-met  .check-icon { color: var(--green); }
+.check-miss .check-icon { color: var(--red); }
+.check-label { flex:1; }
+.check-note  { font-size: 9px; color: var(--faint); font-family: var(--mono); }
+
+/* ══════════════════════════════════════════════════════════════
+   APEX 6.4.1 — Enhanced Replay Frame
+   ══════════════════════════════════════════════════════════════ */
+.rf-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+}
+
+/* Story snapshot in replay */
+.replay-story {
+  padding: 9px 11px; margin-bottom: 8px;
+  background: rgba(15,23,42,.6); border-radius: 8px;
+  border-left: 3px solid var(--blue);
+  font-size: 11px; color: var(--text); line-height: 1.6;
+  font-style: italic;
+}
+
+/* Coach snapshot in replay */
+.replay-coach-action {
+  padding: 8px 10px; margin: 8px 0 4px;
+  background: rgba(12,163,12,.06); border-radius: 7px;
+  border: 1px solid rgba(12,163,12,.15);
+  font-size: 11px; color: var(--muted); line-height: 1.5;
+}
+
+.replay-meta-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px;
+  font-size: 11px; margin-bottom: 6px;
+}

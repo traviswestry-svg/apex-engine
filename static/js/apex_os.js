@@ -486,15 +486,86 @@ function renderCoachSnapshot(d) {
   const el = $('coachSnapshot');
   if (!el || !d) return;
   const coach = d.trade_coach || {};
-  const risk = d.risk || {};
-  const blockers = coach.blockers || [];
+  const risk  = d.risk || {};
+  const ms    = d.market_state || {};
+  const state = coach.state || d.decision_state || 'NO_TRADE';
+
+  const isEnter = state.startsWith('ENTER');
+  const isWatch = state.startsWith('WATCH') || state === 'READY';
+  const badgeCls = isEnter ? 'db-green' : isWatch ? 'db-amber' : 'db-red';
+
+  // Main action (3.1 prose)
+  const action = coach.action || d.executive_summary || 'Waiting for institutional alignment.';
+
+  // Trade levels
+  const stop  = coach.stop  != null ? '$' + fmt(coach.stop)    : '--';
+  const inv   = coach.invalidation != null ? '$' + fmt(coach.invalidation) : '--';
+  const t1    = coach.target1 != null ? '$' + fmt(coach.target1) : '--';
+  const t2    = coach.target2 != null ? '$' + fmt(coach.target2) : '--';
+  const entry = coach.entry_zone || risk.entry_zone || '--';
+  const contract = coach.contract_hint || risk.contract_hint || '--';
+
+  // Scale plan
+  const scalePlan = (coach.scale_out_plan || []);
+  const scaleHtml = scalePlan.length
+    ? `<div class="coach-scale-plan">${scalePlan.map(s => `<div class="scale-step">→ ${esc(s)}</div>`).join('')}</div>`
+    : '';
+
+  // Do-not-trade conditions
+  const dontTrade = coach.dont_trade_if || [];
+  const dontHtml = dontTrade.length
+    ? `<div class="coach-dont-trade">
+         <div class="dont-label">Do not enter if:</div>
+         ${dontTrade.map(c => `<div class="dont-item">• ${esc(c)}</div>`).join('')}
+       </div>`
+    : '';
+
+  // Checklist
+  const checklist = coach.checklist || [];
+  const checkHtml = checklist.length
+    ? `<div class="coach-checklist">${checklist.map(c =>
+        `<div class="check-item ${c.met ? 'check-met' : 'check-miss'}">
+           <span class="check-icon">${c.met ? '✓' : '✗'}</span>
+           <span class="check-label">${esc(c.label)}</span>
+           ${c.note ? `<span class="check-note">${esc(c.note)}</span>` : ''}
+         </div>`
+      ).join('')}</div>`
+    : '';
+
+  // Structure context
+  const poc  = coach.poc  || ms.poc;
+  const vwap = coach.vwap || ms.vwap;
+  const pvp  = coach.price_vs_poc || ms.price_vs_poc || '--';
+  const pva  = coach.price_vs_va  || ms.price_vs_va  || '--';
+  const mig  = coach.poc_migration || ms.poc_migration || '--';
+
+  const readiness = coach.readiness != null ? coach.readiness : null;
+  const readCls = readiness >= 80 ? 'ici-green' : readiness >= 60 ? 'ici-amber' : 'ici-red';
+
   el.innerHTML = `
-    <div class="coach-snap-action">${esc(coach.action || d.executive_summary || 'Waiting for institutional alignment.')}</div>
-    <div class="cmd-row"><span>Contract</span><b>${esc(coach.contract_hint || risk.contract_hint || 'Waiting')}</b></div>
-    <div class="cmd-row"><span>Entry</span><b>${esc(coach.entry_zone || risk.entry_zone || '--')}</b></div>
-    <div class="cmd-row"><span>Stop</span><b>${risk.stop != null ? '$' + fmt(risk.stop) : esc(coach.stop || '--')}</b></div>
-    <div class="cmd-row"><span>T1 / T2</span><b>${risk.target1 != null ? '$' + fmt(risk.target1) : esc(coach.target1 || '--')} / ${risk.target2 != null ? '$' + fmt(risk.target2) : esc(coach.target2 || '--')}</b></div>
-    ${blockers.length ? `<div class="mini-blockers">${blockers.slice(0,4).map(x => `<div>• ${esc(x)}</div>`).join('')}</div>` : ''}
+    <div class="coach-action-block ${badgeCls}">${esc(action)}</div>
+
+    <div class="coach-levels-grid">
+      <div class="cl-item"><span class="cl-label">Contract</span><b class="cl-val">${esc(contract)}</b></div>
+      <div class="cl-item"><span class="cl-label">Entry</span><b class="cl-val">${esc(entry)}</b></div>
+      <div class="cl-item"><span class="cl-label">Stop</span><b class="cl-val rv-red">${stop}</b></div>
+      <div class="cl-item"><span class="cl-label">Invalidation</span><b class="cl-val rv-red">${inv}</b></div>
+      <div class="cl-item"><span class="cl-label">Target 1</span><b class="cl-val rv-green">${t1}</b></div>
+      <div class="cl-item"><span class="cl-label">Target 2</span><b class="cl-val rv-green">${t2}</b></div>
+      ${poc ? `<div class="cl-item"><span class="cl-label">POC</span><b class="cl-val">$${fmt(poc)}</b></div>` : ''}
+      ${vwap ? `<div class="cl-item"><span class="cl-label">VWAP</span><b class="cl-val">$${fmt(vwap)}</b></div>` : ''}
+    </div>
+
+    ${readiness != null ? `
+    <div class="coach-readiness">
+      <span class="cr-label">Readiness</span>
+      <span class="cr-bar-wrap"><span class="cr-bar" style="width:${readiness}%"></span></span>
+      <span class="cr-num ${readCls}">${readiness}%</span>
+    </div>` : ''}
+
+    ${scaleHtml}
+    ${dontHtml}
+    ${checkHtml}
   `;
 }
 
@@ -1287,16 +1358,41 @@ async function loadReplayFrame(date, frameTime) {
       return;
     }
     const f = data.frame;
-    const decCls = f.decision_state?.includes('ENTER') ? 'rv-green' : f.decision_state === 'NO_TRADE' ? 'rv-red' : 'rv-amber';
+    const decCls = f.decision_state?.includes('ENTER') ? 'rv-green'
+                 : f.decision_state === 'NO_TRADE'     ? 'rv-red'
+                 : 'rv-amber';
+
+    // Story snapshot — the key addition in 6.4.1
+    const storyHtml = f.executive_summary
+      ? `<div class="replay-story">${esc(f.executive_summary)}</div>`
+      : '';
+
+    // Coach snapshot
+    const coachHtml = f.coach_action
+      ? `<div class="replay-coach-action">${esc(f.coach_action)}</div>
+         <div class="cmd-row"><span>Entry</span><b>${esc(f.coach_entry || '--')}</b></div>
+         <div class="cmd-row"><span>Stop / T1 / T2</span><b>${f.coach_stop != null ? '$'+fmt(f.coach_stop) : '--'} / ${f.coach_t1 != null ? '$'+fmt(f.coach_t1) : '--'} / ${f.coach_t2 != null ? '$'+fmt(f.coach_t2) : '--'}</b></div>`
+      : '';
+
     el.innerHTML = `
-      <div class="rf-label">${esc(date)} @ ${esc(data.frame_time||'')}</div>
-      <div class="cmd-row"><span>Decision</span><b class="${decCls}">${esc(f.decision_state||'--')}</b></div>
-      <div class="cmd-row"><span>ICI</span><b>${f.confidence!=null?f.confidence.toFixed(1):'--'}</b></div>
-      <div class="cmd-row"><span>Price</span><b>${f.stock_price!=null?'$'+fmt(f.stock_price):'--'}</b></div>
-      <div class="cmd-row"><span>POC</span><b>${f.poc!=null?'$'+fmt(f.poc):'--'}</b></div>
-      <div class="cmd-row"><span>Auction</span><b>${esc(f.auction_state||'--')}</b></div>
-      <div class="cmd-row"><span>Tape Bias</span><b>${esc(f.tape_bias||'--')}</b></div>
-      <div class="cmd-row"><span>Grade</span><b>${esc(f.grade||'--')}</b></div>
+      <div class="rf-header">
+        <div class="rf-label">${esc(date)} @ ${esc(data.frame_time || '')}</div>
+        <div class="decision-badge ${decCls}" style="font-size:10px;padding:3px 8px">${esc(f.decision_state || '--')}</div>
+      </div>
+      ${storyHtml}
+      <div class="replay-meta-grid">
+        <div class="cmd-row"><span>ICI</span><b>${f.ici != null ? f.ici.toFixed(1) : '--'}</b></div>
+        <div class="cmd-row"><span>Price</span><b>${f.stock_price != null ? '$' + fmt(f.stock_price) : '--'}</b></div>
+        <div class="cmd-row"><span>POC</span><b>${f.poc != null ? '$' + fmt(f.poc) : '--'}</b></div>
+        <div class="cmd-row"><span>vs POC / VA</span><b>${esc(f.price_vs_poc || '--')} / ${esc(f.price_vs_va || '--')}</b></div>
+        <div class="cmd-row"><span>Migration</span><b>${esc(f.poc_migration || '--')}</b></div>
+        <div class="cmd-row"><span>Auction</span><b>${esc(f.auction_state || '--')}</b></div>
+        <div class="cmd-row"><span>Gamma</span><b>${esc(f.gamma_regime || '--')}${f.flip_risk ? ' ⚠ Flip' : ''}</b></div>
+        <div class="cmd-row"><span>Flow / Tape</span><b>${esc(f.flow_bias || '--')} / ${esc(f.tape_bias || '--')}</b></div>
+        <div class="cmd-row"><span>Pine</span><b>${esc(f.pine_state || '--')}${f.signal_secs ? ' (' + Math.floor(f.signal_secs/60) + 'm)' : ''}</b></div>
+        <div class="cmd-row"><span>Grade</span><b>${esc(f.grade || '--')}</b></div>
+      </div>
+      ${coachHtml}
     `;
   } catch (_) {}
 }
