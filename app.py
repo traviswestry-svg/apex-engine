@@ -58,6 +58,15 @@ except Exception as _cms_err:
     CANONICAL_MARKET_STATE_AVAILABLE = False
     print(f"APEX 6.4.1 canonical market state unavailable: {_cms_err}", flush=True)
 
+# APEX Overnight Game Plan Engine
+try:
+    from engine.overnight import build_overnight_game_plan
+    OVERNIGHT_ENGINE_AVAILABLE = True
+except Exception as _on_err:
+    build_overnight_game_plan = None  # type: ignore[assignment]
+    OVERNIGHT_ENGINE_AVAILABLE = False
+    print(f"APEX overnight engine unavailable: {_on_err}", flush=True)
+
 # APEX 4.5 nine-engine decision support system
 try:
     from apex_engines import build_institutional_decision as _build_institutional_decision
@@ -310,64 +319,224 @@ def now_et() -> dt.datetime:
 
 
 def session_status() -> str:
+    """Returns the current market session state string.
+
+    States:
+      MARKET_OPEN     — RTH 9:30–16:00 ET, Mon–Fri
+      PREMARKET       — 4:00–9:30 ET, Mon–Fri
+      AFTER_HOURS     — 16:00–18:00 ET, Mon–Fri (ES still trading)
+      OVERNIGHT       — 18:00 ET Mon–Fri through 4:00 ET next day, or Sun 18:00+
+      CLOSED          — Saturday all day, Sunday before 18:00 ET
+    """
     n = now_et()
-    if n.weekday() >= 5:
-        return "CLOSED"
+    wd = n.weekday()       # 0=Mon … 6=Sun
     minutes = n.hour * 60 + n.minute
-    if 9 * 60 + 30 <= minutes <= 16 * 60:
+
+    # Saturday — fully closed
+    if wd == 5:
+        return "CLOSED"
+
+    # Sunday — ES opens at 18:00 ET
+    if wd == 6:
+        return "OVERNIGHT" if minutes >= 18 * 60 else "CLOSED"
+
+    # Weekdays
+    if 9 * 60 + 30 <= minutes < 16 * 60:
         return "MARKET_OPEN"
     if 4 * 60 <= minutes < 9 * 60 + 30:
         return "PREMARKET"
-    return "AFTER_HOURS"
+    if 16 * 60 <= minutes < 18 * 60:
+        return "AFTER_HOURS"
+    # 18:00 ET through midnight / 00:00–04:00 ET next day
+    return "OVERNIGHT"
+
+
+def _next_rth_open() -> str:
+    """Return the next RTH open time as a human-readable string."""
+    n = now_et()
+    wd = n.weekday()
+    minutes = n.hour * 60 + n.minute
+    open_min = 9 * 60 + 30
+
+    # If today is a weekday and we haven't opened yet
+    if wd < 5 and minutes < open_min:
+        mins_left = open_min - minutes
+        if mins_left < 60:
+            return f"Today 9:30 AM ET (~{mins_left}m)"
+        return f"Today 9:30 AM ET (~{mins_left // 60}h {mins_left % 60}m)"
+
+    # Find next weekday
+    days_ahead = 1
+    while True:
+        next_wd = (wd + days_ahead) % 7
+        if next_wd < 5:  # Mon–Fri
+            if days_ahead == 1:
+                return "Tomorrow 9:30 AM ET"
+            day_name = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][next_wd]
+            return f"{day_name} 9:30 AM ET"
+        days_ahead += 1
+        if days_ahead > 7:
+            return "Monday 9:30 AM ET"
+
+
+def _build_market_status_panel(session: str) -> Dict[str, Any]:
+    """Build the market status panel dict for the API and UI banner."""
+    n = now_et()
+    minutes = n.hour * 60 + n.minute
+    wd = n.weekday()
+
+    # ES futures: open Sun 18:00 – Fri 17:00 ET (with brief maintenance)
+    es_open = session in ("MARKET_OPEN", "PREMARKET", "AFTER_HOURS", "OVERNIGHT")
+
+    # SPX cash: RTH only
+    spx_open = session == "MARKET_OPEN"
+
+    # Options flow: available during RTH and shortly after
+    flow_status = (
+        "LIVE"     if spx_open else
+        "LIMITED"  if session in ("PREMARKET", "AFTER_HOURS") else
+        "OVERNIGHT" if session == "OVERNIGHT" else
+        "CLOSED"
+    )
+
+    # Scanner mode
+    scanner_mode = (
+        "Live Scan"        if spx_open else
+        "Pre-Session Prep" if session == "PREMARKET" else
+        "Overnight Monitor" if session == "OVERNIGHT" else
+        "Historical Mode"
+    )
+
+    # Story engine mode
+    story_mode = (
+        "Live Analysis"        if spx_open else
+        "Pre-Session Analysis" if session in ("PREMARKET", "OVERNIGHT") else
+        "Post-Session Review"  if session == "AFTER_HOURS" else
+        "Closed"
+    )
+
+    next_open = _next_rth_open()
+
+    status_items = [
+        {
+            "label": "ES Futures",
+            "status": "OPEN" if es_open else "CLOSED",
+            "detail": "Active overnight session" if session == "OVERNIGHT" else ("Live" if es_open else "Closed"),
+            "color":  "green" if es_open else "red",
+        },
+        {
+            "label": "SPX Cash",
+            "status": "OPEN" if spx_open else "CLOSED",
+            "detail": "9:30–16:00 ET" if spx_open else f"Opens: {next_open}",
+            "color":  "green" if spx_open else "red",
+        },
+        {
+            "label": "Options Flow",
+            "status": flow_status,
+            "detail": "QuantData live" if spx_open else ("Low volume pre-market" if session == "PREMARKET" else "Cash market closed"),
+            "color":  "green" if spx_open else "amber" if flow_status in ("LIMITED", "OVERNIGHT") else "red",
+        },
+        {
+            "label": "Scanner",
+            "status": scanner_mode,
+            "detail": "Scanning for live setups" if spx_open else "Historical analysis mode",
+            "color":  "green" if spx_open else "amber",
+        },
+        {
+            "label": "Story Engine",
+            "status": story_mode,
+            "detail": "Real-time institutional read" if spx_open else "Pre-session game plan",
+            "color":  "green" if spx_open else "amber",
+        },
+    ]
+
+    # Overall banner level
+    if spx_open:
+        level = "GREEN"
+        title = "MARKET OPEN — LIVE MODE"
+        message = "All engines active. Entries require flow alignment and Pine confirmation."
+    elif session == "PREMARKET":
+        mins_left = max(0, (9 * 60 + 30) - minutes)
+        level = "AMBER"
+        title = "PRE-MARKET — GAME PLAN MODE"
+        message = f"Cash market opens in ~{mins_left}m. Use ES and overnight data to build your opening bias. No entries until RTH open and Pine confirmation."
+    elif session == "OVERNIGHT":
+        level = "AMBER"
+        title = "OVERNIGHT SESSION — MONITOR MODE"
+        message = f"ES futures active. Monitoring overnight structure relative to Friday's levels. Next RTH open: {next_open}."
+    elif session == "AFTER_HOURS":
+        level = "AMBER"
+        title = "AFTER HOURS — REVIEW MODE"
+        message = "Cash market closed. Reviewing today's session. ES still trading — monitoring for overnight positioning."
+    else:
+        level = "RED"
+        title = "MARKET CLOSED"
+        message = f"All cash markets closed. ES opens Sunday 18:00 ET. Next RTH: {next_open}."
+
+    return {
+        "session":      session,
+        "level":        level,
+        "title":        title,
+        "message":      message,
+        "next_rth":     next_open,
+        "es_open":      es_open,
+        "spx_open":     spx_open,
+        "flow_status":  flow_status,
+        "scanner_mode": scanner_mode,
+        "story_mode":   story_mode,
+        "items":        status_items,
+        "updated_at":   n.strftime("%H:%M:%S ET"),
+    }
 
 
 def market_session_context() -> Dict[str, Any]:
-    """Session-aware guidance for the Trade Assistant.
-
-    The assistant should not imply an executable entry when the market is
-    closed, premarket, or after-hours. Flow/GEX can define the game plan, but
-    only a fresh Pine trigger during MARKET_OPEN can produce ENTER_NOW.
-    """
+    """Session-aware guidance for the Trade Assistant and Story Engine."""
     status = session_status()
     n = now_et()
     minutes = n.hour * 60 + n.minute
     open_minutes = 9 * 60 + 30
-    close_minutes = 16 * 60
+    panel = _build_market_status_panel(status)
+
+    base = {
+        "session_state":       status,
+        "is_tradeable_session": status == "MARKET_OPEN",
+        "market_status":       panel,
+    }
+
     if status == "MARKET_OPEN":
-        return {
-            "session": status,
-            "is_tradeable_session": True,
+        return {**base,
             "banner_level": "GREEN",
-            "banner_title": "MARKET OPEN",
-            "banner_message": "Live mode: entries require Flow/GEX approval plus a fresh Pine trigger.",
+            "banner_title": panel["title"],
+            "banner_message": panel["message"],
             "assistant_mode": "LIVE_TRADE_ASSISTANT",
         }
     if status == "PREMARKET":
         mins_to_open = max(0, open_minutes - minutes)
-        return {
-            "session": status,
-            "is_tradeable_session": False,
+        return {**base,
             "minutes_to_open": mins_to_open,
             "banner_level": "YELLOW",
-            "banner_title": "PREMARKET GAME PLAN",
-            "banner_message": f"No entries yet. Use the bias as the opening plan; wait for market open and a fresh Pine trigger. Open in ~{mins_to_open} min.",
+            "banner_title": panel["title"],
+            "banner_message": panel["message"],
             "assistant_mode": "GAME_PLAN",
         }
-    if status == "AFTER_HOURS":
-        return {
-            "session": status,
-            "is_tradeable_session": False,
+    if status == "OVERNIGHT":
+        return {**base,
             "banner_level": "YELLOW",
-            "banner_title": "AFTER HOURS",
-            "banner_message": "Execution disabled. Use current Flow/GEX as review and preparation only; it will be refreshed next session.",
+            "banner_title": panel["title"],
+            "banner_message": panel["message"],
+            "assistant_mode": "OVERNIGHT_MONITOR",
+        }
+    if status == "AFTER_HOURS":
+        return {**base,
+            "banner_level": "YELLOW",
+            "banner_title": panel["title"],
+            "banner_message": panel["message"],
             "assistant_mode": "REVIEW_PREP",
         }
-    return {
-        "session": status,
-        "is_tradeable_session": False,
+    return {**base,
         "banner_level": "RED",
-        "banner_title": "MARKET CLOSED",
-        "banner_message": "No new entries while the market is closed. Bias is informational only; wait for the next open and a fresh Pine trigger.",
+        "banner_title": panel["title"],
+        "banner_message": panel["message"],
         "assistant_mode": "CLOSED_GAME_PLAN",
     }
 
@@ -3122,6 +3291,14 @@ def api_diagnostics():
             "closest_to_qualifying": STATE.get("scan_debug", []),
         })
 
+@app.route("/api/market_status")
+def api_market_status():
+    """GET /api/market_status — current session state and per-component status panel."""
+    session = session_status()
+    panel   = _build_market_status_panel(session)
+    return jsonify({"ok": True, "version": VERSION, **panel})
+
+
 @app.route("/health")
 def health():
     with STATE_LOCK:
@@ -3206,6 +3383,7 @@ def api_institutional_os():
                 except Exception:
                     result["heatmap"] = None
             result["session"] = session_ctx
+            result["market_status"] = session_ctx.get("market_status") or _build_market_status_panel(session_ctx.get("session_state", "CLOSED"))
             result["volume_profile"] = volume_bundle.get("profile")
             result["auction"] = volume_bundle.get("auction")
             # Make POC/VAH/VAL available to Ribbon/Story/Trade Coach without duplicating calculations.
@@ -3417,7 +3595,37 @@ def api_institutional_os():
             except Exception:
                 pass
 
-            # Update Telegram if there's an ENTER signal
+            # ── APEX Overnight Game Plan ──
+            _session_state_now = session_ctx.get("session_state", "MARKET_OPEN")
+            if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:
+                try:
+                    # Fetch ES overnight bars if not already in volume_bundle
+                    _es_bars = _futures_fetch_bars(_resolve_polygon_futures_ticker("ES"), days=1, multiplier=5)
+                    _es_price = _sf(canonical_ms.get("price") or 0.0)
+                    _prior_poc  = _sf(vp_levels.get("poc"))
+                    _prior_vah  = _sf(vp_levels.get("vah"))
+                    _prior_val  = _sf(vp_levels.get("val"))
+                    # Approximate prior close from structure
+                    _prior_close = _sf((result.get("structure") or {}).get("prev_close") or 0.0)
+                    _on_plan = build_overnight_game_plan(
+                        es_price=_es_price,
+                        es_bars=_es_bars,
+                        prior_poc=_prior_poc if _prior_poc else None,
+                        prior_vah=_prior_vah if _prior_vah else None,
+                        prior_val=_prior_val if _prior_val else None,
+                        prior_close=_prior_close if _prior_close else None,
+                        call_wall=canonical_ms.get("call_wall"),
+                        put_wall=canonical_ms.get("put_wall"),
+                        zero_gamma=canonical_ms.get("zero_gamma"),
+                        session_state=_session_state_now,
+                        next_rth=session_ctx.get("market_status", {}).get("next_rth", "9:30 AM ET"),
+                    )
+                    result["overnight_game_plan"] = _on_plan
+                    # Override executive summary with overnight read when not in RTH
+                    if _on_plan.get("executive_summary"):
+                        result["executive_summary"] = _on_plan["executive_summary"]
+                except Exception as _on_err:
+                    print(f"Overnight game plan error (non-fatal): {_on_err}", flush=True)
             recommendation = result.get("recommendation", "")
             if "ENTER" in recommendation and "NOW" in recommendation:
                 story = result.get("story", {})
