@@ -67,51 +67,65 @@ function renderRibbon(d) {
   const r   = d.ribbon  || {};
   const ici = d.ici     || {};
   const fl  = d.flow_intelligence || d.flow || {};
-  const g   = (d.gamma_regime || {});
+  const g   = d.gamma_regime || {};
+  const ms  = d.market_state || {};
   const dec = d.decision_state || '';
+  const str = d.structure || {};
 
-  const decCls = dec.includes('CALL') ? 'rv-green' : dec.includes('PUT') ? 'rv-red' : 'rv-amber';
+  const decCls  = dec.includes('CALL') ? 'rv-green' : dec.includes('PUT') ? 'rv-red' : dec.includes('WATCH') || dec === 'READY' ? 'rv-amber' : 'rv-muted';
+  const cellCls = dec.includes('CALL') ? 'rdc-call' : dec.includes('PUT') ? 'rdc-put' : dec.includes('WATCH') || dec === 'READY' ? 'rdc-watch' : 'rdc-no';
+  const poc     = ms.poc || str.session_poc;
+  const vwap    = ms.vwap || r.vwap || str.vwap;
+  const pocMig  = ms.poc_migration || '';
+  const confLevel = ms.confluence_level;
+  const tapeBias  = ms.tape_bias || '';
+  const net_flow  = r.net_flow || 0;
 
   el.innerHTML = `
     <div class="ribbon-cell">
       <div class="ribbon-label">SPX Price</div>
-      <div class="ribbon-val rv-blue">$${fmt(r.spx_price || fl.stock_price || g.stock_price)}</div>
+      <div class="ribbon-val rv-blue">$${fmt(r.spx_price || fl.stock_price || ms.price)}</div>
       <div class="ribbon-sub">${activeTicker}</div>
+    </div>
+    <div class="ribbon-cell">
+      <div class="ribbon-label">Basis</div>
+      <div class="ribbon-val rv-muted">$${fmt(r.es_price || ms.es_price || r.spx_price)}</div>
+      <div class="ribbon-sub">ES Futures</div>
+    </div>
+    <div class="ribbon-cell">
+      <div class="ribbon-label">Call Wall</div>
+      <div class="ribbon-val rv-green">$${fmt(r.call_wall || g.call_wall || ms.call_wall)}</div>
+      <div class="ribbon-sub">GEX: ${fmtI(r.gex_score || ms.gex_score)}</div>
+    </div>
+    <div class="ribbon-cell">
+      <div class="ribbon-label">Gamma Flip</div>
+      <div class="ribbon-val rv-amber">$${fmt(r.zero_gamma || g.zero_gamma || ms.zero_gamma)}</div>
+      <div class="ribbon-sub">${(g.regime_display || '').split(' ').slice(0,2).join(' ') || '--'}</div>
+    </div>
+    <div class="ribbon-cell">
+      <div class="ribbon-label">Put Wall</div>
+      <div class="ribbon-val rv-red">$${fmt(r.put_wall || g.put_wall || ms.put_wall)}</div>
+      <div class="ribbon-sub">GEX shield</div>
+    </div>
+    <div class="ribbon-cell">
+      <div class="ribbon-label">VWAP / POC</div>
+      <div class="ribbon-val rv-blue">$${fmt(vwap)}</div>
+      <div class="ribbon-sub">POC: $${poc ? fmt(poc) : '--'}${pocMig ? ' · ' + pocMig.toLowerCase().replace('_',' ') : ''}</div>
+    </div>
+    <div class="ribbon-cell">
+      <div class="ribbon-label">Net Flow</div>
+      <div class="ribbon-val ${net_flow >= 0 ? 'rv-green' : 'rv-red'}">$${fmtM(net_flow)}</div>
+      <div class="ribbon-sub">Tape: ${tapeBias || r.flow_momentum || '--'}</div>
     </div>
     <div class="ribbon-cell">
       <div class="ribbon-label">Inst. Confidence</div>
       <div class="ribbon-val ${ici.ici_color === 'GREEN' ? 'rv-green' : ici.ici_color === 'RED' ? 'rv-red' : 'rv-amber'}">${fmtI(ici.ici)}</div>
       <div class="ribbon-sub">${ici.ici_label || '--'} · ${d.grade || '--'}</div>
     </div>
-    <div class="ribbon-cell">
+    <div class="ribbon-cell ribbon-decision ${cellCls}">
       <div class="ribbon-label">Decision</div>
-      <div class="ribbon-val ${decCls}" style="font-size:12px;margin-top:5px">${(dec || 'LOADING').replace(/_/g, ' ')}</div>
+      <div class="ribbon-val ${decCls}" style="font-size:11px;margin-top:5px;letter-spacing:.02em">${(dec || 'LOADING').replace(/_/g,' ')}</div>
       <div class="ribbon-sub">${d.readiness ? d.readiness.replace(/_/g,' ') : '--'}</div>
-    </div>
-    <div class="ribbon-cell">
-      <div class="ribbon-label">Net Flow</div>
-      <div class="ribbon-val ${(r.net_flow || 0) >= 0 ? 'rv-green' : 'rv-red'}">$${fmtM(r.net_flow)}</div>
-      <div class="ribbon-sub">${r.flow_momentum ? r.flow_momentum.replace(/_/g,' ') : '--'}</div>
-    </div>
-    <div class="ribbon-cell">
-      <div class="ribbon-label">Call Wall</div>
-      <div class="ribbon-val rv-green">$${fmt(r.call_wall || g.call_wall)}</div>
-      <div class="ribbon-sub">Put: $${fmt(r.put_wall || g.put_wall)}</div>
-    </div>
-    <div class="ribbon-cell">
-      <div class="ribbon-label">Zero Gamma</div>
-      <div class="ribbon-val rv-amber">$${fmt(r.zero_gamma || g.zero_gamma)}</div>
-      <div class="ribbon-sub">${g.regime_display || g.regime_label || '--'}</div>
-    </div>
-    <div class="ribbon-cell">
-      <div class="ribbon-label">VWAP</div>
-      <div class="ribbon-val rv-muted">$${fmt(r.vwap || (d.structure || {}).vwap)}</div>
-      <div class="ribbon-sub">POC: $${fmt(r.poc || (d.structure || {}).session_poc)}</div>
-    </div>
-    <div class="ribbon-cell">
-      <div class="ribbon-label">Updated</div>
-      <div class="ribbon-val rv-muted" style="font-size:12px;margin-top:5px">${r.updated_at_et || d.updated_at_et || '--'}</div>
-      <div class="ribbon-sub">Auto 12s</div>
     </div>
   `;
 }
@@ -725,35 +739,41 @@ function renderStory(d) {
   const el = $('storyPanel');
   if (!el || !d) return;
   const story = d.story || {};
-  const timeline = d.story_timeline || [];
 
   // Executive summary
   const summEl = $('execSummary');
   if (summEl) summEl.textContent = d.executive_summary || story.executive_summary || '--';
 
+  // Meta line
+  const metaEl = $('storyMeta');
+  if (metaEl) {
+    const parts = [story.engine, story.generated_at,
+      story.has_auction_chapter ? '● Auction' : '',
+      story.has_tape_chapter    ? '● Tape'    : ''].filter(Boolean);
+    metaEl.innerHTML = parts.map(s => `<span>${esc(s)}</span>`).join('');
+  }
+
   const chapters = story.chapters || [];
-  if (!chapters.length && !timeline.length) {
-    el.innerHTML = '<div style="color:var(--faint);font-size:12px;padding:12px">No story chapters yet.</div>';
+  if (!chapters.length) {
+    el.innerHTML = '<div style="color:var(--faint);font-size:12px;padding:12px">No story chapters available yet.</div>';
+    const narr = $('narrativeBlock');
+    if (narr && story.full_narrative) narr.textContent = story.full_narrative;
     return;
   }
 
-  // Use chapters (richer) over story_timeline
-  const src = chapters.length ? chapters : timeline.map(t => ({ chapter: t.title, text: t.text, time: '--', color: 'var(--muted)', significance: t.step }));
-
-  el.innerHTML = '<div class="story-timeline">' + src.map((c, i) => `
+  el.innerHTML = '<div class="story-timeline">' + chapters.map((c, i) => `
     <div class="story-entry">
       <div class="story-connector">
         <div class="s-dot" style="background:${esc(c.color || 'var(--faint)')}"></div>
-        ${i < src.length - 1 ? '<div class="s-line"></div>' : ''}
+        ${i < chapters.length - 1 ? '<div class="s-line"></div>' : ''}
       </div>
       <div class="story-body">
-        <div class="story-chapter" style="color:${esc(c.color || 'var(--muted)')}">${esc(c.chapter || c.title || 'Chapter')}</div>
-        <div class="story-text">${esc(c.text || c.narrative || '')}</div>
+        <div class="story-chapter" style="color:${esc(c.color || 'var(--muted)')}">${esc(c.chapter || 'Chapter')}</div>
+        <div class="story-text">${esc(c.text || '')}</div>
         <div class="story-time">${esc(c.time || '--')}</div>
       </div>
     </div>`).join('') + '</div>';
 
-  // Full narrative
   const narr = $('narrativeBlock');
   if (narr && story.full_narrative) narr.textContent = story.full_narrative;
 }
