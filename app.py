@@ -29,6 +29,26 @@ except Exception as _apex601_import_error:
     APEX_OS_601_AVAILABLE = False
     print(f"APEX 6.0.1 engines unavailable: {_apex601_import_error}", flush=True)
 
+# APEX 6.3.2 — Flow Tape Engine
+try:
+    from engine.flow_tape import build_flow_tape
+    FLOW_TAPE_AVAILABLE = True
+except Exception as _ft_err:
+    build_flow_tape = None  # type: ignore[assignment]
+    FLOW_TAPE_AVAILABLE = False
+    print(f"APEX 6.3.2 flow tape engine unavailable: {_ft_err}", flush=True)
+
+# APEX 6.3.4 / 6.3.5 — Story Engine 3.0, Trade Coach 3.0
+try:
+    from engine.story import build_story_v3
+    from engine.trade_coach import build_trade_coach_v3
+    STORY_COACH_V3_AVAILABLE = True
+except Exception as _sc_err:
+    build_story_v3 = None  # type: ignore[assignment]
+    build_trade_coach_v3 = None  # type: ignore[assignment]
+    STORY_COACH_V3_AVAILABLE = False
+    print(f"APEX 6.3.4/6.3.5 story/coach v3 unavailable: {_sc_err}", flush=True)
+
 # APEX 4.5 nine-engine decision support system
 try:
     from apex_engines import build_institutional_decision as _build_institutional_decision
@@ -38,7 +58,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.3.0_VOLUME_PROFILE_AUCTION_ENGINE"
+VERSION = "6.4.0_APEX_TERMINAL_1_0"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -3257,6 +3277,81 @@ def api_institutional_os():
                 },
             }
 
+            # ── APEX 6.3.2 — Enrich with flow tape summary ──
+            tape_summary: Dict[str, Any] = {}
+            if FLOW_TAPE_AVAILABLE and build_flow_tape is not None and QUANTDATA_API_KEY and ORDER_FLOW_ENABLED:
+                try:
+                    _tape_tickers = ["SPY", "QQQ", "SPX"]
+                    _tape_rows = _fetch_flow_tape_rows(_tape_tickers, size_per_ticker=30)
+                    _tape_result = build_flow_tape(_tape_rows, _tape_tickers, min_premium=250_000)
+                    tape_summary = _tape_result.get("summary") or {}
+                    result["flow_tape_summary"] = tape_summary
+                    result["flow_tape_rows_preview"] = (_tape_result.get("rows") or [])[:5]
+                except Exception:
+                    pass
+
+            # ── APEX 6.3.4 / 6.3.5 — Story 3.0 + Trade Coach 3.0 ──
+            _session_state_for_story = session_ctx.get("session_state", "MARKET_OPEN")
+            if STORY_COACH_V3_AVAILABLE and build_story_v3 is not None:
+                try:
+                    story_v3 = build_story_v3(
+                        ticker=ticker,
+                        market_regime=result.get("market_regime") or {},
+                        gamma_regime=result.get("gamma_regime") or {},
+                        flow=result.get("flow_intelligence") or {},
+                        structure=result.get("structure") or {},
+                        trend=result.get("trend") or {},
+                        execution=result.get("execution") or {},
+                        consensus=result.get("consensus") or {},
+                        risk=result.get("risk") or {},
+                        auction=volume_bundle.get("auction"),
+                        volume_profile=volume_bundle.get("profile"),
+                        flow_tape_summary=tape_summary,
+                        session_state=_session_state_for_story,
+                    )
+                    result["story"] = story_v3
+                    result["executive_summary"] = story_v3.get("executive_summary", result.get("executive_summary", ""))
+                except Exception as _sv3_err:
+                    print(f"Story v3 error (using v2 fallback): {_sv3_err}", flush=True)
+
+            if STORY_COACH_V3_AVAILABLE and build_trade_coach_v3 is not None:
+                try:
+                    from engine.trade_coach import build_trade_coach_v3 as _btcv3
+                    coach_v3 = _btcv3(
+                        decision_state=result.get("decision_state", "NO_TRADE"),
+                        consensus=result.get("consensus") or {},
+                        execution=result.get("execution") or {},
+                        risk=result.get("risk") or {},
+                        gamma_regime=result.get("gamma_regime") or {},
+                        flow=result.get("flow_intelligence") or {},
+                        structure=result.get("structure") or {},
+                        ici=result.get("ici") or {},
+                        auction=volume_bundle.get("auction"),
+                        volume_profile=volume_bundle.get("profile"),
+                        flow_tape_summary=tape_summary,
+                    )
+                    result["trade_coach"] = coach_v3
+                except Exception as _cv3_err:
+                    print(f"Trade coach v3 error (using v2 fallback): {_cv3_err}", flush=True)
+
+            # ── Record replay frame ──
+            try:
+                _replay_snap = {
+                    "decision_state": result.get("decision_state"),
+                    "confidence": result.get("confidence"),
+                    "stock_price": (result.get("flow") or {}).get("stock_price"),
+                    "recommendation": result.get("recommendation"),
+                    "grade": result.get("grade"),
+                    "poc": vp_levels.get("poc"),
+                    "vah": vp_levels.get("vah"),
+                    "val": vp_levels.get("val"),
+                    "auction_state": (volume_bundle.get("auction") or {}).get("auction_state"),
+                    "tape_bias": tape_summary.get("tape_bias"),
+                }
+                _record_replay_frame(ticker, _replay_snap)
+            except Exception:
+                pass
+
             # Update Telegram if there's an ENTER signal
             recommendation = result.get("recommendation", "")
             if "ENTER" in recommendation and "NOW" in recommendation:
@@ -4465,6 +4560,517 @@ def api_market_health():
 
 # CHART_HTML replaced by templates/chart.html
 
+# =============================================================================
+# APEX 6.3.2 — INSTITUTIONAL FLOW TAPE
+# =============================================================================
+
+FLOW_TAPE_DEFAULT_TICKERS = ["SPY", "QQQ", "SPX", "NVDA", "TSLA"]
+FLOW_TAPE_DEFAULT_MIN_PREMIUM = 250_000
+
+
+def _fetch_flow_tape_rows(tickers: List[str], size_per_ticker: int = 50) -> List[dict]:
+    """Fetch raw QuantData consolidated order-flow rows for a list of tickers."""
+    if not QUANTDATA_API_KEY or not ORDER_FLOW_ENABLED:
+        return []
+    headers = {"Authorization": f"Bearer {QUANTDATA_API_KEY}", "Content-Type": "application/json"}
+    all_rows: List[dict] = []
+    for ticker in tickers:
+        if BREAKER.is_open("quantdata_order_flow"):
+            break
+        qd_ticker = "SPX" if ticker.upper() in {"SPXW", "$SPX", "I:SPX"} else ticker.upper()
+        payload = {
+            "filter": {"ticker": qd_ticker},
+            "size": size_per_ticker,
+            "sort": {"field": "tradeTime", "direction": "DESCENDING"},
+        }
+        data = safe_post_json(
+            f"{QUANTDATA_BASE_URL}/options/tool/order-flow/consolidated",
+            payload, headers=headers, timeout=20,
+        )
+        BREAKER.record_failure("quantdata_order_flow") if data is None else BREAKER.record_success("quantdata_order_flow")
+        rows = rows_from_tool_response(data)
+        for r in rows:
+            if isinstance(r, dict):
+                if not r.get("ticker"):
+                    r["ticker"] = qd_ticker
+                all_rows.append(r)
+    return all_rows
+
+
+@app.route("/api/flow_tape")
+def api_flow_tape():
+    """APEX 6.3.2 Institutional Flow Tape endpoint.
+
+    GET /api/flow_tape?tickers=SPY,QQQ,SPX,NVDA,TSLA&min_premium=250000&size=50
+
+    Returns normalized, classified, importance-scored tape rows plus a summary.
+    """
+    raw_tickers = request.args.get("tickers", ",".join(FLOW_TAPE_DEFAULT_TICKERS))
+    tickers = [t.strip().upper() for t in raw_tickers.split(",") if t.strip()]
+    if not tickers:
+        tickers = list(FLOW_TAPE_DEFAULT_TICKERS)
+    min_premium = float(request.args.get("min_premium", str(FLOW_TAPE_DEFAULT_MIN_PREMIUM)))
+    size = int(request.args.get("size", "50"))
+    size = max(10, min(size, 200))
+
+    if not FLOW_TAPE_AVAILABLE or build_flow_tape is None:
+        return jsonify({
+            "ok": False,
+            "error": "Flow tape engine not available",
+            "version": VERSION,
+            "tickers": tickers,
+            "rows": [],
+        }), 503
+
+    if not QUANTDATA_API_KEY or not ORDER_FLOW_ENABLED:
+        return jsonify({
+            "ok": True,
+            "status": "NOT_CONFIGURED",
+            "version": VERSION,
+            "tickers": tickers,
+            "rows": [],
+            "summary": {
+                "buy_premium": 0, "sell_premium": 0, "net_premium": 0,
+                "sweep_count": 0, "block_count": 0, "row_count": 0,
+                "tape_bias": "MIXED",
+            },
+            "message": "Set QUANTDATA_API_KEY and ORDER_FLOW_ENABLED=true to enable the flow tape.",
+            "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        })
+
+    try:
+        raw_rows = _fetch_flow_tape_rows(tickers, size_per_ticker=size)
+        tape = build_flow_tape(raw_rows, tickers, min_premium=min_premium)
+        tape["version"] = VERSION
+        tape["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        tape["updated_at_et"] = now_et().strftime("%Y-%m-%d %H:%M:%S ET")
+        return jsonify(tape)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION, "tickers": tickers}), 500
+
+
+# =============================================================================
+# APEX 6.4.0 — REPLAY & POST-TRADE ANALYTICS
+# =============================================================================
+
+REVIEW_DB_PATH = os.getenv("REVIEW_DB_PATH", DB_PATH)
+REPLAY_STORE_LOCK = threading.RLock()
+
+# In-memory replay store indexed by session date string (YYYY-MM-DD)
+# Structure: { "2026-06-28": [frame_dict, ...] }
+REPLAY_STORE: Dict[str, List[Dict[str, Any]]] = {}
+REPLAY_MAX_FRAMES_PER_SESSION = int(os.getenv("REPLAY_MAX_FRAMES", "480"))
+
+
+def _init_review_db() -> None:
+    """Create post-trade review tables if they don't exist."""
+    try:
+        db_dir = os.path.dirname(REVIEW_DB_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=10)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS trade_reviews (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker TEXT NOT NULL,
+                    side TEXT,
+                    entry_time TEXT,
+                    exit_time TEXT,
+                    entry_price REAL,
+                    exit_price REAL,
+                    contract TEXT,
+                    pnl REAL,
+                    reason_entered TEXT,
+                    reason_exited TEXT,
+                    followed_plan INTEGER DEFAULT 1,
+                    mistakes TEXT,
+                    lesson TEXT,
+                    screenshot_url TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS replay_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_date TEXT NOT NULL,
+                    frame_time TEXT NOT NULL,
+                    ticker TEXT NOT NULL,
+                    snapshot_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_replay_session ON replay_snapshots (session_date, ticker, frame_time)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_review_ticker ON trade_reviews (ticker, entry_time)")
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"APEX 6.4.0 review DB init failed (non-fatal): {e}", flush=True)
+
+
+def _store_replay_frame(session_date: str, frame_time: str, ticker: str, snapshot: Dict[str, Any]) -> None:
+    """Persist a replay frame to SQLite (best-effort; never raises)."""
+    try:
+        import json
+        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+        try:
+            conn.execute(
+                "INSERT INTO replay_snapshots (session_date, frame_time, ticker, snapshot_json) VALUES (?,?,?,?)",
+                (session_date, frame_time, ticker, json.dumps(snapshot, default=str))
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def _record_replay_frame(ticker: str, snapshot: Dict[str, Any]) -> None:
+    """Called by the background scanner on each cycle to build the intraday replay store."""
+    import json
+    session_key = now_et().strftime("%Y-%m-%d")
+    frame_time = now_et().strftime("%H:%M:%S")
+    frame = {
+        "session_date": session_key,
+        "frame_time": frame_time,
+        "ticker": ticker,
+        "snapshot": snapshot,
+    }
+    with REPLAY_STORE_LOCK:
+        session_frames = REPLAY_STORE.setdefault(session_key, [])
+        # Evict oldest frames beyond the cap
+        if len(session_frames) >= REPLAY_MAX_FRAMES_PER_SESSION:
+            del session_frames[0]
+        session_frames.append(frame)
+    # Best-effort persist to DB
+    _store_replay_frame(session_key, frame_time, ticker, snapshot)
+
+
+@app.route("/api/replay/session")
+def api_replay_session():
+    """APEX 6.4.0 — Replay session index.
+
+    GET /api/replay/session?ticker=SPX&date=YYYY-MM-DD
+
+    Returns summary of available replay frames for the requested session date.
+    Pulls from in-memory store (today) or SQLite (historical).
+    """
+    import json
+    ticker = request.args.get("ticker", "SPX").upper()
+    date_str = request.args.get("date", now_et().strftime("%Y-%m-%d"))
+    try:
+        # Try in-memory first (today's session)
+        with REPLAY_STORE_LOCK:
+            frames = [f for f in REPLAY_STORE.get(date_str, [])
+                      if f.get("ticker", "").upper() == ticker]
+        if not frames:
+            # Fallback: query SQLite for historical
+            try:
+                conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+                conn.row_factory = sqlite3.Row
+                try:
+                    rows = conn.execute(
+                        "SELECT frame_time, snapshot_json FROM replay_snapshots "
+                        "WHERE session_date=? AND ticker=? ORDER BY frame_time ASC LIMIT 480",
+                        (date_str, ticker)
+                    ).fetchall()
+                    frames = [
+                        {"session_date": date_str, "frame_time": r["frame_time"],
+                         "ticker": ticker,
+                         "snapshot": json.loads(r["snapshot_json"]) if r["snapshot_json"] else {}}
+                        for r in rows
+                    ]
+                finally:
+                    conn.close()
+            except Exception:
+                frames = []
+
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "ticker": ticker,
+            "session_date": date_str,
+            "frame_count": len(frames),
+            "frames": [
+                {
+                    "frame_index": i,
+                    "frame_time": f.get("frame_time", ""),
+                    "decision_state": (f.get("snapshot") or {}).get("decision_state", ""),
+                    "ici": (f.get("snapshot") or {}).get("confidence", None),
+                    "price": (f.get("snapshot") or {}).get("stock_price", None),
+                }
+                for i, f in enumerate(frames)
+            ],
+            "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION}), 500
+
+
+@app.route("/api/replay/frame")
+def api_replay_frame():
+    """APEX 6.4.0 — Single replay frame.
+
+    GET /api/replay/frame?ticker=SPX&date=YYYY-MM-DD&time=HH:MM
+
+    Returns the full APEX snapshot for the nearest frame matching the requested time.
+    """
+    import json
+    ticker = request.args.get("ticker", "SPX").upper()
+    date_str = request.args.get("date", now_et().strftime("%Y-%m-%d"))
+    time_str = request.args.get("time", "")
+
+    try:
+        # In-memory first
+        with REPLAY_STORE_LOCK:
+            day_frames = [f for f in REPLAY_STORE.get(date_str, [])
+                          if f.get("ticker", "").upper() == ticker]
+
+        if not day_frames:
+            conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(
+                    "SELECT frame_time, snapshot_json FROM replay_snapshots "
+                    "WHERE session_date=? AND ticker=? ORDER BY frame_time ASC LIMIT 480",
+                    (date_str, ticker)
+                ).fetchall()
+                day_frames = [
+                    {"frame_time": r["frame_time"],
+                     "snapshot": json.loads(r["snapshot_json"]) if r["snapshot_json"] else {}}
+                    for r in rows
+                ]
+            finally:
+                conn.close()
+
+        if not day_frames:
+            return jsonify({
+                "ok": True,
+                "status": "NO_FRAMES",
+                "ticker": ticker,
+                "session_date": date_str,
+                "frame": None,
+                "message": f"No replay data available for {ticker} on {date_str}.",
+            })
+
+        # Find nearest frame by time
+        if time_str:
+            target = time_str[:5]  # HH:MM
+            best = min(day_frames, key=lambda f: abs(
+                _time_to_minutes(f.get("frame_time", "00:00")) - _time_to_minutes(target)
+            ))
+        else:
+            best = day_frames[-1]
+
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "ticker": ticker,
+            "session_date": date_str,
+            "frame_time": best.get("frame_time"),
+            "frame": best.get("snapshot") or {},
+            "total_frames": len(day_frames),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION}), 500
+
+
+def _time_to_minutes(t: str) -> int:
+    """Convert HH:MM or HH:MM:SS to total minutes since midnight."""
+    parts = (t or "00:00").replace(":", "").ljust(6, "0")
+    try:
+        return int(parts[:2]) * 60 + int(parts[2:4])
+    except Exception:
+        return 0
+
+
+@app.route("/api/review/trade", methods=["POST"])
+def api_review_trade_post():
+    """APEX 6.4.0 — Log a trade review.
+
+    POST /api/review/trade
+    Body (JSON):
+    {
+      "ticker": "SPX",
+      "side": "CALL",
+      "entry_time": "09:47",
+      "exit_time": "10:12",
+      "entry_price": 7352.0,
+      "exit_price": 7365.0,
+      "contract": "SPX 7350C 0DTE",
+      "pnl": 420.0,
+      "reason_entered": "Pine ENTER_CALL, POC support, bullish tape sweeps",
+      "reason_exited": "Hit T1 target",
+      "followed_plan": true,
+      "mistakes": "",
+      "lesson": "Entry near VWAP/POC confluence was ideal.",
+      "screenshot_url": ""
+    }
+    """
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        ticker = str(body.get("ticker", "SPX")).upper()
+        side = str(body.get("side", "")).upper()
+        entry_time = str(body.get("entry_time", ""))
+        exit_time = str(body.get("exit_time", ""))
+        entry_price = body.get("entry_price")
+        exit_price = body.get("exit_price")
+        contract = str(body.get("contract", ""))
+        pnl = body.get("pnl")
+        reason_entered = str(body.get("reason_entered", ""))
+        reason_exited = str(body.get("reason_exited", ""))
+        followed_plan = int(bool(body.get("followed_plan", True)))
+        mistakes = str(body.get("mistakes", ""))
+        lesson = str(body.get("lesson", ""))
+        screenshot_url = str(body.get("screenshot_url", ""))
+
+        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=10)
+        try:
+            cursor = conn.execute(
+                """INSERT INTO trade_reviews
+                   (ticker,side,entry_time,exit_time,entry_price,exit_price,
+                    contract,pnl,reason_entered,reason_exited,followed_plan,
+                    mistakes,lesson,screenshot_url)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (ticker, side, entry_time, exit_time, entry_price, exit_price,
+                 contract, pnl, reason_entered, reason_exited, followed_plan,
+                 mistakes, lesson, screenshot_url)
+            )
+            conn.commit()
+            new_id = cursor.lastrowid
+        finally:
+            conn.close()
+
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "id": new_id,
+            "message": f"Trade review #{new_id} saved.",
+            "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION}), 500
+
+
+@app.route("/api/review/trades")
+def api_review_trades():
+    """APEX 6.4.0 — List trade reviews.
+
+    GET /api/review/trades?ticker=SPX&limit=50
+    """
+    try:
+        ticker = request.args.get("ticker", "").upper()
+        limit = max(1, min(int(request.args.get("limit", "100")), 500))
+        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
+        try:
+            if ticker:
+                rows = conn.execute(
+                    "SELECT * FROM trade_reviews WHERE ticker=? ORDER BY id DESC LIMIT ?",
+                    (ticker, limit)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM trade_reviews ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()
+        finally:
+            conn.close()
+        trades = [dict(r) for r in rows]
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "ticker": ticker or "ALL",
+            "count": len(trades),
+            "trades": trades,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION}), 500
+
+
+@app.route("/api/review/summary")
+def api_review_summary():
+    """APEX 6.4.0 — Post-trade review analytics summary.
+
+    GET /api/review/summary?ticker=SPX
+    """
+    try:
+        ticker = request.args.get("ticker", "").upper()
+        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+        conn.row_factory = sqlite3.Row
+        try:
+            if ticker:
+                rows = conn.execute(
+                    "SELECT * FROM trade_reviews WHERE ticker=? ORDER BY id ASC", (ticker,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM trade_reviews ORDER BY id ASC"
+                ).fetchall()
+        finally:
+            conn.close()
+
+        trades = [dict(r) for r in rows]
+        if not trades:
+            return jsonify({
+                "ok": True,
+                "version": VERSION,
+                "ticker": ticker or "ALL",
+                "trade_count": 0,
+                "summary": {"message": "No trade reviews logged yet."},
+            })
+
+        total = len(trades)
+        with_pnl = [t for t in trades if t.get("pnl") is not None]
+        winners = [t for t in with_pnl if (t.get("pnl") or 0) > 0]
+        losers  = [t for t in with_pnl if (t.get("pnl") or 0) <= 0]
+        win_rate = round(len(winners) / max(len(with_pnl), 1) * 100, 1)
+        avg_pnl  = round(sum(t["pnl"] for t in with_pnl) / max(len(with_pnl), 1), 2) if with_pnl else None
+        avg_win  = round(sum(t["pnl"] for t in winners) / max(len(winners), 1), 2) if winners else None
+        avg_loss = round(sum(t["pnl"] for t in losers) / max(len(losers), 1), 2) if losers else None
+        followed = sum(1 for t in trades if t.get("followed_plan"))
+        plan_rate = round(followed / total * 100, 1)
+
+        # Common mistakes
+        mistake_counts: Dict[str, int] = {}
+        for t in trades:
+            for m in (t.get("mistakes") or "").split(";"):
+                m = m.strip()
+                if m:
+                    mistake_counts[m] = mistake_counts.get(m, 0) + 1
+        top_mistakes = sorted(mistake_counts.items(), key=lambda x: -x[1])[:5]
+
+        # Lessons
+        lessons = [t.get("lesson", "").strip() for t in trades if (t.get("lesson") or "").strip()]
+
+        # Average R (if available: avg_win / abs(avg_loss))
+        avg_r = None
+        if avg_win and avg_loss and avg_loss < 0:
+            avg_r = round(avg_win / abs(avg_loss), 2)
+
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "ticker": ticker or "ALL",
+            "trade_count": total,
+            "summary": {
+                "win_rate_pct":     win_rate,
+                "winner_count":     len(winners),
+                "loser_count":      len(losers),
+                "avg_pnl":          avg_pnl,
+                "avg_win":          avg_win,
+                "avg_loss":         avg_loss,
+                "avg_r":            avg_r,
+                "followed_plan_pct": plan_rate,
+                "top_mistakes":     [{"mistake": m, "count": c} for m, c in top_mistakes],
+                "recent_lessons":   lessons[-5:],
+            },
+            "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION}), 500
+
 
 @app.route("/chart")
 def chart_dashboard():
@@ -4479,6 +5085,10 @@ try:
     init_tracking_db()
 except Exception as e:
     print(f"Unexpected error during tracking init (app continues, tracking disabled): {e}", flush=True)
+try:
+    _init_review_db()
+except Exception as e:
+    print(f"APEX 6.4.0 review DB init error (non-fatal): {e}", flush=True)
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 

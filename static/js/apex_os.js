@@ -980,6 +980,9 @@ async function loadOS() {
     captureReplaySnap(data);
     addReviewEntry(data);
 
+    // 6.3.2 — refresh flow tape on each OS load
+    loadFlowTape();
+
     const lu = $('lastUpdated');
     if (lu) lu.textContent = 'Updated: ' + (data.updated_at_et || new Date().toLocaleTimeString());
   } catch (e) {
@@ -1006,6 +1009,298 @@ function initRefreshBtn() {
   btn.addEventListener('click', async () => { await loadOS(); await loadScannerIdeas(); });
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 6.3.2 — Institutional Flow Tape
+   ════════════════════════════════════════════════════════════════════════════ */
+const TAPE_INDEX_TICKERS = new Set(['SPY','QQQ','SPX','SPXW']);
+const TAPE_TECH_TICKERS  = new Set(['NVDA','TSLA','AAPL','MSFT','AMZN','META','GOOGL','AMD']);
+
+let tapeFilter = 'all';
+let tapeRows   = [];
+
+function initTapeFilters() {
+  document.querySelectorAll('.tape-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      tapeFilter = btn.dataset.filter || 'all';
+      document.querySelectorAll('.tape-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === tapeFilter));
+      renderFlowTapeTable();
+    });
+  });
+}
+
+function filteredTapeRows() {
+  if (tapeFilter === 'all')    return tapeRows;
+  if (tapeFilter === 'SWEEP')  return tapeRows.filter(r => r.consolidation_type === 'SWEEP');
+  if (tapeFilter === 'BLOCK')  return tapeRows.filter(r => r.consolidation_type === 'BLOCK');
+  if (tapeFilter === 'index')  return tapeRows.filter(r => TAPE_INDEX_TICKERS.has(r.ticker));
+  if (tapeFilter === 'tech')   return tapeRows.filter(r => TAPE_TECH_TICKERS.has(r.ticker));
+  return tapeRows;
+}
+
+function fmtPremium(p) {
+  if (!p && p !== 0) return '--';
+  if (Math.abs(p) >= 1e6) return '$' + (p/1e6).toFixed(1) + 'M';
+  if (Math.abs(p) >= 1e3) return '$' + (p/1e3).toFixed(0) + 'K';
+  return '$' + p.toFixed(0);
+}
+
+function renderTapeSummary(summary) {
+  const el = $('tapeSummaryBar');
+  if (!el || !summary) return;
+  const net = summary.net_premium || 0;
+  const netCls = net >= 0 ? 'tape-sum-buy' : 'tape-sum-sell';
+  el.innerHTML = `
+    <div class="tape-sum-item"><span>Buy</span><b class="tape-sum-val tape-sum-buy">${fmtPremium(summary.buy_premium)}</b></div>
+    <div class="tape-sum-item"><span>Sell</span><b class="tape-sum-val tape-sum-sell">${fmtPremium(summary.sell_premium)}</b></div>
+    <div class="tape-sum-item"><span>Net</span><b class="tape-sum-val ${netCls}">${net >= 0?'+':''}${fmtPremium(net)}</b></div>
+    <div class="tape-sum-item"><span>Sweeps</span><b class="tape-sum-val">${summary.sweep_count||0}</b></div>
+    <div class="tape-sum-item"><span>Blocks</span><b class="tape-sum-val">${summary.block_count||0}</b></div>
+    <div class="tape-sum-item"><span>Bias</span><b class="tape-sum-val ${summary.tape_bias==='BULLISH'?'tape-sum-buy':summary.tape_bias==='BEARISH'?'tape-sum-sell':''}">${esc(summary.tape_bias||'--')}</b></div>
+  `;
+}
+
+function renderFlowTapeTable() {
+  const el = $('flowTapeTable');
+  if (!el) return;
+  const rows = filteredTapeRows();
+  if (!rows.length) {
+    el.innerHTML = '<div class="tape-empty">No flow tape rows match the current filter.</div>';
+    return;
+  }
+  const rowHtml = rows.slice(0, 80).map(r => {
+    const agCls = r.aggressor_side === 'BUY' ? 'tape-row-buy' : r.aggressor_side === 'SELL' ? 'tape-row-sell' : 'tape-row-neutral';
+    const label = esc(r.tape_label || '--').replace('_', ' ');
+    const imp   = r.importance_score != null ? `<span class="tape-importance">${r.importance_score}</span>` : '';
+    return `<tr class="${agCls}">
+      <td>${esc(r.time_et||'')}</td>
+      <td><b>${esc(r.ticker)}</b></td>
+      <td>${esc(r.contract_type||'')}</td>
+      <td>${r.strike ? fmt(r.strike) : '--'}</td>
+      <td>${esc(r.expiration||'')}</td>
+      <td><b>${fmtPremium(r.premium)}</b></td>
+      <td><span class="tape-label">${label}</span>${imp}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `<table>
+    <thead><tr>
+      <th>Time</th><th>Ticker</th><th>Type</th><th>Strike</th>
+      <th>Exp</th><th>Premium</th><th>Label / Score</th>
+    </tr></thead>
+    <tbody>${rowHtml}</tbody>
+  </table>`;
+}
+
+async function loadFlowTape() {
+  try {
+    const r = await fetch('/api/flow_tape?tickers=SPY,QQQ,SPX,NVDA,TSLA&min_premium=100000', { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.ok) return;
+    tapeRows = data.rows || [];
+    renderTapeSummary(data.summary);
+    renderFlowTapeTable();
+  } catch (e) {
+    // Non-fatal: tape unavailable
+    const el = $('flowTapeTable');
+    if (el) el.innerHTML = '<div class="tape-empty">Flow tape unavailable: ' + esc(e.message) + '</div>';
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 6.3.3 — Chart Overlay Toggle Wiring
+   ════════════════════════════════════════════════════════════════════════════ */
+function initOverlayToggles() {
+  document.querySelectorAll('.overlay-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const group = btn.dataset.group;
+      const nowActive = btn.classList.toggle('active');
+      if (window.APEXOverlays) {
+        window.APEXOverlays.setToggle(group, nowActive);
+      }
+      // Re-apply overlays on both chart engines if available
+      try {
+        const frame = document.querySelector('.chart-terminal-frame');
+        if (frame && frame.contentWindow && frame.contentWindow.reapplyOverlays) {
+          frame.contentWindow.reapplyOverlays();
+        }
+      } catch (_) {}
+    });
+  });
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 6.4.0 — Post-Trade Review Form
+   ════════════════════════════════════════════════════════════════════════════ */
+function initReviewForm() {
+  const btn = $('rfSubmitBtn');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const status = $('rfStatus');
+    const payload = {
+      ticker:         ($('rfTicker')?.value || 'SPX').toUpperCase(),
+      side:           $('rfSide')?.value || 'CALL',
+      entry_time:     $('rfEntryTime')?.value || '',
+      exit_time:      $('rfExitTime')?.value || '',
+      entry_price:    parseFloat($('rfEntryPrice')?.value) || null,
+      exit_price:     parseFloat($('rfExitPrice')?.value) || null,
+      contract:       $('rfContract')?.value || '',
+      pnl:            parseFloat($('rfPnl')?.value) || null,
+      reason_entered: $('rfReasonIn')?.value || '',
+      reason_exited:  $('rfReasonOut')?.value || '',
+      followed_plan:  parseInt($('rfFollowedPlan')?.value || '1'),
+      mistakes:       $('rfMistakes')?.value || '',
+      lesson:         $('rfLesson')?.value || '',
+    };
+    try {
+      if (status) status.textContent = 'Saving...';
+      const r = await fetch('/api/review/trade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+      if (data.ok) {
+        if (status) status.textContent = '✓ Saved trade #' + data.id;
+        loadReviewSummary();
+        loadTradeHistory();
+      } else {
+        if (status) status.textContent = 'Error: ' + (data.error || 'Unknown');
+      }
+    } catch (e) {
+      if (status) status.textContent = 'Error: ' + e.message;
+    }
+  });
+}
+
+async function loadReviewSummary() {
+  const el = $('reviewSummaryPanel');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/review/summary?ticker=' + activeTicker, { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.ok) return;
+    const s = data.summary || {};
+    if (!data.trade_count) {
+      el.innerHTML = '<div class="review-empty">No trades logged yet.</div>';
+      return;
+    }
+    const wr = s.win_rate_pct ?? '--';
+    const wrCls = (s.win_rate_pct >= 55) ? 'rs-green' : (s.win_rate_pct < 45) ? 'rs-red' : '';
+    const arCls = (s.avg_r >= 1.0) ? 'rs-green' : 'rs-red';
+    el.innerHTML = `
+      <div class="review-summary-grid">
+        <div class="rs-stat"><div class="rs-num ${wrCls}">${wr}%</div><div class="rs-label">Win Rate</div></div>
+        <div class="rs-stat"><div class="rs-num ${s.avg_pnl>=0?'rs-green':'rs-red'}">${s.avg_pnl!=null?'$'+s.avg_pnl.toFixed(0):'--'}</div><div class="rs-label">Avg P&amp;L</div></div>
+        <div class="rs-stat"><div class="rs-num ${arCls}">${s.avg_r!=null?s.avg_r+'R':'--'}</div><div class="rs-label">Avg R</div></div>
+        <div class="rs-stat"><div class="rs-num">${data.trade_count}</div><div class="rs-label">Trades</div></div>
+      </div>
+      ${s.top_mistakes?.length ? `<div style="font-size:10px;color:var(--muted);margin-bottom:6px"><b>Common mistakes:</b> ${s.top_mistakes.slice(0,3).map(m=>`${esc(m.mistake)} (${m.count})`).join(', ')}</div>` : ''}
+      ${s.recent_lessons?.length ? `<div style="font-size:10px;color:var(--faint)"><b>Lessons:</b> ${esc(s.recent_lessons[s.recent_lessons.length-1]||'')}</div>` : ''}
+    `;
+  } catch (_) {}
+}
+
+async function loadTradeHistory() {
+  const el = $('reviewPanel');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/review/trades?ticker=' + activeTicker + '&limit=30', { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.ok || !data.trades?.length) {
+      el.innerHTML = '<div class="review-empty">No trade history yet.</div>';
+      return;
+    }
+    const rowHtml = data.trades.map(t => {
+      const pnlCls = (t.pnl || 0) >= 0 ? 'rv-green' : 'rv-red';
+      return `<tr>
+        <td>${esc(t.ticker)}</td>
+        <td>${esc(t.side)}</td>
+        <td>${esc(t.entry_time||'')}</td>
+        <td>${esc(t.exit_time||'')}</td>
+        <td>${t.entry_price!=null?'$'+t.entry_price.toFixed(2):'--'}</td>
+        <td>${t.exit_price!=null?'$'+t.exit_price.toFixed(2):'--'}</td>
+        <td class="${pnlCls}">${t.pnl!=null?'$'+t.pnl.toFixed(0):'--'}</td>
+        <td>${t.followed_plan?'✓':'✗'}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${esc(t.reason_entered||'')}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11px;font-family:var(--mono)">
+      <thead><tr style="font-size:9px;color:var(--faint)">
+        <th style="text-align:left;padding:4px 6px">Ticker</th>
+        <th>Side</th><th>In</th><th>Out</th>
+        <th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Plan</th><th>Reason</th>
+      </tr></thead>
+      <tbody>${rowHtml}</tbody>
+    </table>`;
+  } catch (_) {}
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 6.4.0 — Replay with date picker
+   ════════════════════════════════════════════════════════════════════════════ */
+function initReplayDatePicker() {
+  const picker = $('replayDatePicker');
+  const btn    = $('replayLoadBtn');
+  if (!picker) return;
+  // Set default to today
+  const today = new Date();
+  picker.value = today.toISOString().slice(0, 10);
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      const date = picker.value || today.toISOString().slice(0, 10);
+      await loadReplaySession(date);
+    });
+  }
+}
+
+async function loadReplaySession(date) {
+  try {
+    const r = await fetch(`/api/replay/session?ticker=${activeTicker}&date=${date}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.ok) return;
+    // Update the scrub bar
+    const scrub = $('replayScrub');
+    const time  = $('replayTime');
+    const count = data.frame_count || 0;
+    if (scrub) { scrub.min = 0; scrub.max = Math.max(0, count - 1); scrub.value = count - 1; }
+    if (time) time.textContent = `${count} / ${count}`;
+    // Load last frame
+    if (count > 0 && data.frames?.length) {
+      const lastFrame = data.frames[data.frames.length - 1];
+      await loadReplayFrame(date, lastFrame.frame_time);
+    }
+  } catch (_) {}
+}
+
+async function loadReplayFrame(date, frameTime) {
+  const el = $('replayFrame');
+  if (!el) return;
+  try {
+    const r = await fetch(`/api/replay/frame?ticker=${activeTicker}&date=${date}&time=${frameTime}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.ok || !data.frame) {
+      el.innerHTML = '<div class="rf-label">No replay frame available for that time.</div>';
+      return;
+    }
+    const f = data.frame;
+    const decCls = f.decision_state?.includes('ENTER') ? 'rv-green' : f.decision_state === 'NO_TRADE' ? 'rv-red' : 'rv-amber';
+    el.innerHTML = `
+      <div class="rf-label">${esc(date)} @ ${esc(data.frame_time||'')}</div>
+      <div class="cmd-row"><span>Decision</span><b class="${decCls}">${esc(f.decision_state||'--')}</b></div>
+      <div class="cmd-row"><span>ICI</span><b>${f.confidence!=null?f.confidence.toFixed(1):'--'}</b></div>
+      <div class="cmd-row"><span>Price</span><b>${f.stock_price!=null?'$'+fmt(f.stock_price):'--'}</b></div>
+      <div class="cmd-row"><span>POC</span><b>${f.poc!=null?'$'+fmt(f.poc):'--'}</b></div>
+      <div class="cmd-row"><span>Auction</span><b>${esc(f.auction_state||'--')}</b></div>
+      <div class="cmd-row"><span>Tape Bias</span><b>${esc(f.tape_bias||'--')}</b></div>
+      <div class="cmd-row"><span>Grade</span><b>${esc(f.grade||'--')}</b></div>
+    `;
+  } catch (_) {}
+}
+
 /* ── Init ─────────────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
@@ -1013,12 +1308,21 @@ document.addEventListener('DOMContentLoaded', () => {
   initTickerSelect();
   initRefreshBtn();
   initRunScanButtons();
+  initTapeFilters();
+  initOverlayToggles();
+  initReviewForm();
+  initReplayDatePicker();
 
   // Activate first tab
   document.querySelector('.tab-btn[data-tab="dashboard"]')?.click();
 
   loadOS();
   loadScannerIdeas();
+  loadFlowTape();
+  loadReviewSummary();
+  loadTradeHistory();
+
   setInterval(loadOS, AUTO_INTERVAL);
   setInterval(loadScannerIdeas, 30000);
+  setInterval(loadFlowTape, 45000);  // Flow tape refresh every 45s
 });

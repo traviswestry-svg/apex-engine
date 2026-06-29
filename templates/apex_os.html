@@ -114,7 +114,43 @@
           <div class="card-label">Coach Snapshot</div>
           <div id="coachSnapshot"></div>
         </div>
+        <div class="card command-card">
+          <div class="card-label">Chart Overlays
+            <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.3.3</span>
+          </div>
+          <div class="overlay-toggles" id="overlayToggles">
+            <button class="overlay-btn active" data-group="gamma">Gamma</button>
+            <button class="overlay-btn active" data-group="volumeProfile">Vol Profile</button>
+            <button class="overlay-btn active" data-group="vwap">VWAP</button>
+            <button class="overlay-btn active" data-group="previousDay">Prev Day</button>
+            <button class="overlay-btn active" data-group="openingRange">Opn Range</button>
+          </div>
+        </div>
       </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM PANEL: Institutional Flow Tape (6.3.2) -->
+  <div class="card sec-mb flow-tape-panel" id="flowTapeWrap">
+    <div class="card-headline">
+      <div>
+        <div class="card-label">Institutional Flow Tape
+          <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">Live</span>
+          <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.3.2</span>
+        </div>
+        <div class="workflow-sub">Sweep Tape · Block Tape · Premium Tape — Aggressive Institutional Flow</div>
+      </div>
+      <div class="tape-filter-row" id="tapeFilters">
+        <button class="tape-btn active" data-filter="all">All</button>
+        <button class="tape-btn" data-filter="SWEEP">Sweeps</button>
+        <button class="tape-btn" data-filter="BLOCK">Blocks</button>
+        <button class="tape-btn" data-filter="index">SPY/QQQ/SPX</button>
+        <button class="tape-btn" data-filter="tech">Tech</button>
+      </div>
+    </div>
+    <div id="tapeSummaryBar" class="tape-summary-bar"></div>
+    <div id="flowTapeTable" class="flow-tape-table">
+      <div class="tape-empty">Waiting for institutional flow tape data...</div>
     </div>
   </div>
 
@@ -215,11 +251,21 @@
     </div>
   </div>
 
-  <!-- TAB: SESSION REPLAY (6.0.4) -->
+  <!-- TAB: SESSION REPLAY (6.4.0) -->
   <div id="tab-replay" class="tab-pane">
     <div class="card sec-mb">
-      <div class="card-label">Session Replay
-        <span class="badge-xs" style="background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.25)">6.2.2</span>
+      <div class="card-headline">
+        <div>
+          <div class="card-label">Session Replay
+            <span class="badge-xs" style="background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.25)">6.4.0</span>
+          </div>
+          <div class="workflow-sub">Frame-by-frame APEX state replay for training and post-trade review.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label style="font-size:10px;color:var(--muted)">Date</label>
+          <input type="date" id="replayDatePicker" class="replay-date-input" />
+          <button class="btn btn-ghost btn-mini" id="replayLoadBtn">Load</button>
+        </div>
       </div>
       <div class="replay-controls">
         <button class="rep-btn" id="repPrev">&#9664; Prev</button>
@@ -230,7 +276,7 @@
       </div>
       <div class="replay-frame" id="replayFrame">
         <div class="rf-label">Replay</div>
-        <div class="rf-note" style="color:var(--faint)">Snapshots captured every 12 seconds once loaded.</div>
+        <div class="rf-note" style="color:var(--faint)">Snapshots captured every scan cycle. Use date picker to load a historical session.</div>
       </div>
     </div>
     <div class="card">
@@ -239,11 +285,75 @@
     </div>
   </div>
 
-  <!-- TAB: REVIEW (6.0.4) -->
+  <!-- TAB: REVIEW (6.4.0) -->
   <div id="tab-review" class="tab-pane">
+    <div class="grid2 sec-mb">
+      <div class="card">
+        <div class="card-label">Log Trade Review
+          <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">6.4.0</span>
+        </div>
+        <div class="review-form" id="reviewForm">
+          <div class="rf-row">
+            <label>Ticker</label><input type="text" id="rfTicker" value="SPX" class="rf-input" />
+            <label>Side</label>
+            <select id="rfSide" class="rf-input">
+              <option value="CALL">CALL</option>
+              <option value="PUT">PUT</option>
+            </select>
+          </div>
+          <div class="rf-row">
+            <label>Entry Time</label><input type="text" id="rfEntryTime" placeholder="09:47" class="rf-input" />
+            <label>Exit Time</label><input type="text" id="rfExitTime" placeholder="10:12" class="rf-input" />
+          </div>
+          <div class="rf-row">
+            <label>Entry Price</label><input type="number" id="rfEntryPrice" step="0.01" class="rf-input" />
+            <label>Exit Price</label><input type="number" id="rfExitPrice" step="0.01" class="rf-input" />
+          </div>
+          <div class="rf-row">
+            <label>Contract</label><input type="text" id="rfContract" placeholder="SPX 7350C 0DTE" class="rf-input rf-wide" />
+            <label>P&amp;L ($)</label><input type="number" id="rfPnl" step="0.01" class="rf-input" />
+          </div>
+          <div class="rf-row-full">
+            <label>Reason Entered</label>
+            <input type="text" id="rfReasonIn" placeholder="Pine ENTER_CALL, POC support, bullish sweeps" class="rf-input rf-full" />
+          </div>
+          <div class="rf-row-full">
+            <label>Reason Exited</label>
+            <input type="text" id="rfReasonOut" placeholder="Hit T1, stop triggered, time decay" class="rf-input rf-full" />
+          </div>
+          <div class="rf-row-full">
+            <label>Mistakes (optional)</label>
+            <input type="text" id="rfMistakes" class="rf-input rf-full" />
+          </div>
+          <div class="rf-row-full">
+            <label>Lesson</label>
+            <input type="text" id="rfLesson" class="rf-input rf-full" />
+          </div>
+          <div class="rf-row">
+            <label>Followed Plan?</label>
+            <select id="rfFollowedPlan" class="rf-input">
+              <option value="1">Yes</option>
+              <option value="0">No</option>
+            </select>
+          </div>
+          <div style="margin-top:10px">
+            <button class="btn btn-primary" id="rfSubmitBtn">Save Trade Review</button>
+            <span id="rfStatus" style="font-size:11px;color:var(--muted);margin-left:10px"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Performance Summary</div>
+        <div id="reviewSummaryPanel">
+          <div class="review-empty">No trades logged yet.</div>
+        </div>
+      </div>
+    </div>
+
     <div class="card">
-      <div class="card-label">Session Review &#8212; Actionable Signal Log
-        <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">6.2.2</span>
+      <div class="card-label">Trade History
+        <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">6.4.0</span>
       </div>
       <div style="font-size:10px;color:var(--faint);margin-bottom:10px">
         ENTER_CALL, ENTER_PUT, and READY signals are logged automatically each refresh cycle.
