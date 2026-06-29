@@ -102,7 +102,7 @@ def _chapter_regime(ms: Dict[str, Any], gamma_regime: Dict[str, Any],
     return {"chapter": "Regime", "text": text, "color": color, "significance": 1.0}
 
 
-def _chapter_auction(ms: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _chapter_auction(ms: Dict[str, Any], auction_intel: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Auction / volume profile: what is the market accepting?"""
     if not ms.get("profile_available"):
         return {
@@ -189,6 +189,37 @@ def _chapter_auction(ms: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             f" POC and VWAP are confluent near {_fmt(conf_level)} — "
             f"this level is the primary institutional reference."
         )
+
+    # Enrich with auction intelligence if available
+    if auction_intel and auction_intel.get("available"):
+        ai_state = auction_intel.get("auction_state") or {}
+        ai_excess = auction_intel.get("excess") or {}
+        ai_hvbo = auction_intel.get("hvbo") or {}
+        ai_acc = auction_intel.get("acceptance") or {}
+        ai_poc = auction_intel.get("poc_migration") or {}
+
+        state_name = ai_state.get("state", "")
+        if state_name and state_name not in ("WAITING_FOR_PROFILE",):
+            day_type = ai_state.get("day_type", "")
+            participant = ai_state.get("participant_type", "")
+            conf_score = ai_state.get("confidence", 0)
+            would_trade = ai_state.get("would_trade", False)
+            core += (
+                f" Auction state: {state_name.replace('_',' ')} "
+                f"({'initiative' if ai_state.get('is_initiative') else 'responsive' if ai_state.get('is_responsive') else 'balanced'} "
+                f"participants, {conf_score}% confidence)."
+            )
+            if not would_trade:
+                core += " Institutional traders would not participate here — wait for better structure."
+
+        if ai_excess.get("detected"):
+            core += f" ⚠ {ai_excess.get('type','').replace('_',' ')}: {ai_excess.get('narrative','')}"
+
+        if ai_acc.get("primary_note"):
+            core += f" {ai_acc['primary_note']}"
+
+        if ai_poc.get("acceleration") == "ACCELERATING":
+            core += " POC migration is accelerating — institutional urgency is rising."
 
     return {"chapter": "Auction", "text": core, "color": color, "significance": 2.0}
 
@@ -585,6 +616,7 @@ def build_story_v3(
     session_state: str = "MARKET_OPEN",
     # 6.4.1: canonical market state preferred over individual args
     market_state:  Optional[Dict[str, Any]] = None,
+    auction_intel: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Story Engine 3.1 — reasoning prose, not metric descriptions.
 
@@ -666,7 +698,7 @@ def build_story_v3(
             chapters.append(ch)
 
     add(_chapter_regime(ms, gamma_regime, market_regime))
-    add(_chapter_auction(ms))
+    add(_chapter_auction(ms, auction_intel=auction_intel))
     add(_chapter_flow(ms, flow))
     add(_chapter_tape(ms))
     add(_chapter_execution(ms))
