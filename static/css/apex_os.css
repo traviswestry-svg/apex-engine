@@ -961,3 +961,124 @@ body {
 .on-bias-bull  { background: rgba(34,197,94,.1);  color: var(--green); border: 1px solid rgba(34,197,94,.3);  }
 .on-bias-bear  { background: rgba(239,68,68,.1);  color: var(--red);   border: 1px solid rgba(239,68,68,.3);  }
 .on-bias-neut  { background: rgba(245,158,11,.1); color: var(--amber); border: 1px solid rgba(245,158,11,.3); }
+
+/* ── Dashboard two-column main grid ──────────────────────────────────────── */
+.dashboard-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 320px;
+  gap: 10px;
+  align-items: start;
+}
+.dashboard-left  { display: flex; flex-direction: column; gap: 0; }
+.dashboard-right { display: flex; flex-direction: column; gap: 10px; position: sticky; top: 52px; }
+@media(max-width:1100px) {
+  .dashboard-main-grid { grid-template-columns: 1fr; }
+  .dashboard-right { position: static; }
+}
+
+/* ── Chart tab ────────────────────────────────────────────────────────────── */
+.chart-tab-card    { padding: 12px; }
+.chart-tab-frame   {
+  width: 100%; height: calc(100vh - 180px);
+  min-height: 560px;
+  border: 1px solid rgba(56,189,248,.15);
+  border-radius: 9px;
+  background: #020617;
+  display: block;
+  margin-top: 8px;
+}
+
+/* ── Flow tape full-tab mode ─────────────────────────────────────────────── */
+.flow-tape-full   { max-height: calc(100vh - 300px); }
+.tape-td-time     { white-space: nowrap; min-width: 60px; }
+.tape-td-contract { font-weight: 700; min-width: 130px; }
+.tape-td-price    { text-align: right; }
+.tape-td-premium  { text-align: right; font-weight: 700; }
+.tape-td-label    { }
+.tape-td-score    { text-align: right; font-size: 10px; color: var(--faint); }
+.tape-label-buy   { color: var(--green); }
+.tape-label-sell  { color: var(--red);   }
+.tape-label-neut  { color: var(--muted); }
+
+/* ── Signal Log entries ──────────────────────────────────────────────────── */
+.signal-log-entry {
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  background: var(--surf2);
+  transition: border-color var(--transition);
+}
+.signal-log-entry:hover { border-color: rgba(56,189,248,.2); }
+.sle-enter { border-color: rgba(34,197,94,.25);  background: rgba(34,197,94,.03); }
+.sle-watch { border-color: rgba(245,158,11,.2);  background: rgba(245,158,11,.02); }
+
+.sle-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.sle-time    { font-family: var(--mono); font-size: 11px; color: var(--faint); min-width: 64px; }
+.sle-state   { font-family: var(--mono); font-size: 12px; font-weight: 800; letter-spacing: .03em; }
+.sle-grade   { font-size: 11px; color: var(--blue); font-family: var(--mono); font-weight: 700; }
+.sle-ici     { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+.sle-contract {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .02em;
+  margin-bottom: 10px;
+}
+
+.sle-levels {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+@media(max-width:760px){ .sle-levels { grid-template-columns: 1fr 1fr; } }
+.sle-level   { display: flex; flex-direction: column; }
+.sll-label   { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.sll-val     { font-family: var(--mono); font-size: 12px; font-weight: 700; margin-top: 2px; }
+
+.sl-readiness {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 7px;
+}
+.sl-read-label { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; min-width: 64px; }
+.sl-read-bar   { flex: 1; height: 4px; background: rgba(100,116,139,.2); border-radius: 2px; overflow: hidden; }
+.sl-read-bar div { height: 100%; border-radius: 2px; transition: width .4s; }
+.sl-read-num   { font-family: var(--mono); font-size: 10px; font-weight: 600; min-width: 32px; text-align: right; }
+
+.sle-action {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-bottom: 6px;
+  padding: 7px 9px;
+  background: rgba(15,23,42,.5);
+  border-radius: 6px;
+  border-left: 2px solid var(--bdr);
+}
+.sle-enter .sle-action { border-left-color: var(--green); }
+.sle-watch .sle-action { border-left-color: var(--amber); }
+
+.sl-blockers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+.sl-blockers span {
+  font-size: 10px;
+  color: var(--amber);
+  background: rgba(245,158,11,.06);
+  border: 1px solid rgba(245,158,11,.2);
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+
+/* Saved reviews table */
+.saved-reviews-table-wrap { overflow-x: auto; }
