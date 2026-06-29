@@ -4264,25 +4264,42 @@ def api_es_ticker_diagnostics():
         today = now_et().date()
         start_iso = f"{today - dt.timedelta(days=5)}T00:00:00Z"
         end_iso   = f"{today + dt.timedelta(days=1)}T00:00:00Z"
-        probe_url = f"https://api.polygon.io/futures/v1/aggs/{front_month}"
-        probe_params = {
+        probe_params_base = {
             "resolution": "5",
             "window_start.gte": start_iso,
             "window_start.lte": end_iso,
             "limit": 5,
             "sort": "window_start.asc",
+            "apiKey": POLYGON_API_KEY,
         }
-        probe_data = safe_get_json(probe_url, params=probe_params, timeout=15)
-        if probe_data:
-            raw_probe = {
-                "status":     probe_data.get("status"),
-                "error":      probe_data.get("error") or probe_data.get("message"),
-                "keys":       list(probe_data.keys()),
-                "results_len": len(probe_data.get("results") or probe_data.get("data") or []),
-                "first_result": (probe_data.get("results") or probe_data.get("data") or [None])[0],
-            }
-        else:
-            raw_probe = {"error": "safe_get_json returned None (HTTP error or timeout)"}
+
+        probe_attempts = []
+        for base_url in [
+            f"https://api.polygon.io/futures/v1/aggs/{front_month}",
+            f"https://futures.polygon.io/v1/aggs/{front_month}",
+        ]:
+            try:
+                import requests as _req
+                _r = _req.get(base_url, params=probe_params_base, timeout=10)
+                attempt = {
+                    "url":        base_url.replace(POLYGON_API_KEY, "***") if POLYGON_API_KEY in base_url else base_url,
+                    "http_status": _r.status_code,
+                    "body_preview": _r.text[:300],
+                }
+                try:
+                    j = _r.json()
+                    attempt["keys"]        = list(j.keys())
+                    attempt["status"]      = j.get("status")
+                    attempt["error"]       = j.get("error") or j.get("message")
+                    attempt["results_len"] = len(j.get("results") or j.get("data") or [])
+                    attempt["first_result"]= (j.get("results") or j.get("data") or [None])[0]
+                except Exception:
+                    pass
+                probe_attempts.append(attempt)
+            except Exception as _e:
+                probe_attempts.append({"url": base_url, "error": str(_e)})
+
+        raw_probe = {"attempts": probe_attempts}
     except Exception as _pe:
         raw_probe = {"error": str(_pe)}
 
