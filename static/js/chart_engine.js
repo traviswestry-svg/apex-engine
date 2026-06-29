@@ -19,7 +19,7 @@
 
   function toSeriesCandles(candles) {
     return (candles || []).filter(Boolean).map((c) => ({
-      time: Number(c.time || Math.floor(Number(c.ts || 0) / 1000)),
+      time: Number(c.ts_et || Math.floor(Number(c.ts || 0) / 1000)),
       open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close)
     })).filter((c) => c.time && [c.open, c.high, c.low, c.close].every(Number.isFinite));
   }
@@ -27,7 +27,7 @@
   function toLine(candles, key) {
     return (candles || []).map((c) => {
       const value = Number(c[key]);
-      const time = Number(c.time || Math.floor(Number(c.ts || 0) / 1000));
+      const time = Number(c.ts_et || Math.floor(Number(c.ts || 0) / 1000));
       return Number.isFinite(value) && value > 0 && time ? { time, value } : null;
     }).filter(Boolean);
   }
