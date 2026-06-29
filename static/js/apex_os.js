@@ -462,6 +462,26 @@ function renderCommandCenter(d) {
   `;
 }
 
+
+function renderAuctionPanel(d) {
+  const el = $('auctionPanel');
+  if (!el || !d) return;
+  const vp = d.volume_profile || {};
+  const levels = vp.levels || {};
+  const auction = d.auction || {};
+  const flags = auction.quality_flags || vp.quality_flags || [];
+  const mig = auction.poc_migration || '--';
+  const migCls = mig === 'RISING' ? 'rv-green' : mig === 'FALLING' ? 'rv-red' : 'rv-amber';
+  el.innerHTML = `
+    <div class="cmd-row"><span>POC</span><b>$${fmt(levels.poc || auction.poc)}</b></div>
+    <div class="cmd-row"><span>VAH / VAL</span><b>$${fmt(levels.vah || auction.vah)} / $${fmt(levels.val || auction.val)}</b></div>
+    <div class="cmd-row"><span>POC Migration</span><b class="${migCls}">${esc(mig)}</b></div>
+    <div class="cmd-row"><span>Auction State</span><b>${esc((auction.auction_state || '--').replace(/_/g,' '))}</b></div>
+    <div class="auction-note">${esc(auction.narrative || vp.message || 'Waiting for profile data.')}</div>
+    ${flags.length ? `<div class="mini-blockers">${flags.slice(0,3).map(x => `<div>• ${esc(String(x).replace(/_/g,' '))}</div>`).join('')}</div>` : ''}
+  `;
+}
+
 function renderCoachSnapshot(d) {
   const el = $('coachSnapshot');
   if (!el || !d) return;
@@ -948,6 +968,7 @@ async function loadOS() {
     renderHeatmap(data);
     recordConfidencePoint(data);
     renderCommandCenter(data);
+    renderAuctionPanel(data);
     renderCoachSnapshot(data);
     await loadConfidenceTimeline();
 

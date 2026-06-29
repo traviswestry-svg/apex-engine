@@ -17,11 +17,15 @@ from flask import Flask, jsonify, render_template, request, redirect
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
     from engine.data_bus import build_market_state as build_market_state_v6
+    from engine.volume_profile import build_volume_profile
+    from engine.auction import build_auction_state
     APEX_OS_601_AVAILABLE = True
 except Exception as _apex601_import_error:
     build_gamma_from_quantdata_response = None
     normalize_index_level_v6 = None
     build_market_state_v6 = None
+    build_volume_profile = None
+    build_auction_state = None
     APEX_OS_601_AVAILABLE = False
     print(f"APEX 6.0.1 engines unavailable: {_apex601_import_error}", flush=True)
 
@@ -34,7 +38,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.2.2_FRONTEND_ROUTE_STABILITY"
+VERSION = "6.3.0_VOLUME_PROFILE_AUCTION_ENGINE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -3129,6 +3133,7 @@ def api_institutional_os():
                 f_vix     = pool.submit(get_vix_price)
 
             flow_snapshot = f_flow.result()
+            volume_bundle = _volume_profile_bundle(ticker=ticker, days=1, multiplier=5)
             spy_bars      = f_spy.result()
             qqq_bars      = f_qqq.result()
             daily_bars    = f_daily.result()
@@ -3163,6 +3168,21 @@ def api_institutional_os():
                 except Exception:
                     result["heatmap"] = None
             result["session"] = session_ctx
+            result["volume_profile"] = volume_bundle.get("profile")
+            result["auction"] = volume_bundle.get("auction")
+            # Make POC/VAH/VAL available to Ribbon/Story/Trade Coach without duplicating calculations.
+            vp_levels = ((volume_bundle.get("profile") or {}).get("levels") or {})
+            if isinstance(result.get("structure"), dict):
+                result["structure"]["session_poc"] = result["structure"].get("session_poc") or vp_levels.get("poc")
+                result["structure"]["session_vah"] = result["structure"].get("session_vah") or vp_levels.get("vah")
+                result["structure"]["session_val"] = result["structure"].get("session_val") or vp_levels.get("val")
+                result["structure"]["auction_state"] = (volume_bundle.get("auction") or {}).get("auction_state")
+            if isinstance(result.get("ribbon"), dict):
+                result["ribbon"]["poc"] = result["ribbon"].get("poc") or vp_levels.get("poc")
+                result["ribbon"]["vah"] = vp_levels.get("vah")
+                result["ribbon"]["val"] = vp_levels.get("val")
+                result["ribbon"]["auction_state"] = (volume_bundle.get("auction") or {}).get("auction_state")
+                result["ribbon"]["poc_migration"] = (volume_bundle.get("auction") or {}).get("poc_migration")
             result["engine_mode"] = "NINE_ENGINE_PIPELINE"
             result["version"] = VERSION
 
@@ -4134,6 +4154,152 @@ def _chart_payload_for_lightweight(symbol: str, days: int, multiplier: int) -> D
     }
 
 
+def _bars_from_lightweight_payload(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return bars in the generic shape expected by the volume profile engine."""
+    out: List[Dict[str, Any]] = []
+    for b in (payload or {}).get("candles", []) or []:
+        out.append({
+            "open": b.get("open"),
+            "high": b.get("high"),
+            "low": b.get("low"),
+            "close": b.get("close"),
+            "volume": b.get("volume", 0.0),
+            "ts": b.get("ts") or (safe_float(b.get("time"), 0.0) * 1000),
+        })
+    return out
+
+
+def _scaled_proxy_bars(proxy_payload: Dict[str, Any], anchor_payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Optional[float]]:
+    """Scale SPY/SPX proxy bars into the anchor price scale when the anchor lacks volume.
+
+    SPX index candles often have volume=0. For a tradable SPX 0DTE workflow, a
+    SPY volume proxy is more informative than pretending zero-volume SPX bars
+    have true profile data. This returns SPY OHLC scaled by current SPX/SPY ratio
+    while preserving SPY volume, and the caller clearly flags it as a proxy.
+    """
+    proxy_close = safe_float(proxy_payload.get("currentClose"), 0.0)
+    anchor_close = safe_float(anchor_payload.get("currentClose"), 0.0)
+    if proxy_close <= 0 or anchor_close <= 0:
+        return [], None
+    ratio = anchor_close / proxy_close
+    bars = []
+    for b in _bars_from_lightweight_payload(proxy_payload):
+        bars.append({
+            "open": safe_float(b.get("open"), 0.0) * ratio,
+            "high": safe_float(b.get("high"), 0.0) * ratio,
+            "low": safe_float(b.get("low"), 0.0) * ratio,
+            "close": safe_float(b.get("close"), 0.0) * ratio,
+            "volume": b.get("volume", 0.0),
+            "ts": b.get("ts"),
+        })
+    return bars, ratio
+
+
+def _volume_profile_bundle(ticker: str = "SPX", days: int = 1, multiplier: int = 5) -> Dict[str, Any]:
+    """Build the APEX 6.3 market auction profile bundle.
+
+    For SPX, prefer SPX price scale. If SPX has no real volume, use SPY volume
+    scaled into SPX price coordinates and label it honestly.
+    """
+    symbol = (ticker or "SPX").upper()
+    anchor_symbol = "SPX" if symbol in {"SPX", "SPXW", "I:SPX", "$SPX"} else symbol
+    anchor_payload = _chart_payload_for_lightweight(anchor_symbol, days, multiplier)
+    anchor_bars = _bars_from_lightweight_payload(anchor_payload)
+    anchor_volume = sum(safe_float(b.get("volume"), 0.0) for b in anchor_bars)
+    source = anchor_symbol
+    source_note = "anchor_bars"
+    proxy_ratio = None
+    profile_bars = anchor_bars
+    quality_flags: List[str] = []
+
+    if anchor_symbol == "SPX" and anchor_volume <= 0:
+        spy_payload = _chart_payload_for_lightweight("SPY", days, multiplier)
+        scaled, ratio = _scaled_proxy_bars(spy_payload, anchor_payload)
+        spy_vol = sum(safe_float(b.get("volume"), 0.0) for b in scaled)
+        if scaled and spy_vol > 0:
+            profile_bars = scaled
+            source = "SPY_VOLUME_PROXY_SCALED_TO_SPX"
+            source_note = "SPX index volume unavailable; SPY volume scaled to SPX price coordinates."
+            proxy_ratio = ratio
+            quality_flags.append("SPY_VOLUME_PROXY_SCALED_TO_SPX")
+        else:
+            quality_flags.append("NO_REAL_VOLUME_USING_ACTIVITY_PROFILE")
+            source_note = "SPX index volume unavailable; using activity profile fallback."
+
+    current_profile = build_volume_profile(profile_bars, ticker=anchor_symbol, profile_range="session") if build_volume_profile else {}
+    if quality_flags:
+        current_profile["quality_flags"] = list(dict.fromkeys((current_profile.get("quality_flags") or []) + quality_flags))
+    current_profile["source"] = source
+    current_profile["source_note"] = source_note
+    current_profile["proxy_ratio"] = round(proxy_ratio, 6) if proxy_ratio else None
+
+    # Prior segment profile for POC migration: compare the latest half of bars to the first half.
+    mid = max(1, len(profile_bars) // 2)
+    prior_profile = build_volume_profile(profile_bars[:mid], ticker=anchor_symbol, profile_range="prior_segment") if build_volume_profile and len(profile_bars) >= 6 else {}
+    latest_profile = build_volume_profile(profile_bars[mid:], ticker=anchor_symbol, profile_range="latest_segment") if build_volume_profile and len(profile_bars[mid:]) >= 3 else current_profile
+
+    current_price = anchor_payload.get("currentClose")
+    auction = build_auction_state(
+        current_price=current_price,
+        current_profile=latest_profile or current_profile,
+        prior_profile=prior_profile,
+        previous_day_profile=None,
+    ) if build_auction_state else {}
+
+    return {
+        "ok": True,
+        "version": VERSION,
+        "ticker": anchor_symbol,
+        "requested_ticker": ticker,
+        "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "session": session_status(),
+        "profile": current_profile,
+        "latest_profile": latest_profile,
+        "prior_profile": prior_profile,
+        "auction": auction,
+    }
+
+
+@app.route("/api/volume_profile")
+def api_volume_profile():
+    """APEX 6.3 Volume Profile + Auction endpoint.
+
+    GET /api/volume_profile?ticker=SPX&range=session&tf=5&days=1
+    Returns POC, VAH, VAL, HVN/LVN and auction/POC migration context.
+    """
+    ticker = request.args.get("ticker", "SPX").strip().upper()
+    days = max(1, min(int(request.args.get("days", "1")), 5))
+    multiplier = int(request.args.get("tf", "5"))
+    multiplier = multiplier if multiplier in (1, 5, 15) else 5
+    try:
+        return jsonify(_volume_profile_bundle(ticker=ticker, days=days, multiplier=multiplier))
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION, "ticker": ticker}), 500
+
+
+@app.route("/api/auction_state")
+def api_auction_state():
+    """Compact auction-state endpoint for Ribbon/Story/Trade Coach integration."""
+    ticker = request.args.get("ticker", "SPX").strip().upper()
+    days = max(1, min(int(request.args.get("days", "1")), 5))
+    multiplier = int(request.args.get("tf", "5"))
+    multiplier = multiplier if multiplier in (1, 5, 15) else 5
+    try:
+        bundle = _volume_profile_bundle(ticker=ticker, days=days, multiplier=multiplier)
+        return jsonify({
+            "ok": True,
+            "version": VERSION,
+            "ticker": bundle.get("ticker"),
+            "updated_at": bundle.get("updated_at"),
+            "updated_at_et": bundle.get("updated_at_et"),
+            "profile_levels": (bundle.get("profile") or {}).get("levels", {}),
+            "auction": bundle.get("auction"),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "version": VERSION, "ticker": ticker}), 500
+
+
 @app.route("/api/charts/state")
 def api_charts_state():
     """APEX 6.0.2 chart-state endpoint for the Lightweight Charts frontend."""
@@ -4177,10 +4343,24 @@ def api_charts_state():
         }
         if dev_mode:
             gamma_levels["raw_zero_gamma"] = spx_gamma.get("raw_zero_gamma")
-        spx_payload["levels"] = {**spx_payload.get("levels", {}), **gamma_levels}
+
+        volume_bundle = _volume_profile_bundle(ticker="SPX", days=days, multiplier=multiplier)
+        profile_levels = ((volume_bundle.get("profile") or {}).get("levels") or {})
+        auction_state = volume_bundle.get("auction") or {}
+        vp_levels = {
+            "poc": profile_levels.get("poc"),
+            "vah": profile_levels.get("vah"),
+            "val": profile_levels.get("val"),
+        }
+
+        spx_payload["levels"] = {**spx_payload.get("levels", {}), **gamma_levels, **vp_levels}
+        spx_payload["volumeProfile"] = volume_bundle.get("profile")
+        spx_payload["auction"] = auction_state
         es_payload["levels"] = {**es_payload.get("levels", {})}
         es_payload["includeRawZeroGamma"] = False
         spx_payload["includeRawZeroGamma"] = dev_mode
+        market_state["volume_profile"] = volume_bundle.get("profile")
+        market_state["auction"] = auction_state
 
         return jsonify({
             "ok": True,
@@ -4188,6 +4368,8 @@ def api_charts_state():
             "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "updated_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
             "market_state": market_state,
+            "volume_profile": volume_bundle.get("profile"),
+            "auction": auction_state,
             "charts": {"ES": es_payload, "SPX": spx_payload},
         })
     except Exception as e:
