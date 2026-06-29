@@ -3950,16 +3950,30 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     for i, b in enumerate(bars):
         ts = safe_float(b.get("t"), 0.0)
         dt_utc = dt.datetime.utcfromtimestamp(ts / 1000) if ts else dt.datetime.utcnow()
-        # ET approximation (UTC-4 EDT, UTC-5 EST) — good enough for bar labels
-        et_hour = dt_utc.hour - 4
+
+        # Convert to ET for display label
         try:
-            label = dt_utc.replace(hour=max(0, et_hour)).strftime("%-I:%M %p")
+            import zoneinfo
+            tz_et = zoneinfo.ZoneInfo("America/New_York")
+            dt_et = dt.datetime.fromtimestamp(ts / 1000, tz=tz_et)
+        except Exception:
+            # Fallback: manual EDT offset (UTC-4)
+            dt_et = dt_utc - dt.timedelta(hours=4)
+
+        try:
+            label = dt_et.strftime("%-I:%M %p")
         except ValueError:
-            label = dt_utc.replace(hour=max(0, et_hour)).strftime("%I:%M %p").lstrip("0")
-        day_label = dt_utc.strftime("%b %d")
+            label = dt_et.strftime("%I:%M %p").lstrip("0")
+        day_label = dt_et.strftime("%b %d")
+
+        # ts_et: Unix seconds shifted to ET so Lightweight Charts x-axis renders ET times.
+        # Lightweight Charts treats the time field as UTC seconds for display — by shifting
+        # the timestamp to ET we make it render the correct local session time on the axis.
+        ts_et_sec = int(dt_et.replace(tzinfo=None).timestamp()) if hasattr(dt_et, 'replace') else int(ts / 1000) - 14400
 
         chart.append({
             "ts":     int(ts),
+            "ts_et":  ts_et_sec,
             "time":   f"{day_label} {label}",
             "day":    day_label,
             "open":   round(safe_float(b.get("o")), 2),
