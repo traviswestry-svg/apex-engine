@@ -13,10 +13,9 @@
   <a href="/" class="nav-logo">APEX</a>
   <div class="nav-sep"></div>
   <a href="/scanner">Scanner</a>
-  <a href="/apex_os" class="active">Institutional OS</a>
+  <a href="/apex_os" class="active">Terminal</a>
   <a href="/assistant">Assistant</a>
   <a href="/flow">Flow / GEX</a>
-  <a href="/chart">Charts</a>
   <div class="nav-sep"></div>
   <a href="/api/v45/status" target="_blank">Status</a>
   <a href="/health" target="_blank">Health</a>
@@ -48,10 +47,12 @@
     <div class="toolbar-divider"></div>
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+      <button class="tab-btn" data-tab="chart">Chart</button>
       <button class="tab-btn" data-tab="flow2">Flow Intelligence</button>
       <button class="tab-btn" data-tab="story">Story Engine</button>
+      <button class="tab-btn" data-tab="tape">Flow Tape</button>
       <button class="tab-btn" data-tab="replay">Replay</button>
-      <button class="tab-btn" data-tab="review">Review</button>
+      <button class="tab-btn" data-tab="review">Signal Log</button>
     </div>
     <div class="toolbar-actions">
       <button class="btn btn-scan" id="runScanBtn">&#9654; Run Scan</button>
@@ -61,11 +62,11 @@
     </div>
   </div>
 
-  <!-- Primary terminal layout -->
-  <div class="terminal-workflow sec-mb">
+  <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
+  <div id="tab-dashboard" class="tab-pane active">
 
-    <!-- Scanner panel -->
-    <div class="card scanner-primary">
+    <!-- Scanner -->
+    <div class="card sec-mb scanner-primary">
       <div class="scanner-card-head">
         <div>
           <div class="card-label">Scanner Qualified Ideas <span class="live-dot-badge">LIVE</span></div>
@@ -79,92 +80,7 @@
       <div id="scannerIdeasPanel" class="scanner-ideas-panel">Loading scanner ideas...</div>
     </div>
 
-    <!-- Chart + Command side-by-side -->
-    <div class="terminal-grid">
-
-      <!-- Chart -->
-      <div class="card chart-focus-card">
-        <div class="chart-focus-head">
-          <div>
-            <div class="card-label">Chart Terminal</div>
-            <div class="workflow-sub">ES futures · SPX cash · Gamma &amp; institutional overlays.</div>
-          </div>
-          <a href="/chart" target="_blank" class="btn btn-ghost btn-mini">Full Chart &#8599;</a>
-        </div>
-        <iframe class="chart-terminal-frame" src="/chart" title="APEX Chart Terminal"></iframe>
-      </div>
-
-      <!-- Command side -->
-      <div class="terminal-side">
-
-        <!-- Decision Command Center -->
-        <div class="card command-card command-primary">
-          <div class="card-label">Command Center</div>
-          <div id="commandCenter"></div>
-        </div>
-
-        <!-- Confidence Timeline -->
-        <div class="card command-card">
-          <div class="card-headline-tight">
-            <div class="card-label" style="margin-bottom:0">Confidence Timeline</div>
-            <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
-          </div>
-          <div class="workflow-sub" style="margin-bottom:8px">Server-side ICI snapshots for replay.</div>
-          <div id="confidenceTimeline" class="confidence-timeline">Waiting for snapshots...</div>
-        </div>
-
-        <!-- Auction / Volume Profile -->
-        <div class="card command-card">
-          <div class="card-label">Auction / Volume Profile</div>
-          <div id="auctionPanel" class="auction-panel">Waiting for profile...</div>
-        </div>
-
-        <!-- Coach Snapshot -->
-        <div class="card command-card">
-          <div class="card-label">Trade Coach</div>
-          <div id="coachSnapshot"></div>
-        </div>
-
-        <!-- Overlay toggles -->
-        <div class="card command-card">
-          <div class="card-label">Chart Overlays</div>
-          <div class="overlay-toggles" id="overlayToggles">
-            <button class="overlay-btn active" data-group="gamma">Gamma</button>
-            <button class="overlay-btn active" data-group="volumeProfile">Vol Profile</button>
-            <button class="overlay-btn active" data-group="vwap">VWAP</button>
-            <button class="overlay-btn active" data-group="previousDay">Prev Day</button>
-            <button class="overlay-btn active" data-group="openingRange">Open Range</button>
-          </div>
-        </div>
-
-      </div><!-- /terminal-side -->
-    </div><!-- /terminal-grid -->
-  </div><!-- /terminal-workflow -->
-
-  <!-- Flow Tape -->
-  <div class="card sec-mb flow-tape-panel" id="flowTapeWrap">
-    <div class="card-headline">
-      <div>
-        <div class="card-label">Institutional Flow Tape <span class="live-dot-badge">LIVE</span></div>
-        <div class="workflow-sub">Sweep Tape &middot; Block Tape &middot; Premium Tape</div>
-      </div>
-      <div class="tape-filter-row" id="tapeFilters">
-        <button class="tape-btn active" data-filter="all">All</button>
-        <button class="tape-btn" data-filter="SWEEP">Sweeps</button>
-        <button class="tape-btn" data-filter="BLOCK">Blocks</button>
-        <button class="tape-btn" data-filter="index">SPY / QQQ / SPX</button>
-        <button class="tape-btn" data-filter="tech">Tech Leaders</button>
-      </div>
-    </div>
-    <div id="tapeSummaryBar" class="tape-summary-bar"></div>
-    <div id="flowTapeTable" class="flow-tape-table">
-      <div class="tape-empty">Waiting for institutional flow tape data...</div>
-    </div>
-  </div>
-
-  <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
-  <div id="tab-dashboard" class="tab-pane active">
-
+    <!-- ICI + Readiness -->
     <div class="grid2 sec-mb">
       <div class="card">
         <div class="card-label">Institutional Confidence Index</div>
@@ -179,7 +95,6 @@
           </div>
         </div>
       </div>
-
       <div class="card">
         <div class="card-label">Trade Readiness</div>
         <div style="display:flex;gap:16px;align-items:flex-start">
@@ -192,34 +107,90 @@
         <div class="action-bar" style="margin-top:12px">
           <a href="/api/institutional_os" target="_blank" class="btn btn-ghost btn-mini">JSON &#8599;</a>
           <a href="/assistant" class="btn btn-ghost btn-mini">Assistant</a>
-          <a href="/flow" class="btn btn-ghost btn-mini">Flow</a>
-          <a href="/chart" class="btn btn-ghost btn-mini">Charts</a>
+          <a href="/flow" class="btn btn-ghost btn-mini">Flow / GEX</a>
         </div>
       </div>
     </div>
 
-    <div class="card sec-mb">
-      <div class="card-label">AI Trade Coach</div>
-      <div id="tradeCoach"></div>
-    </div>
+    <!-- Command Center + right column -->
+    <div class="dashboard-main-grid sec-mb">
+      <div class="dashboard-left">
+        <!-- Trade Coach -->
+        <div class="card sec-mb">
+          <div class="card-label">Trade Coach</div>
+          <div id="tradeCoach"></div>
+        </div>
+        <!-- Heat Map -->
+        <div class="card sec-mb">
+          <div class="card-label">Institutional Heat Map <span class="live-dot-badge">LIVE</span></div>
+          <div id="heatGrid" class="heat-grid"></div>
+        </div>
+        <!-- Engine Matrix -->
+        <div class="card sec-mb">
+          <div class="card-label">Nine Engine Pipeline</div>
+          <div id="consensusBar" class="sec-mb"></div>
+          <div id="engineMatrix" class="engine-matrix"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Engine Health</div>
+          <div id="engineHealthPanel"></div>
+        </div>
+      </div>
 
-    <div class="card sec-mb">
-      <div class="card-label">Institutional Heat Map <span class="live-dot-badge">LIVE</span></div>
-      <div id="heatGrid" class="heat-grid"></div>
-    </div>
-
-    <div class="card sec-mb">
-      <div class="card-label">Nine Engine Pipeline</div>
-      <div id="consensusBar" class="sec-mb"></div>
-      <div id="engineMatrix" class="engine-matrix"></div>
-    </div>
-
-    <div class="card sec-mb">
-      <div class="card-label">Engine Health</div>
-      <div id="engineHealthPanel"></div>
+      <div class="dashboard-right">
+        <!-- Command Center -->
+        <div class="card command-card command-primary sec-mb">
+          <div class="card-label">Command Center</div>
+          <div id="commandCenter"></div>
+        </div>
+        <!-- Confidence Timeline -->
+        <div class="card command-card sec-mb">
+          <div class="card-headline-tight">
+            <div class="card-label" style="margin-bottom:0">Confidence Timeline</div>
+            <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
+          </div>
+          <div class="workflow-sub" style="margin-bottom:8px">Server-side ICI snapshots.</div>
+          <div id="confidenceTimeline" class="confidence-timeline">Waiting...</div>
+        </div>
+        <!-- Auction / Volume Profile -->
+        <div class="card command-card sec-mb">
+          <div class="card-label">Auction / Volume Profile</div>
+          <div id="auctionPanel" class="auction-panel">Waiting for profile...</div>
+        </div>
+        <!-- Coach Snapshot -->
+        <div class="card command-card sec-mb">
+          <div class="card-label">Coach Snapshot</div>
+          <div id="coachSnapshot"></div>
+        </div>
+        <!-- Overlay toggles -->
+        <div class="card command-card">
+          <div class="card-label">Chart Overlays</div>
+          <div class="overlay-toggles" id="overlayToggles">
+            <button class="overlay-btn active" data-group="gamma">Gamma</button>
+            <button class="overlay-btn active" data-group="volumeProfile">Vol Profile</button>
+            <button class="overlay-btn active" data-group="vwap">VWAP</button>
+            <button class="overlay-btn active" data-group="previousDay">Prev Day</button>
+            <button class="overlay-btn active" data-group="openingRange">Open Range</button>
+          </div>
+        </div>
+      </div>
     </div>
 
   </div><!-- /tab-dashboard -->
+
+  <!-- ── TAB: CHART ────────────────────────────────────────────────── -->
+  <div id="tab-chart" class="tab-pane">
+    <div class="card chart-tab-card">
+      <div class="chart-focus-head">
+        <div>
+          <div class="card-label">Chart Terminal</div>
+          <div class="workflow-sub">ES Futures (ESU6) · SPX Cash · Gamma &amp; volume profile overlays.</div>
+        </div>
+        <a href="/chart" target="_blank" class="btn btn-ghost btn-mini">Full Screen &#8599;</a>
+      </div>
+      <iframe class="chart-tab-frame" src="/chart" title="APEX Chart Terminal" id="chartTabFrame"></iframe>
+    </div>
+  </div>
 
   <!-- ── TAB: FLOW INTELLIGENCE ─────────────────────────────────────── -->
   <div id="tab-flow2" class="tab-pane">
@@ -231,7 +202,6 @@
 
   <!-- ── TAB: STORY ENGINE ─────────────────────────────────────────── -->
   <div id="tab-story" class="tab-pane">
-    <!-- Overnight Game Plan — shown only during overnight/premarket -->
     <div id="overnightPlanCard" class="card sec-mb overnight-plan-card" style="display:none">
       <div class="overnight-plan-label">&#9790; Overnight Game Plan</div>
       <div id="overnightPlanContent"></div>
@@ -248,6 +218,29 @@
     <div class="card">
       <div class="card-label">Full Narrative</div>
       <div id="narrativeBlock" class="narrative-block">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ── TAB: FLOW TAPE ─────────────────────────────────────────────── -->
+  <div id="tab-tape" class="tab-pane">
+    <div class="card">
+      <div class="card-headline">
+        <div>
+          <div class="card-label">Institutional Flow Tape <span class="live-dot-badge">LIVE</span></div>
+          <div class="workflow-sub">Sweep Tape &middot; Block Tape &middot; Premium Tape — full contract detail</div>
+        </div>
+        <div class="tape-filter-row" id="tapeFilters">
+          <button class="tape-btn active" data-filter="all">All</button>
+          <button class="tape-btn" data-filter="SWEEP">Sweeps</button>
+          <button class="tape-btn" data-filter="BLOCK">Blocks</button>
+          <button class="tape-btn" data-filter="index">SPY / QQQ / SPX</button>
+          <button class="tape-btn" data-filter="tech">Tech Leaders</button>
+        </div>
+      </div>
+      <div id="tapeSummaryBar" class="tape-summary-bar"></div>
+      <div id="flowTapeTable" class="flow-tape-table flow-tape-full">
+        <div class="tape-empty">Waiting for institutional flow tape data...</div>
+      </div>
     </div>
   </div>
 
@@ -283,7 +276,7 @@
     </div>
   </div>
 
-  <!-- ── TAB: REVIEW ───────────────────────────────────────────────── -->
+  <!-- ── TAB: SIGNAL LOG ───────────────────────────────────────────── -->
   <div id="tab-review" class="tab-pane">
     <div class="grid2 sec-mb">
       <div class="card">
@@ -306,24 +299,24 @@
             <label>Exit $</label><input type="number" id="rfExitPrice" step="0.01" class="rf-input" />
           </div>
           <div class="rf-row">
-            <label>Contract</label><input type="text" id="rfContract" placeholder="SPX 7350C 0DTE" class="rf-input rf-wide" />
+            <label>Contract</label><input type="text" id="rfContract" placeholder="SPX 7450C Jun30" class="rf-input" />
             <label>P&amp;L</label><input type="number" id="rfPnl" step="0.01" class="rf-input" />
           </div>
           <div class="rf-row-full">
             <label>Entered because</label>
-            <input type="text" id="rfReasonIn" placeholder="Pine signal, POC support, bullish sweeps" class="rf-input rf-full" />
+            <input type="text" id="rfReasonIn" placeholder="Pine signal, POC support, bullish sweeps" class="rf-input" />
           </div>
           <div class="rf-row-full">
             <label>Exited because</label>
-            <input type="text" id="rfReasonOut" placeholder="Hit T1, stop triggered, time decay" class="rf-input rf-full" />
+            <input type="text" id="rfReasonOut" placeholder="Hit T1, stop triggered, time decay" class="rf-input" />
           </div>
           <div class="rf-row-full">
             <label>Mistakes</label>
-            <input type="text" id="rfMistakes" class="rf-input rf-full" />
+            <input type="text" id="rfMistakes" class="rf-input" />
           </div>
           <div class="rf-row-full">
             <label>Lesson</label>
-            <input type="text" id="rfLesson" class="rf-input rf-full" />
+            <input type="text" id="rfLesson" class="rf-input" />
           </div>
           <div class="rf-row">
             <label>Followed plan?</label>
@@ -338,16 +331,27 @@
           </div>
         </div>
       </div>
-
       <div class="card">
         <div class="card-label">Performance Summary</div>
         <div id="reviewSummaryPanel"><div class="review-empty">No trades logged yet.</div></div>
       </div>
     </div>
 
+    <!-- Session Signal Log -->
     <div class="card">
-      <div class="card-label">Trade History</div>
-      <div id="reviewPanel"><div class="review-empty">No actionable signals yet this session.</div></div>
+      <div class="card-label">Session Signal Log
+        <span class="live-dot-badge">AUTO</span>
+      </div>
+      <div class="workflow-sub" style="margin-bottom:12px">
+        Every ENTER, READY, and WATCH signal is captured automatically each refresh cycle — time, contract, entry zone, stop, targets, and context.
+      </div>
+      <div id="reviewPanel"></div>
+    </div>
+
+    <!-- Saved reviews from DB -->
+    <div class="card" style="margin-top:10px">
+      <div class="card-label">Saved Trade Reviews</div>
+      <div id="savedReviewsPanel"><div class="review-empty">No saved reviews yet.</div></div>
     </div>
   </div>
 
