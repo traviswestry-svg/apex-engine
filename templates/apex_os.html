@@ -31,6 +31,9 @@
 
   <div class="os-error" id="osError"></div>
 
+  <!-- Market Status Banner -->
+  <div id="marketStatusBanner" class="market-status-banner" style="display:none"></div>
+
   <!-- Institutional Ribbon -->
   <div id="ribbon" class="ribbon sec-mb"></div>
 
@@ -228,6 +231,11 @@
 
   <!-- ── TAB: STORY ENGINE ─────────────────────────────────────────── -->
   <div id="tab-story" class="tab-pane">
+    <!-- Overnight Game Plan — shown only during overnight/premarket -->
+    <div id="overnightPlanCard" class="card sec-mb overnight-plan-card" style="display:none">
+      <div class="overnight-plan-label">&#9790; Overnight Game Plan</div>
+      <div id="overnightPlanContent"></div>
+    </div>
     <div class="card sec-mb story-exec-card">
       <div class="story-exec-label">Institutional Read</div>
       <div id="execSummary" class="exec-summary">Loading institutional narrative...</div>
