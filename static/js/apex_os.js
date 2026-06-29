@@ -1066,6 +1066,10 @@ async function loadOS() {
     // 6.0.4 panels
     renderFlow2(data);
     renderStory(data);
+    renderOvernightGamePlan(data);
+
+    // Render market status banner from data if present
+    if (data.market_status) renderMarketStatusBanner(data.market_status);
 
     // Replay + Review capture
     captureReplaySnap(data);
@@ -1417,6 +1421,93 @@ async function loadReplayFrame(date, frameTime) {
   } catch (_) {}
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   Market Status Banner
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderMarketStatusBanner(status) {
+  const el = $('marketStatusBanner');
+  if (!el || !status) return;
+
+  const level    = (status.level || 'RED').toLowerCase();
+  const dotColor = { green: 'msb-dot-green', amber: 'msb-dot-amber', red: 'msb-dot-red' };
+  const itemColor = { green: 'var(--green)', amber: 'var(--amber)', red: 'var(--red)' };
+
+  const itemsHtml = (status.items || []).map(item => `
+    <div class="msb-item">
+      <div class="msb-dot ${dotColor[item.color] || 'msb-dot-red'}"></div>
+      <div class="msb-item-text">
+        <div class="msb-item-label">${esc(item.label)}</div>
+        <div class="msb-item-status" style="color:${itemColor[item.color] || 'var(--red)'}">${esc(item.status)}</div>
+        <div class="msb-item-detail">${esc(item.detail || '')}</div>
+      </div>
+    </div>`).join('');
+
+  el.className = `market-status-banner msb-level-${level}`;
+  el.innerHTML = `
+    <div class="msb-header">
+      <div class="msb-title">${esc(status.title || 'MARKET STATUS')}</div>
+      <div class="msb-message">${esc(status.message || '')}</div>
+      ${status.next_rth ? `<div class="msb-next">Next RTH: ${esc(status.next_rth)}</div>` : ''}
+    </div>
+    <div class="msb-items">${itemsHtml}</div>
+  `;
+  el.style.display = 'block';
+}
+
+async function loadMarketStatus() {
+  try {
+    const r = await fetch('/api/market_status', { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.ok) renderMarketStatusBanner(data);
+  } catch (_) {}
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Overnight Game Plan
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderOvernightGamePlan(d) {
+  const card    = $('overnightPlanCard');
+  const content = $('overnightPlanContent');
+  if (!card || !content || !d) return;
+
+  const plan = d.overnight_game_plan;
+  if (!plan) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = 'block';
+
+  const bias = plan.bias || 'NEUTRAL';
+  const biasCls = bias.includes('BULL') ? 'on-bias-bull' : bias.includes('BEAR') ? 'on-bias-bear' : 'on-bias-neut';
+  const biasArrow = bias.includes('BULL') ? '▲' : bias.includes('BEAR') ? '▼' : '—';
+
+  const levelsHtml = (plan.key_levels || []).map(l =>
+    `<div class="on-level-chip">${esc(l.label)}: $${fmt(l.price)}</div>`
+  ).join('');
+
+  const statsHtml = [
+    plan.overnight_high  ? `Overnight High: $${fmt(plan.overnight_high)}` : '',
+    plan.overnight_low   ? `Overnight Low: $${fmt(plan.overnight_low)}`  : '',
+    plan.overnight_range ? `Range: ${plan.overnight_range} pts`          : '',
+    plan.projected_gap != null ? `Gap: ${plan.projected_gap > 0 ? '+' : ''}${plan.projected_gap.toFixed(2)} pts` : '',
+  ].filter(Boolean).map(s => `<span class="on-level-chip">${esc(s)}</span>`).join('');
+
+  content.innerHTML = `
+    <div class="on-bias-badge ${biasCls}">${biasArrow} ${esc(bias.replace(/_/g,' '))} OVERNIGHT BIAS</div>
+    <div class="on-exec">${esc(plan.executive_summary || '')}</div>
+    <div class="on-game-plan">${esc(plan.game_plan || '')}</div>
+    <div class="on-levels">${statsHtml}</div>
+    ${levelsHtml ? `<div class="on-levels" style="margin-top:6px">${levelsHtml}</div>` : ''}
+    <div style="margin-top:10px;font-size:10px;color:var(--faint);font-family:var(--mono)">
+      ${plan.bars_used || 0} overnight bars · next RTH: ${esc(plan.next_rth || '9:30 AM ET')}
+    </div>
+  `;
+}
+
 /* ── Init ─────────────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
@@ -1437,8 +1528,10 @@ document.addEventListener('DOMContentLoaded', () => {
   loadFlowTape();
   loadReviewSummary();
   loadTradeHistory();
+  loadMarketStatus();
 
   setInterval(loadOS, AUTO_INTERVAL);
   setInterval(loadScannerIdeas, 30000);
-  setInterval(loadFlowTape, 45000);  // Flow tape refresh every 45s
+  setInterval(loadFlowTape, 45000);
+  setInterval(loadMarketStatus, 60000);  // Status banner refreshes every minute
 });
