@@ -1082,3 +1082,111 @@ body {
 
 /* Saved reviews table */
 .saved-reviews-table-wrap { overflow-x: auto; }
+
+/* ── Auction Intelligence Panel ──────────────────────────────────────────── */
+.ai-waiting { font-size: 11px; color: var(--faint); padding: 8px 0; }
+
+.ai-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+@media(max-width:900px){ .ai-grid { grid-template-columns: 1fr; } }
+
+.ai-block {
+  background: var(--surf2);
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.ai-block-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  color: var(--faint);
+  margin-bottom: 6px;
+}
+
+/* Auction State */
+.ai-state-name {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  margin-bottom: 3px;
+}
+.ai-state-meta { font-size: 10px; color: var(--faint); margin-bottom: 5px; }
+.ai-participation {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 5px;
+  display: inline-block;
+  margin-bottom: 7px;
+}
+.ai-trade-yes { color: var(--green); background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.2); }
+.ai-trade-no  { color: var(--faint); background: rgba(100,116,139,.06); border: 1px solid rgba(100,116,139,.15); }
+
+/* POC Migration */
+.ai-poc-dir {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 800;
+  margin-bottom: 3px;
+}
+.ai-poc-speed { font-size: 10px; font-weight: 500; color: var(--faint); }
+.ai-poc-levels { font-size: 10px; color: var(--muted); margin-bottom: 5px; font-family: var(--mono); }
+
+/* Acceptance */
+.ai-acc-status { font-family: var(--mono); font-size: 13px; font-weight: 800; margin-bottom: 5px; }
+.ai-acc-conf   { font-size: 10px; font-weight: 500; color: var(--faint); }
+
+/* HVBO */
+.ai-hvbo-range { font-family: var(--mono); font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+.ai-hvbo-mid   { font-size: 10px; color: var(--faint); font-weight: 500; }
+.ai-hvbo-loc   { font-size: 10px; color: var(--muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .06em; }
+
+/* Shared narrative */
+.ai-narrative {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+/* Excess alert */
+.ai-excess-alert {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+  border-left: 3px solid;
+}
+.ai-excess-bear { background: rgba(239,68,68,.06);  border-color: var(--red);   }
+.ai-excess-bull { background: rgba(34,197,94,.06);  border-color: var(--green); }
+.ai-excess-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+.ai-excess-bear .ai-excess-label { color: var(--red);   }
+.ai-excess-bull .ai-excess-label { color: var(--green); }
+.ai-excess-text   { font-size: 11px; color: var(--muted); line-height: 1.6; }
+.ai-excess-action { font-size: 11px; color: var(--blue);  margin-top: 5px; font-style: italic; }
+
+/* Targets */
+.ai-targets { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.ai-target-call { font-size: 11px; color: var(--green); padding: 5px 8px; background: rgba(34,197,94,.05); border-radius: 5px; }
+.ai-target-put  { font-size: 11px; color: var(--red);   padding: 5px 8px; background: rgba(239,68,68,.05);  border-radius: 5px; }
+
+/* Fast zone */
+.ai-fast-zone {
+  font-size: 11px;
+  color: var(--amber);
+  padding: 5px 9px;
+  background: rgba(245,158,11,.06);
+  border: 1px solid rgba(245,158,11,.2);
+  border-radius: 5px;
+}
