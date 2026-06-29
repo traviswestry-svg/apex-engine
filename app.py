@@ -3736,48 +3736,75 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
 
 def _futures_fetch_bars(ticker: str, days: int, multiplier: int) -> List[dict]:
     """
-    Fetch intraday bars from the Polygon/Massive Futures API.
+    Fetch intraday bars from the Polygon Futures API.
 
-    Futures use a completely different endpoint from stocks/indices:
-      GET https://api.polygon.io/futures/v1/aggs/{ticker}
-          ?resolution=5min
-          &window_start.gte=YYYY-MM-DD
-          &window_start.lte=YYYY-MM-DD
-          &limit=50000
-          &sort=window_start.asc
+    Endpoint: GET https://api.polygon.io/futures/v1/aggs/{ticker}
 
+    Polygon Futures Basic plan holders use this dedicated endpoint.
     Response fields: open/high/low/close/volume/window_start (nanoseconds).
-    NOT the same as the stocks /v2/aggs endpoint (which uses t in ms).
 
-    Futures Basic plan ($0/m): access granted, 8-hour historical delay, 2-year history.
+    Parameter notes (corrected in 6.4.1):
+      - resolution: integer string e.g. "5" for 5-minute bars, NOT "5min"
+      - window_start.gte / .lte: ISO datetime strings "YYYY-MM-DDTHH:MM:SSZ"
+        (date-only strings work on some plans but datetime is safer)
+      - Response key may be "results" or "data" depending on plan tier —
+        we check both.
     """
+    if not POLYGON_API_KEY:
+        return []
+
     today = now_et().date()
     day_buffer = max(days * 4, 20) if multiplier >= 5 else max(days * 3, 10)
-    start = today - dt.timedelta(days=day_buffer)
-    end   = today + dt.timedelta(days=1)
+    start_date = today - dt.timedelta(days=day_buffer)
+    end_date   = today + dt.timedelta(days=1)
+
+    # Use ISO datetime strings — more reliable than date-only across plan tiers
+    start_iso = f"{start_date}T00:00:00Z"
+    end_iso   = f"{end_date}T00:00:00Z"
 
     url = f"https://api.polygon.io/futures/v1/aggs/{ticker}"
     params = {
-        "resolution":       f"{multiplier}min",
-        "window_start.gte": str(start),
-        "window_start.lte": str(end),
+        # Correct format: integer string, NOT "5min"
+        "resolution":       str(multiplier),
+        "window_start.gte": start_iso,
+        "window_start.lte": end_iso,
         "limit":            50000,
         "sort":             "window_start.asc",
     }
     data = safe_get_json(url, params=params, timeout=20)
-    raw_results = (data or {}).get("results", [])
+    if not data:
+        return []
+
+    # Response key varies by plan tier: "results" or "data"
+    raw_results = data.get("results") or data.get("data") or []
+    if not isinstance(raw_results, list):
+        raw_results = []
+
     if not raw_results:
+        # Log the actual response shape for diagnostics (non-fatal)
+        status = data.get("status", "")
+        error  = data.get("error", "") or data.get("message", "")
+        keys   = list(data.keys())
+        print(
+            f"[futures] {ticker} returned 0 bars. "
+            f"status={status!r} error={error!r} keys={keys}",
+            flush=True,
+        )
         return []
 
     # Normalize futures response → stock-style {o, h, l, c, v, t}
-    # window_start is nanoseconds; convert to milliseconds
+    # window_start is nanoseconds since epoch; convert to milliseconds
     bars = []
     for r in raw_results:
         ws = r.get("window_start")
         if not ws:
             continue
+        try:
+            t_ms = int(ws) // 1_000_000
+        except (TypeError, ValueError):
+            continue
         bars.append({
-            "t": int(ws) // 1_000_000,
+            "t": t_ms,
             "o": r.get("open"),
             "h": r.get("high"),
             "l": r.get("low"),
@@ -4230,6 +4257,35 @@ def api_es_ticker_diagnostics():
         })
 
     any_futures = any(r["has_data"] and r["is_futures"] for r in results)
+
+    # Build a raw probe for direct inspection — shows exactly what Polygon returned
+    raw_probe: Dict[str, Any] = {}
+    try:
+        today = now_et().date()
+        start_iso = f"{today - dt.timedelta(days=5)}T00:00:00Z"
+        end_iso   = f"{today + dt.timedelta(days=1)}T00:00:00Z"
+        probe_url = f"https://api.polygon.io/futures/v1/aggs/{front_month}"
+        probe_params = {
+            "resolution": "5",
+            "window_start.gte": start_iso,
+            "window_start.lte": end_iso,
+            "limit": 5,
+            "sort": "window_start.asc",
+        }
+        probe_data = safe_get_json(probe_url, params=probe_params, timeout=15)
+        if probe_data:
+            raw_probe = {
+                "status":     probe_data.get("status"),
+                "error":      probe_data.get("error") or probe_data.get("message"),
+                "keys":       list(probe_data.keys()),
+                "results_len": len(probe_data.get("results") or probe_data.get("data") or []),
+                "first_result": (probe_data.get("results") or probe_data.get("data") or [None])[0],
+            }
+        else:
+            raw_probe = {"error": "safe_get_json returned None (HTTP error or timeout)"}
+    except Exception as _pe:
+        raw_probe = {"error": str(_pe)}
+
     return jsonify({
         "ok":                   True,
         "resolved_front_month": front_month,
@@ -4243,10 +4299,11 @@ def api_es_ticker_diagnostics():
             "Futures Basic plan is active — data may be end-of-day only outside market hours."
         ),
         "api_note": (
-            "Polygon futures bars use GET /futures/v1/aggs/{ticker}?resolution=5min "
+            "Polygon futures bars use GET /futures/v1/aggs/{ticker}?resolution=5 "
             "NOT /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}. "
             "Response fields: open/high/low/close/volume/window_start(nanoseconds)."
         ),
+        "raw_probe":    raw_probe,
         "candidates":   results,
         "updated_at":   now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
     })
