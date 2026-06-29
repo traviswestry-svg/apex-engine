@@ -544,23 +544,24 @@ def get_intraday_bars(ticker: str, multiplier: int = 5, limit_days: int = 3) -> 
 
 
 def get_vix_price() -> Optional[float]:
-    """Fetch the current VIX level from Polygon.
-    VXX requires a plan upgrade — use the VIX index snapshot instead.
-    """
-    # Try VIX index via Polygon indices endpoint
-    data = safe_get_json("https://api.polygon.io/v1/open-close/I:VIX1D/" + now_et().strftime("%Y-%m-%d"),
-                         timeout=10)
-    if data and data.get("status") == "OK":
-        val = safe_float(data.get("close") or data.get("open"), 0.0)
-        if val > 0:
-            return val
-    # Fallback: VIXY ETF snapshot (proxy, not exact VIX)
-    data = safe_get_json("https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/VIXY", timeout=10)
+    """Fetch the current VIX level. Uses the Polygon indices snapshot."""
+    # Indices snapshot — works on Indices Advanced plan
+    data = safe_get_json("https://api.polygon.io/v3/snapshot?ticker.any_of=I:VIX", timeout=10)
+    if data:
+        results = data.get("results") or []
+        for r in results:
+            val = safe_float((r.get("session") or {}).get("close") or
+                             (r.get("session") or {}).get("previous_close"), 0.0)
+            if val > 0:
+                return val
+    # Fallback: VIXY ETF daily snapshot
+    data = safe_get_json(
+        "https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/VIXY", timeout=10)
     if data and "ticker" in data:
-        day = (data["ticker"].get("day") or {})
+        day = data["ticker"].get("day") or {}
         val = safe_float(day.get("c") or day.get("vw"), 0.0)
         if val > 0:
-            return val * 10  # VIXY ~0.1× VIX scale approximation
+            return val
     return None
 
 
