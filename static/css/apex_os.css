@@ -830,3 +830,134 @@ body {
 .level-label { color: var(--faint); }
 .level-val   { font-family: var(--mono); font-weight: 600; }
 
+
+/* ── Market Status Banner ────────────────────────────────────────────────── */
+.market-status-banner {
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  border: 1px solid var(--bdr);
+  overflow: hidden;
+}
+.msb-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.msb-title {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.msb-message {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  flex: 1;
+}
+.msb-next {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+.msb-items {
+  display: flex;
+  gap: 0;
+  border-top: 1px solid var(--bdr);
+  flex-wrap: wrap;
+}
+.msb-item {
+  flex: 1;
+  min-width: 120px;
+  padding: 8px 14px;
+  border-right: 1px solid var(--bdr);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.msb-item:last-child { border-right: none; }
+.msb-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.msb-dot-green  { background: var(--green); }
+.msb-dot-amber  { background: var(--amber); }
+.msb-dot-red    { background: var(--red);   }
+.msb-item-text  { display: flex; flex-direction: column; }
+.msb-item-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+.msb-item-status{ font-family: var(--mono); font-size: 10px; font-weight: 700; }
+.msb-item-detail{ font-size: 9px; color: var(--faint); margin-top: 1px; }
+
+/* Banner level colors */
+.msb-level-green  { background: rgba(34,197,94,.04);  border-color: rgba(34,197,94,.25); }
+.msb-level-green .msb-title { color: var(--green); }
+.msb-level-amber  { background: rgba(245,158,11,.04); border-color: rgba(245,158,11,.25); }
+.msb-level-amber .msb-title { color: var(--amber); }
+.msb-level-red    { background: rgba(239,68,68,.04);  border-color: rgba(239,68,68,.25); }
+.msb-level-red .msb-title { color: var(--red); }
+
+/* ── Overnight Game Plan ─────────────────────────────────────────────────── */
+.overnight-plan-card {
+  border-color: rgba(245,158,11,.25);
+  background: rgba(245,158,11,.03);
+}
+.overnight-plan-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--amber);
+  margin-bottom: 12px;
+}
+.on-exec {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.65;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  background: rgba(245,158,11,.06);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--amber);
+}
+.on-game-plan {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.75;
+  margin-bottom: 12px;
+}
+.on-levels {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.on-level-chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--bdr);
+  background: var(--surf2);
+  color: var(--muted);
+}
+.on-bias-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 5px 12px;
+  border-radius: 7px;
+  margin-bottom: 10px;
+  letter-spacing: .03em;
+}
+.on-bias-bull  { background: rgba(34,197,94,.1);  color: var(--green); border: 1px solid rgba(34,197,94,.3);  }
+.on-bias-bear  { background: rgba(239,68,68,.1);  color: var(--red);   border: 1px solid rgba(239,68,68,.3);  }
+.on-bias-neut  { background: rgba(245,158,11,.1); color: var(--amber); border: 1px solid rgba(245,158,11,.3); }
