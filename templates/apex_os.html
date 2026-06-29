@@ -11,18 +11,19 @@
 
 <nav class="apex-nav">
   <a href="/" class="nav-logo">APEX</a>
+  <div class="nav-sep"></div>
   <a href="/scanner">Scanner</a>
   <a href="/apex_os" class="active">Institutional OS</a>
-  <a href="/assistant">Trade Assistant</a>
+  <a href="/assistant">Assistant</a>
   <a href="/flow">Flow / GEX</a>
   <a href="/chart">Charts</a>
   <div class="nav-sep"></div>
   <a href="/api/v45/status" target="_blank">Status</a>
   <a href="/health" target="_blank">Health</a>
   <div class="nav-right">
-    <span><span class="dot-live"></span><span id="clockEl">-- ET</span></span>
+    <span class="nav-clock"><span class="dot-live"></span><span id="clockEl">-- ET</span></span>
     <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
-    <span style="font-family:var(--mono);font-size:9px;color:var(--faint)">{{ version or "6.2.2_FRONTEND_ROUTE_STABILITY" }}</span>
+    <span class="nav-version">{{ version or "APEX" }}</span>
   </div>
 </nav>
 
@@ -34,118 +35,122 @@
   <div id="ribbon" class="ribbon sec-mb"></div>
 
   <!-- Ticker + Tab row -->
-  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px">
-    <div style="display:flex;gap:4px">
-      <button class="ticker-btn tab-btn active" data-ticker="SPX">SPX</button>
-      <button class="ticker-btn tab-btn" data-ticker="SPY">SPY</button>
-      <button class="ticker-btn tab-btn" data-ticker="QQQ">QQQ</button>
-      <button class="ticker-btn tab-btn" data-ticker="IWM">IWM</button>
+  <div class="toolbar-row sec-mb">
+    <div class="ticker-group">
+      <button class="ticker-btn active" data-ticker="SPX">SPX</button>
+      <button class="ticker-btn" data-ticker="SPY">SPY</button>
+      <button class="ticker-btn" data-ticker="QQQ">QQQ</button>
+      <button class="ticker-btn" data-ticker="IWM">IWM</button>
     </div>
-    <div style="width:1px;height:20px;background:var(--bdr)"></div>
-    <div class="tab-bar" style="padding:0;margin:0">
+    <div class="toolbar-divider"></div>
+    <div class="tab-bar">
       <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
       <button class="tab-btn" data-tab="flow2">Flow Intelligence</button>
       <button class="tab-btn" data-tab="story">Story Engine</button>
       <button class="tab-btn" data-tab="replay">Replay</button>
       <button class="tab-btn" data-tab="review">Review</button>
     </div>
-    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
-      <button class="btn btn-scan" id="runScanBtn" title="Run scanner now">&#9654; Run Scan</button>
-      <button class="btn btn-blue" id="refreshBtn">&#8635; Refresh</button>
-      <span class="scan-status" id="scanStatusText">Scanner idle</span>
-      <span class="last-upd" id="lastUpdated">--</span>
+    <div class="toolbar-actions">
+      <button class="btn btn-scan" id="runScanBtn">&#9654; Run Scan</button>
+      <button class="btn btn-ghost" id="refreshBtn">&#8635; Refresh</button>
+      <span class="scan-status" id="scanStatusText"></span>
+      <span class="last-upd" id="lastUpdated"></span>
     </div>
   </div>
 
-  <!-- Primary workflow: scanner first, chart center, command context right -->
+  <!-- Primary terminal layout -->
   <div class="terminal-workflow sec-mb">
+
+    <!-- Scanner panel -->
     <div class="card scanner-primary">
       <div class="scanner-card-head">
         <div>
-          <div class="card-label">Scanner Qualified Ideas
-            <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">Live Scanner</span>
-          </div>
-          <div class="workflow-sub">Qualified ideas should appear here immediately after background/manual scans complete.</div>
+          <div class="card-label">Scanner Qualified Ideas <span class="live-dot-badge">LIVE</span></div>
+          <div class="workflow-sub">Qualified ideas appear here after each background scan cycle.</div>
         </div>
         <div class="scanner-actions">
           <button class="btn btn-scan" id="runScanBtnPanel">&#9654; Run Scan</button>
-          <button class="btn" id="refreshScannerBtn">Refresh Ideas</button>
+          <button class="btn btn-ghost btn-mini" id="refreshScannerBtn">Refresh</button>
         </div>
       </div>
       <div id="scannerIdeasPanel" class="scanner-ideas-panel">Loading scanner ideas...</div>
     </div>
 
+    <!-- Chart + Command side-by-side -->
     <div class="terminal-grid">
+
+      <!-- Chart -->
       <div class="card chart-focus-card">
         <div class="chart-focus-head">
           <div>
-            <div class="card-label">Professional Chart Terminal
-              <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">Lightweight Charts</span>
-            </div>
-            <div class="workflow-sub">SPX / ES chart workspace with gamma and institutional overlays.</div>
+            <div class="card-label">Chart Terminal</div>
+            <div class="workflow-sub">ES futures · SPX cash · Gamma &amp; institutional overlays.</div>
           </div>
-          <div class="chart-actions">
-            <a href="/chart" target="_blank" class="btn btn-blue">Open Full Chart &#8599;</a>
-          </div>
+          <a href="/chart" target="_blank" class="btn btn-ghost btn-mini">Full Chart &#8599;</a>
         </div>
         <iframe class="chart-terminal-frame" src="/chart" title="APEX Chart Terminal"></iframe>
       </div>
 
+      <!-- Command side -->
       <div class="terminal-side">
-        <div class="card command-card">
+
+        <!-- Decision Command Center -->
+        <div class="card command-card command-primary">
           <div class="card-label">Command Center</div>
           <div id="commandCenter"></div>
         </div>
+
+        <!-- Confidence Timeline -->
         <div class="card command-card">
-          <div class="card-headline">
-            <div>
-              <div class="card-label">Confidence Timeline</div>
-              <div class="workflow-sub">Server-side ICI / decision snapshots for replay and review.</div>
-            </div>
+          <div class="card-headline-tight">
+            <div class="card-label" style="margin-bottom:0">Confidence Timeline</div>
             <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
           </div>
+          <div class="workflow-sub" style="margin-bottom:8px">Server-side ICI snapshots for replay.</div>
           <div id="confidenceTimeline" class="confidence-timeline">Waiting for snapshots...</div>
         </div>
+
+        <!-- Auction / Volume Profile -->
         <div class="card command-card">
           <div class="card-label">Auction / Volume Profile</div>
           <div id="auctionPanel" class="auction-panel">Waiting for profile...</div>
         </div>
+
+        <!-- Coach Snapshot -->
         <div class="card command-card">
-          <div class="card-label">Coach Snapshot</div>
+          <div class="card-label">Trade Coach</div>
           <div id="coachSnapshot"></div>
         </div>
+
+        <!-- Overlay toggles -->
         <div class="card command-card">
-          <div class="card-label">Chart Overlays
-            <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.3.3</span>
-          </div>
+          <div class="card-label">Chart Overlays</div>
           <div class="overlay-toggles" id="overlayToggles">
             <button class="overlay-btn active" data-group="gamma">Gamma</button>
             <button class="overlay-btn active" data-group="volumeProfile">Vol Profile</button>
             <button class="overlay-btn active" data-group="vwap">VWAP</button>
             <button class="overlay-btn active" data-group="previousDay">Prev Day</button>
-            <button class="overlay-btn active" data-group="openingRange">Opn Range</button>
+            <button class="overlay-btn active" data-group="openingRange">Open Range</button>
           </div>
         </div>
-      </div>
-    </div>
-  </div>
 
-  <!-- BOTTOM PANEL: Institutional Flow Tape (6.3.2) -->
+      </div><!-- /terminal-side -->
+    </div><!-- /terminal-grid -->
+  </div><!-- /terminal-workflow -->
+
+  <!-- Flow Tape -->
   <div class="card sec-mb flow-tape-panel" id="flowTapeWrap">
     <div class="card-headline">
       <div>
-        <div class="card-label">Institutional Flow Tape
-          <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">Live</span>
-          <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.3.2</span>
-        </div>
-        <div class="workflow-sub">Sweep Tape · Block Tape · Premium Tape — Aggressive Institutional Flow</div>
+        <div class="card-label">Institutional Flow Tape <span class="live-dot-badge">LIVE</span></div>
+        <div class="workflow-sub">Sweep Tape &middot; Block Tape &middot; Premium Tape</div>
       </div>
       <div class="tape-filter-row" id="tapeFilters">
         <button class="tape-btn active" data-filter="all">All</button>
         <button class="tape-btn" data-filter="SWEEP">Sweeps</button>
         <button class="tape-btn" data-filter="BLOCK">Blocks</button>
-        <button class="tape-btn" data-filter="index">SPY/QQQ/SPX</button>
-        <button class="tape-btn" data-filter="tech">Tech</button>
+        <button class="tape-btn" data-filter="index">SPY / QQQ / SPX</button>
+        <button class="tape-btn" data-filter="tech">Tech Leaders</button>
       </div>
     </div>
     <div id="tapeSummaryBar" class="tape-summary-bar"></div>
@@ -154,19 +159,17 @@
     </div>
   </div>
 
-  <!-- TAB: DASHBOARD (6.0.3) -->
+  <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
   <div id="tab-dashboard" class="tab-pane active">
 
     <div class="grid2 sec-mb">
       <div class="card">
-        <div class="card-label">Institutional Confidence Index
-          <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2.2</span>
-        </div>
+        <div class="card-label">Institutional Confidence Index</div>
         <div id="iciPanel"></div>
         <div style="margin-top:10px">
           <div id="decisionBadge" class="decision-badge db-neutral">&#8212; Loading</div>
-          <div style="font-size:12px;color:var(--muted);line-height:1.65;margin-top:4px" id="decisionMsg">--</div>
-          <div style="font-size:11px;color:var(--faint);font-style:italic;margin-top:3px" id="decisionAction">--</div>
+          <div class="decision-msg" id="decisionMsg">--</div>
+          <div class="decision-action" id="decisionAction">--</div>
           <div class="decay-wrap">
             <div class="decay-bar"><div class="decay-fill" id="decayBar" style="width:0%"></div></div>
             <div class="decay-meta"><span id="decayAge">--</span><span id="decayExp">--</span></div>
@@ -179,90 +182,77 @@
         <div style="display:flex;gap:16px;align-items:flex-start">
           <div>
             <div class="ici-big ici-amber" id="readinessNum">--</div>
-            <div style="font-size:10px;color:var(--faint);margin-top:2px">/ 100</div>
+            <div class="readiness-sub">/ 100</div>
           </div>
           <div id="gateChecks" style="flex:1"></div>
         </div>
         <div class="action-bar" style="margin-top:12px">
-          <a href="/api/institutional_os" target="_blank" class="btn btn-blue">Full JSON &#8599;</a>
-          <a href="/assistant" class="btn">Assistant &#8599;</a>
-          <a href="/flow" class="btn">Flow &#8599;</a>
-          <a href="/chart" class="btn">Charts &#8599;</a>
+          <a href="/api/institutional_os" target="_blank" class="btn btn-ghost btn-mini">JSON &#8599;</a>
+          <a href="/assistant" class="btn btn-ghost btn-mini">Assistant</a>
+          <a href="/flow" class="btn btn-ghost btn-mini">Flow</a>
+          <a href="/chart" class="btn btn-ghost btn-mini">Charts</a>
         </div>
       </div>
     </div>
 
     <div class="card sec-mb">
-      <div class="card-label">AI Trade Coach
-        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2.2</span>
-      </div>
+      <div class="card-label">AI Trade Coach</div>
       <div id="tradeCoach"></div>
     </div>
 
-    <!-- Heatmap moved above Engine Matrix (highest signal density) -->
     <div class="card sec-mb">
-      <div class="card-label">Institutional Heat Map
-        <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">Live</span>
-      </div>
+      <div class="card-label">Institutional Heat Map <span class="live-dot-badge">LIVE</span></div>
       <div id="heatGrid" class="heat-grid"></div>
     </div>
 
     <div class="card sec-mb">
-      <div class="card-label">Engine Matrix &#8212; Nine Engine Pipeline</div>
+      <div class="card-label">Nine Engine Pipeline</div>
       <div id="consensusBar" class="sec-mb"></div>
       <div id="engineMatrix" class="engine-matrix"></div>
     </div>
 
     <div class="card sec-mb">
-      <div class="card-label">Engine Health
-        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2.2</span>
-      </div>
+      <div class="card-label">Engine Health</div>
       <div id="engineHealthPanel"></div>
     </div>
 
-
   </div><!-- /tab-dashboard -->
 
-  <!-- TAB: FLOW INTELLIGENCE 2.0 (6.0.4) -->
+  <!-- ── TAB: FLOW INTELLIGENCE ─────────────────────────────────────── -->
   <div id="tab-flow2" class="tab-pane">
     <div class="card">
-      <div class="card-label">Flow Intelligence 2.0
-        <span class="badge-xs" style="background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.25)">6.2.2</span>
-      </div>
+      <div class="card-label">Flow Intelligence 2.0</div>
       <div id="flow2Panel"></div>
     </div>
   </div>
 
-  <!-- TAB: STORY ENGINE (6.0.4) -->
+  <!-- ── TAB: STORY ENGINE ─────────────────────────────────────────── -->
   <div id="tab-story" class="tab-pane">
-    <div class="card sec-mb">
-      <div class="card-label">Executive Summary</div>
+    <div class="card sec-mb story-exec-card">
+      <div class="story-exec-label">Institutional Read</div>
       <div id="execSummary" class="exec-summary">Loading institutional narrative...</div>
+      <div class="story-exec-meta" id="storyMeta"></div>
     </div>
     <div class="card sec-mb">
-      <div class="card-label">Story Engine &#8212; Chapter Timeline
-        <span class="badge-xs" style="background:rgba(167,139,250,.1);color:var(--purple);border:1px solid rgba(167,139,250,.25)">6.2.2</span>
-      </div>
+      <div class="card-label">Chapter Timeline</div>
       <div id="storyPanel"></div>
     </div>
     <div class="card">
-      <div class="card-label">Full Institutional Narrative</div>
+      <div class="card-label">Full Narrative</div>
       <div id="narrativeBlock" class="narrative-block">Loading...</div>
     </div>
   </div>
 
-  <!-- TAB: SESSION REPLAY (6.4.0) -->
+  <!-- ── TAB: REPLAY ───────────────────────────────────────────────── -->
   <div id="tab-replay" class="tab-pane">
     <div class="card sec-mb">
       <div class="card-headline">
         <div>
-          <div class="card-label">Session Replay
-            <span class="badge-xs" style="background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.25)">6.4.0</span>
-          </div>
-          <div class="workflow-sub">Frame-by-frame APEX state replay for training and post-trade review.</div>
+          <div class="card-label">Session Replay</div>
+          <div class="workflow-sub">Frame-by-frame APEX state for training and post-trade review.</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
-          <label style="font-size:10px;color:var(--muted)">Date</label>
+          <label class="form-label">Date</label>
           <input type="date" id="replayDatePicker" class="replay-date-input" />
           <button class="btn btn-ghost btn-mini" id="replayLoadBtn">Load</button>
         </div>
@@ -276,22 +266,20 @@
       </div>
       <div class="replay-frame" id="replayFrame">
         <div class="rf-label">Replay</div>
-        <div class="rf-note" style="color:var(--faint)">Snapshots captured every scan cycle. Use date picker to load a historical session.</div>
+        <div class="rf-note">Snapshots captured every scan cycle. Pick a date and click Load.</div>
       </div>
     </div>
     <div class="card">
-      <div class="card-label">Event Log (last 30 snapshots)</div>
+      <div class="card-label">Event Log</div>
       <div id="replayEvents"></div>
     </div>
   </div>
 
-  <!-- TAB: REVIEW (6.4.0) -->
+  <!-- ── TAB: REVIEW ───────────────────────────────────────────────── -->
   <div id="tab-review" class="tab-pane">
     <div class="grid2 sec-mb">
       <div class="card">
-        <div class="card-label">Log Trade Review
-          <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">6.4.0</span>
-        </div>
+        <div class="card-label">Log Trade Review</div>
         <div class="review-form" id="reviewForm">
           <div class="rf-row">
             <label>Ticker</label><input type="text" id="rfTicker" value="SPX" class="rf-input" />
@@ -302,27 +290,27 @@
             </select>
           </div>
           <div class="rf-row">
-            <label>Entry Time</label><input type="text" id="rfEntryTime" placeholder="09:47" class="rf-input" />
-            <label>Exit Time</label><input type="text" id="rfExitTime" placeholder="10:12" class="rf-input" />
+            <label>Entry</label><input type="text" id="rfEntryTime" placeholder="09:47" class="rf-input" />
+            <label>Exit</label><input type="text" id="rfExitTime" placeholder="10:12" class="rf-input" />
           </div>
           <div class="rf-row">
-            <label>Entry Price</label><input type="number" id="rfEntryPrice" step="0.01" class="rf-input" />
-            <label>Exit Price</label><input type="number" id="rfExitPrice" step="0.01" class="rf-input" />
+            <label>Entry $</label><input type="number" id="rfEntryPrice" step="0.01" class="rf-input" />
+            <label>Exit $</label><input type="number" id="rfExitPrice" step="0.01" class="rf-input" />
           </div>
           <div class="rf-row">
             <label>Contract</label><input type="text" id="rfContract" placeholder="SPX 7350C 0DTE" class="rf-input rf-wide" />
-            <label>P&amp;L ($)</label><input type="number" id="rfPnl" step="0.01" class="rf-input" />
+            <label>P&amp;L</label><input type="number" id="rfPnl" step="0.01" class="rf-input" />
           </div>
           <div class="rf-row-full">
-            <label>Reason Entered</label>
-            <input type="text" id="rfReasonIn" placeholder="Pine ENTER_CALL, POC support, bullish sweeps" class="rf-input rf-full" />
+            <label>Entered because</label>
+            <input type="text" id="rfReasonIn" placeholder="Pine signal, POC support, bullish sweeps" class="rf-input rf-full" />
           </div>
           <div class="rf-row-full">
-            <label>Reason Exited</label>
+            <label>Exited because</label>
             <input type="text" id="rfReasonOut" placeholder="Hit T1, stop triggered, time decay" class="rf-input rf-full" />
           </div>
           <div class="rf-row-full">
-            <label>Mistakes (optional)</label>
+            <label>Mistakes</label>
             <input type="text" id="rfMistakes" class="rf-input rf-full" />
           </div>
           <div class="rf-row-full">
@@ -330,48 +318,32 @@
             <input type="text" id="rfLesson" class="rf-input rf-full" />
           </div>
           <div class="rf-row">
-            <label>Followed Plan?</label>
+            <label>Followed plan?</label>
             <select id="rfFollowedPlan" class="rf-input">
               <option value="1">Yes</option>
               <option value="0">No</option>
             </select>
           </div>
-          <div style="margin-top:10px">
-            <button class="btn btn-primary" id="rfSubmitBtn">Save Trade Review</button>
-            <span id="rfStatus" style="font-size:11px;color:var(--muted);margin-left:10px"></span>
+          <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+            <button class="btn btn-primary" id="rfSubmitBtn">Save Review</button>
+            <span id="rfStatus" class="form-status"></span>
           </div>
         </div>
       </div>
 
       <div class="card">
         <div class="card-label">Performance Summary</div>
-        <div id="reviewSummaryPanel">
-          <div class="review-empty">No trades logged yet.</div>
-        </div>
+        <div id="reviewSummaryPanel"><div class="review-empty">No trades logged yet.</div></div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-label">Trade History
-        <span class="badge-xs" style="background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.25)">6.4.0</span>
-      </div>
-      <div style="font-size:10px;color:var(--faint);margin-bottom:10px">
-        ENTER_CALL, ENTER_PUT, and READY signals are logged automatically each refresh cycle.
-      </div>
+      <div class="card-label">Trade History</div>
       <div id="reviewPanel"><div class="review-empty">No actionable signals yet this session.</div></div>
     </div>
   </div>
 
 </div><!-- /os-wrap -->
-
-<style>
-.ticker-btn { margin: 0; }
-.ticker-btn.active {
-  background: rgba(56,189,248,.1) !important;
-  color: var(--blue) !important;
-  border-color: rgba(56,189,248,.4) !important;
-}
-</style>
 
 <script src="{{ url_for('static', filename='js/apex_os.js') }}?v={{ asset_version or version }}"></script>
 </body>
