@@ -544,15 +544,23 @@ def get_intraday_bars(ticker: str, multiplier: int = 5, limit_days: int = 3) -> 
 
 
 def get_vix_price() -> Optional[float]:
-    """Fetch the current VIX spot price from Polygon."""
-    data = safe_get_json("https://api.polygon.io/v2/last/trade/VXX", timeout=10)
-    if data and "results" in data:
-        return safe_float(data["results"].get("p") or data["results"].get("price"), 0.0) or None
-    # Fallback: daily snapshot for VIX
+    """Fetch the current VIX level from Polygon.
+    VXX requires a plan upgrade — use the VIX index snapshot instead.
+    """
+    # Try VIX index via Polygon indices endpoint
+    data = safe_get_json("https://api.polygon.io/v1/open-close/I:VIX1D/" + now_et().strftime("%Y-%m-%d"),
+                         timeout=10)
+    if data and data.get("status") == "OK":
+        val = safe_float(data.get("close") or data.get("open"), 0.0)
+        if val > 0:
+            return val
+    # Fallback: VIXY ETF snapshot (proxy, not exact VIX)
     data = safe_get_json("https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/VIXY", timeout=10)
     if data and "ticker" in data:
         day = (data["ticker"].get("day") or {})
-        return safe_float(day.get("c") or day.get("vw"), 0.0) or None
+        val = safe_float(day.get("c") or day.get("vw"), 0.0)
+        if val > 0:
+            return val * 10  # VIXY ~0.1× VIX scale approximation
     return None
 
 
@@ -3736,19 +3744,22 @@ def _resolve_polygon_futures_ticker(symbol: str) -> str:
 
 def _futures_fetch_bars(ticker: str, days: int, multiplier: int) -> List[dict]:
     """
-    Fetch intraday bars from the Polygon Futures API.
+    Fetch intraday bars from the Massive/Polygon Futures API.
 
     Endpoint: GET https://api.polygon.io/futures/v1/aggs/{ticker}
 
-    Polygon Futures Basic plan holders use this dedicated endpoint.
-    Response fields: open/high/low/close/volume/window_start (nanoseconds).
+    Per Massive docs (https://massive.com/docs/rest/futures/aggregates):
+      resolution: number + unit with no space — e.g. "5min", "1min", "15min"
+                  NOT "5", NOT "minute", NOT "5 min"
+      window_start: YYYY-MM-DD date string OR nanosecond Unix timestamp
 
-    Parameter notes (corrected in 6.4.1):
-      - resolution: integer string e.g. "5" for 5-minute bars, NOT "5min"
-      - window_start.gte / .lte: ISO datetime strings "YYYY-MM-DDTHH:MM:SSZ"
-        (date-only strings work on some plans but datetime is safer)
-      - Response key may be "results" or "data" depending on plan tier —
-        we check both.
+    Plan notes:
+      Futures Basic (free): 8-hour historical delay, 2 years history.
+      Data will be empty if called during or within 8 hours of the session.
+      Futures Starter+: 10-min delayed or real-time.
+
+    Response fields: open/high/low/close/volume/window_start (nanoseconds).
+    Response key: "results"
     """
     if not POLYGON_API_KEY:
         return []
@@ -3758,16 +3769,12 @@ def _futures_fetch_bars(ticker: str, days: int, multiplier: int) -> List[dict]:
     start_date = today - dt.timedelta(days=day_buffer)
     end_date   = today + dt.timedelta(days=1)
 
-    # Use ISO datetime strings — more reliable than date-only across plan tiers
-    start_iso = f"{start_date}T00:00:00Z"
-    end_iso   = f"{end_date}T00:00:00Z"
-
     url = f"https://api.polygon.io/futures/v1/aggs/{ticker}"
     params = {
-        # Correct format: integer string, NOT "5min"
-        "resolution":       str(multiplier),
-        "window_start.gte": start_iso,
-        "window_start.lte": end_iso,
+        # Correct format per Massive docs: number+unit, no space
+        "resolution":       f"{multiplier}min",
+        "window_start.gte": str(start_date),
+        "window_start.lte": str(end_date),
         "limit":            50000,
         "sort":             "window_start.asc",
     }
@@ -3775,25 +3782,21 @@ def _futures_fetch_bars(ticker: str, days: int, multiplier: int) -> List[dict]:
     if not data:
         return []
 
-    # Response key varies by plan tier: "results" or "data"
     raw_results = data.get("results") or data.get("data") or []
     if not isinstance(raw_results, list):
         raw_results = []
 
     if not raw_results:
-        # Log the actual response shape for diagnostics (non-fatal)
         status = data.get("status", "")
         error  = data.get("error", "") or data.get("message", "")
-        keys   = list(data.keys())
         print(
             f"[futures] {ticker} returned 0 bars. "
-            f"status={status!r} error={error!r} keys={keys}",
+            f"status={status!r} error={error!r} keys={list(data.keys())} "
+            f"(Futures Basic has 8-hour delay — no intraday data during market hours)",
             flush=True,
         )
         return []
 
-    # Normalize futures response → stock-style {o, h, l, c, v, t}
-    # window_start is nanoseconds since epoch; convert to milliseconds
     bars = []
     for r in raw_results:
         ws = r.get("window_start")
