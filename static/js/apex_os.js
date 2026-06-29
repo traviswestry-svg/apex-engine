@@ -855,17 +855,44 @@ function initReplayControls() {
 function addReviewEntry(d) {
   if (!d) return;
   const state = d.decision_state || '--';
-  if (!['ENTER_CALL','ENTER_PUT','READY'].includes(state)) return; // only log actionable states
+  if (!['ENTER_CALL','ENTER_PUT','READY','WATCH_CALLS','WATCH_PUTS'].includes(state)) return;
+
+  const coach   = d.trade_coach || {};
+  const risk    = d.risk || {};
+  const ms      = d.market_state || {};
+  const ici_obj = d.ici || {};
+  const exec    = d.execution || {};
+
   reviewLog.unshift({
-    ts:      new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/New_York' }),
-    ticker:  activeTicker,
+    ts:           new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/New_York' }),
+    ticker:       activeTicker,
     state,
-    ici:     Number((d.ici || {}).ici || 0),
-    summary: d.executive_summary || '',
-    coach:   (d.trade_coach || {}).action || '',
-    contract:(d.trade_coach || d.risk || {}).contract_hint || '',
+    ici:          Number(ici_obj.ici || 0),
+    grade:        d.grade || '',
+    // Contract / strike
+    contract:     coach.contract_hint || risk.contract_hint || '',
+    approved_side: coach.approved_side || '',
+    // Trade levels
+    entry_zone:   coach.entry_zone   || risk.entry_zone   || '',
+    stop:         coach.stop         != null ? coach.stop         : (risk.stop         != null ? risk.stop         : null),
+    invalidation: coach.invalidation != null ? coach.invalidation : null,
+    target1:      coach.target1      != null ? coach.target1      : (risk.target1      != null ? risk.target1      : null),
+    target2:      coach.target2      != null ? coach.target2      : (risk.target2      != null ? risk.target2      : null),
+    // Market context at time of signal
+    poc:          ms.poc   || '',
+    vwap:         ms.vwap  || '',
+    pine_state:   ms.pine_state || exec.execution_state || '',
+    signal_secs:  ms.signal_secs || 0,
+    tape_bias:    ms.tape_bias || '',
+    flow_bias:    ms.flow_bias || '',
+    // Narrative
+    coach_action: coach.action || '',
+    summary:      d.executive_summary || '',
+    // Checklist readiness
+    readiness:    coach.readiness != null ? coach.readiness : null,
+    blockers:     coach.blockers || [],
   });
-  if (reviewLog.length > 40) reviewLog.pop();
+  if (reviewLog.length > 60) reviewLog.pop();
   renderReview();
 }
 
@@ -873,19 +900,91 @@ function renderReview() {
   const el = $('reviewPanel');
   if (!el) return;
   if (!reviewLog.length) {
-    el.innerHTML = '<div class="review-empty">No actionable signals logged yet this session.<br>ENTER_CALL, ENTER_PUT, and READY states are captured automatically.</div>';
+    el.innerHTML = `<div class="review-empty">
+      No signals logged yet this session.<br>
+      <span style="font-size:10px;color:var(--faint)">ENTER_CALL, ENTER_PUT, READY, and WATCH states are captured automatically on each refresh cycle.</span>
+    </div>`;
     return;
   }
-  el.innerHTML = reviewLog.map(r => {
-    const cls = r.state.includes('CALL') ? 'var(--green)' : r.state.includes('PUT') ? 'var(--red)' : 'var(--amber)';
-    return `<div class="review-card">
-      <div class="rc-header">
-        <div class="rc-ticker" style="color:${cls}">${r.ticker} — ${r.state.replace(/_/g,' ')}</div>
-        <div class="rc-time">${r.ts} · ICI ${fmtI(r.ici)}</div>
+
+  el.innerHTML = reviewLog.map((r, idx) => {
+    const isCall    = r.state.includes('CALL') || r.approved_side === 'CALL';
+    const isPut     = r.state.includes('PUT')  || r.approved_side === 'PUT';
+    const isEnter   = r.state.startsWith('ENTER');
+    const isWatch   = r.state.startsWith('WATCH') || r.state === 'READY';
+    const stateColor= isEnter ? 'var(--green)' : isWatch ? 'var(--amber)' : 'var(--muted)';
+    const sideColor = isCall ? 'var(--green)' : isPut ? 'var(--red)' : 'var(--muted)';
+
+    // Format stop/target values
+    const fmtLevel = v => v != null && v !== '' ? `$${fmt(Number(v))}` : '--';
+
+    // Pine signal remaining
+    const pineStr = r.pine_state === 'CONFIRMED' && r.signal_secs > 0
+      ? `Pine confirmed (${Math.floor(r.signal_secs/60)}m${r.signal_secs%60}s)`
+      : r.pine_state === 'CONFIRMED' ? 'Pine confirmed' : 'Waiting for Pine';
+
+    // Blockers
+    const blockerHtml = r.blockers?.length
+      ? `<div class="sl-blockers">${r.blockers.slice(0,3).map(b => `<span>• ${esc(b)}</span>`).join('')}</div>`
+      : '';
+
+    // Readiness bar
+    const readHtml = r.readiness != null
+      ? `<div class="sl-readiness">
+           <span class="sl-read-label">Readiness</span>
+           <div class="sl-read-bar"><div style="width:${r.readiness}%;background:${r.readiness>=80?'var(--green)':r.readiness>=60?'var(--blue)':'var(--amber)'}"></div></div>
+           <span class="sl-read-num">${r.readiness}%</span>
+         </div>`
+      : '';
+
+    return `<div class="signal-log-entry ${isEnter ? 'sle-enter' : isWatch ? 'sle-watch' : ''}">
+      <div class="sle-header">
+        <div class="sle-time">${esc(r.ts)}</div>
+        <div class="sle-state" style="color:${stateColor}">${esc(r.state.replace(/_/g,' '))}</div>
+        <div class="sle-grade">${esc(r.grade)}</div>
+        <div class="sle-ici">ICI ${fmtI(r.ici)}</div>
       </div>
-      ${r.contract ? `<div style="font-family:var(--mono);font-size:12px;color:var(--blue);margin-bottom:4px">${esc(r.contract)}</div>` : ''}
-      ${r.coach    ? `<div class="rc-result">${esc(r.coach)}</div>` : ''}
-      ${r.summary  ? `<div class="rc-result" style="margin-top:4px;font-size:10px;color:var(--faint)">${esc(r.summary)}</div>` : ''}
+
+      ${r.contract ? `<div class="sle-contract" style="color:${sideColor}">${esc(r.contract)}</div>` : ''}
+
+      <div class="sle-levels">
+        <div class="sle-level">
+          <span class="sll-label">Entry</span>
+          <span class="sll-val rv-blue">${esc(r.entry_zone || '--')}</span>
+        </div>
+        <div class="sle-level">
+          <span class="sll-label">Stop</span>
+          <span class="sll-val rv-red">${fmtLevel(r.stop)}</span>
+        </div>
+        <div class="sle-level">
+          <span class="sll-label">Invalidation</span>
+          <span class="sll-val rv-red">${fmtLevel(r.invalidation)}</span>
+        </div>
+        <div class="sle-level">
+          <span class="sll-label">T1</span>
+          <span class="sll-val rv-green">${fmtLevel(r.target1)}</span>
+        </div>
+        <div class="sle-level">
+          <span class="sll-label">T2</span>
+          <span class="sll-val rv-green">${fmtLevel(r.target2)}</span>
+        </div>
+        <div class="sle-level">
+          <span class="sll-label">POC</span>
+          <span class="sll-val">${r.poc ? '$'+fmt(r.poc) : '--'}</span>
+        </div>
+        <div class="sle-level">
+          <span class="sll-label">VWAP</span>
+          <span class="sll-val">${r.vwap ? '$'+fmt(r.vwap) : '--'}</span>
+        </div>
+        <div class="sle-level">
+          <span class="sll-label">Pine</span>
+          <span class="sll-val" style="color:${r.pine_state==='CONFIRMED'?'var(--green)':'var(--faint)'}">${esc(pineStr)}</span>
+        </div>
+      </div>
+
+      ${readHtml}
+      ${r.coach_action ? `<div class="sle-action">${esc(r.coach_action)}</div>` : ''}
+      ${blockerHtml}
     </div>`;
   }).join('');
 }
@@ -1085,6 +1184,43 @@ async function loadOS() {
   }
 }
 
+async function loadSavedReviews() {
+  const el = $('savedReviewsPanel');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/review/trades?ticker=' + activeTicker + '&limit=30', { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.ok || !data.trades?.length) {
+      el.innerHTML = '<div class="review-empty">No saved reviews yet. Use the form above to log completed trades.</div>';
+      return;
+    }
+    el.innerHTML = `<div class="saved-reviews-table-wrap"><table class="scanner-table" style="min-width:700px">
+      <thead><tr>
+        <th>Ticker</th><th>Side</th><th>Contract</th>
+        <th>Entry</th><th>Exit</th><th>Entry $</th><th>Exit $</th>
+        <th>P&amp;L</th><th>Plan</th><th>Reason In</th>
+      </tr></thead>
+      <tbody>${data.trades.map(t => {
+        const pnlCls = (t.pnl || 0) >= 0 ? 'rv-green' : 'rv-red';
+        const sideCls = t.side === 'CALL' ? 'scan-side-call' : 'scan-side-put';
+        return `<tr>
+          <td><b>${esc(t.ticker || '')}</b></td>
+          <td><span class="scan-side ${sideCls}">${esc(t.side || '')}</span></td>
+          <td class="scan-contract-cell">${esc(t.contract || '--')}</td>
+          <td style="font-family:var(--mono)">${esc(t.entry_time || '--')}</td>
+          <td style="font-family:var(--mono)">${esc(t.exit_time  || '--')}</td>
+          <td style="font-family:var(--mono)">${t.entry_price != null ? '$'+t.entry_price.toFixed(2) : '--'}</td>
+          <td style="font-family:var(--mono)">${t.exit_price  != null ? '$'+t.exit_price.toFixed(2)  : '--'}</td>
+          <td style="font-family:var(--mono)" class="${pnlCls}">${t.pnl != null ? (t.pnl>=0?'+':'')+t.pnl.toFixed(0) : '--'}</td>
+          <td>${t.followed_plan ? '✓' : '✗'}</td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:10px">${esc(t.reason_entered || '')}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  } catch (_) {}
+}
+
 /* ── Ticker selector ──────────────────────────────────────────────────────── */
 function initTickerSelect() {
   document.querySelectorAll('.ticker-btn').forEach(btn => {
@@ -1154,6 +1290,24 @@ function renderTapeSummary(summary) {
   `;
 }
 
+function _formatContract(r) {
+  // Format: SPX 7450C Jun30 or SPY 540P 06/28
+  const ticker = r.ticker || '';
+  const type   = r.contract_type === 'CALL' ? 'C' : r.contract_type === 'PUT' ? 'P' : '';
+  const strike = r.strike ? Math.round(r.strike) : '';
+  let exp = r.expiration || '';
+  if (exp && exp.length === 10) {
+    // YYYY-MM-DD → Jun30
+    try {
+      const d = new Date(exp + 'T12:00:00Z');
+      const mo = d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
+      const dy = d.getUTCDate();
+      exp = `${mo}${dy}`;
+    } catch (_) { exp = exp.slice(5).replace('-','/'); }
+  }
+  return [ticker, `${strike}${type}`, exp].filter(Boolean).join(' ');
+}
+
 function renderFlowTapeTable() {
   const el = $('flowTapeTable');
   if (!el) return;
@@ -1162,24 +1316,31 @@ function renderFlowTapeTable() {
     el.innerHTML = '<div class="tape-empty">No flow tape rows match the current filter.</div>';
     return;
   }
-  const rowHtml = rows.slice(0, 80).map(r => {
-    const agCls = r.aggressor_side === 'BUY' ? 'tape-row-buy' : r.aggressor_side === 'SELL' ? 'tape-row-sell' : 'tape-row-neutral';
-    const label = esc(r.tape_label || '--').replace('_', ' ');
-    const imp   = r.importance_score != null ? `<span class="tape-importance">${r.importance_score}</span>` : '';
+  const rowHtml = rows.slice(0, 100).map(r => {
+    const agCls    = r.aggressor_side === 'BUY' ? 'tape-row-buy' : r.aggressor_side === 'SELL' ? 'tape-row-sell' : 'tape-row-neutral';
+    const label    = (r.tape_label || '--').replace(/_/g, ' ');
+    const contract = _formatContract(r);
+    const price    = r.trade_price ? fmt(r.trade_price) : '--';
+    const imp      = r.importance_score != null ? r.importance_score : '';
+    // Color the label badge
+    const labelCls = r.aggressor_side === 'BUY' ? 'tape-label-buy' : r.aggressor_side === 'SELL' ? 'tape-label-sell' : 'tape-label-neut';
     return `<tr class="${agCls}">
-      <td>${esc(r.time_et||'')}</td>
-      <td><b>${esc(r.ticker)}</b></td>
-      <td>${esc(r.contract_type||'')}</td>
-      <td>${r.strike ? fmt(r.strike) : '--'}</td>
-      <td>${esc(r.expiration||'')}</td>
-      <td><b>${fmtPremium(r.premium)}</b></td>
-      <td><span class="tape-label">${label}</span>${imp}</td>
+      <td class="tape-td-time">${esc(r.time_et || '')}</td>
+      <td class="tape-td-contract"><b>${esc(contract)}</b></td>
+      <td class="tape-td-price">${price}</td>
+      <td class="tape-td-premium"><b>${fmtPremium(r.premium)}</b></td>
+      <td class="tape-td-label"><span class="tape-label ${labelCls}">${esc(label)}</span></td>
+      <td class="tape-td-score">${imp}</td>
     </tr>`;
   }).join('');
   el.innerHTML = `<table>
     <thead><tr>
-      <th>Time</th><th>Ticker</th><th>Type</th><th>Strike</th>
-      <th>Exp</th><th>Premium</th><th>Label / Score</th>
+      <th>Time</th>
+      <th>Contract</th>
+      <th>Price</th>
+      <th>Premium</th>
+      <th>Type</th>
+      <th>Score</th>
     </tr></thead>
     <tbody>${rowHtml}</tbody>
   </table>`;
@@ -1523,15 +1684,22 @@ document.addEventListener('DOMContentLoaded', () => {
   // Activate first tab
   document.querySelector('.tab-btn[data-tab="dashboard"]')?.click();
 
+  // Lazy-load chart iframe only when Chart tab is opened
+  document.querySelector('.tab-btn[data-tab="chart"]')?.addEventListener('click', () => {
+    const frame = $('chartTabFrame');
+    if (frame && !frame.src) frame.src = '/chart';
+  });
+
   loadOS();
   loadScannerIdeas();
   loadFlowTape();
   loadReviewSummary();
   loadTradeHistory();
   loadMarketStatus();
+  loadSavedReviews();
 
   setInterval(loadOS, AUTO_INTERVAL);
   setInterval(loadScannerIdeas, 30000);
   setInterval(loadFlowTape, 45000);
-  setInterval(loadMarketStatus, 60000);  // Status banner refreshes every minute
+  setInterval(loadMarketStatus, 60000);
 });
