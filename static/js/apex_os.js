@@ -1166,6 +1166,7 @@ async function loadOS() {
     renderFlow2(data);
     renderStory(data);
     renderOvernightGamePlan(data);
+    renderAuctionIntel(data);
 
     // Render market status banner from data if present
     if (data.market_status) renderMarketStatusBanner(data.market_status);
@@ -1219,6 +1220,123 @@ async function loadSavedReviews() {
       }).join('')}</tbody>
     </table></div>`;
   } catch (_) {}
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Auction Intelligence Panel
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderAuctionIntel(d) {
+  const el = $('auctionIntelPanel');
+  if (!el || !d) return;
+
+  const ai = d.auction_intelligence;
+  if (!ai || !ai.available) {
+    el.innerHTML = '<div class="ai-waiting">Waiting for session volume profile...</div>';
+    return;
+  }
+
+  const state   = ai.auction_state   || {};
+  const poc_mig = ai.poc_migration   || {};
+  const excess  = ai.excess          || {};
+  const acc     = ai.acceptance      || {};
+  const nodes   = ai.nodes           || {};
+  const hvbo    = ai.hvbo            || {};
+
+  // ── Auction State Block ──
+  const stateName  = (state.state || '--').replace(/_/g, ' ');
+  const dayType    = (state.day_type || '--').replace(/_/g, ' ');
+  const partType   = state.participant_type || '';
+  const isInit     = state.is_initiative;
+  const isResp     = state.is_responsive;
+  const isTrend    = state.is_trend_day;
+  const isBalanced = state.is_balanced;
+  const stateConf  = state.confidence || 0;
+  const wouldTrade = state.would_trade;
+  const stateColor = isTrend ? 'var(--green)' : isInit ? '#22d3ee' : isResp ? 'var(--amber)' : 'var(--muted)';
+
+  // ── POC Migration Block ──
+  const pocDir   = poc_mig.direction || 'UNKNOWN';
+  const pocSpeed = poc_mig.speed || '';
+  const pocAccel = poc_mig.acceleration || '';
+  const pocColor = pocDir === 'RISING' ? 'var(--green)' : pocDir === 'FALLING' ? 'var(--red)' : 'var(--muted)';
+  const pocArrow = pocDir === 'RISING' ? '▲' : pocDir === 'FALLING' ? '▼' : '—';
+
+  // ── Excess ──
+  const excessDetected = excess.detected;
+  const excessType = (excess.type || '').replace(/_/g,' ');
+  const excessConf = excess.confidence || 0;
+
+  // ── Acceptance ──
+  const accStatus = acc.primary_status || '';
+  const accLevel  = acc.primary_level  || '';
+  const accConf   = acc.primary_confidence || 0;
+  const accColor  = accStatus === 'ACCEPTING' ? 'var(--green)' : accStatus === 'REJECTED' ? 'var(--red)' : 'var(--amber)';
+
+  // ── HVBO ──
+  const hvboLow  = hvbo.hvbo_low;
+  const hvboHigh = hvbo.hvbo_high;
+  const hvboMid  = hvbo.hvbo_mid;
+  const hvboLoc  = (hvbo.price_location || '').replace(/_/g,' ');
+  const vaStatus = (hvbo.va_status || '').replace(/_/g,' ');
+
+  // ── Node intelligence ──
+  const callNote  = nodes.call_target_note || '';
+  const putNote   = nodes.put_target_note  || '';
+  const fastZone  = nodes.fast_zone_warning || '';
+
+  el.innerHTML = `
+    <div class="ai-grid">
+
+      <div class="ai-block">
+        <div class="ai-block-label">Auction State</div>
+        <div class="ai-state-name" style="color:${stateColor}">${esc(stateName)}</div>
+        <div class="ai-state-meta">
+          ${esc(dayType)} &middot; ${esc(partType.replace(/_/g,' '))} &middot; ${stateConf}% confidence
+        </div>
+        <div class="ai-participation ${wouldTrade ? 'ai-trade-yes' : 'ai-trade-no'}">
+          ${wouldTrade ? '✓ Institutional traders would participate' : '✗ Wait for better structure'}
+        </div>
+        <div class="ai-narrative">${esc(state.explanation || '')}</div>
+      </div>
+
+      <div class="ai-block">
+        <div class="ai-block-label">POC Migration</div>
+        <div class="ai-poc-dir" style="color:${pocColor}">${pocArrow} ${esc(pocDir)} <span class="ai-poc-speed">${esc(pocSpeed)} ${pocAccel ? '· '+esc(pocAccel) : ''}</span></div>
+        ${poc_mig.current_poc ? `<div class="ai-poc-levels">Current POC: <b>$${fmt(poc_mig.current_poc)}</b> · Prior: $${fmt(poc_mig.prior_poc)}</div>` : ''}
+        <div class="ai-narrative">${esc(poc_mig.narrative || '')}</div>
+      </div>
+
+      <div class="ai-block">
+        <div class="ai-block-label">Acceptance / Rejection</div>
+        <div class="ai-acc-status" style="color:${accColor}">${esc(accStatus)} at ${esc(accLevel)} <span class="ai-acc-conf">${accConf}%</span></div>
+        <div class="ai-narrative">${esc(acc.primary_note || '')}</div>
+      </div>
+
+      <div class="ai-block">
+        <div class="ai-block-label">HVBO Zone</div>
+        ${hvboLow && hvboHigh ? `<div class="ai-hvbo-range"><b>$${fmt(hvboLow)} – $${fmt(hvboHigh)}</b> <span class="ai-hvbo-mid">mid $${fmt(hvboMid)}</span></div>` : '<div class="ai-waiting">Building...</div>'}
+        <div class="ai-hvbo-loc">${esc(hvboLoc)}</div>
+        <div class="ai-narrative">${esc(hvbo.va_note || '')}</div>
+      </div>
+
+    </div>
+
+    ${excessDetected ? `
+    <div class="ai-excess-alert ${excess.type?.includes('BEARISH') ? 'ai-excess-bear' : 'ai-excess-bull'}">
+      <div class="ai-excess-label">⚠ ${esc(excessType)} — ${excessConf}% confidence</div>
+      <div class="ai-excess-text">${esc(excess.narrative || '')}</div>
+      ${excess.action ? `<div class="ai-excess-action">${esc(excess.action)}</div>` : ''}
+    </div>` : ''}
+
+    ${callNote || putNote ? `
+    <div class="ai-targets">
+      ${callNote ? `<div class="ai-target-call">▲ ${esc(callNote)}</div>` : ''}
+      ${putNote  ? `<div class="ai-target-put">▼ ${esc(putNote)}</div>`  : ''}
+    </div>` : ''}
+
+    ${fastZone ? `<div class="ai-fast-zone">⚡ ${esc(fastZone)}</div>` : ''}
+  `;
 }
 
 /* ── Ticker selector ──────────────────────────────────────────────────────── */
