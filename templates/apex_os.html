@@ -145,28 +145,39 @@
       </div>
 
       <div class="dashboard-right">
-        <!-- Command Center -->
+        <!-- Auction Command Center — POC as hero -->
         <div class="card command-card command-primary sec-mb">
-          <div class="card-label">Command Center</div>
+          <div class="card-label">Auction Command Center</div>
           <div id="commandCenter"></div>
+        </div>
+        <!-- Decision Tree -->
+        <div class="card command-card sec-mb">
+          <div class="card-label">Decision Hierarchy</div>
+          <div id="decisionTreePanel"></div>
+        </div>
+        <!-- Institutional Timeline -->
+        <div class="card command-card sec-mb">
+          <div class="card-label">Institutional Timeline <span class="live-dot-badge">LIVE</span></div>
+          <div id="institutionalTimeline" class="itl-wrap">
+            <div class="itl-empty">Session events will appear here as the auction develops.</div>
+          </div>
         </div>
         <!-- Confidence Timeline -->
         <div class="card command-card sec-mb">
           <div class="card-headline-tight">
-            <div class="card-label" style="margin-bottom:0">Confidence Timeline</div>
+            <div class="card-label" style="margin-bottom:0">ICI Timeline</div>
             <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
           </div>
-          <div class="workflow-sub" style="margin-bottom:8px">Server-side ICI snapshots.</div>
           <div id="confidenceTimeline" class="confidence-timeline">Waiting...</div>
         </div>
         <!-- Auction / Volume Profile -->
         <div class="card command-card sec-mb">
-          <div class="card-label">Auction / Volume Profile</div>
+          <div class="card-label">POC / Value Area</div>
           <div id="auctionPanel" class="auction-panel">Waiting for profile...</div>
         </div>
         <!-- Coach Snapshot -->
         <div class="card command-card sec-mb">
-          <div class="card-label">Coach Snapshot</div>
+          <div class="card-label">Trade Coach</div>
           <div id="coachSnapshot"></div>
         </div>
         <!-- Overlay toggles -->
