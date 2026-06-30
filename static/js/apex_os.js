@@ -69,59 +69,141 @@ function renderRibbon(d) {
   const fl  = d.flow_intelligence || d.flow || {};
   const g   = d.gamma_regime || {};
   const ms  = d.market_state || {};
+  const ai  = d.auction_intelligence || {};
   const dec = d.decision_state || '';
   const str = d.structure || {};
 
   const decCls  = dec.includes('CALL') ? 'rv-green' : dec.includes('PUT') ? 'rv-red' : dec.includes('WATCH') || dec === 'READY' ? 'rv-amber' : 'rv-muted';
   const cellCls = dec.includes('CALL') ? 'rdc-call' : dec.includes('PUT') ? 'rdc-put' : dec.includes('WATCH') || dec === 'READY' ? 'rdc-watch' : 'rdc-no';
-  const poc     = ms.poc || str.session_poc;
-  const vwap    = ms.vwap || r.vwap || str.vwap;
+
+  const poc     = ms.poc || str.session_poc || 0;
+  const vwap    = ms.vwap || r.vwap || str.vwap || 0;
   const pocMig  = ms.poc_migration || '';
-  const confLevel = ms.confluence_level;
-  const tapeBias  = ms.tape_bias || '';
-  const net_flow  = r.net_flow || 0;
+  const pvp     = ms.price_vs_poc  || '';
+  const pva     = ms.price_vs_va   || '';
+  const net_flow = r.net_flow || 0;
+  const price    = ms.price || r.spx_price || fl.stock_price || 0;
+
+  // ── Auction synthesis ──
+  const aiState  = (ai.auction_state || {});
+  const aiAcc    = (ai.acceptance    || {});
+  const aiPoc    = (ai.poc_migration || {});
+  const accStatus = aiAcc.primary_status || '';
+  const auctionName = (aiState.state || '').replace(/_/g,' ');
+  const pocDelta  = aiPoc.delta || 0;
+  const pocArrow  = pocMig === 'RISING' ? '▲' : pocMig === 'FALLING' ? '▼' : '—';
+  const pocColor  = pocMig === 'RISING' ? 'var(--green)' : pocMig === 'FALLING' ? 'var(--red)' : 'var(--muted)';
+  const accColor  = accStatus === 'ACCEPTING' ? 'var(--green)' : accStatus === 'REJECTED' ? 'var(--red)' : 'var(--amber)';
+
+  // Auction cell label: "Accepting Higher" / "Accepting Lower" / "Rejecting" / "Balanced"
+  const auctionVerb =
+    pva === 'ABOVE_VAH' && pocMig === 'RISING'   ? 'Accepting Higher' :
+    pva === 'ABOVE_VAH' && pocMig !== 'RISING'   ? 'Testing Higher'   :
+    pva === 'BELOW_VAL' && pocMig === 'FALLING'  ? 'Accepting Lower'  :
+    pva === 'BELOW_VAL' && pocMig !== 'FALLING'  ? 'Testing Lower'    :
+    accStatus === 'REJECTED'                      ? 'Rejecting'        :
+    pocMig === 'RISING'                           ? 'POC Rising'       :
+    pocMig === 'FALLING'                          ? 'POC Falling'      : 'Balanced';
+
+  const auctionVerbColor =
+    auctionVerb.includes('Accepting Higher') || auctionVerb.includes('POC Rising') ? 'var(--green)' :
+    auctionVerb.includes('Accepting Lower')  || auctionVerb.includes('POC Falling') || auctionVerb.includes('Rejecting') ? 'var(--red)' :
+    auctionVerb.includes('Testing') ? 'var(--amber)' : 'var(--muted)';
+
+  // Auction confidence from auction state engine
+  const auctionConf = aiState.confidence || 0;
+
+  // POC delta string: "+1.75" or "-3.25"
+  const pocDeltaStr = pocDelta !== 0 ? (pocDelta > 0 ? '+' : '') + pocDelta.toFixed(2) : '';
+
+  // ── Gamma flip proximity ──
+  const zeroGamma = ms.zero_gamma || g.zero_gamma || r.zero_gamma || 0;
+  const flipProx  = ms.flip_proximity || (zeroGamma > 0 && price > 0 ? Math.abs(price - zeroGamma) : null);
+  const flipPct   = flipProx != null && price > 0 ? (flipProx / price * 100).toFixed(2) : null;
+  const flipWarn  = flipProx != null && flipProx < 15;
+  const flipColor = flipProx != null && flipProx < 5 ? 'var(--red)' : flipProx != null && flipProx < 10 ? 'var(--amber)' : 'var(--muted)';
+  const gammaSubLabel = flipWarn && flipPct
+    ? `Within ${flipPct}% of flip ⚡`
+    : (g.regime_display || '').split(' ').slice(0,2).join(' ') || '--';
+
+  // ── Flow pressure line ──
+  const flowBias   = ms.flow_bias || fl.bias || 'MIXED';
+  const tapeBias   = ms.tape_bias || '';
+  const sweeps     = ms.tape_sweeps || 0;
+  const netPrem    = ms.net_premium || net_flow || 0;
+  const darkPool   = fl.block_conviction || '';
+
+  // "Bullish options premium · sweep pressure" style sub-label
+  const flowPressure = (() => {
+    const parts = [];
+    if (flowBias === 'BULLISH') parts.push('Bullish options premium');
+    else if (flowBias === 'BEARISH') parts.push('Bearish options pressure');
+    else parts.push('Mixed flow');
+    if (sweeps >= 3) parts.push(`${sweeps} sweeps`);
+    if (darkPool && darkPool !== 'NONE') parts.push('Block conviction');
+    return parts.join(' · ');
+  })();
+
+  // Relative strength — QQQ vs SPY proxy from structure
+  const rsLabel = (() => {
+    const qqq_rel = fl.qqq_relative_strength || ms.qqq_relative_strength || null;
+    if (qqq_rel === 'LEADING')  return 'Tech leading ↑';
+    if (qqq_rel === 'LAGGING')  return 'Tech lagging ↓';
+    return tapeBias ? `Tape: ${tapeBias}` : '';
+  })();
 
   el.innerHTML = `
     <div class="ribbon-cell">
       <div class="ribbon-label">SPX Price</div>
-      <div class="ribbon-val rv-blue">$${fmt(r.spx_price || fl.stock_price || ms.price)}</div>
-      <div class="ribbon-sub">${activeTicker}</div>
+      <div class="ribbon-val rv-blue">$${fmt(price)}</div>
+      <div class="ribbon-sub">${activeTicker} · ES $${fmt(r.es_price || ms.es_price || price)}</div>
     </div>
+
+    <div class="ribbon-cell ribbon-auction-cell">
+      <div class="ribbon-label">Auction</div>
+      <div class="ribbon-val" style="font-size:13px;font-weight:900;color:${auctionVerbColor}">${esc(auctionVerb)}</div>
+      <div class="ribbon-sub">
+        <span style="color:${pocColor};font-weight:700">${pocArrow} POC${pocDeltaStr ? ' '+pocDeltaStr+'pts' : ''}</span>
+        ${auctionConf > 0 ? ` · ${auctionConf}%` : ''}
+      </div>
+    </div>
+
     <div class="ribbon-cell">
-      <div class="ribbon-label">Basis</div>
-      <div class="ribbon-val rv-muted">$${fmt(r.es_price || ms.es_price || r.spx_price)}</div>
-      <div class="ribbon-sub">ES Futures</div>
+      <div class="ribbon-label">Acceptance</div>
+      <div class="ribbon-val" style="font-size:12px;color:${accColor};font-weight:800">${accStatus || '--'}</div>
+      <div class="ribbon-sub">${esc(aiAcc.primary_level || (poc > 0 ? 'POC $'+fmt(poc) : '--'))}</div>
     </div>
+
     <div class="ribbon-cell">
       <div class="ribbon-label">Call Wall</div>
       <div class="ribbon-val rv-green">$${fmt(r.call_wall || g.call_wall || ms.call_wall)}</div>
-      <div class="ribbon-sub">GEX: ${fmtI(r.gex_score || ms.gex_score)}</div>
+      <div class="ribbon-sub">Put: $${fmt(r.put_wall || g.put_wall || ms.put_wall)}</div>
     </div>
-    <div class="ribbon-cell">
+
+    <div class="ribbon-cell ${flipWarn ? 'ribbon-cell-warn' : ''}">
       <div class="ribbon-label">Gamma Flip</div>
-      <div class="ribbon-val rv-amber">$${fmt(r.zero_gamma || g.zero_gamma || ms.zero_gamma)}</div>
-      <div class="ribbon-sub">${(g.regime_display || '').split(' ').slice(0,2).join(' ') || '--'}</div>
+      <div class="ribbon-val" style="color:${flipWarn ? flipColor : 'var(--amber)'}">$${fmt(zeroGamma)}</div>
+      <div class="ribbon-sub" style="color:${flipWarn ? flipColor : 'var(--faint)'}">${esc(gammaSubLabel)}</div>
     </div>
+
     <div class="ribbon-cell">
-      <div class="ribbon-label">Put Wall</div>
-      <div class="ribbon-val rv-red">$${fmt(r.put_wall || g.put_wall || ms.put_wall)}</div>
-      <div class="ribbon-sub">GEX shield</div>
-    </div>
-    <div class="ribbon-cell">
-      <div class="ribbon-label">VWAP / POC</div>
-      <div class="ribbon-val rv-blue">$${fmt(vwap)}</div>
-      <div class="ribbon-sub">POC: $${poc ? fmt(poc) : '--'}${pocMig ? ' · ' + pocMig.toLowerCase().replace('_',' ') : ''}</div>
-    </div>
-    <div class="ribbon-cell">
-      <div class="ribbon-label">Net Flow</div>
+      <div class="ribbon-label">Inst. Flow</div>
       <div class="ribbon-val ${net_flow >= 0 ? 'rv-green' : 'rv-red'}">$${fmtM(net_flow)}</div>
-      <div class="ribbon-sub">Tape: ${tapeBias || r.flow_momentum || '--'}</div>
+      <div class="ribbon-sub ribbon-flow-pressure" title="${esc(flowPressure)}">${esc(flowPressure.length > 28 ? flowPressure.slice(0,27)+'…' : flowPressure)}</div>
     </div>
+
     <div class="ribbon-cell">
-      <div class="ribbon-label">Inst. Confidence</div>
+      <div class="ribbon-label">VWAP</div>
+      <div class="ribbon-val rv-blue">$${fmt(vwap)}</div>
+      <div class="ribbon-sub">${poc > 0 ? 'POC $'+fmt(poc) : '--'}${rsLabel ? ' · '+esc(rsLabel) : ''}</div>
+    </div>
+
+    <div class="ribbon-cell">
+      <div class="ribbon-label">ICI</div>
       <div class="ribbon-val ${ici.ici_color === 'GREEN' ? 'rv-green' : ici.ici_color === 'RED' ? 'rv-red' : 'rv-amber'}">${fmtI(ici.ici)}</div>
       <div class="ribbon-sub">${ici.ici_label || '--'} · ${d.grade || '--'}</div>
     </div>
+
     <div class="ribbon-cell ribbon-decision ${cellCls}">
       <div class="ribbon-label">Decision</div>
       <div class="ribbon-val ${decCls}" style="font-size:11px;margin-top:5px;letter-spacing:.02em">${(dec || 'LOADING').replace(/_/g,' ')}</div>
@@ -455,24 +537,103 @@ function recordConfidencePoint(d) {
 function renderCommandCenter(d) {
   const el = $('commandCenter');
   if (!el || !d) return;
-  const ici = Number((d.ici || {}).ici || d.confidence || 0);
-  const state = d.decision_state || (d.decision || {}).state || 'NO_TRADE';
-  const session = (d.session || {}).session || '--';
-  const flow = d.flow || d.flow_intelligence || {};
-  const gamma = d.gamma_regime || {};
-  const price = (d.ribbon || {}).spx_price || flow.stock_price;
-  const cls = state.includes('CALL') ? 'cmd-call' : state.includes('PUT') ? 'cmd-put' : state.includes('READY') || state.includes('WATCH') ? 'cmd-watch' : 'cmd-no';
-  const flowTxt = `${fmtI(flow.flow_score)} / ${fmtI(flow.order_flow_score)}`;
-  const netFlow = flow.net_premium != null ? '$' + fmtM(flow.net_premium) : '$' + fmtM((d.ribbon || {}).net_flow);
+  // Command Center now focuses on POC and auction — not a list of metrics
+  const ms    = d.market_state || {};
+  const ai    = d.auction_intelligence || {};
+  const au    = d.auction || {};
+  const state = d.decision_state || 'NO_TRADE';
+  const ici   = Number((d.ici || {}).ici || 0);
+  const price = ms.price || (d.ribbon || {}).spx_price || 0;
+
+  // POC context
+  const poc   = ms.poc || (au.poc) || 0;
+  const vah   = ms.vah || (au.vah) || 0;
+  const val_  = ms.val || (au.val) || 0;
+  const mig   = ms.poc_migration || au.poc_migration || 'UNKNOWN';
+  const pvp   = ms.price_vs_poc || '';
+  const pva   = ms.price_vs_va  || '';
+  const pocDelta = (ai.poc_migration || {}).delta || 0;
+  const pocSpeed = (ai.poc_migration || {}).speed || '';
+  const pocAccel = (ai.poc_migration || {}).acceleration || '';
+
+  // Auction state
+  const aiState = (ai.auction_state || {});
+  const auctionName = (aiState.state || au.auction_state || 'UNKNOWN').replace(/_/g,' ');
+  const isInit  = aiState.is_initiative;
+  const isResp  = aiState.is_responsive;
+  const isTrend = aiState.is_trend_day;
+  const wouldTrade = aiState.would_trade;
+  const auctionConf = aiState.confidence || 0;
+
+  // Acceptance
+  const accStatus = (ai.acceptance || {}).primary_status || '';
+  const accLevel  = (ai.acceptance || {}).primary_level  || '';
+
+  // Excess
+  const excess    = (ai.excess || {}).detected ? (ai.excess.type || '').replace(/_/g,' ') : '';
+
+  // Colors
+  const decCls  = state.includes('CALL') ? 'cmd-call' : state.includes('PUT') ? 'cmd-put' : state.includes('WATCH') || state === 'READY' ? 'cmd-watch' : 'cmd-no';
+  const pocColor = mig === 'RISING' ? 'var(--green)' : mig === 'FALLING' ? 'var(--red)' : 'var(--muted)';
+  const pocArrow = mig === 'RISING' ? '▲' : mig === 'FALLING' ? '▼' : '—';
+  const pvaColor = pva === 'ABOVE_VAH' ? 'var(--green)' : pva === 'BELOW_VAL' ? 'var(--red)' : 'var(--muted)';
+  const iciColor = ici >= 75 ? 'var(--green)' : ici >= 55 ? 'var(--amber)' : 'var(--red)';
+  const accColor = accStatus === 'ACCEPTING' ? 'var(--green)' : accStatus === 'REJECTED' ? 'var(--red)' : 'var(--amber)';
+  const auctionColor = isTrend ? 'var(--green)' : isInit ? '#22d3ee' : isResp ? 'var(--amber)' : 'var(--muted)';
+
+  // POC delta display
+  const deltaPts = pocDelta !== 0 ? (pocDelta > 0 ? '+' : '') + pocDelta.toFixed(2) + ' pts' : '';
+
+  // Location plain english
+  const locText =
+    pva === 'ABOVE_VAH' ? 'Above Value' :
+    pva === 'BELOW_VAL' ? 'Below Value' :
+    pvp === 'ABOVE'     ? 'Inside — Above POC' :
+    pvp === 'BELOW'     ? 'Inside — Below POC' : 'At POC';
+
   el.innerHTML = `
-    <div class="cmd-decision ${cls}">${esc(state.replace(/_/g, ' '))}</div>
-    <div class="cmd-row"><span>ICI</span><b>${fmtI(ici)}%</b></div>
-    <div class="cmd-row"><span>SPX</span><b>$${fmt(price)}</b></div>
-    <div class="cmd-row"><span>Session</span><b>${esc(session)}</b></div>
-    <div class="cmd-row"><span>Flow / Order</span><b>${flowTxt}</b></div>
-    <div class="cmd-row"><span>Net Flow</span><b>${netFlow}</b></div>
-    <div class="cmd-row"><span>Gamma</span><b>${esc(gamma.regime_display || gamma.regime_label || '--')}</b></div>
-    <div class="cmd-row"><span>Call / Put Wall</span><b>${fmt(gamma.call_wall || (d.ribbon || {}).call_wall)} / ${fmt(gamma.put_wall || (d.ribbon || {}).put_wall)}</b></div>
+    <div class="cmd-decision ${decCls}">${esc(state.replace(/_/g,' '))}</div>
+
+    <!-- POC as hero -->
+    <div class="poc-hero">
+      <div class="poc-hero-label">Point of Control</div>
+      <div class="poc-hero-value">${poc > 0 ? '$' + fmt(poc) : '—'}</div>
+      <div class="poc-hero-migration" style="color:${pocColor}">
+        ${pocArrow} ${esc(mig)}${deltaPts ? ' · ' + deltaPts : ''}
+        ${pocSpeed ? '<span class="poc-speed">' + esc(pocSpeed) + (pocAccel === 'ACCELERATING' ? ' ↑↑' : pocAccel === 'DECELERATING' ? ' ↓' : '') + '</span>' : ''}
+      </div>
+      <div class="poc-hero-loc" style="color:${pvaColor}">${esc(locText)}</div>
+    </div>
+
+    <!-- Value area -->
+    <div class="cmd-va-strip">
+      <div class="va-chip va-chip-vah">VAH $${vah > 0 ? fmt(vah) : '—'}</div>
+      <div class="va-chip va-chip-poc">POC $${poc > 0 ? fmt(poc) : '—'}</div>
+      <div class="va-chip va-chip-val">VAL $${val_ > 0 ? fmt(val_) : '—'}</div>
+    </div>
+
+    <!-- Auction state -->
+    <div class="cmd-auction-row">
+      <div class="cmd-auction-state" style="color:${auctionColor}">${esc(auctionName)}</div>
+      <div class="cmd-auction-meta">${esc(isInit ? 'Initiative' : isResp ? 'Responsive' : isTrend ? 'Trend Day' : 'Balanced')} · ${auctionConf}%</div>
+    </div>
+
+    <!-- Acceptance -->
+    ${accStatus ? `<div class="cmd-acceptance-row">
+      <span class="cmd-acc-label">Acceptance</span>
+      <span class="cmd-acc-status" style="color:${accColor}">${esc(accStatus)} at ${esc(accLevel)}</span>
+    </div>` : ''}
+
+    <!-- Excess warning -->
+    ${excess ? `<div class="cmd-excess-row">⚠ ${esc(excess)}</div>` : ''}
+
+    <!-- ICI + price -->
+    <div class="cmd-ici-row">
+      <div class="cmd-ici-num" style="color:${iciColor}">${fmtI(ici)}<span class="cmd-ici-label">ICI</span></div>
+      <div class="cmd-price-num">$${fmt(price)}<span class="cmd-price-label">SPX</span></div>
+    </div>
+
+    ${wouldTrade === false ? '<div class="cmd-no-trade-note">Institutional traders would not participate here</div>' : ''}
   `;
 }
 
@@ -480,21 +641,197 @@ function renderCommandCenter(d) {
 function renderAuctionPanel(d) {
   const el = $('auctionPanel');
   if (!el || !d) return;
-  const vp = d.volume_profile || {};
-  const levels = vp.levels || {};
-  const auction = d.auction || {};
-  const flags = auction.quality_flags || vp.quality_flags || [];
-  const mig = auction.poc_migration || '--';
-  const migCls = mig === 'RISING' ? 'rv-green' : mig === 'FALLING' ? 'rv-red' : 'rv-amber';
+  const ai  = d.auction_intelligence || {};
+  const au  = d.auction || {};
+  const ms  = d.market_state || {};
+  const vp  = d.volume_profile || {};
+  const lvl = vp.levels || {};
+  const g   = d.gamma_regime || {};
+
+  const poc    = ms.poc   || lvl.poc || au.poc  || 0;
+  const vah    = ms.vah   || lvl.vah || au.vah  || 0;
+  const val_   = ms.val   || lvl.val || au.val  || 0;
+  const vwap   = ms.vwap  || 0;
+  const price  = ms.price || 0;
+  const mig    = ms.poc_migration || au.poc_migration || '--';
+  const pvp    = ms.price_vs_poc  || '';
+  const pva    = ms.price_vs_va   || '';
+
+  const aiPocMig = ai.poc_migration  || {};
+  const aiState  = ai.auction_state  || {};
+  const aiAcc    = ai.acceptance     || {};
+  const aiHvbo   = ai.hvbo           || {};
+  const aiExcess = ai.excess         || {};
+
+  // Auction verb — what are institutions doing?
+  const auctionVerb =
+    pva === 'ABOVE_VAH' && mig === 'RISING'  ? 'Accepting Higher'    :
+    pva === 'ABOVE_VAH' && mig !== 'RISING'  ? 'Testing Higher'      :
+    pva === 'BELOW_VAL' && mig === 'FALLING' ? 'Accepting Lower'     :
+    pva === 'BELOW_VAL' && mig !== 'FALLING' ? 'Testing Lower'       :
+    (aiAcc.primary_status === 'REJECTED')    ? 'Rejecting'           :
+    mig === 'RISING'                          ? 'POC Rising'          :
+    mig === 'FALLING'                         ? 'POC Falling'         :
+    (aiState.is_balanced)                     ? 'Balanced Auction'    : 'Monitoring';
+
+  const verbColor =
+    auctionVerb.includes('Accepting Higher') || auctionVerb.includes('POC Rising') ? 'var(--green)' :
+    auctionVerb.includes('Accepting Lower') || auctionVerb.includes('POC Falling') || auctionVerb.includes('Rejecting') ? 'var(--red)' :
+    auctionVerb.includes('Testing') ? 'var(--amber)' : 'var(--muted)';
+
+  // POC migration: show delta + narrative word
+  const pocDelta = aiPocMig.delta || 0;
+  const pocArrow = mig === 'RISING' ? '▲' : mig === 'FALLING' ? '▼' : '—';
+  const pocColor = mig === 'RISING' ? 'var(--green)' : mig === 'FALLING' ? 'var(--red)' : 'var(--muted)';
+  const pocDeltaStr = pocDelta !== 0 ? (pocDelta > 0 ? '+' : '') + pocDelta.toFixed(2) : '';
+  const pocAccel = aiPocMig.acceleration || '';
+  const auctionConf = aiState.confidence || (au.confidence) || 0;
+
+  // Acceptance sub-text
+  const accStatus  = aiAcc.primary_status || '';
+  const accLevel   = aiAcc.primary_level  || '';
+  const accNote    = aiAcc.primary_note   || au.narrative || '';
+  const accColor   = accStatus === 'ACCEPTING' ? 'var(--green)' : accStatus === 'REJECTED' ? 'var(--red)' : 'var(--amber)';
+
+  // Value width
+  const valWidth = vah > 0 && val_ > 0 ? (vah - val_).toFixed(2) : null;
+
+  // ── Auction Narrative 2.0 ──────────────────────────────────────────────────
+  // Each condition answers three questions:
+  //   1. What is price doing?  2. What is the auction doing?  3. What does it mean?
+  const instNarrative = (() => {
+    // ── Above value ──────────────────────────────────────────────────────────
+    if (pva === 'ABOVE_VAH' && mig === 'RISING')
+      return 'Price is above Value Area High and POC is migrating higher. ' +
+             'Institutions are actively accepting these prices as fair value — ' +
+             'this is a confirmed breakout. The auction is expanding upward with conviction.';
+    if (pva === 'ABOVE_VAH' && mig === 'STABLE')
+      return 'Price is above Value Area High, but POC has not yet migrated higher. ' +
+             'The auction is pausing — institutions have not fully accepted these prices. ' +
+             'Watch for POC to follow. If it stalls, this is a probe, not acceptance.';
+    if (pva === 'ABOVE_VAH' && mig === 'FALLING')
+      return 'Price is probing above VAH but POC is migrating lower. ' +
+             'This is a divergence — sellers are distributing into the breakout attempt. ' +
+             'High probability of a rejection and rotation back into value.';
+
+    // ── Below value ──────────────────────────────────────────────────────────
+    if (pva === 'BELOW_VAL' && mig === 'FALLING')
+      return 'Price is below Value Area Low and POC is migrating lower. ' +
+             'Institutions are accepting lower prices as fair value — ' +
+             'this is a confirmed breakdown. The auction is expanding downward with conviction.';
+    if (pva === 'BELOW_VAL' && mig === 'STABLE')
+      return 'Price is testing below Value Area Low, but POC remains higher. ' +
+             'Sellers are probing lower prices, but the auction has not accepted them yet. ' +
+             'Responsive buyers may defend this level. Wait for POC to confirm before treating as a breakdown.';
+    if (pva === 'BELOW_VAL' && mig === 'RISING')
+      return 'Price is below Value Area Low, but POC is migrating higher — a significant divergence. ' +
+             'Sellers are pushing lower while the auction center moves up. ' +
+             'This is a failed breakdown setup. Buyers defending the low with increasing conviction.';
+
+    // ── Inside value, rejection ───────────────────────────────────────────────
+    if (accStatus === 'REJECTED' && pvp === 'ABOVE')
+      return 'Price attempted to hold above POC but was rejected. ' +
+             'Institutions are not accepting prices above the control point. ' +
+             'Expect a rotation toward VAL unless buyers quickly reclaim POC.';
+    if (accStatus === 'REJECTED' && pvp === 'BELOW')
+      return 'Price attempted to hold below POC but was rejected. ' +
+             'Sellers failed to push the auction lower from the control point. ' +
+             'Responsive buyers are defending POC — watch for a bounce toward VAH.';
+    if (accStatus === 'REJECTED')
+      return 'Price was rejected at the reference level. ' +
+             'Institutions are not accepting these prices. A rotation back toward POC is likely.';
+
+    // ── Inside value, POC migrating ───────────────────────────────────────────
+    if (pva === 'INSIDE' && pvp === 'ABOVE' && mig === 'RISING')
+      return 'Price is above POC inside value with POC migrating higher. ' +
+             'Buyers are building control from within the value area. ' +
+             'A break of VAH with POC following would confirm initiative buying.';
+    if (pva === 'INSIDE' && pvp === 'BELOW' && mig === 'FALLING')
+      return 'Price is below POC inside value with POC migrating lower. ' +
+             'Sellers are building control from within the value area. ' +
+             'A break of VAL with POC following would confirm initiative selling.';
+    if (mig === 'RISING')
+      return 'POC is migrating higher — buyers are building a control zone. ' +
+             'Institutional acceptance is increasing. A break of VAH confirms the bias.';
+    if (mig === 'FALLING')
+      return 'POC is migrating lower — sellers are building a control zone. ' +
+             'Institutional distribution is increasing. A break of VAL confirms the bias.';
+
+    // ── Reclaim scenarios ─────────────────────────────────────────────────────
+    if (pvp === 'ABOVE' && accStatus === 'ACCEPTING' && pva === 'INSIDE')
+      return 'Price is accepting above POC inside value. ' +
+             'Buyers have reclaimed the control point — a constructive sign. ' +
+             'A push toward VAH is the likely next reference level.';
+    if (pvp === 'BELOW' && accStatus === 'ACCEPTING' && pva === 'INSIDE')
+      return 'Price is accepting below POC inside value. ' +
+             'Sellers have reclaimed the control point — a constructive bearish sign. ' +
+             'A push toward VAL is the likely next reference level.';
+
+    // ── Default: balanced ─────────────────────────────────────────────────────
+    return 'Balanced auction — price is inside value with no clear directional commitment. ' +
+           'The market is in equilibrium. Avoid new positions until the auction breaks ' +
+           'above VAH or below VAL with POC confirming.';
+  })();
+
+  // ── Institutional bias phrase (for bottom of ladder) ──────────────────────
+  // Captures the "split brain" situations (price going one way, auction another)
+  const instBias = (() => {
+    if (pva === 'ABOVE_VAH' && mig === 'RISING')  return { bull: 'Bullish price',  bear: null,           note: 'Confirmed acceptance higher' };
+    if (pva === 'ABOVE_VAH' && mig === 'STABLE')  return { bull: 'Bullish price',  bear: 'Neutral auction', note: 'Probe — not yet accepted' };
+    if (pva === 'ABOVE_VAH' && mig === 'FALLING') return { bull: 'Bullish price',  bear: 'Bearish auction', note: 'Divergence — rejection risk' };
+    if (pva === 'BELOW_VAL' && mig === 'FALLING') return { bull: null,             bear: 'Bearish price',  note: 'Confirmed acceptance lower' };
+    if (pva === 'BELOW_VAL' && mig === 'STABLE')  return { bull: 'Bullish auction',bear: 'Bearish price',  note: 'Lower probe — not accepted' };
+    if (pva === 'BELOW_VAL' && mig === 'RISING')  return { bull: 'Bullish auction',bear: 'Bearish price',  note: 'Failed breakdown — watch reclaim' };
+    if (mig === 'RISING')  return { bull: 'Bullish value', bear: null,            note: 'POC migrating higher' };
+    if (mig === 'FALLING') return { bull: null,            bear: 'Bearish value', note: 'POC migrating lower' };
+    return { bull: null, bear: null, note: 'Balanced — no bias' };
+  })();
+
   el.innerHTML = `
-    <div class="cmd-row"><span>POC</span><b>$${fmt(levels.poc || auction.poc)}</b></div>
-    <div class="cmd-row"><span>VAH / VAL</span><b>$${fmt(levels.vah || auction.vah)} / $${fmt(levels.val || auction.val)}</b></div>
-    <div class="cmd-row"><span>POC Migration</span><b class="${migCls}">${esc(mig)}</b></div>
-    <div class="cmd-row"><span>Auction State</span><b>${esc((auction.auction_state || '--').replace(/_/g,' '))}</b></div>
-    <div class="auction-note">${esc(auction.narrative || vp.message || 'Waiting for profile data.')}</div>
-    ${flags.length ? `<div class="mini-blockers">${flags.slice(0,3).map(x => `<div>• ${esc(String(x).replace(/_/g,' '))}</div>`).join('')}</div>` : ''}
+    <div class="ap-auction-hero">
+      <div class="ap-auction-verb" style="color:${verbColor}">${esc(auctionVerb)}</div>
+      ${auctionConf > 0 ? `<div class="ap-auction-conf">Confidence <span style="color:${verbColor}">${auctionConf}%</span></div>` : ''}
+    </div>
+
+    <div class="ap-poc-row">
+      <div class="ap-poc-main">
+        <span class="ap-poc-arrow" style="color:${pocColor}">${pocArrow}</span>
+        <span class="ap-poc-label">POC</span>
+        <span class="ap-poc-val">$${poc > 0 ? fmt(poc) : '—'}</span>
+      </div>
+      ${pocDeltaStr ? `<div class="ap-poc-delta" style="color:${pocColor}">${pocDeltaStr} pts${pocAccel === 'ACCELERATING' ? ' ↑↑ accelerating' : pocAccel === 'DECELERATING' ? ' slowing' : ''}</div>` : ''}
+    </div>
+
+    <div class="ap-acceptance-block">
+      <div class="ap-acc-status" style="color:${accColor}">${accStatus || '—'} ${accLevel ? 'at ' + esc(accLevel) : ''}</div>
+    </div>
+
+    <div class="ap-inst-narrative">${esc(instNarrative)}</div>
+    ${instBias.note ? `<div class="ap-bias-strip">
+      ${instBias.bull ? `<span class="ap-bias-bull">▲ ${esc(instBias.bull)}</span>` : ''}
+      ${instBias.bear ? `<span class="ap-bias-bear">▼ ${esc(instBias.bear)}</span>` : ''}
+      <span class="ap-bias-note">${esc(instBias.note)}</span>
+    </div>` : ''}
+
+    <div class="ap-va-strip">
+      <div class="ap-va-item ap-va-vah"><span>VAH</span><b>$${fmt(vah)}</b></div>
+      <div class="ap-va-item ap-va-vwap"><span>VWAP</span><b>$${fmt(vwap)}</b></div>
+      <div class="ap-va-item ap-va-val"><span>VAL</span><b>$${fmt(val_)}</b></div>
+    </div>
+
+    ${valWidth ? `<div class="ap-va-width">Value width: <b>${valWidth} pts</b>${aiHvbo.value_rotation_pct ? ' · Rotation: '+aiHvbo.value_rotation_pct+'%' : ''}</div>` : ''}
+
+    ${aiExcess.detected ? `<div class="ap-excess-inline">⚠ ${esc((aiExcess.type||'').replace(/_/g,' '))} — ${esc(aiExcess.action||'')}</div>` : ''}
+
+    ${aiHvbo.available && aiHvbo.hvbo_low ? `
+    <div class="ap-hvbo-row">
+      <span class="ap-hvbo-label">HVBO</span>
+      <span class="ap-hvbo-val">$${fmt(aiHvbo.hvbo_low)}–$${fmt(aiHvbo.hvbo_high)}</span>
+      <span class="ap-hvbo-loc">${esc((aiHvbo.price_location||'').replace(/_/g,' '))}</span>
+    </div>` : ''}
   `;
 }
+
 
 function renderCoachSnapshot(d) {
   const el = $('coachSnapshot');
@@ -781,15 +1118,26 @@ function renderStory(d) {
 /* ── Replay ───────────────────────────────────────────────────────────────── */
 function captureReplaySnap(d) {
   if (!d) return;
+  const _ai  = d.auction_intelligence || {};
+  const _ms  = d.market_state || {};
   const snap = {
     ts:      new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'America/New_York' }),
     state:   d.decision_state || '--',
     ici:     Number((d.ici || {}).ici || 0),
-    price:   (d.ribbon || {}).spx_price || ((d.flow_intelligence || d.flow || {}).stock_price) || null,
+    price:   _ms.price || (d.ribbon || {}).spx_price || null,
     exec:    (d.execution || {}).execution_state || '--',
     flow:    (d.flow_intelligence || {}).flow_momentum || '--',
     notes:   ((d.flow_intelligence || {}).notes || []).slice(0, 2),
     summary: d.executive_summary || '',
+    // Auction context for timeline
+    poc:           _ms.poc || 0,
+    poc_migration: _ms.poc_migration || '',
+    auction_state: ((_ai.auction_state || {}).state || (d.auction || {}).auction_state || '').replace(/_/g,' '),
+    acceptance:    ((_ai.acceptance || {}).primary_status || ''),
+    acc_level:     ((_ai.acceptance || {}).primary_level  || ''),
+    excess:        ((_ai.excess || {}).detected ? (_ai.excess.type||'').replace(/_/g,' ') : ''),
+    tape_bias:     _ms.tape_bias || '',
+    pine_state:    _ms.pine_state || '',
   };
   replaySnaps.push(snap);
   if (replaySnaps.length > 120) replaySnaps.shift(); // keep last 120 snaps (~24 min at 12s)
@@ -1167,6 +1515,9 @@ async function loadOS() {
     renderStory(data);
     renderOvernightGamePlan(data);
     renderAuctionIntel(data);
+    renderDecisionTree(data);
+    captureTimelineEvent(data);
+    renderAuctionLadder(data);
 
     // Render market status banner from data if present
     if (data.market_status) renderMarketStatusBanner(data.market_status);
@@ -1336,6 +1687,407 @@ function renderAuctionIntel(d) {
     </div>` : ''}
 
     ${fastZone ? `<div class="ai-fast-zone">⚡ ${esc(fastZone)}</div>` : ''}
+  `;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   DECISION TREE — 6-layer institutional hierarchy
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderDecisionTree(d) {
+  const el = $('decisionTreePanel');
+  if (!el || !d) return;
+
+  const ms    = d.market_state || {};
+  const ai    = d.auction_intelligence || {};
+  const ici   = d.ici || {};
+  const exec  = d.execution || {};
+  const flow  = d.flow_intelligence || d.flow || {};
+  const gamma = d.gamma_regime || {};
+  const risk  = d.risk || {};
+  const state = d.decision_state || 'NO_TRADE';
+
+  // Layer 1: Environment
+  const session   = (d.session || {}).session_state || 'UNKNOWN';
+  const tradeable = session === 'MARKET_OPEN';
+  const env_ok    = tradeable;
+  const env_label = tradeable ? 'Tradeable' : session.replace(/_/g,' ');
+
+  // Layer 2: Auction
+  const aiState   = ai.auction_state || {};
+  const auctionOk = aiState.would_trade === true;
+  const auction_label = (aiState.state || (d.auction||{}).auction_state || 'UNKNOWN').replace(/_/g,' ');
+  const mig = ms.poc_migration || '';
+  const pva = ms.price_vs_va  || '';
+
+  // Layer 3: Institutional participation
+  const flowBias  = ms.flow_bias || flow.bias || 'MIXED';
+  const tapeBias  = ms.tape_bias || 'MIXED';
+  const sweeps    = ms.tape_sweeps || 0;
+  const netPrem   = ms.net_premium || 0;
+  const flowOk    = flowBias === 'BULLISH' && state.includes('CALL') ||
+                    flowBias === 'BEARISH' && state.includes('PUT') ||
+                    flowBias !== 'MIXED';
+  const flow_label = `Flow ${esc(flowBias)} · Tape ${esc(tapeBias)}${sweeps > 0 ? ' · '+sweeps+' sweeps' : ''}`;
+
+  // Layer 4: Structure
+  const pocOk  = ms.poc > 0;
+  const conf   = ms.poc_vwap_confluent;
+  const accStatus = (ai.acceptance || {}).primary_status || '';
+  const struct_label = accStatus ? `${esc(accStatus)} at ${esc((ai.acceptance||{}).primary_level||'')}` : (pocOk ? 'Levels defined' : 'Waiting for profile');
+  const structOk = accStatus === 'ACCEPTING' || accStatus === 'TESTING';
+
+  // Layer 5: Execution (Pine)
+  const pine   = ms.pine_state || 'WAITING';
+  const pineOk = pine === 'CONFIRMED';
+  const pine_secs = ms.signal_secs || 0;
+  const pine_label = pineOk ? `Pine Confirmed${pine_secs > 0 ? ' ('+Math.floor(pine_secs/60)+'m '+pine_secs%60+'s)' : ''}` : 'Waiting for Pine';
+
+  // Layer 6: Decision
+  const isEnter   = state.startsWith('ENTER');
+  const isWatch   = state.startsWith('WATCH') || state === 'READY';
+  const dec_color = isEnter ? 'var(--green)' : isWatch ? 'var(--amber)' : 'var(--red)';
+
+  const _layer = (num, label, value, ok, note='') => {
+    const dot = ok === true ? 'dt-dot-green' : ok === false ? 'dt-dot-red' : 'dt-dot-amber';
+    return `<div class="dt-layer">
+      <div class="dt-layer-left">
+        <div class="dt-dot ${dot}"></div>
+        <div class="dt-connector"></div>
+      </div>
+      <div class="dt-layer-body">
+        <div class="dt-layer-label">${label}</div>
+        <div class="dt-layer-value">${value}</div>
+        ${note ? `<div class="dt-layer-note">${esc(note)}</div>` : ''}
+      </div>
+    </div>`;
+  };
+
+  el.innerHTML = `
+    <div class="dt-wrap">
+      ${_layer(1, 'Environment',              env_label,     env_ok,    tradeable ? '' : 'Market closed — no entries')}
+      ${_layer(2, 'Auction',                  auction_label, auctionOk, aiState.explanation ? aiState.explanation.slice(0,120)+'…' : '')}
+      ${_layer(3, 'Institutional Flow',       flow_label,    flowOk,    '')}
+      ${_layer(4, 'Structure / Acceptance',   struct_label,  structOk,  (ai.acceptance||{}).primary_note ? (ai.acceptance.primary_note).slice(0,100)+'…' : '')}
+      ${_layer(5, 'Execution',                pine_label,    pineOk,    '')}
+      <div class="dt-decision" style="color:${dec_color}">
+        <div class="dt-decision-label">Decision</div>
+        <div class="dt-decision-state">${esc(state.replace(/_/g,' '))}</div>
+        <div class="dt-decision-ici">ICI ${fmtI(Number(ici.ici||0))}</div>
+      </div>
+    </div>
+  `;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   INSTITUTIONAL TIMELINE — chronological event feed
+   ════════════════════════════════════════════════════════════════════════════ */
+
+// Deduplicated event log — only logs meaningful state changes
+const timelineEvents = [];
+let lastTimelineState = '';
+
+function captureTimelineEvent(d) {
+  if (!d) return;
+  const ms     = d.market_state || {};
+  const ai     = d.auction_intelligence || {};
+  const state  = d.decision_state || '';
+  const mig    = ms.poc_migration || '';
+  const accS   = (ai.acceptance || {}).primary_status || '';
+  const accL   = (ai.acceptance || {}).primary_level  || '';
+  const excess = (ai.excess || {}).detected ? (ai.excess.type||'') : '';
+  const pine   = ms.pine_state || '';
+  const flow   = ms.flow_bias  || '';
+  const tape   = ms.tape_bias  || '';
+  const auctionState = ((ai.auction_state||{}).state||'').replace(/_/g,' ');
+
+  // Build a fingerprint of the meaningful state
+  const fp = [state, mig, accS, accL, excess, pine, flow, auctionState].join('|');
+  if (fp === lastTimelineState) return;  // no change — skip
+  lastTimelineState = fp;
+
+  const ts  = new Date().toLocaleTimeString('en-US', {
+    hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/New_York'
+  });
+
+  // Determine the most meaningful event to log
+  const events = [];
+
+  if (excess) {
+    events.push({ text: excess.replace(/_/g,' '), type: excess.includes('BEARISH') ? 'bear' : 'bull', icon: '⚠' });
+  }
+  if (pine === 'CONFIRMED' && !lastTimelineState.includes('CONFIRMED')) {
+    events.push({ text: 'Pine trigger confirmed', type: 'signal', icon: '🎯' });
+  }
+  if (mig === 'RISING') {
+    events.push({ text: 'POC migrating higher — institutions accepting higher prices', type: 'bull', icon: '▲' });
+  } else if (mig === 'FALLING') {
+    events.push({ text: 'POC migrating lower — institutions distributing', type: 'bear', icon: '▼' });
+  }
+  if (accS === 'ACCEPTING') {
+    events.push({ text: `Acceptance ${accS.toLowerCase()} at ${accL}`, type: 'bull', icon: '✓' });
+  } else if (accS === 'REJECTED') {
+    events.push({ text: `Rejection at ${accL}`, type: 'bear', icon: '✗' });
+  }
+  if (auctionState && auctionState !== 'UNKNOWN') {
+    events.push({ text: auctionState, type: 'auction', icon: '⚡' });
+  }
+  if (flow === 'BULLISH') {
+    events.push({ text: 'Flow turned bullish', type: 'bull', icon: '●' });
+  } else if (flow === 'BEARISH') {
+    events.push({ text: 'Flow turned bearish', type: 'bear', icon: '●' });
+  }
+  if (state.startsWith('ENTER')) {
+    events.push({ text: state.replace(/_/g,' '), type: 'signal', icon: '▶' });
+  }
+
+  if (!events.length) {
+    events.push({ text: state.replace(/_/g,' '), type: 'neutral', icon: '·' });
+  }
+
+  // Add all events at this timestamp
+  for (const ev of events) {
+    timelineEvents.unshift({ ts, ...ev });
+  }
+  while (timelineEvents.length > 80) timelineEvents.pop();
+
+  renderInstitutionalTimeline();
+}
+
+function renderInstitutionalTimeline() {
+  const el = $('institutionalTimeline');
+  if (!el) return;
+  if (!timelineEvents.length) {
+    el.innerHTML = '<div class="itl-empty">Session events will appear here as the auction develops.</div>';
+    return;
+  }
+  const typeColor = {
+    bull:    'var(--green)',
+    bear:    'var(--red)',
+    signal:  '#22d3ee',
+    auction: 'var(--purple)',
+    neutral: 'var(--faint)',
+  };
+  el.innerHTML = timelineEvents.slice(0,30).map((ev, i) => `
+    <div class="itl-event">
+      <div class="itl-time">${ev.ts}</div>
+      <div class="itl-connector">
+        <div class="itl-dot" style="background:${typeColor[ev.type]||'var(--faint)'}"></div>
+        ${i < timelineEvents.length - 1 ? '<div class="itl-line"></div>' : ''}
+      </div>
+      <div class="itl-text" style="color:${typeColor[ev.type]||'var(--muted)'}">${ev.icon} ${esc(ev.text)}</div>
+    </div>`).join('');
+}
+
+/* Upgrade renderReplayList to show auction context */
+function renderReplayList() {
+  const el = $('replayEvents');
+  if (!el) return;
+  if (!replaySnaps.length) {
+    el.innerHTML = '<div style="color:var(--faint);font-size:12px;padding:12px">No replay data yet.</div>';
+    return;
+  }
+  el.innerHTML = [...replaySnaps].reverse().slice(0, 30).map(s => {
+    const decColor = s.state.includes('CALL') ? 'var(--green)' : s.state.includes('PUT') ? 'var(--red)' : s.state.includes('WATCH') || s.state === 'READY' ? 'var(--amber)' : 'var(--muted)';
+    const migArrow = s.poc_migration === 'RISING' ? '▲' : s.poc_migration === 'FALLING' ? '▼' : '—';
+    const accColor = s.acceptance === 'ACCEPTING' ? 'var(--green)' : s.acceptance === 'REJECTED' ? 'var(--red)' : 'var(--muted)';
+    return `<div class="replay-event">
+      <span class="re-time">${s.ts}</span>
+      <div class="re-dot" style="background:${decColor}"></div>
+      <div class="re-text">
+        <b style="color:${decColor}">${s.state.replace(/_/g,' ')}</b>
+        ${s.poc > 0 ? ` · POC <span style="color:var(--purple)">$${fmt(s.poc)}</span> ${migArrow}` : ''}
+        ${s.auction_state ? ` · <span style="color:var(--faint)">${esc(s.auction_state)}</span>` : ''}
+        ${s.acceptance ? ` · <span style="color:${accColor}">${esc(s.acceptance)}${s.acc_level?' @ '+esc(s.acc_level):''}</span>` : ''}
+        ${s.excess ? `<br><span style="color:var(--amber)">⚠ ${esc(s.excess)}</span>` : ''}
+        ${s.pine_state === 'CONFIRMED' ? `<br><span style="color:#22d3ee">🎯 Pine confirmed</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   AUCTION LADDER — 2-second institutional read
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderAuctionLadder(d) {
+  const el = $('auctionLadder');
+  if (!el || !d) return;
+
+  const ms  = d.market_state || {};
+  const ai  = d.auction_intelligence || {};
+  const au  = d.auction  || {};
+  const vp  = d.volume_profile || {};
+  const lvl = vp.levels || {};
+
+  const price  = ms.price   || 0;
+  const poc    = ms.poc     || lvl.poc || au.poc || 0;
+  const vah    = ms.vah     || lvl.vah || au.vah || 0;
+  const val_   = ms.val     || lvl.val || au.val || 0;
+  const vwap   = ms.vwap    || 0;
+  const mig    = ms.poc_migration || au.poc_migration || '--';
+  const pvp    = ms.price_vs_poc  || '';
+  const pva    = ms.price_vs_va   || '';
+
+  const aiState  = ai.auction_state  || {};
+  const aiAcc    = ai.acceptance     || {};
+  const aiPocMig = ai.poc_migration  || {};
+  const aiExcess = ai.excess         || {};
+
+  const pocDelta   = aiPocMig.delta || 0;
+  const pocAccel   = aiPocMig.acceleration || '';
+  const auctionConf= aiState.confidence || au.confidence || 0;
+  const accStatus  = aiAcc.primary_status || '';
+  const accLevel   = aiAcc.primary_level  || '';
+  const wouldTrade = aiState.would_trade;
+  const isInit     = aiState.is_initiative;
+  const isResp     = aiState.is_responsive;
+  const isTrend    = aiState.is_trend_day;
+  const auctionStateName = (aiState.state || au.auction_state || '').replace(/_/g, ' ');
+
+  // ── Price location label ──
+  const priceLoc =
+    pva === 'ABOVE_VAH' ? '▲ ABOVE VALUE' :
+    pva === 'BELOW_VAL' ? '▼ BELOW VALUE' :
+    pvp === 'ABOVE'     ? '▲ ABOVE POC'   :
+    pvp === 'BELOW'     ? '▼ BELOW POC'   :
+    pvp === 'AT'        ? '— AT POC'       : '— INSIDE VALUE';
+
+  const priceLocColor =
+    pva === 'ABOVE_VAH'             ? 'var(--green)'  :
+    pva === 'BELOW_VAL'             ? 'var(--red)'    :
+    pvp === 'ABOVE'                 ? 'var(--green)'  :
+    pvp === 'BELOW'                 ? 'var(--red)'    : 'var(--muted)';
+
+  // ── POC migration label ──
+  const pocMigLabel =
+    mig === 'RISING'  ? '▲ Rising' :
+    mig === 'FALLING' ? '▼ Falling' : '— Stable';
+  const pocMigSub = pocDelta !== 0
+    ? (pocDelta > 0 ? '+' : '') + pocDelta.toFixed(2) + ' pts' +
+      (pocAccel === 'ACCELERATING' ? ' · ↑↑ accel' : pocAccel === 'DECELERATING' ? ' · slowing' : '')
+    : '';
+  const migColor = mig === 'RISING' ? 'var(--green)' : mig === 'FALLING' ? 'var(--red)' : 'var(--muted)';
+
+  // ── Auction state label ──
+  const auctionLabel =
+    pva === 'ABOVE_VAH' && mig === 'RISING'  ? 'Accepting Higher'       :
+    pva === 'ABOVE_VAH' && mig === 'STABLE'  ? 'Testing Higher — Probe' :
+    pva === 'ABOVE_VAH' && mig === 'FALLING' ? 'Rejection Risk'         :
+    pva === 'BELOW_VAL' && mig === 'FALLING' ? 'Accepting Lower'        :
+    pva === 'BELOW_VAL' && mig === 'STABLE'  ? 'Lower Probe — Not Accepted' :
+    pva === 'BELOW_VAL' && mig === 'RISING'  ? 'Failed Breakdown'       :
+    accStatus === 'REJECTED'                  ? 'Rejected at Level'      :
+    isTrend                                   ? auctionStateName          :
+    isInit                                    ? auctionStateName          :
+    isResp                                    ? auctionStateName          :
+    mig === 'RISING'                          ? 'Building Higher — Inside Value' :
+    mig === 'FALLING'                         ? 'Building Lower — Inside Value'  :
+    auctionStateName || 'Balanced';
+
+  const auctionColor =
+    auctionLabel.includes('Accepting Higher') || auctionLabel.includes('Failed Breakdown') ? 'var(--green)' :
+    auctionLabel.includes('Accepting Lower')  || auctionLabel.includes('Rejection') ? 'var(--red)' :
+    auctionLabel.includes('Probe') || auctionLabel.includes('Testing') ? 'var(--amber)' :
+    isTrend || isInit ? '#22d3ee' : 'var(--muted)';
+
+  // ── Acceptance ──
+  const accLabel = accStatus
+    ? accStatus + (accLevel ? ' at ' + accLevel : '')
+    : '—';
+  const accColor = accStatus === 'ACCEPTING' ? 'var(--green)' : accStatus === 'REJECTED' ? 'var(--red)' : 'var(--amber)';
+  const accYN    = accStatus === 'ACCEPTING' ? '✓ YES' : accStatus === 'REJECTED' ? '✗ NO' : '~ TESTING';
+
+  // ── Institutional bias (the split-brain read) ──
+  const biasBull =
+    pva === 'ABOVE_VAH' && mig === 'RISING'  ? 'Bullish price & auction'   :
+    pva === 'ABOVE_VAH' && mig === 'STABLE'  ? 'Bullish price'             :
+    pva === 'ABOVE_VAH' && mig === 'FALLING' ? 'Bullish price'             :
+    pva === 'BELOW_VAL' && mig === 'RISING'  ? 'Bullish auction'           :
+    mig === 'RISING'                          ? 'Bullish value'             : null;
+
+  const biasBear =
+    pva === 'BELOW_VAL' && mig === 'FALLING' ? 'Bearish price & auction'   :
+    pva === 'BELOW_VAL' && mig === 'STABLE'  ? 'Bearish price'             :
+    pva === 'ABOVE_VAH' && mig === 'FALLING' ? 'Bearish auction'           :
+    pva === 'BELOW_VAL' && mig === 'RISING'  ? 'Bearish price'             :
+    mig === 'FALLING'                         ? 'Bearish value'             : null;
+
+  const biasConflict = biasBull && biasBear;
+
+  // ── Excess ──
+  const excessType = aiExcess.detected ? (aiExcess.type || '').replace(/_/g, ' ') : null;
+
+  // ── Participation ──
+  const participationLabel = wouldTrade === false
+    ? 'Wait — no institutional setup'
+    : isInit   ? 'Initiative participants active'
+    : isResp   ? 'Responsive participants active'
+    : isTrend  ? 'Trend day — momentum favored'
+    : 'Balanced — no clear participants';
+  const participationColor = wouldTrade === false ? 'var(--faint)'
+    : (isInit || isTrend) ? '#22d3ee' : isResp ? 'var(--amber)' : 'var(--faint)';
+
+  // ── Build the ladder ──
+  const _row = (label, value, sub, valueColor) => `
+    <div class="al-row">
+      <div class="al-label">${esc(label)}</div>
+      <div class="al-value" style="color:${valueColor||'var(--text)'}">${value}</div>
+      ${sub ? `<div class="al-sub">${esc(sub)}</div>` : ''}
+    </div>`;
+
+  const _div = () => `<div class="al-divider"></div>`;
+
+  el.innerHTML = `
+    <div class="al-wrap">
+
+      ${excessType ? `<div class="al-excess-banner">${excessType}</div>` : ''}
+
+      ${_row('Price', price > 0 ? '$' + fmt(price) : '—', priceLoc, priceLocColor)}
+      ${_row('POC',   poc   > 0 ? '$' + fmt(poc)   : '—', pocMigLabel + (pocMigSub ? ' · ' + pocMigSub : ''), 'var(--purple)')}
+      ${_row('VAH',   vah   > 0 ? '$' + fmt(vah)   : '—', '', 'var(--amber)')}
+      ${_row('VAL',   val_  > 0 ? '$' + fmt(val_)  : '—', '', 'var(--amber)')}
+      ${vwap > 0 ? _row('VWAP', '$' + fmt(vwap), '', 'var(--blue)') : ''}
+
+      ${_div()}
+
+      ${_row('POC Migration', pocMigLabel, pocMigSub, migColor)}
+
+      ${_div()}
+
+      <div class="al-row al-row-feature">
+        <div class="al-label">Auction</div>
+        <div class="al-value al-value-feature" style="color:${auctionColor}">${esc(auctionLabel)}</div>
+        ${auctionConf > 0 ? `<div class="al-sub">${auctionConf}% confidence</div>` : ''}
+      </div>
+
+      ${_div()}
+
+      <div class="al-row">
+        <div class="al-label">Acceptance</div>
+        <div class="al-value" style="color:${accColor}">${accYN}</div>
+        <div class="al-sub">${esc(accLabel)}</div>
+      </div>
+
+      ${_div()}
+
+      <div class="al-row al-row-bias">
+        <div class="al-label">Institutional Bias</div>
+        <div class="al-bias-values">
+          ${biasBull ? `<span class="al-bias-bull">▲ ${esc(biasBull)}</span>` : ''}
+          ${biasBear ? `<span class="al-bias-bear">▼ ${esc(biasBear)}</span>` : ''}
+          ${!biasBull && !biasBear ? '<span style="color:var(--faint)">Neutral</span>' : ''}
+        </div>
+        ${biasConflict ? '<div class="al-bias-conflict">⚡ Bias conflict — divergence condition</div>' : ''}
+      </div>
+
+      ${_div()}
+
+      <div class="al-participation" style="color:${participationColor}">
+        ${esc(participationLabel)}
+      </div>
+
+    </div>
   `;
 }
 
