@@ -1190,3 +1190,312 @@ body {
   border: 1px solid rgba(245,158,11,.2);
   border-radius: 5px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AUCTION COMMAND CENTER — POC as hero
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* POC hero block */
+.poc-hero {
+  text-align: center;
+  padding: 12px 0 10px;
+  border-bottom: 1px solid var(--bdr);
+  margin-bottom: 10px;
+}
+.poc-hero-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--faint);
+  margin-bottom: 4px;
+}
+.poc-hero-value {
+  font-family: var(--mono);
+  font-size: 32px;
+  font-weight: 900;
+  color: var(--purple);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.poc-hero-migration {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.poc-speed {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--faint);
+  margin-left: 6px;
+}
+.poc-hero-loc {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .03em;
+}
+
+/* Value area strip */
+.cmd-va-strip {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.va-chip {
+  flex: 1;
+  text-align: center;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+.va-chip-vah { background: rgba(245,158,11,.1);  color: var(--amber); }
+.va-chip-poc { background: rgba(167,139,250,.1); color: var(--purple);}
+.va-chip-val { background: rgba(245,158,11,.1);  color: var(--amber); }
+
+/* Auction state row */
+.cmd-auction-row {
+  padding: 8px 0 6px;
+  border-bottom: 1px solid var(--bdr);
+  margin-bottom: 8px;
+}
+.cmd-auction-state {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .03em;
+  margin-bottom: 2px;
+}
+.cmd-auction-meta { font-size: 10px; color: var(--faint); }
+
+/* Acceptance row */
+.cmd-acceptance-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--bdr);
+}
+.cmd-acc-label  { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.cmd-acc-status { font-family: var(--mono); font-size: 11px; font-weight: 700; }
+
+/* Excess row */
+.cmd-excess-row {
+  font-size: 10px;
+  color: var(--amber);
+  background: rgba(245,158,11,.07);
+  border: 1px solid rgba(245,158,11,.2);
+  border-radius: 5px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+}
+
+/* ICI + price row */
+.cmd-ici-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--bdr);
+}
+.cmd-ici-num {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+.cmd-ici-label { font-size: 9px; color: var(--faint); text-transform: uppercase; margin-bottom: 2px; letter-spacing: .06em; }
+.cmd-price-num {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--blue);
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  margin-left: auto;
+}
+.cmd-price-label { font-size: 9px; color: var(--faint); text-transform: uppercase; margin-bottom: 2px; }
+
+.cmd-no-trade-note {
+  font-size: 10px;
+  color: var(--faint);
+  margin-top: 6px;
+  font-style: italic;
+  text-align: center;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AUCTION PANEL — POC / Value Area card
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ap-poc-block {
+  text-align: center;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--bdr);
+  margin-bottom: 10px;
+}
+.ap-poc-num {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--purple);
+  margin-bottom: 3px;
+}
+.ap-poc-dir {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+.ap-narrative {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.55;
+  padding: 0 4px;
+}
+.ap-va-bar { margin-bottom: 8px; }
+.ap-va-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(100,116,139,.1);
+}
+.ap-va-row span { color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+.ap-va-row b { font-family: var(--mono); font-weight: 700; }
+.ap-va-width { border-bottom: none; }
+.ap-hvbo-block {
+  background: rgba(56,189,248,.05);
+  border: 1px solid rgba(56,189,248,.15);
+  border-radius: 7px;
+  padding: 7px 9px;
+  margin-bottom: 8px;
+}
+.ap-hvbo-label { font-size: 9px; color: var(--blue); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; margin-bottom: 3px; }
+.ap-hvbo-range { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--blue); }
+.ap-hvbo-loc   { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.ap-acc-note {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin-bottom: 6px;
+  padding: 6px 8px;
+  background: rgba(15,23,42,.5);
+  border-radius: 6px;
+  border-left: 2px solid var(--bdr);
+}
+.ap-excess {
+  font-size: 10px;
+  color: var(--amber);
+  padding: 4px 7px;
+  background: rgba(245,158,11,.06);
+  border-radius: 5px;
+  border: 1px solid rgba(245,158,11,.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DECISION TREE — 6-layer institutional hierarchy
+   ═══════════════════════════════════════════════════════════════════════════ */
+.dt-wrap { display: flex; flex-direction: column; }
+
+.dt-layer {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+.dt-layer-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 18px;
+  flex-shrink: 0;
+}
+.dt-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.dt-dot-green { background: var(--green); box-shadow: 0 0 6px rgba(34,197,94,.5); }
+.dt-dot-red   { background: var(--red);   }
+.dt-dot-amber { background: var(--amber); }
+.dt-connector {
+  width: 1px;
+  flex: 1;
+  min-height: 14px;
+  background: var(--bdr);
+  margin: 3px 0;
+}
+.dt-layer-body  { flex: 1; padding-bottom: 10px; }
+.dt-layer-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .8px; color: var(--faint); margin-bottom: 2px; }
+.dt-layer-value { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--text); }
+.dt-layer-note  { font-size: 10px; color: var(--faint); line-height: 1.45; margin-top: 2px; }
+
+.dt-decision {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px;
+  background: rgba(15,23,42,.6);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--bdr);
+  margin-top: 4px;
+}
+.dt-decision-label { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 4px; }
+.dt-decision-state { font-family: var(--mono); font-size: 16px; font-weight: 900; letter-spacing: .04em; }
+.dt-decision-ici   { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: var(--mono); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INSTITUTIONAL TIMELINE
+   ═══════════════════════════════════════════════════════════════════════════ */
+.itl-wrap { max-height: 280px; overflow-y: auto; }
+.itl-empty { font-size: 11px; color: var(--faint); padding: 10px 0; }
+
+.itl-event {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.itl-time {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  min-width: 54px;
+  padding-top: 2px;
+  flex-shrink: 0;
+}
+.itl-connector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 14px;
+}
+.itl-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.itl-line {
+  width: 1px;
+  flex: 1;
+  min-height: 12px;
+  background: var(--bdr);
+  margin: 3px 0;
+}
+.itl-text {
+  flex: 1;
+  font-size: 11px;
+  line-height: 1.5;
+  padding-bottom: 10px;
+  font-weight: 600;
+}
