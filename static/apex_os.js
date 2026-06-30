@@ -696,16 +696,95 @@ function renderAuctionPanel(d) {
   // Value width
   const valWidth = vah > 0 && val_ > 0 ? (vah - val_).toFixed(2) : null;
 
-  // Institutional narrative: what does this mean?
+  // ── Auction Narrative 2.0 ──────────────────────────────────────────────────
+  // Each condition answers three questions:
+  //   1. What is price doing?  2. What is the auction doing?  3. What does it mean?
   const instNarrative = (() => {
-    if (pva === 'ABOVE_VAH' && mig === 'RISING')  return 'Institutions are accepting higher prices as fair value. POC migrating higher confirms this — buyers are in control of the auction.';
-    if (pva === 'ABOVE_VAH' && mig !== 'RISING')  return 'Price is above Value Area High but POC has not confirmed. This may be a test — wait for POC to follow before treating as acceptance.';
-    if (pva === 'BELOW_VAL' && mig === 'FALLING') return 'Institutions are accepting lower prices. POC migrating lower confirms distribution — sellers are in control.';
-    if (pva === 'BELOW_VAL' && mig !== 'FALLING') return 'Price probing below Value Area Low. POC has not confirmed — responsive buyers may defend this level.';
-    if (accStatus === 'REJECTED')                  return 'Price was rejected at the reference level. Institutions are not accepting these prices — a rotation back toward POC is likely.';
-    if (mig === 'RISING')                          return 'POC migrating higher inside value. Buyers are building control. A break of VAH would confirm initiative buying.';
-    if (mig === 'FALLING')                         return 'POC migrating lower inside value. Sellers are building control. A break of VAL would confirm initiative selling.';
-    return 'Balanced auction — no directional commitment. Wait for a break of VAH or VAL before entering.';
+    // ── Above value ──────────────────────────────────────────────────────────
+    if (pva === 'ABOVE_VAH' && mig === 'RISING')
+      return 'Price is above Value Area High and POC is migrating higher. ' +
+             'Institutions are actively accepting these prices as fair value — ' +
+             'this is a confirmed breakout. The auction is expanding upward with conviction.';
+    if (pva === 'ABOVE_VAH' && mig === 'STABLE')
+      return 'Price is above Value Area High, but POC has not yet migrated higher. ' +
+             'The auction is pausing — institutions have not fully accepted these prices. ' +
+             'Watch for POC to follow. If it stalls, this is a probe, not acceptance.';
+    if (pva === 'ABOVE_VAH' && mig === 'FALLING')
+      return 'Price is probing above VAH but POC is migrating lower. ' +
+             'This is a divergence — sellers are distributing into the breakout attempt. ' +
+             'High probability of a rejection and rotation back into value.';
+
+    // ── Below value ──────────────────────────────────────────────────────────
+    if (pva === 'BELOW_VAL' && mig === 'FALLING')
+      return 'Price is below Value Area Low and POC is migrating lower. ' +
+             'Institutions are accepting lower prices as fair value — ' +
+             'this is a confirmed breakdown. The auction is expanding downward with conviction.';
+    if (pva === 'BELOW_VAL' && mig === 'STABLE')
+      return 'Price is testing below Value Area Low, but POC remains higher. ' +
+             'Sellers are probing lower prices, but the auction has not accepted them yet. ' +
+             'Responsive buyers may defend this level. Wait for POC to confirm before treating as a breakdown.';
+    if (pva === 'BELOW_VAL' && mig === 'RISING')
+      return 'Price is below Value Area Low, but POC is migrating higher — a significant divergence. ' +
+             'Sellers are pushing lower while the auction center moves up. ' +
+             'This is a failed breakdown setup. Buyers defending the low with increasing conviction.';
+
+    // ── Inside value, rejection ───────────────────────────────────────────────
+    if (accStatus === 'REJECTED' && pvp === 'ABOVE')
+      return 'Price attempted to hold above POC but was rejected. ' +
+             'Institutions are not accepting prices above the control point. ' +
+             'Expect a rotation toward VAL unless buyers quickly reclaim POC.';
+    if (accStatus === 'REJECTED' && pvp === 'BELOW')
+      return 'Price attempted to hold below POC but was rejected. ' +
+             'Sellers failed to push the auction lower from the control point. ' +
+             'Responsive buyers are defending POC — watch for a bounce toward VAH.';
+    if (accStatus === 'REJECTED')
+      return 'Price was rejected at the reference level. ' +
+             'Institutions are not accepting these prices. A rotation back toward POC is likely.';
+
+    // ── Inside value, POC migrating ───────────────────────────────────────────
+    if (pva === 'INSIDE' && pvp === 'ABOVE' && mig === 'RISING')
+      return 'Price is above POC inside value with POC migrating higher. ' +
+             'Buyers are building control from within the value area. ' +
+             'A break of VAH with POC following would confirm initiative buying.';
+    if (pva === 'INSIDE' && pvp === 'BELOW' && mig === 'FALLING')
+      return 'Price is below POC inside value with POC migrating lower. ' +
+             'Sellers are building control from within the value area. ' +
+             'A break of VAL with POC following would confirm initiative selling.';
+    if (mig === 'RISING')
+      return 'POC is migrating higher — buyers are building a control zone. ' +
+             'Institutional acceptance is increasing. A break of VAH confirms the bias.';
+    if (mig === 'FALLING')
+      return 'POC is migrating lower — sellers are building a control zone. ' +
+             'Institutional distribution is increasing. A break of VAL confirms the bias.';
+
+    // ── Reclaim scenarios ─────────────────────────────────────────────────────
+    if (pvp === 'ABOVE' && accStatus === 'ACCEPTING' && pva === 'INSIDE')
+      return 'Price is accepting above POC inside value. ' +
+             'Buyers have reclaimed the control point — a constructive sign. ' +
+             'A push toward VAH is the likely next reference level.';
+    if (pvp === 'BELOW' && accStatus === 'ACCEPTING' && pva === 'INSIDE')
+      return 'Price is accepting below POC inside value. ' +
+             'Sellers have reclaimed the control point — a constructive bearish sign. ' +
+             'A push toward VAL is the likely next reference level.';
+
+    // ── Default: balanced ─────────────────────────────────────────────────────
+    return 'Balanced auction — price is inside value with no clear directional commitment. ' +
+           'The market is in equilibrium. Avoid new positions until the auction breaks ' +
+           'above VAH or below VAL with POC confirming.';
+  })();
+
+  // ── Institutional bias phrase (for bottom of ladder) ──────────────────────
+  // Captures the "split brain" situations (price going one way, auction another)
+  const instBias = (() => {
+    if (pva === 'ABOVE_VAH' && mig === 'RISING')  return { bull: 'Bullish price',  bear: null,           note: 'Confirmed acceptance higher' };
+    if (pva === 'ABOVE_VAH' && mig === 'STABLE')  return { bull: 'Bullish price',  bear: 'Neutral auction', note: 'Probe — not yet accepted' };
+    if (pva === 'ABOVE_VAH' && mig === 'FALLING') return { bull: 'Bullish price',  bear: 'Bearish auction', note: 'Divergence — rejection risk' };
+    if (pva === 'BELOW_VAL' && mig === 'FALLING') return { bull: null,             bear: 'Bearish price',  note: 'Confirmed acceptance lower' };
+    if (pva === 'BELOW_VAL' && mig === 'STABLE')  return { bull: 'Bullish auction',bear: 'Bearish price',  note: 'Lower probe — not accepted' };
+    if (pva === 'BELOW_VAL' && mig === 'RISING')  return { bull: 'Bullish auction',bear: 'Bearish price',  note: 'Failed breakdown — watch reclaim' };
+    if (mig === 'RISING')  return { bull: 'Bullish value', bear: null,            note: 'POC migrating higher' };
+    if (mig === 'FALLING') return { bull: null,            bear: 'Bearish value', note: 'POC migrating lower' };
+    return { bull: null, bear: null, note: 'Balanced — no bias' };
   })();
 
   el.innerHTML = `
@@ -728,6 +807,11 @@ function renderAuctionPanel(d) {
     </div>
 
     <div class="ap-inst-narrative">${esc(instNarrative)}</div>
+    ${instBias.note ? `<div class="ap-bias-strip">
+      ${instBias.bull ? `<span class="ap-bias-bull">▲ ${esc(instBias.bull)}</span>` : ''}
+      ${instBias.bear ? `<span class="ap-bias-bear">▼ ${esc(instBias.bear)}</span>` : ''}
+      <span class="ap-bias-note">${esc(instBias.note)}</span>
+    </div>` : ''}
 
     <div class="ap-va-strip">
       <div class="ap-va-item ap-va-vah"><span>VAH</span><b>$${fmt(vah)}</b></div>
@@ -1433,6 +1517,7 @@ async function loadOS() {
     renderAuctionIntel(data);
     renderDecisionTree(data);
     captureTimelineEvent(data);
+    renderAuctionLadder(data);
 
     // Render market status banner from data if present
     if (data.market_status) renderMarketStatusBanner(data.market_status);
@@ -1819,6 +1904,191 @@ function renderReplayList() {
       </div>
     </div>`;
   }).join('');
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   AUCTION LADDER — 2-second institutional read
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderAuctionLadder(d) {
+  const el = $('auctionLadder');
+  if (!el || !d) return;
+
+  const ms  = d.market_state || {};
+  const ai  = d.auction_intelligence || {};
+  const au  = d.auction  || {};
+  const vp  = d.volume_profile || {};
+  const lvl = vp.levels || {};
+
+  const price  = ms.price   || 0;
+  const poc    = ms.poc     || lvl.poc || au.poc || 0;
+  const vah    = ms.vah     || lvl.vah || au.vah || 0;
+  const val_   = ms.val     || lvl.val || au.val || 0;
+  const vwap   = ms.vwap    || 0;
+  const mig    = ms.poc_migration || au.poc_migration || '--';
+  const pvp    = ms.price_vs_poc  || '';
+  const pva    = ms.price_vs_va   || '';
+
+  const aiState  = ai.auction_state  || {};
+  const aiAcc    = ai.acceptance     || {};
+  const aiPocMig = ai.poc_migration  || {};
+  const aiExcess = ai.excess         || {};
+
+  const pocDelta   = aiPocMig.delta || 0;
+  const pocAccel   = aiPocMig.acceleration || '';
+  const auctionConf= aiState.confidence || au.confidence || 0;
+  const accStatus  = aiAcc.primary_status || '';
+  const accLevel   = aiAcc.primary_level  || '';
+  const wouldTrade = aiState.would_trade;
+  const isInit     = aiState.is_initiative;
+  const isResp     = aiState.is_responsive;
+  const isTrend    = aiState.is_trend_day;
+  const auctionStateName = (aiState.state || au.auction_state || '').replace(/_/g, ' ');
+
+  // ── Price location label ──
+  const priceLoc =
+    pva === 'ABOVE_VAH' ? '▲ ABOVE VALUE' :
+    pva === 'BELOW_VAL' ? '▼ BELOW VALUE' :
+    pvp === 'ABOVE'     ? '▲ ABOVE POC'   :
+    pvp === 'BELOW'     ? '▼ BELOW POC'   :
+    pvp === 'AT'        ? '— AT POC'       : '— INSIDE VALUE';
+
+  const priceLocColor =
+    pva === 'ABOVE_VAH'             ? 'var(--green)'  :
+    pva === 'BELOW_VAL'             ? 'var(--red)'    :
+    pvp === 'ABOVE'                 ? 'var(--green)'  :
+    pvp === 'BELOW'                 ? 'var(--red)'    : 'var(--muted)';
+
+  // ── POC migration label ──
+  const pocMigLabel =
+    mig === 'RISING'  ? '▲ Rising' :
+    mig === 'FALLING' ? '▼ Falling' : '— Stable';
+  const pocMigSub = pocDelta !== 0
+    ? (pocDelta > 0 ? '+' : '') + pocDelta.toFixed(2) + ' pts' +
+      (pocAccel === 'ACCELERATING' ? ' · ↑↑ accel' : pocAccel === 'DECELERATING' ? ' · slowing' : '')
+    : '';
+  const migColor = mig === 'RISING' ? 'var(--green)' : mig === 'FALLING' ? 'var(--red)' : 'var(--muted)';
+
+  // ── Auction state label ──
+  const auctionLabel =
+    pva === 'ABOVE_VAH' && mig === 'RISING'  ? 'Accepting Higher'       :
+    pva === 'ABOVE_VAH' && mig === 'STABLE'  ? 'Testing Higher — Probe' :
+    pva === 'ABOVE_VAH' && mig === 'FALLING' ? 'Rejection Risk'         :
+    pva === 'BELOW_VAL' && mig === 'FALLING' ? 'Accepting Lower'        :
+    pva === 'BELOW_VAL' && mig === 'STABLE'  ? 'Lower Probe — Not Accepted' :
+    pva === 'BELOW_VAL' && mig === 'RISING'  ? 'Failed Breakdown'       :
+    accStatus === 'REJECTED'                  ? 'Rejected at Level'      :
+    isTrend                                   ? auctionStateName          :
+    isInit                                    ? auctionStateName          :
+    isResp                                    ? auctionStateName          :
+    mig === 'RISING'                          ? 'Building Higher — Inside Value' :
+    mig === 'FALLING'                         ? 'Building Lower — Inside Value'  :
+    auctionStateName || 'Balanced';
+
+  const auctionColor =
+    auctionLabel.includes('Accepting Higher') || auctionLabel.includes('Failed Breakdown') ? 'var(--green)' :
+    auctionLabel.includes('Accepting Lower')  || auctionLabel.includes('Rejection') ? 'var(--red)' :
+    auctionLabel.includes('Probe') || auctionLabel.includes('Testing') ? 'var(--amber)' :
+    isTrend || isInit ? '#22d3ee' : 'var(--muted)';
+
+  // ── Acceptance ──
+  const accLabel = accStatus
+    ? accStatus + (accLevel ? ' at ' + accLevel : '')
+    : '—';
+  const accColor = accStatus === 'ACCEPTING' ? 'var(--green)' : accStatus === 'REJECTED' ? 'var(--red)' : 'var(--amber)';
+  const accYN    = accStatus === 'ACCEPTING' ? '✓ YES' : accStatus === 'REJECTED' ? '✗ NO' : '~ TESTING';
+
+  // ── Institutional bias (the split-brain read) ──
+  const biasBull =
+    pva === 'ABOVE_VAH' && mig === 'RISING'  ? 'Bullish price & auction'   :
+    pva === 'ABOVE_VAH' && mig === 'STABLE'  ? 'Bullish price'             :
+    pva === 'ABOVE_VAH' && mig === 'FALLING' ? 'Bullish price'             :
+    pva === 'BELOW_VAL' && mig === 'RISING'  ? 'Bullish auction'           :
+    mig === 'RISING'                          ? 'Bullish value'             : null;
+
+  const biasBear =
+    pva === 'BELOW_VAL' && mig === 'FALLING' ? 'Bearish price & auction'   :
+    pva === 'BELOW_VAL' && mig === 'STABLE'  ? 'Bearish price'             :
+    pva === 'ABOVE_VAH' && mig === 'FALLING' ? 'Bearish auction'           :
+    pva === 'BELOW_VAL' && mig === 'RISING'  ? 'Bearish price'             :
+    mig === 'FALLING'                         ? 'Bearish value'             : null;
+
+  const biasConflict = biasBull && biasBear;
+
+  // ── Excess ──
+  const excessType = aiExcess.detected ? (aiExcess.type || '').replace(/_/g, ' ') : null;
+
+  // ── Participation ──
+  const participationLabel = wouldTrade === false
+    ? 'Wait — no institutional setup'
+    : isInit   ? 'Initiative participants active'
+    : isResp   ? 'Responsive participants active'
+    : isTrend  ? 'Trend day — momentum favored'
+    : 'Balanced — no clear participants';
+  const participationColor = wouldTrade === false ? 'var(--faint)'
+    : (isInit || isTrend) ? '#22d3ee' : isResp ? 'var(--amber)' : 'var(--faint)';
+
+  // ── Build the ladder ──
+  const _row = (label, value, sub, valueColor) => `
+    <div class="al-row">
+      <div class="al-label">${esc(label)}</div>
+      <div class="al-value" style="color:${valueColor||'var(--text)'}">${value}</div>
+      ${sub ? `<div class="al-sub">${esc(sub)}</div>` : ''}
+    </div>`;
+
+  const _div = () => `<div class="al-divider"></div>`;
+
+  el.innerHTML = `
+    <div class="al-wrap">
+
+      ${excessType ? `<div class="al-excess-banner">${excessType}</div>` : ''}
+
+      ${_row('Price', price > 0 ? '$' + fmt(price) : '—', priceLoc, priceLocColor)}
+      ${_row('POC',   poc   > 0 ? '$' + fmt(poc)   : '—', pocMigLabel + (pocMigSub ? ' · ' + pocMigSub : ''), 'var(--purple)')}
+      ${_row('VAH',   vah   > 0 ? '$' + fmt(vah)   : '—', '', 'var(--amber)')}
+      ${_row('VAL',   val_  > 0 ? '$' + fmt(val_)  : '—', '', 'var(--amber)')}
+      ${vwap > 0 ? _row('VWAP', '$' + fmt(vwap), '', 'var(--blue)') : ''}
+
+      ${_div()}
+
+      ${_row('POC Migration', pocMigLabel, pocMigSub, migColor)}
+
+      ${_div()}
+
+      <div class="al-row al-row-feature">
+        <div class="al-label">Auction</div>
+        <div class="al-value al-value-feature" style="color:${auctionColor}">${esc(auctionLabel)}</div>
+        ${auctionConf > 0 ? `<div class="al-sub">${auctionConf}% confidence</div>` : ''}
+      </div>
+
+      ${_div()}
+
+      <div class="al-row">
+        <div class="al-label">Acceptance</div>
+        <div class="al-value" style="color:${accColor}">${accYN}</div>
+        <div class="al-sub">${esc(accLabel)}</div>
+      </div>
+
+      ${_div()}
+
+      <div class="al-row al-row-bias">
+        <div class="al-label">Institutional Bias</div>
+        <div class="al-bias-values">
+          ${biasBull ? `<span class="al-bias-bull">▲ ${esc(biasBull)}</span>` : ''}
+          ${biasBear ? `<span class="al-bias-bear">▼ ${esc(biasBear)}</span>` : ''}
+          ${!biasBull && !biasBear ? '<span style="color:var(--faint)">Neutral</span>' : ''}
+        </div>
+        ${biasConflict ? '<div class="al-bias-conflict">⚡ Bias conflict — divergence condition</div>' : ''}
+      </div>
+
+      ${_div()}
+
+      <div class="al-participation" style="color:${participationColor}">
+        ${esc(participationLabel)}
+      </div>
+
+    </div>
+  `;
 }
 
 /* ── Ticker selector ──────────────────────────────────────────────────────── */

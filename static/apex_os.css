@@ -1676,3 +1676,117 @@ body {
 .ap-hvbo-label { font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 .ap-hvbo-val   { font-family: var(--mono); color: var(--blue); font-weight: 700; }
 .ap-hvbo-loc   { color: var(--faint); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AUCTION LADDER
+   ═══════════════════════════════════════════════════════════════════════════ */
+.auction-ladder-card { border-color: rgba(167,139,250,.2); }
+
+.al-wrap { font-size: 12px; }
+
+/* Excess banner — full width alert at top */
+.al-excess-banner {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--amber);
+  background: rgba(245,158,11,.08);
+  border: 1px solid rgba(245,158,11,.25);
+  border-radius: 5px;
+  padding: 4px 10px;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+/* Standard row */
+.al-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+}
+.al-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  color: var(--faint);
+}
+.al-value {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+}
+.al-sub {
+  font-size: 10px;
+  color: var(--faint);
+  font-family: var(--mono);
+  margin-top: 1px;
+}
+
+/* Feature row — Auction state gets larger treatment */
+.al-row-feature .al-value-feature {
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: .02em;
+  line-height: 1.2;
+}
+
+/* Divider */
+.al-divider {
+  height: 1px;
+  background: var(--bdr);
+  margin: 2px 0;
+}
+
+/* Bias row */
+.al-row-bias { gap: 4px; }
+.al-bias-values {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.al-bias-bull {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+}
+.al-bias-bear {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--red);
+}
+.al-bias-conflict {
+  font-size: 10px;
+  color: var(--amber);
+  margin-top: 3px;
+}
+
+/* Participation line — bottom of ladder */
+.al-participation {
+  font-size: 11px;
+  font-style: italic;
+  padding: 6px 0 2px;
+  line-height: 1.5;
+}
+
+/* ── Bias strip in auction panel ──────────────────────────────────────────── */
+.ap-bias-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: rgba(15,23,42,.5);
+  border-radius: 5px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.ap-bias-bull { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--green); }
+.ap-bias-bear { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--red);   }
+.ap-bias-note { font-size: 10px; color: var(--faint); margin-left: auto; }
