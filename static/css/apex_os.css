@@ -1790,3 +1790,97 @@ body {
 .ap-bias-bull { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--green); }
 .ap-bias-bear { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--red);   }
 .ap-bias-note { font-size: 10px; color: var(--faint); margin-left: auto; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DASHBOARD INNER TABS — tabbed cards eliminating vertical scroll
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Analytics card (left) and command card (right) */
+.db-analytics-card,
+.db-command-card {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 520px;
+}
+
+/* Inner tab bar */
+.db-inner-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--bdr);
+  padding: 0 12px;
+  gap: 2px;
+  flex-shrink: 0;
+  background: rgba(15,23,42,.4);
+  border-radius: var(--radius) var(--radius) 0 0;
+  flex-wrap: wrap;
+}
+.db-inner-tab {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--mono);
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color var(--transition), border-color var(--transition);
+  white-space: nowrap;
+  letter-spacing: .04em;
+}
+.db-inner-tab:hover { color: var(--muted); }
+.db-inner-tab.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+}
+
+/* Inner panes */
+.db-inner-pane {
+  display: none;
+  padding: 14px;
+  flex: 1;
+  overflow-y: auto;
+  max-height: calc(100vh - 320px);
+  min-height: 400px;
+}
+.db-inner-pane.active { display: block; }
+
+/* Sub-sections within a pane */
+.db-pane-sub { margin-bottom: 14px; }
+.db-pane-sub:last-child { margin-bottom: 0; }
+.db-pane-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  color: var(--faint);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.db-pane-headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.db-pane-divider {
+  height: 1px;
+  background: var(--bdr);
+  margin: 12px 0;
+}
+
+/* Right column sticky */
+.dashboard-right .db-command-card {
+  position: sticky;
+  top: 52px;
+  max-height: calc(100vh - 72px);
+}
+
+@media(max-width:1100px) {
+  .dashboard-right .db-command-card { position: static; max-height: none; }
+  .db-inner-pane { max-height: none; }
+}
