@@ -144,13 +144,9 @@
     const ce=document.getElementById('chartError'); if(ce){ce.style.display='none'; ce.textContent='';}
     const charts = data.charts || {}; const state = data.market_state || {};
     renderRibbon(state); renderHeaders(charts);
-    // Compute basis: ES price − SPX price. All SPX-derived overlay levels
-    // (Call Wall, VWAP, POC, Gamma Flip, etc.) must shift up by this amount
-    // when drawn on the ES chart so they appear at the correct ES price scale.
-    const esPrice  = Number((charts.ES  || {}).currentClose || 0);
-    const spxPrice = Number((charts.SPX || {}).currentClose || (state.spx_price) || 0);
-    const basis    = (esPrice > 0 && spxPrice > 0) ? esPrice - spxPrice : 0;
-    esEngine.setData({ ...(charts.ES || {}), _basisOffset: basis });
+    // ES levels are pre-shifted server-side by the basis offset.
+    // Pass basisOffset=0 so overlays.js does not double-shift.
+    esEngine.setData({ ...(charts.ES || {}), _basisOffset: 0 });
     spxEngine.setData(charts.SPX || {});
     els.lastUpdate.textContent = `${state.version || 'APEX'} · ${state.session || '--'} · ${state.updated_at_et || data.updated_at_et || ''}`;
   }
