@@ -65,76 +65,95 @@
   <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
   <div id="tab-dashboard" class="tab-pane active">
 
-    <!-- ROW 0: Executive Summary Hero — always visible, context-aware -->
-    <div class="card exec-summary-hero sec-mb" id="execSummaryHero">
-      <div class="exec-loading">Loading institutional read...</div>
+    <!-- ══ BAND 1: MARKET STATUS + EXECUTIVE SUMMARY ══════════════════════ -->
+    <div class="op-band op-band-status sec-mb" id="execSummaryHero">
+      <div class="op-loading">Loading institutional read...</div>
     </div>
 
-    <!-- ROW 1: Compact status bar -->
-    <div class="card db-status-bar sec-mb">
-      <div class="dsb-ici">
-        <div class="dsb-label">ICI</div>
-        <div class="dsb-ici-num" id="readinessNum">--</div>
-        <div id="decisionBadge" class="decision-badge db-neutral" style="margin:4px 0 0">&#8212;</div>
-      </div>
-      <div class="dsb-divider"></div>
-      <div class="dsb-panel" id="iciPanel"></div>
-      <div class="dsb-divider"></div>
-      <div class="dsb-gates" id="gateChecks"></div>
-      <div class="dsb-divider"></div>
-      <div class="dsb-meta">
-        <div class="decision-msg" id="decisionMsg">--</div>
-        <div class="decision-action" id="decisionAction" style="margin-top:3px"></div>
-        <div class="decay-wrap" style="margin-top:6px">
+    <!-- ══ BAND 2: DECISION COMMAND ════════════════════════════════════════ -->
+    <div class="op-decision-band sec-mb">
+
+      <!-- Decision cell -->
+      <div class="op-decision-cell">
+        <div class="op-decision-label">Decision</div>
+        <div id="decisionBadge" class="decision-badge db-neutral">&#8212; Loading</div>
+        <div class="decay-wrap" style="margin-top:8px">
           <div class="decay-bar"><div class="decay-fill" id="decayBar" style="width:0%"></div></div>
           <div class="decay-meta"><span id="decayAge">--</span><span id="decayExp">--</span></div>
         </div>
-        <div class="action-bar" style="margin-top:8px">
+      </div>
+
+      <!-- Confidence meter -->
+      <div class="op-ici-cell">
+        <div class="op-ici-label">Institutional Confidence</div>
+        <div class="op-ici-meter">
+          <div class="op-ici-num" id="readinessNum">--</div>
+          <div class="op-ici-track">
+            <div class="op-ici-fill" id="iciFill" style="width:0%"></div>
+          </div>
+          <div class="op-ici-ctx" id="iciCtxLabel">--</div>
+        </div>
+        <div id="iciPanel" class="op-ici-comps"></div>
+      </div>
+
+      <!-- Why panel -->
+      <div class="op-why-cell">
+        <div class="op-why-label" id="whyLabel">Why</div>
+        <div id="gateChecks" class="op-why-gates"></div>
+      </div>
+
+      <!-- Decision message -->
+      <div class="op-msg-cell">
+        <div class="decision-msg" id="decisionMsg">--</div>
+        <div class="decision-action" id="decisionAction" style="margin-top:4px"></div>
+        <div class="action-bar" style="margin-top:10px">
           <a href="/api/institutional_os" target="_blank" class="btn btn-ghost btn-mini">JSON &#8599;</a>
           <a href="/assistant" class="btn btn-ghost btn-mini">Assistant</a>
           <a href="/flow" class="btn btn-ghost btn-mini">Flow</a>
         </div>
       </div>
-    </div>
 
-    <!-- ROW 2: Auction Intelligence — full-width horizontal 3-column -->
-    <div class="card sec-mb db-auction-row">
+    </div><!-- /op-decision-band -->
 
-      <!-- Col 1: Auction Ladder -->
-      <div class="db-auction-col">
-        <div class="db-auction-col-label">Auction Ladder</div>
+    <!-- ══ BAND 3: AUCTION + FLOW + GAMMA (3-col) ═══════════════════════════ -->
+    <div class="op-intel-band sec-mb">
+
+      <!-- Auction -->
+      <div class="op-intel-col">
+        <div class="op-intel-col-hdr">Auction</div>
         <div id="auctionLadder"></div>
+        <div class="op-intel-sub-div"></div>
+        <div class="op-intel-col-hdr">POC / Value Area</div>
+        <div id="auctionPanel">Waiting for profile...</div>
       </div>
 
-      <div class="db-auction-divider"></div>
+      <div class="op-intel-divider"></div>
 
-      <!-- Col 2: Command Center + Decision Tree -->
-      <div class="db-auction-col">
-        <div class="db-auction-col-label">Auction Command Center</div>
-        <div id="commandCenter"></div>
-        <div class="db-auction-sub-divider"></div>
-        <div class="db-auction-col-label">Decision Hierarchy</div>
-        <div id="decisionTreePanel"></div>
-      </div>
-
-      <div class="db-auction-divider"></div>
-
-      <!-- Col 3: POC / Value Area + Institutional Timeline -->
-      <div class="db-auction-col">
-        <div class="db-auction-col-label">POC / Value Area</div>
-        <div id="auctionPanel" class="auction-panel">Waiting for profile...</div>
-        <div class="db-auction-sub-divider"></div>
-        <div class="db-auction-col-label">
-          Institutional Timeline <span class="live-dot-badge">LIVE</span>
-        </div>
+      <!-- Flow + Institutional Activity -->
+      <div class="op-intel-col">
+        <div class="op-intel-col-hdr">Institutional Flow</div>
+        <div id="opFlowPanel"></div>
+        <div class="op-intel-sub-div"></div>
+        <div class="op-intel-col-hdr">Institutional Timeline <span class="live-dot-badge">LIVE</span></div>
         <div id="institutionalTimeline" class="itl-wrap">
           <div class="itl-empty">Session events will appear as the auction develops.</div>
         </div>
       </div>
 
-    </div><!-- /db-auction-row -->
+      <div class="op-intel-divider"></div>
 
-    <!-- ROW 3: Scanner (compact) + tabbed analytics -->
+      <!-- Playbook + Command -->
+      <div class="op-intel-col">
+        <div class="op-intel-col-hdr">Decision Hierarchy</div>
+        <div id="decisionTreePanel"></div>
+        <div class="op-intel-sub-div"></div>
+        <div class="op-intel-col-hdr">Trade Coach</div>
+        <div id="coachSnapshot"></div>
+      </div>
+
+    </div><!-- /op-intel-band -->
+
+    <!-- ══ BAND 4: SCANNER + ANALYTICS TABS ════════════════════════════════ -->
     <div class="db-bottom-grid">
 
       <!-- Scanner -->
@@ -149,19 +168,20 @@
         <div id="scannerIdeasPanel" class="scanner-ideas-panel scanner-ideas-compact">Loading...</div>
       </div>
 
-      <!-- Tabbed analytics -->
+      <!-- Tabbed deep-dive analytics -->
       <div class="card db-analytics-card">
         <div class="db-inner-tabs">
           <button class="db-inner-tab active" data-inner="coach">Trade Coach</button>
           <button class="db-inner-tab" data-inner="auction-intel">Auction Intel</button>
+          <button class="db-inner-tab" data-inner="command">Command Ctr</button>
           <button class="db-inner-tab" data-inner="engines">Engines</button>
           <button class="db-inner-tab" data-inner="heat">Heat Map</button>
           <button class="db-inner-tab" data-inner="ici-tl">ICI Timeline</button>
-          <button class="db-inner-tab" data-inner="coach-snap">Coach Snap</button>
           <button class="db-inner-tab" data-inner="overlays">Overlays</button>
         </div>
         <div id="db-inner-coach"         class="db-inner-pane active"><div id="tradeCoach"></div></div>
         <div id="db-inner-auction-intel" class="db-inner-pane"><div id="auctionIntelPanel"></div></div>
+        <div id="db-inner-command"       class="db-inner-pane"><div id="commandCenter"></div></div>
         <div id="db-inner-engines"       class="db-inner-pane">
           <div id="consensusBar" class="sec-mb"></div>
           <div id="engineMatrix" class="engine-matrix"></div>
@@ -175,8 +195,7 @@
           </div>
           <div id="confidenceTimeline" class="confidence-timeline">Waiting...</div>
         </div>
-        <div id="db-inner-coach-snap"    class="db-inner-pane"><div id="coachSnapshot"></div></div>
-        <div id="db-inner-overlays"      class="db-inner-pane">
+        <div id="db-inner-overlays" class="db-inner-pane">
           <div class="db-pane-label">Chart Overlays</div>
           <div class="overlay-toggles" id="overlayToggles">
             <button class="overlay-btn active" data-group="gamma">Gamma</button>
