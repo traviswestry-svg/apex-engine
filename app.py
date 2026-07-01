@@ -4912,8 +4912,8 @@ def api_charts_state():
 
         # ES levels: apply basis offset to all SPX-derived levels so they
         # align correctly on the ES price scale (~+40 to +55 pts above SPX).
-        es_close  = _sf(es_payload.get("currentClose") or 0)
-        spx_close = _sf(spx_payload.get("currentClose") or 0)
+        es_close  = safe_float(es_payload.get("currentClose") or 0, 0.0)
+        spx_close = safe_float(spx_payload.get("currentClose") or 0, 0.0)
         basis_pts = round(es_close - spx_close, 2) if es_close > 0 and spx_close > 0 else 0.0
 
         def _shift(v):
