@@ -1984,3 +1984,77 @@ body {
 /* ── Compact scanner ──────────────────────────────────────────────────────── */
 .scanner-ideas-compact { max-height: 80px; overflow: hidden; }
 .scanner-ideas-compact .scanner-summary { margin-bottom: 4px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FULL-WIDTH HORIZONTAL AUCTION ROW
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The 3-column auction row — sits below the status bar, full width */
+.db-auction-row {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr 1px 1fr;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  align-items: start;
+}
+
+/* Each auction column */
+.db-auction-col {
+  padding: 14px 16px;
+  min-width: 0;
+  overflow-y: auto;
+  max-height: 420px;
+}
+
+/* Vertical divider between columns */
+.db-auction-divider {
+  background: var(--bdr);
+  width: 1px;
+  align-self: stretch;
+}
+
+/* Column label */
+.db-auction-col-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  color: var(--faint);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Horizontal divider within a column (between two sub-panels) */
+.db-auction-sub-divider {
+  height: 1px;
+  background: var(--bdr);
+  margin: 12px 0;
+}
+
+/* Collapse to single column on narrow screens */
+@media(max-width:1000px) {
+  .db-auction-row {
+    grid-template-columns: 1fr;
+  }
+  .db-auction-divider { display: none; }
+  .db-auction-col { max-height: none; border-bottom: 1px solid var(--bdr); }
+  .db-auction-col:last-child { border-bottom: none; }
+}
+
+/* ── Bottom grid: scanner + analytics side by side ─────────────────────── */
+.db-bottom-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+@media(max-width:900px) {
+  .db-bottom-grid { grid-template-columns: 1fr; }
+}
+
+/* Remove old dashboard-left / dashboard-right / dashboard-main-grid rules
+   that forced the two-column layout — they're no longer used on dashboard */
