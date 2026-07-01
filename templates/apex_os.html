@@ -67,7 +67,7 @@
 
     <!-- ══ BAND 1: MARKET STATUS + EXECUTIVE SUMMARY ══════════════════════ -->
     <div class="op-band op-band-status sec-mb" id="execSummaryHero">
-      <div class="op-loading">Loading institutional read...</div>
+      <div class="op-skeleton-hero"><div class="sk-badge">⏳ APEX LOADING</div><div class="sk-line sk-wide">Fetching institutional intelligence...</div><div class="sk-line sk-med">Session state · Auction · Flow · Gamma</div></div>
     </div>
 
     <!-- ══ BAND 2: DECISION COMMAND ════════════════════════════════════════ -->
@@ -124,7 +124,7 @@
         <div id="auctionLadder"></div>
         <div class="op-intel-sub-div"></div>
         <div class="op-intel-col-hdr">POC / Value Area</div>
-        <div id="auctionPanel">Waiting for profile...</div>
+        <div id="auctionPanel"><div class="sk-waiting">⌛ Building volume profile...</div></div>
       </div>
 
       <div class="op-intel-divider"></div>
@@ -136,7 +136,7 @@
         <div class="op-intel-sub-div"></div>
         <div class="op-intel-col-hdr">Institutional Timeline <span class="live-dot-badge">LIVE</span></div>
         <div id="institutionalTimeline" class="itl-wrap">
-          <div class="itl-empty">Session events will appear as the auction develops.</div>
+          <div class="sk-waiting">Timeline builds as the session progresses.</div>
         </div>
       </div>
 
@@ -165,7 +165,7 @@
             <button class="btn btn-ghost btn-mini" id="refreshScannerBtn">Refresh</button>
           </div>
         </div>
-        <div id="scannerIdeasPanel" class="scanner-ideas-panel scanner-ideas-compact">Loading...</div>
+        <div id="scannerIdeasPanel" class="scanner-ideas-panel scanner-ideas-compact"><div class="sk-waiting">⌛ Loading...</div></div>
       </div>
 
       <!-- Tabbed deep-dive analytics -->
@@ -193,7 +193,7 @@
             <div class="db-pane-label">ICI Timeline</div>
             <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
           </div>
-          <div id="confidenceTimeline" class="confidence-timeline">Waiting...</div>
+          <div id="confidenceTimeline" class="confidence-timeline"><div class="sk-waiting">Waiting for first scan...</div></div>
         </div>
         <div id="db-inner-overlays" class="db-inner-pane">
           <div class="db-pane-label">Chart Overlays</div>
@@ -251,7 +251,7 @@
     </div>
     <div class="card">
       <div class="card-label">Full Narrative</div>
-      <div id="narrativeBlock" class="narrative-block">Loading...</div>
+      <div id="narrativeBlock" class="narrative-block"><div class="sk-waiting">⌛ Loading...</div></div>
     </div>
   </div>
 
