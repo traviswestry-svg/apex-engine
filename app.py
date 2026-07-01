@@ -3537,15 +3537,33 @@ def api_institutional_os():
             ribbon = result.get("ribbon", {}) or {}
             ici = result.get("ici", {}) or {}
 
+            # ── ICI carry-forward: if current ICI is 0 and we have a recent
+            # valid value in SCANNER_STATE, carry it forward so the dashboard
+            # doesn't show 0 during the first few minutes of the session
+            # (volume profile still building, engines not yet warmed up).
+            _cur_ici = safe_float(ici.get("ici"), 0.0)
+            if _cur_ici <= 0:
+                with STATE_LOCK:
+                    _last_valid_ici = SCANNER_STATE.get("last_valid_ici") or {}
+                if _last_valid_ici and safe_float(_last_valid_ici.get("ici"), 0.0) > 0:
+                    ici = dict(_last_valid_ici)
+                    ici["stale"] = True
+                    ici["stale_note"] = "Carried from last valid scan — engines warming up."
+                    result["ici"] = ici
+            else:
+                # Save this as the last valid ICI
+                with STATE_LOCK:
+                    SCANNER_STATE["last_valid_ici"] = dict(ici)
+
             result.setdefault("flow", {
                 "ticker": ticker,
                 "bias": "CALL" if consensus.get("consensus_direction") == "BULLISH" else "PUT" if consensus.get("consensus_direction") == "BEARISH" else "NEUTRAL",
                 "decision_color": "GREEN" if result.get("decision_state") in ("READY", "ENTER_CALL", "ENTER_PUT") else "YELLOW" if str(result.get("decision_state", "")).startswith("WATCH") else "RED",
                 "flow_score": flow_intel.get("flow_score"),
                 "order_flow_score": flow_intel.get("order_flow_score"),
-                "net_premium": ribbon.get("net_flow"),
-                "call_premium": ribbon.get("call_flow"),
-                "put_premium": ribbon.get("put_flow"),
+                "net_premium": ribbon.get("net_flow") or safe_float(flow_snapshot.get("net_premium")),
+                "call_premium": ribbon.get("call_flow") or safe_float(flow_snapshot.get("call_premium")),
+                "put_premium": ribbon.get("put_flow") or safe_float(flow_snapshot.get("put_premium")),
                 "sweep_count": flow_intel.get("sweep_count"),
                 "flow_momentum": flow_intel.get("flow_momentum"),
                 "gex_score": gamma.get("gex_score"),
@@ -4857,7 +4875,12 @@ def _volume_profile_bundle(ticker: str = "SPX", days: int = 1, multiplier: int =
 
     For SPX, prefer SPX price scale. If SPX has no real volume, use SPY volume
     scaled into SPX price coordinates and label it honestly.
+
+    Early-session fallback: if fewer than MIN_PROFILE_BARS intraday bars exist
+    (market just opened), extend the window to include prior-day bars so the
+    auction intelligence has reference levels to work with.
     """
+    MIN_PROFILE_BARS = 12   # require at least 12 bars (~1 hour at 5m) for a useful profile
     symbol = (ticker or "SPX").upper()
     anchor_symbol = "SPX" if symbol in {"SPX", "SPXW", "I:SPX", "$SPX"} else symbol
     anchor_payload = _chart_payload_for_lightweight(anchor_symbol, days, multiplier)
@@ -4868,6 +4891,16 @@ def _volume_profile_bundle(ticker: str = "SPX", days: int = 1, multiplier: int =
     proxy_ratio = None
     profile_bars = anchor_bars
     quality_flags: List[str] = []
+
+    # Early-session: not enough intraday bars yet — fetch prior day too
+    if len(anchor_bars) < MIN_PROFILE_BARS and days == 1:
+        extended_payload = _chart_payload_for_lightweight(anchor_symbol, 2, multiplier)
+        extended_bars    = _bars_from_lightweight_payload(extended_payload)
+        if len(extended_bars) > len(anchor_bars):
+            anchor_bars   = extended_bars
+            anchor_volume = sum(safe_float(b.get("volume"), 0.0) for b in anchor_bars)
+            profile_bars  = anchor_bars
+            quality_flags.append("EXTENDED_TO_PRIOR_DAY_EARLY_SESSION")
 
     if anchor_symbol == "SPX" and anchor_volume <= 0:
         spy_payload = _chart_payload_for_lightweight("SPY", days, multiplier)
