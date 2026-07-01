@@ -162,6 +162,23 @@ SCAN_LOCK = threading.Lock()
 SCANNER_START_LOCK = threading.Lock()
 SCANNER_STARTED = False
 TRADE_ASSISTANT_LOCK = threading.RLock()
+
+# SCANNER_STATE: persists auction intelligence context across scan cycles.
+# Tracks POC history, bar-level acceptance counters, signal log, and
+# last valid ICI for carry-forward during early-session warm-up.
+SCANNER_STATE: Dict[str, Any] = {
+    "updated_at":             None,
+    "last_scan_duration_seconds": None,
+    "scan_in_progress":       False,
+    "signal_log":             [],
+    "last_valid_ici":         {},
+    "bars_above_vah":         0,
+    "bars_below_val":         0,
+    "bars_above_poc":         0,
+    "bars_below_poc":         0,
+    "_bar_day":               None,
+}
+
 TRADE_ASSISTANT_STATE: Dict[str, Any] = {
     "state": "WAITING",
     "message": "Waiting for Flow/GEX snapshot and Pine trigger",
