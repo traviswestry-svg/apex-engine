@@ -2401,3 +2401,34 @@ body {
 .op-prem-row    { display: flex; justify-content: space-between; font-size: 11px; padding: 3px 0; }
 .op-prem-label  { color: var(--faint); }
 .op-prem-val    { font-family: var(--mono); font-weight: 700; }
+
+/* ── Skeleton / first-render states ─────────────────────────────────────── */
+.op-skeleton-hero { padding: 4px 0; }
+.sk-badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  margin-bottom: 6px;
+}
+.sk-line {
+  height: 10px;
+  background: rgba(148,163,184,.08);
+  border-radius: 5px;
+  margin-bottom: 5px;
+  animation: sk-pulse 1.8s ease-in-out infinite;
+}
+.sk-wide  { width: 70%; }
+.sk-med   { width: 45%; }
+.sk-waiting {
+  font-size: 11px;
+  color: var(--faint);
+  font-family: var(--mono);
+  padding: 6px 0;
+}
+@keyframes sk-pulse {
+  0%, 100% { opacity: .4; }
+  50%       { opacity: .9; }
+}
