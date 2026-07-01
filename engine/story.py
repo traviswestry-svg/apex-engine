@@ -99,7 +99,7 @@ def _chapter_regime(ms: Dict[str, Any], gamma_regime: Dict[str, Any],
     elif regime_key == "TREND_DAY":
         text += f" Market regime is trend-day — favor continuation over fade."
 
-    return {"chapter": "Regime", "text": text, "color": color, "significance": 1.0}
+    return {"chapter": "Regime", "text": text, "color": color, "significance": 1.0, "category": "KNOWS"}
 
 
 def _chapter_auction(ms: Dict[str, Any], auction_intel: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -221,7 +221,7 @@ def _chapter_auction(ms: Dict[str, Any], auction_intel: Optional[Dict[str, Any]]
         if ai_poc.get("acceleration") == "ACCELERATING":
             core += " POC migration is accelerating — institutional urgency is rising."
 
-    return {"chapter": "Auction", "text": core, "color": color, "significance": 2.0}
+    return {"chapter": "Auction", "text": core, "color": color, "significance": 2.0, "category": "KNOWS"}
 
 
 def _chapter_flow(ms: Dict[str, Any], flow_intel: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -245,7 +245,7 @@ def _chapter_flow(ms: Dict[str, Any], flow_intel: Dict[str, Any]) -> Optional[Di
             f"This is a high-conviction institutional signal — do not trade against it."
         )
         color = "#e34948" if div_dir == "BEARISH" else "#0ca30c"
-        return {"chapter": "Flow Intelligence", "text": text, "color": color, "significance": 3.5}
+        return {"chapter": "Flow Intelligence", "text": text, "color": color, "significance": 3.5, "category": "KNOWS"}
 
     # Flow flip is the next priority
     if flow_flip and flip_dir:
@@ -255,12 +255,12 @@ def _chapter_flow(ms: Dict[str, Any], flow_intel: Dict[str, Any]) -> Optional[Di
             f"Net premium is {'positive' if net > 0 else 'negative'} at {_prem(net)}."
         )
         color = "#0ca30c" if "BULL" in flip_dir.upper() else "#e34948"
-        return {"chapter": "Flow Intelligence", "text": text, "color": color, "significance": 3.0}
+        return {"chapter": "Flow Intelligence", "text": text, "color": color, "significance": 3.0, "category": "KNOWS"}
 
     # Absorption
     if absorption and absorb_desc:
         text = absorb_desc
-        return {"chapter": "Flow Intelligence", "text": text, "color": "#fab219", "significance": 2.8}
+        return {"chapter": "Flow Intelligence", "text": text, "color": "#fab219", "significance": 2.8, "category": "KNOWS"}
 
     # Standard flow read
     if abs(net) > 2_000_000:
@@ -281,7 +281,7 @@ def _chapter_flow(ms: Dict[str, Any], flow_intel: Dict[str, Any]) -> Optional[Di
         )
 
     color = "#0ca30c" if bias == "BULLISH" else "#e34948" if bias == "BEARISH" else "#fab219"
-    return {"chapter": "Flow Intelligence", "text": text, "color": color, "significance": 2.5}
+    return {"chapter": "Flow Intelligence", "text": text, "color": color, "significance": 2.5, "category": "KNOWS"}
 
 
 def _chapter_tape(ms: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -325,7 +325,7 @@ def _chapter_tape(ms: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         )
         color = "#fab219"
 
-    return {"chapter": "Flow Tape", "text": text, "color": color, "significance": 2.7}
+    return {"chapter": "Flow Tape", "category": "KNOWS", "text": text, "color": color, "significance": 2.7}
 
 
 def _chapter_execution(ms: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -368,7 +368,7 @@ def _chapter_execution(ms: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         )
         color = "#475569"
 
-    return {"chapter": "Pine Execution", "text": text, "color": color, "significance": 3.0}
+    return {"chapter": "Pine Execution", "text": text, "color": color, "significance": 3.0, "category": "KNOWS"}
 
 
 def _chapter_verdict(
@@ -450,7 +450,7 @@ def _chapter_verdict(
             )
             color = "#fab219"
 
-    return {"chapter": "Verdict", "text": text, "color": color, "significance": 4.0}
+    return {"chapter": "Verdict", "category": "RECOMMENDS", "text": text, "color": color, "significance": 4.0}
 
 
 # ── Executive summary builder ────────────────────────────────────────────────
@@ -723,9 +723,14 @@ def build_story_v3(
     exec_summary = _executive_summary(ms, consensus, risk, flow)
     full_narrative = " ".join(c["text"] for c in sorted(chapters, key=lambda x: x["significance"]))
 
+    knows_chs = [c for c in chapters if c.get("category") != "RECOMMENDS"]
+    rec_chs   = [c for c in chapters if c.get("category") == "RECOMMENDS"]
+
     return {
         "ticker":            ticker,
         "chapters":          chapters,
+        "knows_chapters":    knows_chs,
+        "recommends_chapters": rec_chs,
         "full_narrative":    full_narrative,
         "executive_summary": exec_summary,
         "chapter_count":     len(chapters),
