@@ -175,8 +175,8 @@
    */
   function applyPriceLineOverlays(engine, levels, options) {
     if (!engine || !engine.candleSeries) return;
-    // basisOffset: ES − SPX (typically +40 to +55 pts).
-    // All SPX-derived levels drawn on the ES chart must shift up by basis.
+    // basisOffset: passed from chart.html for any remaining client-side adjustment.
+    // For ES, levels are pre-shifted server-side so this is 0. Kept for safety.
     const basis = Number((options || {}).basisOffset || 0);
 
     let savedRange = null;

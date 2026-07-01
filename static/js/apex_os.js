@@ -1140,9 +1140,29 @@ function renderFlow2(d) {
 }
 
 /* ── Story Engine ─────────────────────────────────────────────────────────── */
+function _renderChapterList(chapters, containerId) {
+  const el = $(containerId);
+  if (!el) return;
+  if (!chapters || !chapters.length) {
+    el.innerHTML = '<div style="color:var(--faint);font-size:11px;padding:8px">No chapters yet.</div>';
+    return;
+  }
+  el.innerHTML = chapters.map((c, i) => `
+    <div class="story-entry">
+      <div class="story-connector">
+        <div class="s-dot" style="background:${esc(c.color || 'var(--faint)')}"></div>
+        ${i < chapters.length - 1 ? '<div class="s-line"></div>' : ''}
+      </div>
+      <div class="story-body">
+        <div class="story-chapter" style="color:${esc(c.color || 'var(--muted)')}">${esc(c.chapter || 'Chapter')}</div>
+        <div class="story-text">${esc(c.text || '')}</div>
+        <div class="story-time">${esc(c.time || '--')}</div>
+      </div>
+    </div>`).join('');
+}
+
 function renderStory(d) {
-  const el = $('storyPanel');
-  if (!el || !d) return;
+  if (!d) return;
   const story = d.story || {};
 
   // Executive summary
@@ -1158,27 +1178,11 @@ function renderStory(d) {
     metaEl.innerHTML = parts.map(s => `<span>${esc(s)}</span>`).join('');
   }
 
-  const chapters = story.chapters || [];
-  if (!chapters.length) {
-    el.innerHTML = '<div style="color:var(--faint);font-size:12px;padding:12px">No story chapters available yet.</div>';
-    const narr = $('narrativeBlock');
-    if (narr && story.full_narrative) narr.textContent = story.full_narrative;
-    return;
-  }
+  // Knows / Recommends split
+  _renderChapterList(story.knows_chapters     || story.chapters || [], 'storyKnows');
+  _renderChapterList(story.recommends_chapters || [],                   'storyRecommends');
 
-  el.innerHTML = '<div class="story-timeline">' + chapters.map((c, i) => `
-    <div class="story-entry">
-      <div class="story-connector">
-        <div class="s-dot" style="background:${esc(c.color || 'var(--faint)')}"></div>
-        ${i < chapters.length - 1 ? '<div class="s-line"></div>' : ''}
-      </div>
-      <div class="story-body">
-        <div class="story-chapter" style="color:${esc(c.color || 'var(--muted)')}">${esc(c.chapter || 'Chapter')}</div>
-        <div class="story-text">${esc(c.text || '')}</div>
-        <div class="story-time">${esc(c.time || '--')}</div>
-      </div>
-    </div>`).join('') + '</div>';
-
+  // Full narrative
   const narr = $('narrativeBlock');
   if (narr && story.full_narrative) narr.textContent = story.full_narrative;
 }
@@ -1604,6 +1608,65 @@ async function loadOS() {
   } catch (e) {
     if (errEl) { errEl.style.display = ''; errEl.textContent = 'Institutional OS data error: ' + e.message; } console.error('APEX OS load failed', e);
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SIGNAL LOG — Pine webhook signal history with outcome tracking
+   ════════════════════════════════════════════════════════════════════════════ */
+
+async function loadSignalLog() {
+  const el = $('signalLogPanel');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/signal_log', { cache: 'no-store' });
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.ok || !data.signals?.length) {
+      el.innerHTML = '<div class="review-empty">No Pine signals received yet this session.<br><span style="font-size:10px;color:var(--faint)">Signals arrive here from TradingView via the /tv_signal webhook.</span></div>';
+      return;
+    }
+    el.innerHTML = data.signals.map(s => {
+      const side = s.signal || s.side || '';
+      const sc = side.includes('CALL') ? 'var(--green)' : side.includes('PUT') ? 'var(--red)' : 'var(--muted)';
+      const outcome = s.outcome;
+      const oc = outcome === 'WIN' ? 'var(--green)' : outcome === 'LOSS' ? 'var(--red)' : outcome === 'SCRATCH' ? 'var(--amber)' : 'var(--faint)';
+      return `<div class="signal-log-entry ${side.includes('CALL') ? 'sle-enter' : side.includes('PUT') ? 'sle-enter' : ''}">
+        <div class="sle-header">
+          <div class="sle-time">${esc(s.bar_time || s.received_at_et?.slice(11,16) || '--')}</div>
+          <div class="sle-state" style="color:${sc}">▶ ${esc(side)}</div>
+          <div class="sle-ici">ICI ${fmtI(Number(s.apex_ici||0))}</div>
+          ${outcome ? `<div class="sle-grade" style="color:${oc}">${esc(outcome)}${s.outcome_pnl!=null?' · '+(s.outcome_pnl>=0?'+':'')+s.outcome_pnl:''}</div>` : `<span style="font-size:9px;color:var(--faint)">Pending</span>`}
+        </div>
+        <div class="sle-contract" style="color:${sc}">${esc(s.ticker||'SPX')} ${esc(side)}</div>
+        <div class="sle-levels">
+          <div class="sle-level"><span class="sll-label">Price</span><span class="sll-val rv-blue">$${fmt(Number(s.price||0))}</span></div>
+          <div class="sle-level"><span class="sll-label">Auction</span><span class="sll-val" style="font-size:9px">${esc((s.apex_auction||'--').replace(/_/g,' '))}</span></div>
+          <div class="sle-level"><span class="sll-label">POC Mig</span><span class="sll-val">${esc(s.apex_poc_migration||'--')}</span></div>
+          <div class="sle-level"><span class="sll-label">Accept</span><span class="sll-val">${esc(s.apex_acceptance||'--')}</span></div>
+          <div class="sle-level"><span class="sll-label">POC</span><span class="sll-val">$${fmt(Number(s.poc||0))}</span></div>
+          <div class="sle-level"><span class="sll-label">VWAP</span><span class="sll-val">$${fmt(Number(s.vwap||0))}</span></div>
+          <div class="sle-level"><span class="sll-label">Internals</span><span class="sll-val">${s.intern_score||'--'}/3</span></div>
+          <div class="sle-level"><span class="sll-label">Signal #</span><span class="sll-val">${s.signal_num||'--'}</span></div>
+        </div>
+        ${outcome ? '' : `<div style="margin-top:6px;display:flex;gap:5px">
+          <button class="btn btn-ghost btn-mini" onclick="markOutcome('${esc(s.received_at)}','WIN')">WIN</button>
+          <button class="btn btn-ghost btn-mini" onclick="markOutcome('${esc(s.received_at)}','LOSS')">LOSS</button>
+          <button class="btn btn-ghost btn-mini" onclick="markOutcome('${esc(s.received_at)}','SCRATCH')">SCRATCH</button>
+        </div>`}
+      </div>`;
+    }).join('');
+  } catch(_) {}
+}
+
+async function markOutcome(receivedAt, outcome) {
+  try {
+    await fetch('/api/signal_outcome', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ received_at: receivedAt, outcome })
+    });
+    loadSignalLog();
+  } catch(_) {}
 }
 
 async function loadSavedReviews() {
@@ -2810,9 +2873,11 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTradeHistory();
   loadMarketStatus();
   loadSavedReviews();
+  loadSignalLog();
 
   setInterval(loadOS, AUTO_INTERVAL);
   setInterval(loadScannerIdeas, 30000);
   setInterval(loadFlowTape, 45000);
   setInterval(loadMarketStatus, 60000);
+  setInterval(loadSignalLog, 30000);
 });
