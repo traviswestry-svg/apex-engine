@@ -245,9 +245,17 @@
       <div id="execSummary" class="exec-summary">Loading institutional narrative...</div>
       <div class="story-exec-meta" id="storyMeta"></div>
     </div>
-    <div class="card sec-mb">
-      <div class="card-label">Chapter Timeline</div>
-      <div id="storyPanel"></div>
+    <div class="story-split-grid sec-mb">
+      <div class="card">
+        <div class="card-label">What APEX Knows</div>
+        <div class="workflow-sub" style="margin-bottom:10px">Market facts · Auction · Flow · Gamma · Structure</div>
+        <div id="storyKnows" class="story-timeline"><div class="sk-waiting">⌛ Loading...</div></div>
+      </div>
+      <div class="card">
+        <div class="card-label">What APEX Recommends</div>
+        <div class="workflow-sub" style="margin-bottom:10px">Verdict · Decision rationale · Next action</div>
+        <div id="storyRecommends" class="story-timeline"><div class="sk-waiting">⌛ Loading...</div></div>
+      </div>
     </div>
     <div class="card">
       <div class="card-label">Full Narrative</div>
@@ -380,6 +388,13 @@
         Every ENTER, READY, and WATCH signal is captured automatically each refresh cycle — time, contract, entry zone, stop, targets, and context.
       </div>
       <div id="reviewPanel"></div>
+    </div>
+
+    <!-- Pine Signal Log -->
+    <div class="card sec-mb">
+      <div class="card-label">Pine Signal Log <span class="live-dot-badge">WEBHOOK</span></div>
+      <div class="workflow-sub" style="margin-bottom:10px">Every /tv_signal webhook received from TradingView. Mark WIN/LOSS/SCRATCH after each trade.</div>
+      <div id="signalLogPanel"><div class="sk-waiting">⌛ Loading signal log...</div></div>
     </div>
 
     <!-- Saved reviews from DB -->
