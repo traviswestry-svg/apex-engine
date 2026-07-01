@@ -4224,7 +4224,16 @@ def build_chart_data(symbol: str, days: int = 3, multiplier: int = 15) -> dict:
     days_map: dict = defaultdict(list)
     for b in raw_bars:
         ts = safe_float(b.get("t"), 0.0)
-        day_key = dt.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d") if ts else "unknown"
+        if ts:
+            # Use ET date so overnight futures bars (e.g. 00:00 UTC = 20:00 ET prev day)
+            # group with the correct trading session rather than rolling to tomorrow UTC
+            try:
+                dt_et = dt.datetime.fromtimestamp(ts / 1000, tz=EASTERN)
+                day_key = dt_et.strftime("%Y-%m-%d")
+            except Exception:
+                day_key = dt.datetime.utcfromtimestamp(ts / 1000).strftime("%Y-%m-%d")
+        else:
+            day_key = "unknown"
         days_map[day_key].append(b)
 
     sorted_days = sorted(days_map.keys())[-days:]
@@ -4847,7 +4856,7 @@ def api_auction_state():
 @app.route("/api/charts/state")
 def api_charts_state():
     """APEX 6.0.2 chart-state endpoint for the Lightweight Charts frontend."""
-    days = max(1, min(int(request.args.get("days", "1")), 5))
+    days = max(1, min(int(request.args.get("days", "2")), 5))  # default 2 — shows prior RTH + overnight
     multiplier = int(request.args.get("tf", "5"))
     multiplier = multiplier if multiplier in (1, 5, 15) else 5
     dev_mode = request.args.get("dev", "0") in {"1", "true", "yes", "on"}
@@ -4900,7 +4909,27 @@ def api_charts_state():
         spx_payload["levels"] = {**spx_payload.get("levels", {}), **gamma_levels, **vp_levels}
         spx_payload["volumeProfile"] = volume_bundle.get("profile")
         spx_payload["auction"] = auction_state
-        es_payload["levels"] = {**es_payload.get("levels", {})}
+
+        # ES levels: apply basis offset to all SPX-derived levels so they
+        # align correctly on the ES price scale (~+40 to +55 pts above SPX).
+        es_close  = _sf(es_payload.get("currentClose") or 0)
+        spx_close = _sf(spx_payload.get("currentClose") or 0)
+        basis_pts = round(es_close - spx_close, 2) if es_close > 0 and spx_close > 0 else 0.0
+
+        def _shift(v):
+            """Add basis to a numeric level value; pass through None."""
+            try:
+                f = float(v)
+                return round(f + basis_pts, 2)
+            except (TypeError, ValueError):
+                return v
+
+        es_gamma_levels = {k: _shift(v) for k, v in gamma_levels.items()}
+        es_vp_levels    = {k: _shift(v) for k, v in vp_levels.items()}
+        es_payload["levels"]  = {**es_payload.get("levels", {}), **es_gamma_levels, **es_vp_levels}
+        es_payload["basis"]   = basis_pts
+        es_payload["volumeProfile"] = volume_bundle.get("profile")
+        es_payload["auction"] = auction_state
         es_payload["includeRawZeroGamma"] = False
         spx_payload["includeRawZeroGamma"] = dev_mode
         market_state["volume_profile"] = volume_bundle.get("profile")
