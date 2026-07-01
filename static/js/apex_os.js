@@ -218,36 +218,37 @@ function renderICI(d) {
   if (!el || !d) return;
   const ici   = d.ici || {};
   const score = Number(ici.ici || 0);
-  const color = ici.ici_color === 'GREEN' ? 'ici-green' : ici.ici_color === 'RED' ? 'ici-red' : 'ici-amber';
   const comps = ici.components || {};
-  const wts   = ici.weights || {};
+  const wts   = ici.weights   || {};
+  const scoreColor = ici.ici_color === 'GREEN' ? 'var(--green)' : ici.ici_color === 'RED' ? 'var(--red)' : 'var(--amber)';
 
-  const compHTML = [
-    { key: 'conviction',      label: 'Consensus', w: wts.conviction || 0.5 },
-    { key: 'freshness',       label: 'Signal Freshness', w: wts.freshness || 0.2 },
-    { key: 'gamma_stability', label: 'Gamma Stability', w: wts.gamma || 0.15 },
-    { key: 'flow_momentum',   label: 'Flow Momentum', w: wts.momentum || 0.15 },
-  ].map(c => {
+  // Update the big ICI number in the status bar
+  const readEl = $('readinessNum');
+  if (readEl) {
+    readEl.textContent = fmtI(score);
+    readEl.className = 'dsb-ici-num';
+    readEl.style.color = scoreColor;
+  }
+
+  // Compact horizontal component bars for the status bar
+  const compDefs = [
+    { key: 'conviction',      label: 'Consensus',   w: wts.conviction || 0.5  },
+    { key: 'freshness',       label: 'Signal',      w: wts.freshness  || 0.2  },
+    { key: 'gamma_stability', label: 'Gamma',       w: wts.gamma      || 0.15 },
+    { key: 'flow_momentum',   label: 'Flow',        w: wts.momentum   || 0.15 },
+  ];
+
+  el.innerHTML = compDefs.map(c => {
     const val = Number(comps[c.key] || 0);
     const barColor = val >= 70 ? 'var(--green)' : val >= 45 ? 'var(--blue)' : 'var(--red)';
-    return `<div class="ici-comp">
-      <div class="ici-comp-label">${c.label} <span class="ici-weight">${(c.w * 100).toFixed(0)}%</span></div>
-      <div class="ici-comp-bar"><div class="ici-comp-fill" style="width:${val}%;background:${barColor}"></div></div>
-      <div class="ici-comp-val">${val.toFixed(1)}</div>
-    </div>`;
-  }).join('');
-
-  el.innerHTML = `
-    <div class="ici-row">
-      <div class="ici-big ${color}">${fmtI(score)}</div>
-      <div class="ici-meta">
-        <div class="ici-label" style="color:${ici.ici_color === 'GREEN' ? 'var(--green)' : ici.ici_color === 'RED' ? 'var(--red)' : 'var(--amber)'}">${ici.ici_label || '--'} CONFIDENCE</div>
-        <div class="ici-status">${esc(ici.ici_status || '--')}</div>
-        <div class="ici-components">${compHTML}</div>
+    return `<div class="dsb-comp">
+      <div class="dsb-comp-header">
+        <span class="dsb-comp-label">${c.label}</span>
+        <span class="dsb-comp-val" style="color:${barColor}">${val.toFixed(0)}</span>
       </div>
-      <div class="ici-grade" style="color:${score >= 85 ? 'var(--green)' : score >= 70 ? 'var(--blue)' : score >= 55 ? 'var(--amber)' : 'var(--red)'}">${d.grade || '--'}</div>
-    </div>
-  `;
+      <div class="dsb-comp-bar"><div style="width:${val}%;background:${barColor}"></div></div>
+    </div>`;
+  }).join('') + `<div class="dsb-grade" style="color:${score>=85?'var(--green)':score>=70?'var(--blue)':score>=55?'var(--amber)':'var(--red)'}">${d.grade||'--'}</div>`;
 }
 
 /* ── Decision + Signal Decay ──────────────────────────────────────────────── */
