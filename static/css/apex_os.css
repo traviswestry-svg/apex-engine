@@ -2208,3 +2208,196 @@ body {
 
 /* ── Auction row — unconstrained height ──────────────────────────────────── */
 .db-auction-col { max-height: none !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OPERATOR-FIRST DASHBOARD — Terminal 1.1
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Band 1: Market Status + Executive Summary ───────────────────────────── */
+.op-band {
+  border-color: rgba(56,189,248,.15);
+  background: rgba(56,189,248,.02);
+  min-height: 64px;
+}
+.op-loading { font-size: 12px; color: var(--faint); }
+
+/* ── Band 2: Decision Command ────────────────────────────────────────────── */
+.op-decision-band {
+  display: grid;
+  grid-template-columns: 160px 1fr 1fr 1.4fr;
+  background: var(--surf);
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+@media(max-width:900px) { .op-decision-band { grid-template-columns: 1fr 1fr; } }
+@media(max-width:600px) { .op-decision-band { grid-template-columns: 1fr; } }
+
+.op-decision-cell {
+  padding: 14px 16px;
+  background: rgba(15,23,42,.4);
+  border-right: 1px solid var(--bdr);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 6px;
+}
+.op-decision-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  color: var(--faint);
+}
+.op-decision-cell .decision-badge { font-size: 13px; width: 100%; text-align: center; }
+
+/* Confidence meter cell */
+.op-ici-cell {
+  padding: 12px 16px;
+  border-right: 1px solid var(--bdr);
+}
+.op-ici-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  color: var(--faint);
+  margin-bottom: 8px;
+}
+.op-ici-meter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.op-ici-num {
+  font-family: var(--mono);
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+  min-width: 48px;
+}
+.op-ici-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(100,116,139,.2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.op-ici-fill { height: 100%; border-radius: 3px; transition: width .5s, background .3s; }
+.op-ici-ctx {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  min-width: 64px;
+  text-align: right;
+}
+.op-ici-comps { font-size: 10px; }
+
+/* Why panel */
+.op-why-cell {
+  padding: 12px 16px;
+  border-right: 1px solid var(--bdr);
+}
+.op-why-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  margin-bottom: 8px;
+  color: var(--faint);
+}
+.op-why-gates { display: flex; flex-direction: column; gap: 4px; }
+.why-gate {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+}
+.why-gate-pass { color: var(--green); }
+.why-gate-fail { color: var(--red);   }
+.why-gate-need { color: var(--blue);  }
+
+/* Decision message */
+.op-msg-cell {
+  padding: 12px 16px;
+}
+
+/* ── Band 3: Auction + Flow + Playbook ───────────────────────────────────── */
+.op-intel-band {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr 1px 1fr;
+  background: var(--surf);
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+@media(max-width:1000px) {
+  .op-intel-band { grid-template-columns: 1fr; }
+  .op-intel-divider { display: none; }
+}
+.op-intel-col {
+  padding: 14px 16px;
+  overflow-y: auto;
+  max-height: 520px;
+}
+.op-intel-divider { background: var(--bdr); }
+.op-intel-col-hdr {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  color: var(--faint);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.op-intel-sub-div {
+  height: 1px;
+  background: var(--bdr);
+  margin: 12px 0;
+}
+
+/* ── Operator Flow Panel ─────────────────────────────────────────────────── */
+.op-flow-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+.op-flow-item   { display: flex; flex-direction: column; gap: 2px; }
+.op-flow-label  { font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); font-weight: 700; }
+.op-flow-val    { font-family: var(--mono); font-size: 14px; font-weight: 800; }
+
+.op-conv-block {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+  margin-bottom: 8px;
+}
+.op-conv-label { font-family: var(--mono); font-size: 10px; font-weight: 800; letter-spacing: .04em; margin-bottom: 3px; }
+.op-conv-note  { font-size: 10px; color: var(--muted); line-height: 1.5; font-style: italic; }
+
+.op-div-alert {
+  font-size: 10px;
+  color: var(--amber);
+  padding: 4px 8px;
+  background: rgba(245,158,11,.07);
+  border: 1px solid rgba(245,158,11,.2);
+  border-radius: 5px;
+  margin-bottom: 8px;
+}
+
+.op-flow-prems  { border-top: 1px solid var(--bdr); padding-top: 8px; }
+.op-prem-row    { display: flex; justify-content: space-between; font-size: 11px; padding: 3px 0; }
+.op-prem-label  { color: var(--faint); }
+.op-prem-val    { font-family: var(--mono); font-weight: 700; }
