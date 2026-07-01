@@ -221,7 +221,7 @@ def _record_confidence_timeline_point(ticker: str, result: Dict[str, Any]) -> No
         "zero_gamma": ribbon.get("zero_gamma") or gamma.get("zero_gamma"),
         "consensus_direction": consensus.get("consensus_direction"),
         "signal_fresh": execution.get("signal_fresh"),
-        "session": (result.get("session") or {}).get("session") if isinstance(result.get("session"), dict) else session_status(),
+        "session": (result.get("session") or {}).get("session_state") or session_status(),
     }
     with CONFIDENCE_TIMELINE_LOCK:
         rows = CONFIDENCE_TIMELINE.setdefault(t, [])
@@ -3341,14 +3341,20 @@ def api_market_status():
 @app.route("/health")
 def health():
     with STATE_LOCK:
+        s_updated  = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
+        s_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
+        s_sources  = SCANNER_STATE.get("data_sources") or STATE.get("data_sources")
+        s_session  = session_status()
         return jsonify({
-            "ok": True,
-            "mode": VERSION,
-            "updated_at": STATE.get("updated_at"),
-            "scanner_started": SCANNER_STARTED,
-            "scan_in_progress": STATE.get("scan_in_progress"),
-            "last_scan_duration_seconds": STATE.get("last_scan_duration_seconds"),
-            "sources": STATE.get("data_sources"),
+            "ok":                         True,
+            "mode":                       VERSION,
+            "session":                    s_session,
+            "updated_at":                 s_updated,
+            "scanner_started":            SCANNER_STARTED,
+            "scan_in_progress":           SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"),
+            "last_scan_duration_seconds": s_duration,
+            "sources":                    s_sources,
+            "is_tradeable":               s_session == "MARKET_OPEN",
         })
 
 # =============================================================================
