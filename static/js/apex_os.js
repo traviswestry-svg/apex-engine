@@ -216,11 +216,25 @@ function renderRibbon(d) {
 function renderICI(d) {
   const el = $('iciPanel');
   if (!el || !d) return;
-  const ici   = d.ici || {};
-  const score = Number(ici.ici || 0);
-  const comps = ici.components || {};
-  const wts   = ici.weights   || {};
+  const ici     = d.ici || {};
+  const score   = Number(ici.ici || 0);
+  const comps   = ici.components || {};
+  const wts     = ici.weights    || {};
+  const ms      = d.market_state || {};
+  const session = (d.session || {}).session_state || ms.session_state || '';
   const scoreColor = ici.ici_color === 'GREEN' ? 'var(--green)' : ici.ici_color === 'RED' ? 'var(--red)' : 'var(--amber)';
+
+  // Session context label for the ICI — explains low scores are EXPECTED
+  const sessionCtx = (() => {
+    if (session === 'CLOSED')      return { label: 'CLOSED SESSION',    note: 'Expected. Recalculates after cash open.' };
+    if (session === 'OVERNIGHT')   return { label: 'OVERNIGHT',         note: 'Execution engine inactive. ES monitoring only.' };
+    if (session === 'PREMARKET')   return { label: 'PRE-MARKET',        note: 'Building confidence before 9:30 ET.' };
+    if (session === 'AFTER_HOURS') return { label: 'AFTER-HOURS',       note: 'Review mode. No new entries.' };
+    if (score < 30)                return { label: 'LOW CONVICTION',    note: 'Sit out until engines align.' };
+    if (score < 55)                return { label: 'BUILDING',          note: 'Partial alignment — watch mode.' };
+    if (score < 70)                return { label: 'MODERATE',          note: 'Some alignment — Pine needed.' };
+    return { label: ici.ici_label || 'HIGH', note: 'All systems aligned.' };
+  })();
 
   // Update the big ICI number in the status bar
   const readEl = $('readinessNum');
@@ -230,15 +244,15 @@ function renderICI(d) {
     readEl.style.color = scoreColor;
   }
 
-  // Compact horizontal component bars for the status bar
+  // Compact component bars + context label
   const compDefs = [
-    { key: 'conviction',      label: 'Consensus',   w: wts.conviction || 0.5  },
-    { key: 'freshness',       label: 'Signal',      w: wts.freshness  || 0.2  },
-    { key: 'gamma_stability', label: 'Gamma',       w: wts.gamma      || 0.15 },
-    { key: 'flow_momentum',   label: 'Flow',        w: wts.momentum   || 0.15 },
+    { key: 'conviction',      label: 'Consensus', w: wts.conviction || 0.5  },
+    { key: 'freshness',       label: 'Signal',    w: wts.freshness  || 0.2  },
+    { key: 'gamma_stability', label: 'Gamma',     w: wts.gamma      || 0.15 },
+    { key: 'flow_momentum',   label: 'Flow',      w: wts.momentum   || 0.15 },
   ];
 
-  el.innerHTML = compDefs.map(c => {
+  const barsHTML = compDefs.map(c => {
     const val = Number(comps[c.key] || 0);
     const barColor = val >= 70 ? 'var(--green)' : val >= 45 ? 'var(--blue)' : 'var(--red)';
     return `<div class="dsb-comp">
@@ -248,7 +262,14 @@ function renderICI(d) {
       </div>
       <div class="dsb-comp-bar"><div style="width:${val}%;background:${barColor}"></div></div>
     </div>`;
-  }).join('') + `<div class="dsb-grade" style="color:${score>=85?'var(--green)':score>=70?'var(--blue)':score>=55?'var(--amber)':'var(--red)'}">${d.grade||'--'}</div>`;
+  }).join('');
+
+  el.innerHTML = barsHTML + `
+    <div class="dsb-session-ctx">
+      <span class="dsb-ctx-label" style="color:${scoreColor}">${esc(sessionCtx.label)}</span>
+      <span class="dsb-ctx-note">${esc(sessionCtx.note)}</span>
+    </div>
+    <div class="dsb-grade" style="color:${score>=85?'var(--green)':score>=70?'var(--blue)':score>=55?'var(--amber)':'var(--red)'}">${d.grade||'--'}</div>`;
 }
 
 /* ── Decision + Signal Decay ──────────────────────────────────────────────── */
@@ -313,9 +334,36 @@ function renderDecision(d) {
       readEl.textContent = pctR;
       readEl.className = 'ici-big ' + (pctR >= 75 ? 'ici-green' : pctR >= 50 ? 'ici-amber' : 'ici-red');
     }
-    gcEl.innerHTML = gates.map(g =>
-      `<div class="gate-row"><span class="gate-dot ${g.ok ? 'gd-on' : 'gd-off'}"></span>${esc(g.label)}</div>`
-    ).join('');
+    const isNoTrade = state === 'NO_TRADE' || state === 'PREPARING';
+    const passCount2 = gates.filter(g => g.ok).length;
+    const failGates  = gates.filter(g => !g.ok);
+
+    // What's needed to get to an entry
+    const needed = (() => {
+      const n = [];
+      if (!exec.signal_matches_flow && !exec.has_signal) n.push('Pine confirmation');
+      if (!['BULLISH','BEARISH'].includes(cons.consensus_direction)) n.push('Directional flow');
+      if (Number(ici.ici || 0) < 70) n.push('ICI ≥ 70');
+      return n;
+    })();
+
+    if (isNoTrade && failGates.length > 0) {
+      gcEl.innerHTML = `
+        <div class="blocker-panel">
+          <div class="blocker-title">Why NO TRADE</div>
+          <div class="blocker-missing">
+            ${failGates.map(g => `<div class="blocker-item">☐ ${esc(g.label)}</div>`).join('')}
+          </div>
+          ${needed.length ? `<div class="blocker-need-label">Still needs</div>
+          <div class="blocker-need">
+            ${needed.map(n => `<div class="blocker-need-item">→ ${esc(n)}</div>`).join('')}
+          </div>` : ''}
+        </div>`;
+    } else {
+      gcEl.innerHTML = gates.map(g =>
+        `<div class="gate-row"><span class="gate-dot ${g.ok ? 'gd-on' : 'gd-off'}"></span>${esc(g.label)}</div>`
+      ).join('');
+    }
   }
 }
 
@@ -1515,6 +1563,7 @@ async function loadOS() {
     renderFlow2(data);
     renderStory(data);
     renderOvernightGamePlan(data);
+    renderExecutiveSummary(data);
     renderAuctionIntel(data);
     renderDecisionTree(data);
     captureTimelineEvent(data);
@@ -2108,6 +2157,82 @@ function initInnerTabs() {
       if (pane) pane.classList.add('active');
     });
   });
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   EXECUTIVE SUMMARY — hero panel at top of dashboard
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderExecutiveSummary(d) {
+  const el = $('execSummaryHero');
+  if (!el || !d) return;
+
+  const story   = d.story || {};
+  const ms      = d.market_state || {};
+  const session = (d.session || {}).session_state || ms.session_state || '';
+  const fi      = d.flow_intelligence || d.flow || {};
+  const on_plan = d.overnight_game_plan;
+  const summary = d.executive_summary || story.executive_summary || '';
+  const state   = d.decision_state || 'NO_TRADE';
+
+  const isOvernight  = session === 'OVERNIGHT' || session === 'PREMARKET';
+  const isClosed     = session === 'CLOSED';
+  const isNoTrade    = state === 'NO_TRADE' || state === 'PREPARING';
+  const isActionable = state.startsWith('ENTER') || state.startsWith('WATCH') || state === 'READY';
+
+  const stateColor = state.startsWith('ENTER') ? 'var(--green)' :
+                     (state.startsWith('WATCH') || state === 'READY') ? 'var(--amber)' : 'var(--muted)';
+
+  // Block conviction vs bias surfaced here
+  const blockConv = fi.block_conviction || '';
+  const flowBias  = ms.flow_bias || fi.bias || 'MIXED';
+  const netPrem   = ms.net_premium || fi.net_premium || 0;
+  const blockHtml = blockConv && blockConv !== 'NONE' && blockConv !== 'LOW' ? `
+    <div class="exec-block-row">
+      <div class="exec-block-item">
+        <div class="exec-block-label">Institutional Activity</div>
+        <div class="exec-block-val" style="color:${blockConv==='HIGH'?'var(--amber)':'var(--muted)'}">${esc(blockConv)}</div>
+      </div>
+      <div class="exec-block-item">
+        <div class="exec-block-label">Direction</div>
+        <div class="exec-block-val" style="color:${flowBias==='BULLISH'?'var(--green)':flowBias==='BEARISH'?'var(--red)':'var(--muted)'}">${esc(flowBias)}</div>
+      </div>
+      ${blockConv === 'HIGH' && flowBias === 'MIXED' ? `<div class="exec-block-note">Large institutions active but not aligned — expect two-way trade until one side takes control.</div>` : ''}
+    </div>` : '';
+
+  // Overnight plan gets priority when markets closed
+  if (isOvernight && on_plan && on_plan.game_plan) {
+    const bias = on_plan.bias || 'NEUTRAL';
+    const biasColor = bias.includes('BULL') ? 'var(--green)' : bias.includes('BEAR') ? 'var(--red)' : 'var(--amber)';
+    const biasArrow = bias.includes('BULL') ? '▲' : bias.includes('BEAR') ? '▼' : '—';
+    el.innerHTML = `
+      <div class="exec-session-badge exec-overnight">☾ OVERNIGHT GAME PLAN</div>
+      <div class="exec-bias-row">
+        <span class="exec-bias" style="color:${biasColor}">${biasArrow} ${esc(bias.replace(/_/g,' '))}</span>
+        ${on_plan.next_rth ? `<span class="exec-next-rth">Cash open: ${esc(on_plan.next_rth)}</span>` : ''}
+      </div>
+      <div class="exec-narrative">${esc(on_plan.executive_summary || summary)}</div>
+      ${on_plan.game_plan ? `<div class="exec-game-plan">${esc(on_plan.game_plan)}</div>` : ''}
+      ${blockHtml}`;
+    return;
+  }
+
+  if (isClosed) {
+    el.innerHTML = `
+      <div class="exec-session-badge exec-closed">● CLOSED SESSION</div>
+      <div class="exec-narrative">${esc(summary || "Market closed. Review the day's auction and prepare for tomorrow.")}</div>
+      ${blockHtml}`;
+    return;
+  }
+
+  // Regular session — show the executive summary prominently
+  el.innerHTML = `
+    <div class="exec-state-row">
+      <span class="exec-state-badge" style="color:${stateColor};border-color:${stateColor}">${esc(state.replace(/_/g,' '))}</span>
+      ${story.engine ? `<span class="exec-engine-tag">${esc(story.engine)}</span>` : ''}
+    </div>
+    <div class="exec-narrative ${isActionable ? 'exec-narrative-active' : ''}">${esc(summary)}</div>
+    ${blockHtml}`;
 }
 
 /* ── Ticker selector ──────────────────────────────────────────────────────── */
