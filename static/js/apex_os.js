@@ -264,9 +264,21 @@ function renderICI(d) {
     </div>`;
   }).join('');
 
+  // Drive the confidence meter fill bar
+  const fillEl = $('iciFill');
+  if (fillEl) {
+    fillEl.style.width = Math.min(score, 100) + '%';
+    fillEl.style.background = scoreColor;
+  }
+  const ctxEl = $('iciCtxLabel');
+  if (ctxEl) {
+    ctxEl.textContent = sessionCtx.label;
+    ctxEl.style.color = scoreColor;
+  }
+
+  // Compact component bars in the new op-ici-comps slot
   el.innerHTML = barsHTML + `
     <div class="dsb-session-ctx">
-      <span class="dsb-ctx-label" style="color:${scoreColor}">${esc(sessionCtx.label)}</span>
       <span class="dsb-ctx-note">${esc(sessionCtx.note)}</span>
     </div>
     <div class="dsb-grade" style="color:${score>=85?'var(--green)':score>=70?'var(--blue)':score>=55?'var(--amber)':'var(--red)'}">${d.grade||'--'}</div>`;
@@ -335,8 +347,17 @@ function renderDecision(d) {
       readEl.className = 'ici-big ' + (pctR >= 75 ? 'ici-green' : pctR >= 50 ? 'ici-amber' : 'ici-red');
     }
     const isNoTrade = state === 'NO_TRADE' || state === 'PREPARING';
+    const isEnter   = state.startsWith('ENTER');
     const passCount2 = gates.filter(g => g.ok).length;
+    const passGates  = gates.filter(g => g.ok);
     const failGates  = gates.filter(g => !g.ok);
+
+    // Update the "Why" label
+    const whyLabelEl = $('whyLabel');
+    if (whyLabelEl) {
+      whyLabelEl.textContent = isEnter ? 'Enter Because' : isNoTrade ? 'Blocked By' : 'Gates';
+      whyLabelEl.style.color = isEnter ? 'var(--green)' : isNoTrade ? 'var(--red)' : 'var(--muted)';
+    }
 
     // What's needed to get to an entry
     const needed = (() => {
@@ -347,21 +368,24 @@ function renderDecision(d) {
       return n;
     })();
 
-    if (isNoTrade && failGates.length > 0) {
-      gcEl.innerHTML = `
-        <div class="blocker-panel">
-          <div class="blocker-title">Why NO TRADE</div>
-          <div class="blocker-missing">
-            ${failGates.map(g => `<div class="blocker-item">☐ ${esc(g.label)}</div>`).join('')}
-          </div>
-          ${needed.length ? `<div class="blocker-need-label">Still needs</div>
-          <div class="blocker-need">
-            ${needed.map(n => `<div class="blocker-need-item">→ ${esc(n)}</div>`).join('')}
-          </div>` : ''}
-        </div>`;
+    if (isEnter) {
+      // ENTER BECAUSE — show passing gates with checkmarks
+      gcEl.innerHTML = passGates.map(g =>
+        `<div class="why-gate why-gate-pass">✓ ${esc(g.label)}</div>`
+      ).concat(failGates.map(g =>
+        `<div class="why-gate why-gate-fail">✗ ${esc(g.label)}</div>`
+      )).join('');
+    } else if (isNoTrade && failGates.length > 0) {
+      // NO TRADE BECAUSE — show blockers + what's needed
+      gcEl.innerHTML = failGates.map(g =>
+        `<div class="why-gate why-gate-fail">✗ ${esc(g.label)}</div>`
+      ).join('') +
+      (needed.length ? needed.map(n =>
+        `<div class="why-gate why-gate-need">→ ${esc(n)}</div>`
+      ).join('') : '');
     } else {
       gcEl.innerHTML = gates.map(g =>
-        `<div class="gate-row"><span class="gate-dot ${g.ok ? 'gd-on' : 'gd-off'}"></span>${esc(g.label)}</div>`
+        `<div class="why-gate ${g.ok ? 'why-gate-pass' : 'why-gate-fail'}">${g.ok ? '✓' : '✗'} ${esc(g.label)}</div>`
       ).join('');
     }
   }
@@ -1564,6 +1588,7 @@ async function loadOS() {
     renderStory(data);
     renderOvernightGamePlan(data);
     renderExecutiveSummary(data);
+    renderOpFlow(data);
     renderAuctionIntel(data);
     renderDecisionTree(data);
     captureTimelineEvent(data);
@@ -2157,6 +2182,84 @@ function initInnerTabs() {
       if (pane) pane.classList.add('active');
     });
   });
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   OPERATOR FLOW PANEL — compact inline flow summary for Band 3
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderOpFlow(d) {
+  const el = $('opFlowPanel');
+  if (!el || !d) return;
+  const fi  = d.flow_intelligence || d.flow || {};
+  const ms  = d.market_state || {};
+  const tape = d.flow_tape_summary || {};
+
+  const flowBias   = ms.flow_bias   || fi.bias   || 'MIXED';
+  const tapeBias   = ms.tape_bias   || 'MIXED';
+  const netPrem    = ms.net_premium || fi.net_premium || 0;
+  const callPrem   = ms.call_premium|| fi.call_premium || 0;
+  const putPrem    = ms.put_premium || fi.put_premium  || 0;
+  const sweeps     = ms.tape_sweeps || tape.sweep_count || fi.sweep_count || 0;
+  const blocks     = ms.tape_blocks || tape.block_count || 0;
+  const blockConv  = fi.block_conviction || '';
+  const divType    = ms.divergence_type || fi.divergence_type || '';
+
+  const biasColor = flowBias === 'BULLISH' ? 'var(--green)' : flowBias === 'BEARISH' ? 'var(--red)' : 'var(--muted)';
+  const tapeColor = tapeBias === 'BULLISH' ? 'var(--green)' : tapeBias === 'BEARISH' ? 'var(--red)' : 'var(--muted)';
+
+  // Block conviction interpretation
+  const convInterpret = (() => {
+    if (blockConv === 'HIGH' && flowBias === 'MIXED')
+      return { label: 'HIGH ACTIVITY · NO DIRECTION', note: 'Institutions active but fighting each other. Expect rotational trade.', color: 'var(--amber)' };
+    if (blockConv === 'HIGH' && flowBias === 'BULLISH')
+      return { label: 'HIGH ACTIVITY · BULLISH', note: 'Large institutions buying. Directional conviction confirmed.', color: 'var(--green)' };
+    if (blockConv === 'HIGH' && flowBias === 'BEARISH')
+      return { label: 'HIGH ACTIVITY · BEARISH', note: 'Large institutions selling. Directional conviction confirmed.', color: 'var(--red)' };
+    if (blockConv === 'LOW')
+      return { label: 'LOW ACTIVITY', note: 'Institutional participation is light.', color: 'var(--faint)' };
+    return null;
+  })();
+
+  el.innerHTML = `
+    <div class="op-flow-grid">
+      <div class="op-flow-item">
+        <div class="op-flow-label">Flow Bias</div>
+        <div class="op-flow-val" style="color:${biasColor}">${esc(flowBias)}</div>
+      </div>
+      <div class="op-flow-item">
+        <div class="op-flow-label">Tape Bias</div>
+        <div class="op-flow-val" style="color:${tapeColor}">${esc(tapeBias)}</div>
+      </div>
+      <div class="op-flow-item">
+        <div class="op-flow-label">Net Premium</div>
+        <div class="op-flow-val" style="color:${netPrem>=0?'var(--green)':'var(--red)'}">${netPrem>=0?'+':''}${fmtM(netPrem)}</div>
+      </div>
+      <div class="op-flow-item">
+        <div class="op-flow-label">Sweeps / Blocks</div>
+        <div class="op-flow-val">${sweeps} / ${blocks}</div>
+      </div>
+    </div>
+
+    ${convInterpret ? `
+    <div class="op-conv-block" style="border-color:${convInterpret.color}20;background:${convInterpret.color}08">
+      <div class="op-conv-label" style="color:${convInterpret.color}">${esc(convInterpret.label)}</div>
+      <div class="op-conv-note">${esc(convInterpret.note)}</div>
+    </div>` : ''}
+
+    ${divType ? `<div class="op-div-alert">⚡ ${esc(divType.replace(/_/g,' '))} divergence active</div>` : ''}
+
+    <div class="op-flow-prems">
+      <div class="op-prem-row">
+        <span class="op-prem-label">Call premium</span>
+        <span class="op-prem-val rv-green">$${fmtM(callPrem)}</span>
+      </div>
+      <div class="op-prem-row">
+        <span class="op-prem-label">Put premium</span>
+        <span class="op-prem-val rv-red">$${fmtM(putPrem)}</span>
+      </div>
+    </div>
+  `;
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
