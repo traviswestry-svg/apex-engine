@@ -78,7 +78,10 @@
       this.ema8Series.setData(toLine(candles, 'ema8'));
       this.ema21Series.setData(toLine(candles, 'ema21'));
       this.vwapSeries.setData(toLine(candles, 'vwap'));
-      if (window.APEXOverlays) window.APEXOverlays.applyPriceLineOverlays(this, payload.levels || {}, { includeRaw: !!payload.includeRawZeroGamma });
+      if (window.APEXOverlays) window.APEXOverlays.applyPriceLineOverlays(
+        this, payload.levels || {},
+        { includeRaw: !!payload.includeRawZeroGamma, basisOffset: Number(payload._basisOffset || 0) }
+      );
       const restored = window.APEXViewport && window.APEXViewport.restore(this.container.id, this.chart);
       if (!restored) this.fitLatest();
     }

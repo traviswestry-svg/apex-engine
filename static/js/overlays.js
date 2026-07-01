@@ -175,8 +175,10 @@
    */
   function applyPriceLineOverlays(engine, levels, options) {
     if (!engine || !engine.candleSeries) return;
+    // basisOffset: ES − SPX (typically +40 to +55 pts).
+    // All SPX-derived levels drawn on the ES chart must shift up by basis.
+    const basis = Number((options || {}).basisOffset || 0);
 
-    // Preserve current visible range to avoid resetting zoom/pan
     let savedRange = null;
     try {
       if (engine.chart && engine.chart.timeScale) {
@@ -189,19 +191,19 @@
 
     normalized.forEach(function (level) {
       try {
+        const adjustedPrice = level.price + basis;
         const line = engine.candleSeries.createPriceLine({
-          price:            level.price,
+          price:            adjustedPrice,
           color:            level.color,
           lineWidth:        level.lineWidth || 1,
           lineStyle:        level.lineStyle != null ? level.lineStyle : 2,
           axisLabelVisible: true,
-          title:            level.title + ' ' + level.price.toFixed(2),
+          title:            level.title + ' ' + adjustedPrice.toFixed(2),
         });
         engine.priceLines.push(line);
       } catch (_) {}
     });
 
-    // Restore zoom/pan if we had a range
     if (savedRange) {
       try { engine.chart.timeScale().setVisibleRange(savedRange); } catch (_) {}
     }

@@ -340,12 +340,7 @@ function renderDecision(d) {
       { label: 'No A+ divergence block', ok: (d.divergence_type) !== 'A_PLUS' },
     ];
     const passCount = gates.filter(g => g.ok).length;
-    const readEl = $('readinessNum');
-    if (readEl) {
-      const pctR = gates.length ? Math.round(passCount / gates.length * 100) : 0;
-      readEl.textContent = pctR;
-      readEl.className = 'ici-big ' + (pctR >= 75 ? 'ici-green' : pctR >= 50 ? 'ici-amber' : 'ici-red');
-    }
+    // readinessNum is owned by renderICI — do not overwrite it here
     const isNoTrade = state === 'NO_TRADE' || state === 'PREPARING';
     const isEnter   = state.startsWith('ENTER');
     const passCount2 = gates.filter(g => g.ok).length;
@@ -441,7 +436,7 @@ function renderEngineMatrix(d) {
   const consEl = $('consensusBar');
   if (consEl) {
     const iciW = (d.ici || {}).weights || {};
-    const sessState = (d.ici || {}).session_state || 'CLOSED';
+    const sessState = (d.session || {}).session_state || ms.session_state || '';
     const sessBadge = sessState !== 'MARKET_OPEN'
       ? `<span style="font-size:9px;padding:1px 6px;border-radius:4px;background:rgba(245,158,11,.12);color:var(--amber);margin-left:6px;font-weight:700">${sessState.replace(/_/g,' ')} — adaptive weights active</span>`
       : '';
@@ -571,7 +566,7 @@ function renderSession(d) {
   const sess = d.session || {};
   const pill = $('sessionPill');
   if (pill) {
-    const s = sess.session || '';
+    const s = sess.session_state || '';
     pill.textContent = s.replace(/_/g, ' ') || 'LOADING';
     pill.className = 'session-pill ' + (s === 'MARKET_OPEN' ? 'sess-open' : 'sess-closed');
   }
@@ -1783,7 +1778,7 @@ function renderDecisionTree(d) {
   const state = d.decision_state || 'NO_TRADE';
 
   // Layer 1: Environment
-  const session   = (d.session || {}).session_state || 'UNKNOWN';
+  const session   = (d.session || {}).session_state || ms.session_state || '';
   const tradeable = session === 'MARKET_OPEN';
   const env_ok    = tradeable;
   const env_label = tradeable ? 'Tradeable' : session.replace(/_/g,' ');
