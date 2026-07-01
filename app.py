@@ -3157,28 +3157,101 @@ def tv_signal():
     secret = str(payload.get("secret", ""))
     if WEBHOOK_SECRET and secret != WEBHOOK_SECRET:
         return jsonify({"ok": False, "error": "bad secret"}), 403
+
     ticker = normalize_signal_ticker(str(payload.get("ticker", ASSISTANT_TICKER)))
-    side = str(payload.get("signal", payload.get("side", "NONE"))).upper()
+    side   = str(payload.get("signal", payload.get("side", "NONE"))).upper()
+
+    # Full signal enriched with Pine v6 context fields
     signal = {
-        "ticker": ticker,
-        "signal": side,
-        "direction": str(payload.get("direction", "")),
-        "score": payload.get("score"),
-        "close": payload.get("close"),
-        "timeframe": payload.get("timeframe"),
-        "system": payload.get("system", "APEX_PRO"),
-        "received_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "ticker":       ticker,
+        "signal":       side,
+        "direction":    str(payload.get("direction", "")),
+        "price":        payload.get("price"),
+        "score":        payload.get("score"),
+        "close":        payload.get("close") or payload.get("price"),
+        "timeframe":    payload.get("timeframe"),
+        "system":       payload.get("source", payload.get("system", "APEX_PRO")),
+        # APEX context from Pine inputs
+        "apex_decision":      payload.get("apex_decision"),
+        "apex_auction":       payload.get("apex_auction"),
+        "apex_poc_migration": payload.get("apex_poc_migration"),
+        "apex_acceptance":    payload.get("apex_acceptance"),
+        "apex_ici":           payload.get("apex_ici"),
+        "poc":                payload.get("poc"),
+        "vah":                payload.get("vah"),
+        "val":                payload.get("val"),
+        # Chart confirmation from Pine
+        "ema8":           payload.get("ema8"),
+        "ema21":          payload.get("ema21"),
+        "vwap":           payload.get("vwap"),
+        "vix":            payload.get("vix"),
+        "orb_high":       payload.get("orb_high"),
+        "orb_low":        payload.get("orb_low"),
+        "intern_score":   payload.get("intern_score"),
+        "signal_num":     payload.get("signal_num"),
+        "bar_time":       payload.get("bar_time"),
+        # Outcome tracking — filled in later via /api/signal_outcome
+        "outcome":        None,
+        "outcome_pnl":    None,
+        "outcome_notes":  None,
+        "received_at":    dt.datetime.now(dt.timezone.utc).isoformat(),
         "received_at_et": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
     }
+
+    # Persist signal in SCANNER_STATE signal log (last 50)
+    with STATE_LOCK:
+        log = SCANNER_STATE.setdefault("signal_log", [])
+        log.insert(0, signal)
+        SCANNER_STATE["signal_log"] = log[:50]
+
     flow_item = quantdata_flow_snapshot(ticker)
     assistant = build_trade_assistant_decision(flow_item, signal)
     with TRADE_ASSISTANT_LOCK:
         TRADE_ASSISTANT_STATE.update(assistant)
-        TRADE_ASSISTANT_STATE["last_signal"] = signal
+        TRADE_ASSISTANT_STATE["last_signal"]   = signal
         TRADE_ASSISTANT_STATE["last_decision"] = assistant
+
     if assistant.get("alert"):
-        send_telegram(f"🚨 APEX 3.5 ENTER {side} NOW\nTicker: {ticker}\nPine Score: {signal.get('score')}\nInstitutional Alignment: {assistant.get('institutional_alignment')}/100\nPlan: {(assistant.get('trade_plan') or {}).get('execution_summary')}\nCountdown: {(assistant.get('trade_plan') or {}).get('signal_seconds_remaining')}s")
+        send_telegram(
+            f"🚨 APEX ENTER {side}\n"
+            f"Ticker: {ticker} · Price: {signal.get('price')}\n"
+            f"Auction: {signal.get('apex_auction','--')} · ICI: {signal.get('apex_ici','--')}\n"
+            f"POC: {signal.get('poc','--')} · Bar: {signal.get('bar_time','--')}\n"
+            f"Internals: {signal.get('intern_score','--')}/3 · Signal #{signal.get('signal_num','--')}"
+        )
+
     return jsonify({"ok": True, "version": VERSION, "signal": signal, "flow": flow_item, "assistant": assistant})
+
+@app.route("/api/signal_log")
+def api_signal_log():
+    """GET /api/signal_log — last 50 Pine signals received at /tv_signal."""
+    with STATE_LOCK:
+        log = SCANNER_STATE.get("signal_log", [])
+    return jsonify({"ok": True, "count": len(log), "signals": log})
+
+
+@app.route("/api/signal_outcome", methods=["POST"])
+def api_signal_outcome():
+    """POST /api/signal_outcome — mark the outcome of a received signal.
+
+    Body: { "received_at": "<iso>", "outcome": "WIN|LOSS|SCRATCH", "pnl": 0.0, "notes": "..." }
+    """
+    body = request.get_json(silent=True) or {}
+    received_at = body.get("received_at")
+    if not received_at:
+        return jsonify({"ok": False, "error": "received_at required"}), 400
+    with STATE_LOCK:
+        log = SCANNER_STATE.get("signal_log", [])
+        matched = False
+        for sig in log:
+            if sig.get("received_at") == received_at:
+                sig["outcome"]       = body.get("outcome")
+                sig["outcome_pnl"]   = body.get("pnl")
+                sig["outcome_notes"] = body.get("notes")
+                matched = True
+                break
+    return jsonify({"ok": matched, "updated": matched})
+
 
 @app.route("/flow")
 def flow_dashboard():
@@ -3681,12 +3754,43 @@ def api_institutional_os():
                         prev_day_vah     = 0.0,
                         prev_day_val     = 0.0,
                         minutes_open     = _minutes_o,
-                        bars_above_vah   = 0,  # would require bar-level state tracking
-                        bars_below_val   = 0,
-                        bars_above_poc   = 0,
-                        bars_below_poc   = 0,
+                        bars_above_vah   = int(SCANNER_STATE.get("bars_above_vah", 0)),
+                        bars_below_val   = int(SCANNER_STATE.get("bars_below_val", 0)),
+                        bars_above_poc   = int(SCANNER_STATE.get("bars_above_poc", 0)),
+                        bars_below_poc   = int(SCANNER_STATE.get("bars_below_poc", 0)),
                     )
                     result["auction_intelligence"] = auction_intel
+
+                    # ── Update bar-level acceptance counters ──
+                    # These persist across scan cycles to track acceptance duration
+                    _vah = _sf(_vp_lvls.get("vah"))
+                    _val = _sf(_vp_lvls.get("val"))
+                    _poc = _sf(_vp_lvls.get("poc"))
+                    _px  = _cur_price or 0.0
+                    if _px > 0 and _vah > 0 and _val > 0:
+                        _new_day = SCANNER_STATE.get("_bar_day") != now_et().strftime("%Y-%m-%d")
+                        if _new_day:
+                            SCANNER_STATE["bars_above_vah"] = 0
+                            SCANNER_STATE["bars_below_val"] = 0
+                            SCANNER_STATE["bars_above_poc"] = 0
+                            SCANNER_STATE["bars_below_poc"] = 0
+                            SCANNER_STATE["_bar_day"] = now_et().strftime("%Y-%m-%d")
+                        if _px > _vah:
+                            SCANNER_STATE["bars_above_vah"] = SCANNER_STATE.get("bars_above_vah", 0) + 1
+                            SCANNER_STATE["bars_below_val"] = 0
+                        elif _px < _val:
+                            SCANNER_STATE["bars_below_val"] = SCANNER_STATE.get("bars_below_val", 0) + 1
+                            SCANNER_STATE["bars_above_vah"] = 0
+                        else:
+                            SCANNER_STATE["bars_above_vah"] = 0
+                            SCANNER_STATE["bars_below_val"] = 0
+                        if _poc > 0:
+                            if _px > _poc:
+                                SCANNER_STATE["bars_above_poc"] = SCANNER_STATE.get("bars_above_poc", 0) + 1
+                                SCANNER_STATE["bars_below_poc"] = 0
+                            else:
+                                SCANNER_STATE["bars_below_poc"] = SCANNER_STATE.get("bars_below_poc", 0) + 1
+                                SCANNER_STATE["bars_above_poc"] = 0
                 except Exception as _ai_err2:
                     print(f"Auction intelligence error (non-fatal): {_ai_err2}", flush=True)
             _session_state_now = session_ctx.get("session_state", "MARKET_OPEN")
