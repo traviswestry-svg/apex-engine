@@ -1884,3 +1884,103 @@ body {
   .dashboard-right .db-command-card { position: static; max-height: none; }
   .db-inner-pane { max-height: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPACT STATUS BAR — replaces two-card ICI + Readiness row
+   ═══════════════════════════════════════════════════════════════════════════ */
+.db-status-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.dsb-ici {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 16px;
+  background: rgba(15,23,42,.4);
+  flex-shrink: 0;
+  gap: 2px;
+}
+.dsb-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .9px;
+  color: var(--faint);
+}
+.dsb-ici-num {
+  font-family: var(--mono);
+  font-size: 36px;
+  font-weight: 900;
+  line-height: 1;
+}
+.dsb-divider {
+  width: 1px;
+  background: var(--bdr);
+  flex-shrink: 0;
+}
+.dsb-panel {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1.2;
+  min-width: 0;
+  justify-content: center;
+}
+/* Individual component bars inside dsb-panel */
+.dsb-comp { display: flex; flex-direction: column; gap: 2px; }
+.dsb-comp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.dsb-comp-label { font-size: 9px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.dsb-comp-val   { font-family: var(--mono); font-size: 10px; font-weight: 700; }
+.dsb-comp-bar   {
+  height: 3px;
+  background: rgba(100,116,139,.2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.dsb-comp-bar div { height: 100%; border-radius: 2px; }
+.dsb-grade {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 900;
+  text-align: center;
+  margin-top: 4px;
+  align-self: center;
+}
+.dsb-gates {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid var(--bdr);
+}
+.dsb-meta {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1.5;
+  min-width: 0;
+  border-left: 1px solid var(--bdr);
+}
+@media(max-width:900px) {
+  .db-status-bar { flex-wrap: wrap; }
+  .dsb-divider   { display: none; }
+  .dsb-gates, .dsb-meta, .dsb-panel { border-left: none; border-top: 1px solid var(--bdr); }
+}
+
+/* ── Compact scanner ──────────────────────────────────────────────────────── */
+.scanner-ideas-compact { max-height: 80px; overflow: hidden; }
+.scanner-ideas-compact .scanner-summary { margin-bottom: 4px; }
