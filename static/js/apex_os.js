@@ -2091,6 +2091,24 @@ function renderAuctionLadder(d) {
   `;
 }
 
+/* ── Inner tabs (within cards) ────────────────────────────────────────────── */
+function initInnerTabs() {
+  document.querySelectorAll('.db-inner-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.inner;
+      // Find parent tab container
+      const parent = btn.closest('.card, .db-command-card, .db-analytics-card');
+      if (!parent) return;
+      // Deactivate all sibling tabs and panes
+      parent.querySelectorAll('.db-inner-tab').forEach(b => b.classList.remove('active'));
+      parent.querySelectorAll('.db-inner-pane').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      const pane = document.getElementById('db-inner-' + key);
+      if (pane) pane.classList.add('active');
+    });
+  });
+}
+
 /* ── Ticker selector ──────────────────────────────────────────────────────── */
 function initTickerSelect() {
   document.querySelectorAll('.ticker-btn').forEach(btn => {
@@ -2542,6 +2560,7 @@ function renderOvernightGamePlan(d) {
 /* ── Init ─────────────────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
+  initInnerTabs();
   initReplayControls();
   initTickerSelect();
   initRefreshBtn();
