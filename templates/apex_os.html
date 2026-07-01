@@ -65,29 +65,14 @@
   <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
   <div id="tab-dashboard" class="tab-pane active">
 
-    <!-- Scanner -->
-    <div class="card sec-mb scanner-primary">
-      <div class="scanner-card-head">
-        <div>
-          <div class="card-label">Scanner Qualified Ideas <span class="live-dot-badge">LIVE</span></div>
-          <div class="workflow-sub">Qualified ideas appear here after each background scan cycle.</div>
-        </div>
-        <div class="scanner-actions">
-          <button class="btn btn-scan" id="runScanBtnPanel">&#9654; Run Scan</button>
-          <button class="btn btn-ghost btn-mini" id="refreshScannerBtn">Refresh</button>
-        </div>
-      </div>
-      <div id="scannerIdeasPanel" class="scanner-ideas-panel">Loading scanner ideas...</div>
-    </div>
-
-    <!-- ICI + Readiness -->
+    <!-- ICI + Readiness row -->
     <div class="grid2 sec-mb">
       <div class="card">
         <div class="card-label">Institutional Confidence Index</div>
         <div id="iciPanel"></div>
         <div style="margin-top:10px">
           <div id="decisionBadge" class="decision-badge db-neutral">&#8212; Loading</div>
-          <div class="decision-msg" id="decisionMsg">--</div>
+          <div class="decision-msg"  id="decisionMsg">--</div>
           <div class="decision-action" id="decisionAction">--</div>
           <div class="decay-wrap">
             <div class="decay-bar"><div class="decay-fill" id="decayBar" style="width:0%"></div></div>
@@ -112,95 +97,130 @@
       </div>
     </div>
 
-    <!-- Command Center + right column -->
+    <!-- Main two-column layout -->
     <div class="dashboard-main-grid sec-mb">
-      <div class="dashboard-left">
-        <!-- Auction Intelligence -->
-        <div class="card sec-mb">
-          <div class="card-label">Auction Intelligence
-            <span class="live-dot-badge">AMT</span>
-          </div>
-          <div id="auctionIntelPanel"></div>
-        </div>
-        <!-- Trade Coach -->
-        <div class="card sec-mb">
-          <div class="card-label">Trade Coach</div>
-          <div id="tradeCoach"></div>
-        </div>
-        <!-- Heat Map -->
-        <div class="card sec-mb">
-          <div class="card-label">Institutional Heat Map <span class="live-dot-badge">LIVE</span></div>
-          <div id="heatGrid" class="heat-grid"></div>
-        </div>
-        <!-- Engine Matrix -->
-        <div class="card sec-mb">
-          <div class="card-label">Nine Engine Pipeline</div>
-          <div id="consensusBar" class="sec-mb"></div>
-          <div id="engineMatrix" class="engine-matrix"></div>
-        </div>
-        <div class="card">
-          <div class="card-label">Engine Health</div>
-          <div id="engineHealthPanel"></div>
-        </div>
-      </div>
 
+      <!-- LEFT: Scanner + tabbed analytics -->
+      <div class="dashboard-left">
+
+        <!-- Scanner -->
+        <div class="card sec-mb scanner-primary">
+          <div class="scanner-card-head">
+            <div>
+              <div class="card-label">Scanner Qualified Ideas <span class="live-dot-badge">LIVE</span></div>
+              <div class="workflow-sub">Qualified ideas appear after each background scan cycle.</div>
+            </div>
+            <div class="scanner-actions">
+              <button class="btn btn-scan" id="runScanBtnPanel">&#9654; Run Scan</button>
+              <button class="btn btn-ghost btn-mini" id="refreshScannerBtn">Refresh</button>
+            </div>
+          </div>
+          <div id="scannerIdeasPanel" class="scanner-ideas-panel">Loading scanner ideas...</div>
+        </div>
+
+        <!-- Tabbed analytics card -->
+        <div class="card db-analytics-card">
+          <div class="db-inner-tabs">
+            <button class="db-inner-tab active" data-inner="coach">Trade Coach</button>
+            <button class="db-inner-tab" data-inner="auction-intel">Auction Intelligence</button>
+            <button class="db-inner-tab" data-inner="engines">Nine Engines</button>
+            <button class="db-inner-tab" data-inner="heat">Heat Map</button>
+          </div>
+          <div id="db-inner-coach"         class="db-inner-pane active"><div id="tradeCoach"></div></div>
+          <div id="db-inner-auction-intel" class="db-inner-pane"><div id="auctionIntelPanel"></div></div>
+          <div id="db-inner-engines"       class="db-inner-pane">
+            <div id="consensusBar" class="sec-mb"></div>
+            <div id="engineMatrix" class="engine-matrix"></div>
+            <div style="margin-top:10px"><div id="engineHealthPanel"></div></div>
+          </div>
+          <div id="db-inner-heat"          class="db-inner-pane">
+            <div id="heatGrid" class="heat-grid"></div>
+          </div>
+        </div>
+
+      </div><!-- /dashboard-left -->
+
+      <!-- RIGHT: Single tabbed command card -->
       <div class="dashboard-right">
-        <!-- Auction Ladder — 2-second institutional read -->
-        <div class="card command-card sec-mb auction-ladder-card">
-          <div class="card-label">Auction Ladder</div>
-          <div id="auctionLadder"></div>
-        </div>
-        <!-- Auction Command Center — POC as hero -->
-        <div class="card command-card command-primary sec-mb">
-          <div class="card-label">Auction Command Center</div>
-          <div id="commandCenter"></div>
-        </div>
-        <!-- Decision Tree -->
-        <div class="card command-card sec-mb">
-          <div class="card-label">Decision Hierarchy</div>
-          <div id="decisionTreePanel"></div>
-        </div>
-        <!-- Institutional Timeline -->
-        <div class="card command-card sec-mb">
-          <div class="card-label">Institutional Timeline <span class="live-dot-badge">LIVE</span></div>
-          <div id="institutionalTimeline" class="itl-wrap">
-            <div class="itl-empty">Session events will appear here as the auction develops.</div>
+        <div class="card db-command-card">
+
+          <!-- Inner tab bar -->
+          <div class="db-inner-tabs">
+            <button class="db-inner-tab active" data-inner="ladder">Auction</button>
+            <button class="db-inner-tab" data-inner="decision">Decision</button>
+            <button class="db-inner-tab" data-inner="timeline">Timeline</button>
+            <button class="db-inner-tab" data-inner="coach-snap">Coach</button>
+            <button class="db-inner-tab" data-inner="overlays">Overlays</button>
           </div>
-        </div>
-        <!-- Confidence Timeline -->
-        <div class="card command-card sec-mb">
-          <div class="card-headline-tight">
-            <div class="card-label" style="margin-bottom:0">ICI Timeline</div>
-            <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
+
+          <!-- Auction Ladder -->
+          <div id="db-inner-ladder" class="db-inner-pane active">
+            <div class="db-pane-sub">
+              <div class="db-pane-label">Auction Ladder</div>
+              <div id="auctionLadder"></div>
+            </div>
+            <div class="db-pane-divider"></div>
+            <div class="db-pane-sub">
+              <div class="db-pane-label">POC / Value Area</div>
+              <div id="auctionPanel" class="auction-panel">Waiting for profile...</div>
+            </div>
           </div>
-          <div id="confidenceTimeline" class="confidence-timeline">Waiting...</div>
-        </div>
-        <!-- Auction / Volume Profile -->
-        <div class="card command-card sec-mb">
-          <div class="card-label">POC / Value Area</div>
-          <div id="auctionPanel" class="auction-panel">Waiting for profile...</div>
-        </div>
-        <!-- Coach Snapshot -->
-        <div class="card command-card sec-mb">
-          <div class="card-label">Trade Coach</div>
-          <div id="coachSnapshot"></div>
-        </div>
-        <!-- Overlay toggles -->
-        <div class="card command-card">
-          <div class="card-label">Chart Overlays</div>
-          <div class="overlay-toggles" id="overlayToggles">
-            <button class="overlay-btn active" data-group="gamma">Gamma</button>
-            <button class="overlay-btn active" data-group="volumeProfile">Vol Profile</button>
-            <button class="overlay-btn active" data-group="vwap">VWAP</button>
-            <button class="overlay-btn active" data-group="previousDay">Prev Day</button>
-            <button class="overlay-btn active" data-group="openingRange">Open Range</button>
+
+          <!-- Decision Tree + Command Center -->
+          <div id="db-inner-decision" class="db-inner-pane">
+            <div class="db-pane-sub">
+              <div class="db-pane-label">Auction Command Center</div>
+              <div id="commandCenter"></div>
+            </div>
+            <div class="db-pane-divider"></div>
+            <div class="db-pane-sub">
+              <div class="db-pane-label">Decision Hierarchy</div>
+              <div id="decisionTreePanel"></div>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
+
+          <!-- Timeline -->
+          <div id="db-inner-timeline" class="db-inner-pane">
+            <div class="db-pane-sub">
+              <div class="db-pane-label">Institutional Timeline <span class="live-dot-badge">LIVE</span></div>
+              <div id="institutionalTimeline" class="itl-wrap">
+                <div class="itl-empty">Session events will appear as the auction develops.</div>
+              </div>
+            </div>
+            <div class="db-pane-divider"></div>
+            <div class="db-pane-sub">
+              <div class="db-pane-headline">
+                <div class="db-pane-label">ICI Timeline</div>
+                <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
+              </div>
+              <div id="confidenceTimeline" class="confidence-timeline">Waiting...</div>
+            </div>
+          </div>
+
+          <!-- Coach Snapshot -->
+          <div id="db-inner-coach-snap" class="db-inner-pane">
+            <div id="coachSnapshot"></div>
+          </div>
+
+          <!-- Overlays -->
+          <div id="db-inner-overlays" class="db-inner-pane">
+            <div class="db-pane-label">Chart Overlays</div>
+            <div class="overlay-toggles" id="overlayToggles">
+              <button class="overlay-btn active" data-group="gamma">Gamma</button>
+              <button class="overlay-btn active" data-group="volumeProfile">Vol Profile</button>
+              <button class="overlay-btn active" data-group="vwap">VWAP</button>
+              <button class="overlay-btn active" data-group="previousDay">Prev Day</button>
+              <button class="overlay-btn active" data-group="openingRange">Open Range</button>
+            </div>
+          </div>
+
+        </div><!-- /db-command-card -->
+      </div><!-- /dashboard-right -->
+    </div><!-- /dashboard-main-grid -->
 
   </div><!-- /tab-dashboard -->
 
+  <!-- ── TAB: CHART ────────────────────────────────────────────────── -->
   <!-- ── TAB: CHART ────────────────────────────────────────────────── -->
   <div id="tab-chart" class="tab-pane">
     <div class="card chart-tab-card">
