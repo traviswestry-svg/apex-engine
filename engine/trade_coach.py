@@ -311,7 +311,9 @@ def _build_checklist(ms: Dict[str, Any], side: str) -> List[Dict[str, Any]]:
     is_trade  = ms.get("is_tradeable", False)
 
     items = [
-        check("Session is live / tradeable", is_trade, "Market must be open"),
+        check("Market is open (RTH)",
+               is_trade,
+               "Market must be open for new entries" if not is_trade else ""),
         check("ICI ≥ 65", ici >= 65, f"Current: {ici:.0f}"),
         check("Pine signal confirmed and fresh", pine == "CONFIRMED" and fresh and matches,
               f"State: {pine}, Matches flow: {matches}"),
