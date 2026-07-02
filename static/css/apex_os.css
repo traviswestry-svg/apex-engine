@@ -2511,3 +2511,64 @@ body {
 .pb-inv-label { font-size: 9px; font-weight: 800; color: var(--red); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
 .pb-inv-text  { font-size: 10px; color: var(--muted); line-height: 1.5; }
 .pb-next { font-size: 10px; color: var(--faint); line-height: 1.5; font-style: italic; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INSTITUTIONAL INTELLIGENCE — Four Pillar Panel (APEX 6.5)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.ii-overall {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.ii-score {
+  font-family: var(--mono);
+  font-size: 36px;
+  font-weight: 900;
+  line-height: 1;
+}
+.ii-alignment {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+.ii-read {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: rgba(15,23,42,.5);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--blue);
+}
+.ii-pillar-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.ii-pillar {
+  background: var(--surf2);
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+}
+.ii-pillar-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.ii-pillar-emoji  { font-size: 12px; }
+.ii-pillar-label  { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); flex: 1; }
+.ii-pillar-score  { font-family: var(--mono); font-size: 13px; font-weight: 900; }
+.ii-pillar-dir    { font-family: var(--mono); font-size: 10px; font-weight: 700; margin-bottom: 4px; padding: 2px 6px; border-radius: 4px; display: inline-block; }
+.ii-bull { color: var(--green); background: rgba(34,197,94,.08); }
+.ii-bear { color: var(--red);   background: rgba(239,68,68,.08); }
+.ii-neut { color: var(--faint); background: rgba(100,116,139,.08); }
+.ii-pillar-note   { font-size: 9px; color: var(--faint); line-height: 1.45; }
+.ii-what { margin-bottom: 8px; }
+.ii-what-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); margin-bottom: 3px; }
+.ii-what-text  { font-size: 11px; color: var(--muted); line-height: 1.55; }
