@@ -1,17 +1,19 @@
-"""engine/institutional_intelligence.py — APEX 6.5 Institutional Intelligence Layer.
+"""engine/institutional_intelligence.py — APEX 7.0 Institutional Intelligence Layer.
 
-THE canonical intelligence object. Every dashboard component, Story Engine,
-Trade Coach, Ribbon, and Replay consumes this single object — no component
-independently queries multiple engines.
+THE canonical object. Every dashboard component, Story Engine, Trade Coach,
+Ribbon, and Replay consumes this single object — no component independently
+queries multiple engines.
 
-Four Pillars:
-  1. Market Structure  — auction, volume profile, rotation, trend
-  2. Dealer            — GEX, DEX, VEX, CHEX, hedging, pinning
-  3. Institutional     — sweeps, blocks, splits, options chain, story
-  4. Execution         — Pine, Trade Coach, risk, replay
+Seven intelligence inputs merged into one answer:
+  1. Market State (auction, volume profile, session)
+  2. Market Drivers (what is moving SPX)
+  3. Options Chain (OI, skew, term structure)
+  4. Dealer Positioning (GEX, DEX, VEX, CHEX, hedging, pinning)
+  5. Strike Magnets (pin levels, resistance, support)
+  6. Institutional Flow (sweeps, blocks, splits, dark flow)
+  7. Volatility (regime, path, dealer vega risk)
 
-Inputs: outputs of all existing engines — no new API calls.
-Output: single `institutional_intelligence` dict published once per scan.
+Output: institutional_intelligence — the complete institutional picture.
 """
 from __future__ import annotations
 
@@ -31,350 +33,31 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, v))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# PILLAR BUILDERS
-# Each pillar rolls up its engines into a single scored, narrated object.
-# ═══════════════════════════════════════════════════════════════════════════
+# ── Evidence builder ──────────────────────────────────────────────────────────
 
-def _build_market_structure_pillar(
-    auction_intel:  Dict[str, Any],
-    market_state:   Dict[str, Any],
-    rotation:       Optional[Dict[str, Any]],
-    volume_profile: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Pillar 1: Market Structure — auction + volume + rotation + trend."""
-    ai_state  = (auction_intel.get("auction_state") or {})
-    ai_poc    = (auction_intel.get("poc_migration") or {})
-    ai_acc    = (auction_intel.get("acceptance") or {})
-    ai_excess = (auction_intel.get("excess") or {})
-
-    # Auction
-    auction_state = (ai_state.get("state") or "UNKNOWN").replace("_", " ")
-    auction_conf  = _sf(ai_state.get("confidence"))
-    would_trade   = ai_state.get("would_trade", False)
-
-    # POC migration
-    poc_mig    = ai_poc.get("direction") or market_state.get("poc_migration") or "STABLE"
-    poc_delta  = _sf(ai_poc.get("delta"))
-    poc        = _sf(market_state.get("poc"))
-    vah        = _sf(market_state.get("vah"))
-    val_       = _sf(market_state.get("val"))
-    price      = _sf(market_state.get("price"))
-
-    # Acceptance
-    acc_status = ai_acc.get("primary_status") or ""
-    acc_level  = ai_acc.get("primary_level") or ""
-
-    # Excess
-    excess_detected = ai_excess.get("detected", False)
-    excess_type     = (ai_excess.get("type") or "").replace("_", " ")
-
-    # Rotation
-    rot_label  = (rotation or {}).get("rotation_label", "Unknown")
-    rot_type   = (rotation or {}).get("rotation_type", "BALANCED_ROTATION")
-    breadth    = (rotation or {}).get("breadth_label", "UNKNOWN")
-    spx_bias   = (rotation or {}).get("spx_bias", "NEUTRAL")
-
-    # Structure score (0–100)
-    score = 50.0
-    if would_trade:
-        score += 15
-    if poc_mig in ("RISING", "FALLING"):
-        score += 10
-    if acc_status == "ACCEPTING":
-        score += 12
-    elif acc_status == "REJECTED":
-        score -= 12
-    if excess_detected:
-        score -= 10
-    if rot_type == "GROWTH_ROTATION" and spx_bias in ("BULLISH", "MODERATELY_BULLISH"):
-        score += 8
-    score = _clamp(score)
-
-    # Direction from auction + POC
-    if would_trade and poc_mig == "RISING" and acc_status == "ACCEPTING":
-        direction = "BULLISH"
-    elif would_trade and poc_mig == "FALLING" and acc_status == "ACCEPTING":
-        direction = "BEARISH"
-    elif "BALANCED" in auction_state.upper() or poc_mig == "STABLE":
-        direction = "NEUTRAL"
-    else:
-        direction = "DEVELOPING"
-
-    narrative = (
-        f"Auction: {auction_state} ({auction_conf:.0f}% confidence). "
-        f"POC {'migrating ' + poc_mig.lower() if poc_mig != 'STABLE' else 'stable'} at ${poc:.2f}. "
-        f"Acceptance: {acc_status or 'unknown'}{' at ' + acc_level if acc_level else ''}. "
-        f"Rotation: {rot_label}. Breadth: {breadth.lower()}. "
-        f"{'⚠ ' + excess_type + ' detected. ' if excess_detected else ''}"
-        f"{'Institutional structure supports participation.' if would_trade else 'Wait for better structure.'}"
-    )
-
-    return {
-        "pillar":             "MARKET_STRUCTURE",
-        "score":              round(score, 1),
-        "direction":          direction,
-        "auction_state":      auction_state,
-        "auction_conf":       round(auction_conf, 1),
-        "would_trade":        would_trade,
-        "poc_migration":      poc_mig,
-        "poc_delta":          round(poc_delta, 2),
-        "poc":                round(poc, 2),
-        "vah":                round(vah, 2),
-        "val":                round(val_, 2),
-        "acceptance":         acc_status,
-        "excess_detected":    excess_detected,
-        "excess_type":        excess_type,
-        "rotation_type":      rot_type,
-        "breadth":            breadth,
-        "spx_bias":           spx_bias,
-        "narrative":          narrative,
-    }
+def _evidence(source: str, direction: str, strength: str, note: str) -> Dict[str, str]:
+    return {"source": source, "direction": direction, "strength": strength, "note": note}
 
 
-def _build_dealer_pillar(
-    dealer_positioning: Dict[str, Any],
-    options_chain:      Optional[Dict[str, Any]],
-    volatility:         Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """Pillar 2: Dealer — GEX, DEX, VEX, CHEX, hedging, pinning."""
-    d_gamma   = dealer_positioning.get("gamma") or {}
-    d_delta   = dealer_positioning.get("delta") or {}
-    d_charm   = dealer_positioning.get("charm") or {}
-    d_vega    = dealer_positioning.get("vega") or {}
-    d_hedge   = dealer_positioning.get("hedging_pressure") or {}
-    d_pin     = dealer_positioning.get("pin_probability") or {}
-    d_mom     = dealer_positioning.get("momentum_probability") or {}
-
-    gamma_regime   = d_gamma.get("regime") or "NEUTRAL_GAMMA"
-    delta_bias     = d_delta.get("bias") or "NEUTRAL"
-    charm          = d_charm.get("charm") or "NEUTRAL"
-    hedge_level    = d_hedge.get("level") or "LOW"
-    pin_prob       = _sf(d_pin.get("probability"))
-    mom_prob       = _sf(d_mom.get("probability"), 50.0)
-    gex_score      = _sf(d_gamma.get("gex_score"))
-    dealer_summary = dealer_positioning.get("dealer_summary", "")
-
-    # Vol regime
-    vol_regime     = (volatility or {}).get("regime", "NORMAL")
-    dealer_vega_risk = (volatility or {}).get("dealer_vega_risk", "MEDIUM")
-
-    # Options chain
-    oc_dealer_bias = (options_chain or {}).get("dealer_bias", "NEUTRAL")
-    oc_skew        = (options_chain or {}).get("skew", "NEUTRAL")
-
-    # Dealer score
-    score = 50.0
-    if gamma_regime == "NEGATIVE_GAMMA":
-        score += 15    # momentum amplifier
-    elif gamma_regime == "POSITIVE_GAMMA":
-        score -= 5     # damper
-    if delta_bias == "BUYING":
-        score += 10
-    elif delta_bias == "SELLING":
-        score -= 10
-    if charm in ("POSITIVE", "NEGATIVE"):
-        score += 5
-    if hedge_level == "HIGH":
-        score += 8
-    score = _clamp(score)
-
-    # Direction from dealer signals
-    if delta_bias == "BUYING" and (charm == "POSITIVE" or gamma_regime == "NEGATIVE_GAMMA"):
-        direction = "BULLISH"
-    elif delta_bias == "SELLING" and (charm == "NEGATIVE" or gamma_regime == "NEGATIVE_GAMMA"):
-        direction = "BEARISH"
-    else:
-        direction = "NEUTRAL"
-
-    narrative = (
-        f"Dealer Gamma: {gamma_regime.replace('_', ' ')}. "
-        f"Delta: {delta_bias} ({d_delta.get('confidence', 0):.0f}% confidence). "
-        f"Charm: {charm} — {d_charm.get('charm_bias', '').replace('_', ' ').lower()}. "
-        f"Vega risk: {dealer_vega_risk} (VIX {vol_regime.lower()}). "
-        f"Hedging pressure: {hedge_level}. "
-        f"Pin probability: {pin_prob:.0f}%. "
-        f"Momentum probability: {mom_prob:.0f}%. "
-        f"{dealer_summary[:120] if dealer_summary else ''}"
-    )
-
-    return {
-        "pillar":          "DEALER",
-        "score":           round(score, 1),
-        "direction":       direction,
-        "gamma_regime":    gamma_regime,
-        "delta_bias":      delta_bias,
-        "delta_confidence": round(_sf(d_delta.get("confidence")), 1),
-        "charm":           charm,
-        "hedge_level":     hedge_level,
-        "pin_probability": round(pin_prob, 1),
-        "momentum_probability": round(mom_prob, 1),
-        "gex_score":       round(gex_score, 1),
-        "vol_regime":      vol_regime,
-        "dealer_vega_risk": dealer_vega_risk,
-        "options_skew":    oc_skew,
-        "narrative":       narrative,
-    }
-
-
-def _build_institutional_pillar(
-    flow_intel_2:    Dict[str, Any],
-    options_chain:   Optional[Dict[str, Any]],
-    story:           Optional[Dict[str, Any]],
-    market_state:    Dict[str, Any],
-) -> Dict[str, Any]:
-    """Pillar 3: Institutional Intent — flow, options chain, story."""
-    conviction   = _sf(flow_intel_2.get("flow_conviction"), 50.0)
-    urgency      = flow_intel_2.get("urgency") or "LOW"
-    flow_intent  = flow_intel_2.get("flow_intent") or "MIXED"
-    flow_bias    = flow_intel_2.get("flow_bias") or "MIXED"
-    sweep_pres   = _sf(flow_intel_2.get("sweep_pressure"))
-    block_conv   = _sf(flow_intel_2.get("block_conviction"))
-    split_acc    = _sf(flow_intel_2.get("split_accumulation"))
-    dealer_resp  = _sf(flow_intel_2.get("dealer_response"), 50.0)
-    call_outs    = flow_intel_2.get("call_outs") or []
-
-    # Options chain
-    inst_read    = (options_chain or {}).get("institutional_read", "")
-    oc_gamma     = (options_chain or {}).get("gamma_profile", "BALANCED")
-
-    # Story
-    exec_summary = (story or {}).get("executive_summary", "")
-
-    # Institutional score
-    score = conviction * 0.4 + sweep_pres * 0.2 + block_conv * 0.2 + split_acc * 0.1 + dealer_resp * 0.1
-
-    if flow_bias == "BULLISH":
-        direction = "BULLISH"
-    elif flow_bias == "BEARISH":
-        direction = "BEARISH"
-    else:
-        direction = "MIXED"
-
-    narrative = (
-        f"Flow conviction: {conviction:.0f}/100. "
-        f"Urgency: {urgency.lower()}. "
-        f"Intent: {flow_intent.lower().replace('_', ' ')}. "
-        f"Sweep pressure: {sweep_pres:.0f}, block conviction: {block_conv:.0f}, split accumulation: {split_acc:.0f}. "
-        f"{call_outs[0] if call_outs else ''} "
-        f"{inst_read[:100] if inst_read else ''}"
-    ).strip()
-
-    return {
-        "pillar":            "INSTITUTIONAL",
-        "score":             round(_clamp(score), 1),
-        "direction":         direction,
-        "flow_bias":         flow_bias,
-        "flow_conviction":   round(conviction, 1),
-        "flow_intent":       flow_intent,
-        "urgency":           urgency,
-        "sweep_pressure":    round(sweep_pres, 1),
-        "block_conviction":  round(block_conv, 1),
-        "split_accumulation": round(split_acc, 1),
-        "dealer_response":   round(dealer_resp, 1),
-        "options_gamma":     oc_gamma,
-        "executive_summary": exec_summary,
-        "narrative":         narrative,
-        "top_call_out":      call_outs[0] if call_outs else "",
-    }
-
-
-def _build_execution_pillar(
-    market_state:   Dict[str, Any],
-    trade_coach:    Optional[Dict[str, Any]],
-    risk:           Optional[Dict[str, Any]],
-    decision_state: str,
-    ici:            Dict[str, Any],
-    consensus:      Dict[str, Any],
-) -> Dict[str, Any]:
-    """Pillar 4: Execution — Pine, Trade Coach, risk."""
-    pine_state    = market_state.get("pine_state") or "WAITING"
-    pine_confirmed = pine_state == "CONFIRMED"
-    pine_secs     = _sf(market_state.get("signal_secs"))
-    is_tradeable  = market_state.get("is_tradeable", False)
-    ici_score     = _sf(ici.get("ici"))
-
-    coach_action  = (trade_coach or {}).get("action", "")
-    readiness     = _sf((trade_coach or {}).get("readiness"))
-    entry_zone    = (trade_coach or {}).get("entry_zone", "")
-    stop          = (trade_coach or {}).get("stop")
-    target1       = (trade_coach or {}).get("target1")
-    target2       = (trade_coach or {}).get("target2")
-    contract_hint = (trade_coach or {}).get("contract_hint", "")
-
-    risk_ok       = (risk or {}).get("risk_approved", True)
-    risk_note     = (risk or {}).get("risk_note", "")
-
-    is_enter = decision_state.startswith("ENTER")
-    is_watch = decision_state.startswith("WATCH") or decision_state == "READY"
-
-    score = 50.0
-    if pine_confirmed:
-        score += 20
-    if is_tradeable:
-        score += 10
-    if ici_score >= 70:
-        score += 15
-    elif ici_score >= 55:
-        score += 7
-    if is_enter:
-        score += 20
-    elif is_watch:
-        score += 10
-    if risk_ok:
-        score += 5
-    score = _clamp(score)
-
-    narrative = (
-        f"Decision: {decision_state.replace('_', ' ')}. "
-        f"ICI: {ici_score:.0f}. "
-        f"Pine: {'confirmed' if pine_confirmed else 'waiting'}{'( ' + str(int(pine_secs)) + 's)' if pine_confirmed and pine_secs > 0 else ''}. "
-        f"Readiness: {readiness:.0f}%. "
-        f"{coach_action[:100] if coach_action else ''}"
-    ).strip()
-
-    return {
-        "pillar":         "EXECUTION",
-        "score":          round(score, 1),
-        "decision_state": decision_state,
-        "is_enter":       is_enter,
-        "is_watch":       is_watch,
-        "pine_state":     pine_state,
-        "pine_confirmed": pine_confirmed,
-        "ici_score":      round(ici_score, 1),
-        "readiness":      round(readiness, 1),
-        "is_tradeable":   is_tradeable,
-        "entry_zone":     entry_zone,
-        "stop":           stop,
-        "target1":        target1,
-        "target2":        target2,
-        "contract_hint":  contract_hint,
-        "risk_ok":        risk_ok,
-        "risk_note":      risk_note,
-        "narrative":      narrative,
-        "coach_action":   coach_action,
-    }
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# MASTER ORCHESTRATOR
-# ═══════════════════════════════════════════════════════════════════════════
+# ── Main builder ──────────────────────────────────────────────────────────────
 
 def build_institutional_intelligence(
     *,
-    # Pillar 1: Market Structure
+    # Market structure
     auction_intel:      Dict[str, Any],
     market_state:       Dict[str, Any],
     rotation:           Optional[Dict[str, Any]] = None,
     volume_profile:     Optional[Dict[str, Any]] = None,
-    # Pillar 2: Dealer
+    # Dealer
     dealer_positioning: Dict[str, Any],
     options_chain:      Optional[Dict[str, Any]] = None,
     volatility:         Optional[Dict[str, Any]] = None,
-    # Pillar 3: Institutional
+    strike_magnets:     Optional[Dict[str, Any]] = None,
+    # Institutional
     flow_intel_2:       Dict[str, Any],
+    market_drivers:     Optional[Dict[str, Any]] = None,
     story:              Optional[Dict[str, Any]] = None,
-    # Pillar 4: Execution
+    # Execution
     trade_coach:        Optional[Dict[str, Any]] = None,
     risk:               Optional[Dict[str, Any]] = None,
     ici:                Dict[str, Any],
@@ -385,121 +68,277 @@ def build_institutional_intelligence(
 ) -> Dict[str, Any]:
     """Build the canonical institutional intelligence object.
 
-    This is the SINGLE object consumed by every dashboard component.
-    Built once per scan cycle, published through the data bus.
+    Built once per scan, consumed everywhere.
     """
-    # Build four pillars
-    p1 = _build_market_structure_pillar(auction_intel, market_state, rotation, volume_profile)
-    p2 = _build_dealer_pillar(dealer_positioning, options_chain, volatility)
-    p3 = _build_institutional_pillar(flow_intel_2, options_chain, story, market_state)
-    p4 = _build_execution_pillar(market_state, trade_coach, risk, decision_state, ici, consensus)
+    # ── Extract key values from each source ──────────────────────────────────
+    price      = _sf(market_state.get("price"))
+    poc        = _sf(market_state.get("poc"))
+    vah        = _sf(market_state.get("vah"))
+    val_       = _sf(market_state.get("val"))
+    poc_mig    = str(market_state.get("poc_migration") or "STABLE")
+    flow_bias  = str(market_state.get("flow_bias") or flow_intel_2.get("flow_bias") or "MIXED")
+    is_trade   = market_state.get("is_tradeable", session_state == "MARKET_OPEN")
 
-    # ── Overall institutional score (weighted average across pillars) ──────
-    weights = {"MARKET_STRUCTURE": 0.25, "DEALER": 0.25, "INSTITUTIONAL": 0.30, "EXECUTION": 0.20}
-    overall = (
-        p1["score"] * weights["MARKET_STRUCTURE"] +
-        p2["score"] * weights["DEALER"] +
-        p3["score"] * weights["INSTITUTIONAL"] +
-        p4["score"] * weights["EXECUTION"]
-    )
-    overall = _clamp(overall)
+    ai_state   = (auction_intel.get("auction_state") or {}) if isinstance(auction_intel, dict) else {}
+    ai_acc     = (auction_intel.get("acceptance") or {})    if isinstance(auction_intel, dict) else {}
+    ai_excess  = (auction_intel.get("excess") or {})        if isinstance(auction_intel, dict) else {}
 
-    # ── Pillar alignment check ─────────────────────────────────────────────
-    directions = [p1["direction"], p2["direction"], p3["direction"]]
-    bull_count = sum(1 for d in directions if d == "BULLISH")
-    bear_count = sum(1 for d in directions if d == "BEARISH")
-    neut_count = sum(1 for d in directions if d in ("NEUTRAL", "MIXED", "DEVELOPING"))
+    auction_state_str = (ai_state.get("state") or "UNKNOWN").replace("_", " ")
+    acceptance    = ai_acc.get("primary_status") or ""
+    excess_det    = ai_excess.get("detected", False)
+    would_trade   = ai_state.get("would_trade", False)
+    auction_conf  = _sf(ai_state.get("confidence"))
 
-    if bull_count >= 3:
-        alignment = "FULL_BULL_ALIGNMENT"
-        alignment_note = "All three intelligence pillars confirm bullish institutional positioning."
-    elif bear_count >= 3:
-        alignment = "FULL_BEAR_ALIGNMENT"
-        alignment_note = "All three intelligence pillars confirm bearish institutional positioning."
-    elif bull_count >= 2:
-        alignment = "PARTIAL_BULL_ALIGNMENT"
-        alignment_note = f"{bull_count}/3 pillars bullish — partial alignment. Wait for full confirmation."
-    elif bear_count >= 2:
-        alignment = "PARTIAL_BEAR_ALIGNMENT"
-        alignment_note = f"{bear_count}/3 pillars bearish — partial alignment. Wait for full confirmation."
+    d_gamma   = dealer_positioning.get("gamma")   or {} if isinstance(dealer_positioning, dict) else {}
+    d_delta   = dealer_positioning.get("delta")   or {} if isinstance(dealer_positioning, dict) else {}
+    d_charm   = dealer_positioning.get("charm")   or {} if isinstance(dealer_positioning, dict) else {}
+    d_hedge   = dealer_positioning.get("hedging_pressure") or {} if isinstance(dealer_positioning, dict) else {}
+    d_pin     = dealer_positioning.get("pin_probability")  or {} if isinstance(dealer_positioning, dict) else {}
+    d_mom     = dealer_positioning.get("momentum_probability") or {} if isinstance(dealer_positioning, dict) else {}
+    dealer_gr = str(d_gamma.get("regime") or "NEUTRAL_GAMMA")
+    dealer_db = str(d_delta.get("bias") or "NEUTRAL")
+    pin_prob  = _sf(d_pin.get("probability"))
+    mom_prob  = _sf(d_mom.get("probability"), 50.0)
+    gex_score = _sf(d_gamma.get("gex_score"))
+
+    fi2_conv  = _sf(flow_intel_2.get("flow_conviction") if isinstance(flow_intel_2, dict) else 0, 50.0)
+    fi2_urg   = str(flow_intel_2.get("urgency") or "LOW") if isinstance(flow_intel_2, dict) else "LOW"
+    fi2_intent= str(flow_intel_2.get("flow_intent") or "MIXED") if isinstance(flow_intel_2, dict) else "MIXED"
+    fi2_contra= (flow_intel_2.get("contradictions") or []) if isinstance(flow_intel_2, dict) else []
+
+    ici_score = _sf(ici.get("ici") if isinstance(ici, dict) else 0)
+    pine_conf = market_state.get("pine_state") == "CONFIRMED"
+
+    # Market drivers
+    md_bias     = str((market_drivers or {}).get("market_bias") or "MIXED")
+    md_lead     = str((market_drivers or {}).get("leadership_label") or "")
+    md_breadth  = str((market_drivers or {}).get("breadth") or "MIXED")
+    md_interp   = str((market_drivers or {}).get("story_line") or "")
+    md_avail    = (market_drivers or {}).get("available", False)
+
+    # Strike magnets
+    sm_pin_risk = str((strike_magnets or {}).get("pin_risk") or "LOW")
+    sm_nearest  = (strike_magnets or {}).get("nearest_magnet")
+    sm_watch    = str((strike_magnets or {}).get("watch") or "")
+
+    # Volatility
+    vol_reg     = str((volatility or {}).get("regime") or "NORMAL")
+    vol_path    = str((volatility or {}).get("expected_vol_path") or "STABLE")
+    vix         = _sf((volatility or {}).get("vix"))
+
+    # ── Evidence accumulation ─────────────────────────────────────────────────
+    evidence: List[Dict[str, str]] = []
+    bull_signals = 0
+    bear_signals = 0
+    neut_signals = 0
+
+    def _add(src, direction, strength, note):
+        nonlocal bull_signals, bear_signals, neut_signals
+        evidence.append(_evidence(src, direction, strength, note))
+        if direction == "BULLISH":
+            bull_signals += {"HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(strength, 1)
+        elif direction == "BEARISH":
+            bear_signals += {"HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(strength, 1)
+        else:
+            neut_signals += 1
+
+    # Auction evidence
+    if would_trade and poc_mig == "RISING":
+        _add("AUCTION", "BULLISH", "HIGH",
+             f"{auction_state_str} with POC migrating higher. Institutions accepting higher prices.")
+    elif would_trade and poc_mig == "FALLING":
+        _add("AUCTION", "BEARISH", "HIGH",
+             f"{auction_state_str} with POC migrating lower. Institutions accepting lower prices.")
+    elif acceptance == "ACCEPTING" and poc_mig == "RISING":
+        _add("AUCTION", "BULLISH", "MEDIUM",
+             f"Price accepting above value with rising POC — bullish auction structure.")
+    elif acceptance == "REJECTED":
+        _add("AUCTION", "BEARISH", "MEDIUM",
+             f"Price rejected at reference level — rotation back toward POC likely.")
     else:
-        alignment = "UNALIGNED"
-        alignment_note = "Pillars are not aligned. Balanced or transitioning institutional conditions."
+        _add("AUCTION", "NEUTRAL", "LOW", f"{auction_state_str} — balanced auction.")
 
-    # ── Primary institutional read ─────────────────────────────────────────
-    is_enter   = decision_state.startswith("ENTER")
-    is_watch   = decision_state.startswith("WATCH") or decision_state == "READY"
-    exec_sum   = (story or {}).get("executive_summary", "")
+    # Flow evidence
+    if flow_bias == "BULLISH" and fi2_conv >= 70:
+        _add("FLOW", "BULLISH", "HIGH",
+             f"Bullish flow conviction {fi2_conv:.0f}/100. {fi2_urg.lower()} urgency. {fi2_intent.replace('_', ' ').lower()}.")
+    elif flow_bias == "BEARISH" and fi2_conv >= 70:
+        _add("FLOW", "BEARISH", "HIGH",
+             f"Bearish flow conviction {fi2_conv:.0f}/100. {fi2_urg.lower()} urgency.")
+    elif flow_bias == "BULLISH":
+        _add("FLOW", "BULLISH", "MEDIUM", f"Flow bias bullish, conviction {fi2_conv:.0f}/100.")
+    elif flow_bias == "BEARISH":
+        _add("FLOW", "BEARISH", "MEDIUM", f"Flow bias bearish, conviction {fi2_conv:.0f}/100.")
+    else:
+        _add("FLOW", "NEUTRAL", "LOW", "Mixed institutional flow.")
 
-    if session_state not in ("MARKET_OPEN",):
-        primary_read = (
-            f"[{session_state.replace('_', ' ')}] {exec_sum}"
-        )
+    # Dealer evidence
+    if dealer_gr == "NEGATIVE_GAMMA" and dealer_db == "BUYING":
+        _add("DEALER", "BULLISH", "HIGH",
+             "Negative gamma forces dealers to buy strength. Delta hedging adds buy pressure.")
+    elif dealer_gr == "NEGATIVE_GAMMA" and dealer_db == "SELLING":
+        _add("DEALER", "BEARISH", "HIGH",
+             "Negative gamma forces dealers to sell weakness. Delta hedging amplifies downside.")
+    elif dealer_db == "BUYING":
+        _add("DEALER", "BULLISH", "MEDIUM", "Dealer delta hedging adds structural buy pressure.")
+    elif dealer_db == "SELLING":
+        _add("DEALER", "BEARISH", "MEDIUM", "Dealer delta hedging adds structural sell pressure.")
+    else:
+        _add("DEALER", "NEUTRAL", "LOW", "Dealer positioning approximately neutral.")
+
+    # Market drivers evidence
+    if md_avail:
+        if md_bias == "BULLISH":
+            _add("MARKET_DRIVERS", "BULLISH", "MEDIUM",
+                 f"{md_lead} leading SPX. {md_interp[:100]}")
+        elif md_bias == "BEARISH":
+            _add("MARKET_DRIVERS", "BEARISH", "MEDIUM",
+                 f"SPX weakness driven by key constituents. {md_interp[:100]}")
+
+    # Execution evidence
+    if pine_conf:
+        _add("EXECUTION", "BULLISH" if "CALL" in decision_state else "BEARISH" if "PUT" in decision_state else "NEUTRAL",
+             "HIGH", "Pine signal confirmed.")
+    if ici_score >= 75:
+        _add("CONFIDENCE", "BULLISH" if flow_bias == "BULLISH" else "NEUTRAL", "MEDIUM",
+             f"ICI {ici_score:.0f}/100 — strong institutional alignment.")
+
+    # ── Bias determination ────────────────────────────────────────────────────
+    if bull_signals > bear_signals * 1.5:
+        institutional_bias  = "BULLISH"
+        dealer_bias_read    = "MOMENTUM_SUPPORTIVE" if dealer_gr == "NEGATIVE_GAMMA" else "MILDLY_SUPPORTIVE"
+    elif bear_signals > bull_signals * 1.5:
+        institutional_bias  = "BEARISH"
+        dealer_bias_read    = "MOMENTUM_SUPPORTIVE" if dealer_gr == "NEGATIVE_GAMMA" else "MILDLY_SUPPORTIVE"
+    else:
+        institutional_bias  = "NEUTRAL"
+        dealer_bias_read    = "NEUTRAL"
+
+    # Auction bias label
+    if acceptance == "ACCEPTING" and poc_mig == "RISING":
+        auction_bias = "ACCEPTANCE_HIGHER"
+    elif acceptance == "ACCEPTING" and poc_mig == "FALLING":
+        auction_bias = "ACCEPTANCE_LOWER"
+    elif acceptance == "REJECTED":
+        auction_bias = "REJECTION"
+    elif "BALANCED" in auction_state_str.upper():
+        auction_bias = "BALANCED"
+    else:
+        auction_bias = "DEVELOPING"
+
+    # ── Overall score ─────────────────────────────────────────────────────────
+    overall = _clamp(
+        ici_score * 0.25 +
+        fi2_conv  * 0.25 +
+        mom_prob  * 0.20 +
+        auction_conf * 0.15 +
+        (_sf(gex_score) if gex_score else 50) * 0.15
+    )
+
+    # ── Decision recommendation ───────────────────────────────────────────────
+    is_enter = decision_state.startswith("ENTER")
+    is_watch = decision_state.startswith("WATCH") or decision_state == "READY"
+
+    if not is_trade:
+        decision_rec = f"[{session_state.replace('_', ' ')}] No entries while market is closed."
     elif is_enter:
-        primary_read = (
-            f"ALL SYSTEMS GO — {decision_state.replace('_', ' ')}. "
-            f"Institutional score: {overall:.0f}/100. {alignment_note} "
-            f"{exec_sum[:150] if exec_sum else ''}"
-        )
+        decision_rec = f"ENTER — All intelligence pillars support {decision_state.replace('_', ' ')}."
     elif is_watch:
-        primary_read = (
-            f"WATCHING — {decision_state.replace('_', ' ')}. "
-            f"Institutional score: {overall:.0f}/100. {alignment_note} "
-            f"Waiting for Pine confirmation and full pillar alignment."
+        decision_rec = f"WATCH — {decision_state.replace('_', ' ')}. Waiting for Pine confirmation."
+    elif institutional_bias != "NEUTRAL" and fi2_conv >= 60:
+        decision_rec = f"DEVELOPING SETUP — {institutional_bias.lower()} institutional bias building."
+    else:
+        decision_rec = "NO TRADE — Intelligence is not aligned. Sit out until signals converge."
+
+    # ── Executive summary ─────────────────────────────────────────────────────
+    parts = []
+    if md_avail and md_interp:
+        parts.append(md_interp[:120])
+    parts.append(
+        f"Dealers are in {dealer_gr.replace('_', ' ')} with estimated {dealer_db.lower()} delta pressure."
+    )
+    parts.append(
+        f"Price is {auction_state_str.lower()} — "
+        f"{'institutions accepting higher prices.' if poc_mig == 'RISING' else 'institutions accepting lower prices.' if poc_mig == 'FALLING' else 'auction balanced.'}"
+    )
+    if fi2_urg == "HIGH":
+        parts.append(f"Urgent institutional flow is {flow_bias.lower()}.")
+    if fi2_contra:
+        parts.append(f"⚠ Contradiction: {fi2_contra[0][:100]}")
+    parts.append(f"APEX is in {decision_state.replace('_', ' ')}.")
+    exec_summary = " ".join(parts)
+
+    # ── Highest probability scenario ─────────────────────────────────────────
+    playbook_primary = (playbook or {}).get("primary_scenario") if isinstance(playbook, dict) else None
+    if playbook_primary and isinstance(playbook_primary, dict):
+        highest_prob_scenario = playbook_primary.get("path", "")
+    elif institutional_bias == "BULLISH":
+        highest_prob_scenario = (
+            f"Continuation higher toward {_sf(d_gamma.get('call_wall')):.0f} (Call Wall) "
+            f"if POC continues migrating higher and flow remains bullish."
+        )
+    elif institutional_bias == "BEARISH":
+        highest_prob_scenario = (
+            f"Continuation lower toward {_sf(d_gamma.get('put_wall')):.0f} (Put Wall) "
+            f"if POC continues migrating lower and flow remains bearish."
         )
     else:
-        primary_read = (
-            f"NO TRADE. Institutional score: {overall:.0f}/100. "
-            f"{alignment_note} "
-            f"{exec_sum[:150] if exec_sum else ''}"
-        )
+        highest_prob_scenario = "Balanced auction — await break of VAH or VAL with acceptance."
 
-    # ── What institutions are doing ────────────────────────────────────────
-    what_institutions = (
-        f"Structure: {p1['auction_state']} — {'accepting' if p1['acceptance'] == 'ACCEPTING' else 'testing'} "
-        f"{'higher' if p1['poc_migration'] == 'RISING' else 'lower' if p1['poc_migration'] == 'FALLING' else 'current'} prices. "
-        f"Flow: {p3['flow_bias'].lower()} bias, {p3['urgency'].lower()} urgency. "
-        f"{p3['top_call_out']}"
-    )
-
-    what_dealers = p2["narrative"][:200]
+    # ── Primary risk ──────────────────────────────────────────────────────────
+    if excess_det:
+        primary_risk = f"Excess detected — {(ai_excess.get('type') or '').replace('_', ' ')}. {ai_excess.get('action', '')}"
+    elif sm_pin_risk == "HIGH":
+        primary_risk = f"High pin risk toward {sm_nearest}. Gamma pinning may limit directional moves."
+    elif vol_path == "EXPANDING":
+        primary_risk = f"Volatility expanding (VIX {vix:.1f}). Widen stops — dealer vega losses may trigger forced hedging."
+    elif fi2_contra:
+        primary_risk = f"Flow contradiction: {fi2_contra[0][:120]}"
+    else:
+        primary_risk = "No elevated risk signals. Standard position sizing."
 
     return {
-        "available":        True,
-        "version":          "6.5.0",
-        "session_state":    session_state,
-        "overall_score":    round(overall, 1),
-        "alignment":        alignment,
-        "alignment_note":   alignment_note,
-        "primary_read":     primary_read,
-        "what_institutions": what_institutions,
-        "what_dealers":     what_dealers,
-        "decision_state":   decision_state,
-        # Four pillars
-        "pillars": {
-            "market_structure": p1,
-            "dealer":           p2,
-            "institutional":    p3,
-            "execution":        p4,
-        },
-        # Flat scores for ribbon
-        "market_structure_score": p1["score"],
-        "dealer_score":           p2["score"],
-        "institutional_score":    p3["score"],
-        "execution_score":        p4["score"],
-        # Key reads
-        "auction_state":     p1["auction_state"],
-        "poc_migration":     p1["poc_migration"],
-        "acceptance":        p1["acceptance"],
-        "gamma_regime":      p2["gamma_regime"],
-        "delta_bias":        p2["delta_bias"],
-        "flow_bias":         p3["flow_bias"],
-        "flow_conviction":   p3["flow_conviction"],
-        "pine_confirmed":    p4["pine_confirmed"],
-        "readiness":         p4["readiness"],
-        # Playbook
-        "playbook":          playbook,
-        # Bull/bear counts for alignment indicator
-        "bull_pillars":      bull_count,
-        "bear_pillars":      bear_count,
+        "available":                True,
+        "version":                  "7.0",
+        "session_state":            session_state,
+        "overall_score":            round(overall, 1),
+        "institutional_bias":       institutional_bias,
+        "dealer_bias":              dealer_bias_read,
+        "auction_bias":             auction_bias,
+        "market_driver_bias":       f"{md_lead}_LEADING" if md_lead else "UNKNOWN",
+        "decision_state":           decision_state,
+        "decision_recommendation":  decision_rec,
+        "executive_summary":        exec_summary,
+        "highest_probability_scenario": highest_prob_scenario,
+        "primary_risk":             primary_risk,
+        "evidence":                 evidence,
+        "bull_signals":             bull_signals,
+        "bear_signals":             bear_signals,
+        # Key reads (flat for ribbon/dashboard access)
+        "auction_state":            auction_state_str,
+        "poc_migration":            poc_mig,
+        "acceptance":               acceptance,
+        "gamma_regime":             dealer_gr,
+        "delta_bias":               dealer_db,
+        "flow_bias":                flow_bias,
+        "flow_conviction":          round(fi2_conv, 1),
+        "flow_urgency":             fi2_urg,
+        "flow_contradictions":      fi2_contra,
+        "pin_probability":          round(pin_prob, 1),
+        "momentum_probability":     round(mom_prob, 1),
+        "pin_risk":                 sm_pin_risk,
+        "nearest_magnet":           sm_nearest,
+        "vol_regime":               vol_reg,
+        "vol_path":                 vol_path,
+        "ici_score":                round(ici_score, 1),
+        "pine_confirmed":           pine_conf,
+        # Market drivers
+        "market_driver_bias_raw":   md_bias,
+        "market_driver_leadership": md_lead,
+        "market_driver_breadth":    md_breadth,
+        "market_driver_story":      md_interp,
+        # Strike magnets
+        "strike_magnet_watch":      sm_watch,
+        # Playbook passthrough
+        "playbook":                 playbook,
     }

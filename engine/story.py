@@ -617,6 +617,8 @@ def build_story_v3(
     # 6.4.1: canonical market state preferred over individual args
     market_state:  Optional[Dict[str, Any]] = None,
     auction_intel: Optional[Dict[str, Any]] = None,
+    # 7.0: institutional intelligence canonical object
+    institutional_intelligence: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Story Engine 3.1 — reasoning prose, not metric descriptions.
 
@@ -697,6 +699,13 @@ def build_story_v3(
             ch["time"] = ts
             chapters.append(ch)
 
+    # APEX 7.0: institutional intelligence chapters (if available)
+    _ii = institutional_intelligence if isinstance(institutional_intelligence, dict) else None
+    if _ii:
+        add(_chapter_market_drivers(_ii))
+        add(_chapter_dealer_institutional(_ii))
+        add(_chapter_strike_magnets(_ii))
+
     add(_chapter_regime(ms, gamma_regime, market_regime))
     add(_chapter_auction(ms, auction_intel=auction_intel))
     add(_chapter_flow(ms, flow))
@@ -748,3 +757,109 @@ try:
 except Exception:
     def engine_story(*a, **kw): return {}        # type: ignore[misc]
     def build_story_timeline(s): return []       # type: ignore[misc]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# APEX 7.0 — NEW CHAPTERS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _chapter_market_drivers(ii: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Chapter: SPX Market Drivers — what is actually moving the index."""
+    if not ii:
+        return None
+    md = ii.get("market_driver_story") or ""
+    lead = ii.get("market_driver_leadership") or ""
+    breadth = ii.get("market_driver_breadth") or ""
+    bias = ii.get("market_driver_bias_raw") or "MIXED"
+    if not md and not lead:
+        return None
+
+    color = "#22c55e" if bias == "BULLISH" else "#ef4444" if bias == "BEARISH" else "#94a3b8"
+
+    # Breadth context
+    breadth_note = ""
+    if breadth == "NARROW_BULLISH":
+        breadth_note = " However, participation is narrow — a few large caps are driving the index while the broader market lags."
+    elif breadth == "BROAD_BULLISH":
+        breadth_note = " Participation is broad — multiple sectors and constituents are contributing."
+    elif breadth == "NARROW_BEARISH":
+        breadth_note = " The weakness is concentrated in a few key names rather than broad deterioration."
+
+    text = f"{md}{breadth_note}" if md else f"{lead} theme is leading. Breadth: {breadth.lower().replace('_', ' ')}."
+
+    return {
+        "chapter":      "SPX Market Drivers",
+        "text":         text,
+        "color":        color,
+        "significance": 1.5,
+        "category":     "KNOWS",
+        "time":         _now_et().strftime("%H:%M ET"),
+    }
+
+
+def _chapter_dealer_institutional(ii: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Chapter: Dealer Positioning — what dealers are doing and why."""
+    if not ii:
+        return None
+    gr     = ii.get("gamma_regime") or "NEUTRAL_GAMMA"
+    db     = ii.get("delta_bias") or "NEUTRAL"
+    pin    = ii.get("pin_probability") or 0
+    mom    = ii.get("momentum_probability") or 50
+    vol    = ii.get("vol_regime") or "NORMAL"
+    dr_bias = ii.get("dealer_bias") or ""
+
+    # Write like an institutional strategist
+    gamma_line = (
+        "Dealers remain in negative gamma — they must buy strength and sell weakness, amplifying directional moves." if gr == "NEGATIVE_GAMMA"
+        else "Dealers are in positive gamma — they fade extremes, suppressing volatility and creating mean-reversion conditions." if gr == "POSITIVE_GAMMA"
+        else "Dealers are approximately gamma-neutral with no strong directional amplification."
+    )
+    delta_line = (
+        " Estimated delta hedging pressure is to the buy side — dealer futures buying provides structural support." if db == "BUYING"
+        else " Estimated delta hedging pressure is to the sell side — dealer futures selling creates overhead resistance." if db == "SELLING"
+        else " Delta hedging is approximately balanced."
+    )
+    pin_line = (
+        f" Pin probability is {pin:.0f}% — expiration gravity may limit directional range into close." if pin >= 50
+        else f" Pin probability is {pin:.0f}% — price is free to trade directionally." if pin < 30
+        else f" Moderate pin probability ({pin:.0f}%) — watch for gravitational pull toward high-OI strikes."
+    )
+    mom_line = (
+        f" Momentum probability is {mom:.0f}% — trend continuation is the highest-probability scenario." if mom >= 70
+        else f" Momentum probability is {mom:.0f}% — wait for additional confirmation before trend entries."
+    )
+
+    text = gamma_line + delta_line + pin_line + mom_line
+    color = "#22c55e" if db == "BUYING" else "#ef4444" if db == "SELLING" else "#94a3b8"
+
+    return {
+        "chapter":      "Dealer Positioning",
+        "text":         text,
+        "color":        color,
+        "significance": 1.8,
+        "category":     "KNOWS",
+        "time":         _now_et().strftime("%H:%M ET"),
+    }
+
+
+def _chapter_strike_magnets(ii: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Chapter: Options Chain + Strike Magnets."""
+    if not ii:
+        return None
+    pin_risk = ii.get("pin_risk") or "LOW"
+    nearest  = ii.get("nearest_magnet")
+    watch    = ii.get("strike_magnet_watch") or ""
+    if not watch and not nearest:
+        return None
+
+    color = "#f59e0b" if pin_risk == "HIGH" else "#94a3b8"
+    text  = watch or f"Nearest magnet strike: {nearest:.2f}. Pin risk: {pin_risk.lower()}."
+
+    return {
+        "chapter":      "Strike Magnets",
+        "text":         text,
+        "color":        color,
+        "significance": 2.2,
+        "category":     "KNOWS",
+        "time":         _now_et().strftime("%H:%M ET"),
+    }

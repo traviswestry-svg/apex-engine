@@ -540,6 +540,31 @@ def build_trade_coach_v3(
         "next_confirmation": next_conf,
         "gamma_management":  gamma_regime.get("trade_rules", {}).get("expected_behavior"),
 
+        # ── APEX 7.0 Institutional context fields ──
+        "dealer_behavior_expected":   (
+            "Dealers in negative gamma — expect amplified moves in the direction of flow." if ms.get("gamma_regime") == "NEGATIVE"
+            else "Dealers in positive gamma — expect mean-reversion and suppressed volatility." if ms.get("gamma_regime") == "POSITIVE"
+            else "Dealer behavior is approximately neutral."
+        ),
+        "auction_behavior_expected":  (
+            "Accepting higher — POC migrating higher confirms institutional value migration." if ms.get("poc_migration") == "RISING"
+            else "Accepting lower — POC migrating lower confirms distribution." if ms.get("poc_migration") == "FALLING"
+            else "Balanced auction — no directional acceptance confirmed yet."
+        ),
+        "flow_confirmation_needed":   (
+            "Wait for bullish flow score ≥70 with fresh Pine confirmation." if side == "CALL"
+            else "Wait for bearish flow score ≤30 with fresh Pine confirmation." if side == "PUT"
+            else "Wait for directional flow alignment before entering."
+        ),
+        "market_driver_confirmation_needed": (
+            "Confirm NVDA/MSFT or tech mega-cap leadership before SPX call entry." if side == "CALL"
+            else "Confirm broad weakness in large-cap constituents before SPX put entry." if side == "PUT"
+            else "Monitor market driver breadth for directional confirmation."
+        ),
+        "expected_holding_time": (
+            "15–45 minutes (0DTE — exit before 3:30 PM ET to avoid gamma decay acceleration)."
+        ),
+
         # ── Context pass-through for UI ──
         "poc":            round(_sf(ms.get("poc")), 2) or None,
         "vah":            round(_sf(ms.get("vah")), 2) or None,

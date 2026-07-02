@@ -1,4 +1,4 @@
-"""APEX Institutional OS 6.5 engine package — Four Pillar Architecture."""
+"""APEX Institutional OS 7.0 engine package — Institutional Intelligence Platform."""
 
 from .gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
 from .data_bus import build_market_state
@@ -17,6 +17,8 @@ from .options_chain import build_options_chain_intelligence
 from .volatility import build_volatility_intelligence
 from .rotation import build_rotation_intelligence
 from .institutional_intelligence import build_institutional_intelligence
+from .market_drivers import build_market_drivers
+from .strike_magnet import build_strike_magnets
 
 __all__ = [
     "build_gamma_from_quantdata_response",
@@ -38,4 +40,6 @@ __all__ = [
     "build_volatility_intelligence",
     "build_rotation_intelligence",
     "build_institutional_intelligence",
+    "build_market_drivers",
+    "build_strike_magnets",
 ]
