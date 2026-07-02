@@ -650,6 +650,9 @@ def safe_float(x: Any, default: float = 0.0) -> float:
         return default
 
 
+# _sf: short alias for safe_float, used throughout engine injection blocks
+_sf = safe_float
+
 def safe_get_json(url: str, params: Optional[dict] = None, headers: Optional[dict] = None, timeout: Optional[int] = None) -> Optional[dict]:
     params = dict(params or {})
     if "polygon.io" in url and POLYGON_API_KEY:
@@ -3600,6 +3603,17 @@ def api_institutional_os():
             result["engine_mode"] = "NINE_ENGINE_PIPELINE"
             result["version"] = VERSION
 
+            # ── 6.5 engine output vars — declared here so they're always in
+            # scope even if the engine blocks below don't execute (e.g. because
+            # AUCTION_INTEL_AVAILABLE is False). Story Engine 3.1 references
+            # auction_intel before the auction block runs.
+            auction_intel:        Dict[str, Any] = {}
+            dealer_pos:           Dict[str, Any] = {}
+            flow_intel_2:         Dict[str, Any] = {}
+            options_chain_intel:  Dict[str, Any] = {}
+            vol_intel:            Dict[str, Any] = {}
+            rotation_intel:       Dict[str, Any] = {}
+
             # APEX 5.1 dashboard compatibility contract. The engine returns the
             # institutional OS fields directly; this normalizes them into the
             # older dashboard sections without discarding the new ribbon/ICI fields.
@@ -3736,7 +3750,7 @@ def api_institutional_os():
                         flow_tape_summary=tape_summary,
                         session_state=_session_state_for_story,
                         market_state=canonical_ms or None,
-                        auction_intel=auction_intel or None,
+                        auction_intel=auction_intel if isinstance(auction_intel, dict) else None,
                     )
                     result["story"] = story_v3
                     result["executive_summary"] = story_v3.get("executive_summary", result.get("executive_summary", ""))
@@ -3813,7 +3827,6 @@ def api_institutional_os():
                 pass
 
             # ── APEX Auction Intelligence ──
-            auction_intel: Dict[str, Any] = {}
             if AUCTION_INTEL_AVAILABLE and build_auction_intelligence is not None:
                 try:
                     _vp_cur  = volume_bundle.get("profile") or {}
@@ -3929,10 +3942,12 @@ def api_institutional_os():
             # ── APEX 6.5 Institutional Playbook ──
             if PLAYBOOK_AVAILABLE and build_institutional_playbook is not None:
                 try:
+                    _pb_auction = auction_intel if isinstance(auction_intel, dict) else {}
+                    _pb_flow2   = flow_intel_2  if isinstance(flow_intel_2,  dict) else {}
                     playbook = build_institutional_playbook(
-                        dealer_positioning = dealer_pos,
-                        auction_intel      = auction_intel,
-                        flow_intel_2       = flow_intel_2,
+                        dealer_positioning = dealer_pos if isinstance(dealer_pos, dict) else {},
+                        auction_intel      = _pb_auction,
+                        flow_intel_2       = _pb_flow2,
                         market_state       = canonical_ms or {},
                         overnight_plan     = result.get("overnight_game_plan") if _session_state_now in ("OVERNIGHT","PREMARKET") else None,
                         session_state      = _session_state_now,
@@ -3994,22 +4009,22 @@ def api_institutional_os():
             if INST_INTEL_AVAILABLE and build_institutional_intelligence is not None:
                 try:
                     inst_intel = build_institutional_intelligence(
-                        auction_intel      = auction_intel,
-                        market_state       = canonical_ms or {},
-                        rotation           = rotation_intel or None,
+                        auction_intel      = auction_intel if isinstance(auction_intel, dict) else {},
+                        market_state       = canonical_ms if isinstance(canonical_ms, dict) else {},
+                        rotation           = rotation_intel if isinstance(rotation_intel, dict) else None,
                         volume_profile     = volume_bundle.get("profile"),
-                        dealer_positioning = dealer_pos,
-                        options_chain      = options_chain_intel or None,
-                        volatility         = vol_intel or None,
-                        flow_intel_2       = flow_intel_2,
-                        story              = result.get("story"),
-                        trade_coach        = result.get("trade_coach"),
-                        risk               = result.get("risk"),
+                        dealer_positioning = dealer_pos if isinstance(dealer_pos, dict) else {},
+                        options_chain      = options_chain_intel if isinstance(options_chain_intel, dict) else None,
+                        volatility         = vol_intel if isinstance(vol_intel, dict) else None,
+                        flow_intel_2       = flow_intel_2 if isinstance(flow_intel_2, dict) else {},
+                        story              = result.get("story") if isinstance(result.get("story"), dict) else None,
+                        trade_coach        = result.get("trade_coach") if isinstance(result.get("trade_coach"), dict) else None,
+                        risk               = result.get("risk") if isinstance(result.get("risk"), dict) else None,
                         ici                = result.get("ici") or {},
                         consensus          = result.get("consensus") or {},
-                        decision_state     = result.get("decision_state", "NO_TRADE"),
-                        playbook           = result.get("playbook"),
-                        session_state      = _session_state_now,
+                        decision_state     = str(result.get("decision_state") or "NO_TRADE"),
+                        playbook           = result.get("playbook") if isinstance(result.get("playbook"), dict) else None,
+                        session_state      = str(_session_state_now),
                     )
                     result["institutional_intelligence"] = inst_intel
                 except Exception as _ii2:
