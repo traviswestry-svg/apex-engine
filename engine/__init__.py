@@ -1,4 +1,4 @@
-"""APEX Institutional OS 6.0 engine package."""
+"""APEX Institutional OS 6.5 engine package — Four Pillar Architecture."""
 
 from .gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
 from .data_bus import build_market_state
@@ -13,6 +13,10 @@ from .auction_intelligence import build_auction_intelligence
 from .dealer_positioning import build_dealer_positioning
 from .flow_intelligence import build_flow_intelligence_2
 from .playbook import build_institutional_playbook
+from .options_chain import build_options_chain_intelligence
+from .volatility import build_volatility_intelligence
+from .rotation import build_rotation_intelligence
+from .institutional_intelligence import build_institutional_intelligence
 
 __all__ = [
     "build_gamma_from_quantdata_response",
@@ -30,4 +34,8 @@ __all__ = [
     "build_dealer_positioning",
     "build_flow_intelligence_2",
     "build_institutional_playbook",
+    "build_options_chain_intelligence",
+    "build_volatility_intelligence",
+    "build_rotation_intelligence",
+    "build_institutional_intelligence",
 ]
