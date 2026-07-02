@@ -103,6 +103,42 @@ except Exception as _pb_err:
     PLAYBOOK_AVAILABLE = False
     print(f"APEX institutional playbook unavailable: {_pb_err}", flush=True)
 
+# APEX 6.5 — Options Chain Intelligence
+try:
+    from engine.options_chain import build_options_chain_intelligence
+    OPTIONS_CHAIN_AVAILABLE = True
+except Exception as _oc_err:
+    build_options_chain_intelligence = None  # type: ignore[assignment]
+    OPTIONS_CHAIN_AVAILABLE = False
+    print(f"APEX options chain unavailable: {_oc_err}", flush=True)
+
+# APEX 6.5 — Volatility Intelligence
+try:
+    from engine.volatility import build_volatility_intelligence
+    VOLATILITY_AVAILABLE = True
+except Exception as _vi_err:
+    build_volatility_intelligence = None  # type: ignore[assignment]
+    VOLATILITY_AVAILABLE = False
+    print(f"APEX volatility intelligence unavailable: {_vi_err}", flush=True)
+
+# APEX 6.5 — Market Rotation Engine
+try:
+    from engine.rotation import build_rotation_intelligence
+    ROTATION_AVAILABLE = True
+except Exception as _rot_err:
+    build_rotation_intelligence = None  # type: ignore[assignment]
+    ROTATION_AVAILABLE = False
+    print(f"APEX rotation engine unavailable: {_rot_err}", flush=True)
+
+# APEX 6.5 — Institutional Intelligence (canonical master object)
+try:
+    from engine.institutional_intelligence import build_institutional_intelligence
+    INST_INTEL_AVAILABLE = True
+except Exception as _ii_err:
+    build_institutional_intelligence = None  # type: ignore[assignment]
+    INST_INTEL_AVAILABLE = False
+    print(f"APEX institutional intelligence unavailable: {_ii_err}", flush=True)
+
 # APEX 4.5 nine-engine decision support system
 try:
     from apex_engines import build_institutional_decision as _build_institutional_decision
@@ -112,7 +148,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.4.1_APEX_TERMINAL_CONSOLIDATION"
+VERSION = "6.5.0_APEX_FOUR_PILLAR"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -3904,6 +3940,80 @@ def api_institutional_os():
                     result["playbook"] = playbook
                 except Exception as _pb2:
                     print(f"Playbook error (non-fatal): {_pb2}", flush=True)
+
+            # ── APEX 6.5 Options Chain Intelligence ──
+            options_chain_intel: Dict[str, Any] = {}
+            if OPTIONS_CHAIN_AVAILABLE and build_options_chain_intelligence is not None:
+                try:
+                    options_chain_intel = build_options_chain_intelligence(
+                        gamma_regime  = result.get("gamma_regime") or {},
+                        flow_snapshot = flow_snapshot,
+                        market_state  = canonical_ms or {},
+                    )
+                    result["options_chain"] = options_chain_intel
+                except Exception as _oc2:
+                    print(f"Options chain error (non-fatal): {_oc2}", flush=True)
+
+            # ── APEX 6.5 Volatility Intelligence ──
+            vol_intel: Dict[str, Any] = {}
+            if VOLATILITY_AVAILABLE and build_volatility_intelligence is not None:
+                try:
+                    _vix_cur  = _sf(canonical_ms.get("vix") or vix_price or 0.0)
+                    vol_intel = build_volatility_intelligence(
+                        vix                 = _vix_cur,
+                        vix_prev            = 0.0,
+                        gex_score           = _sf((result.get("gamma_regime") or {}).get("gex_score")),
+                        dealer_gamma_regime = dealer_pos.get("gamma", {}).get("regime", "NEUTRAL_GAMMA"),
+                        call_premium        = _sf(flow_snapshot.get("call_premium")),
+                        put_premium         = _sf(flow_snapshot.get("put_premium")),
+                        flow_momentum       = str((result.get("flow_intelligence") or {}).get("flow_momentum","STABLE")),
+                        minutes_open        = int(_sf(canonical_ms.get("minutes_open"))),
+                        session_state       = _session_state_now,
+                    )
+                    result["volatility"] = vol_intel
+                except Exception as _vi2:
+                    print(f"Volatility intelligence error (non-fatal): {_vi2}", flush=True)
+
+            # ── APEX 6.5 Market Rotation ──
+            rotation_intel: Dict[str, Any] = {}
+            if ROTATION_AVAILABLE and build_rotation_intelligence is not None:
+                try:
+                    _heat = result.get("heat_map") or {}
+                    rotation_intel = build_rotation_intelligence(
+                        heat_map       = _heat,
+                        flow_snapshot  = flow_snapshot,
+                        market_state   = canonical_ms or {},
+                        breadth_score  = canonical_ms.get("breadth_score"),
+                        spx_flow_score = _sf((result.get("flow_intelligence") or {}).get("flow_score"), 50.0),
+                    )
+                    result["rotation"] = rotation_intel
+                except Exception as _rot2:
+                    print(f"Rotation intelligence error (non-fatal): {_rot2}", flush=True)
+
+            # ── APEX 6.5 Institutional Intelligence (canonical master object) ──
+            if INST_INTEL_AVAILABLE and build_institutional_intelligence is not None:
+                try:
+                    inst_intel = build_institutional_intelligence(
+                        auction_intel      = auction_intel,
+                        market_state       = canonical_ms or {},
+                        rotation           = rotation_intel or None,
+                        volume_profile     = volume_bundle.get("profile"),
+                        dealer_positioning = dealer_pos,
+                        options_chain      = options_chain_intel or None,
+                        volatility         = vol_intel or None,
+                        flow_intel_2       = flow_intel_2,
+                        story              = result.get("story"),
+                        trade_coach        = result.get("trade_coach"),
+                        risk               = result.get("risk"),
+                        ici                = result.get("ici") or {},
+                        consensus          = result.get("consensus") or {},
+                        decision_state     = result.get("decision_state", "NO_TRADE"),
+                        playbook           = result.get("playbook"),
+                        session_state      = _session_state_now,
+                    )
+                    result["institutional_intelligence"] = inst_intel
+                except Exception as _ii2:
+                    print(f"Institutional intelligence error (non-fatal): {_ii2}", flush=True)
             if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:
                 try:
                     # Fetch ES overnight bars if not already in volume_bundle
