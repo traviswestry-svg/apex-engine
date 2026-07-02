@@ -139,6 +139,24 @@ except Exception as _ii_err:
     INST_INTEL_AVAILABLE = False
     print(f"APEX institutional intelligence unavailable: {_ii_err}", flush=True)
 
+# APEX 7.0 — Market Drivers Engine
+try:
+    from engine.market_drivers import build_market_drivers
+    MARKET_DRIVERS_AVAILABLE = True
+except Exception as _md_err:
+    build_market_drivers = None  # type: ignore[assignment]
+    MARKET_DRIVERS_AVAILABLE = False
+    print(f"APEX market drivers unavailable: {_md_err}", flush=True)
+
+# APEX 7.0 — Strike Magnet Engine
+try:
+    from engine.strike_magnet import build_strike_magnets
+    STRIKE_MAGNET_AVAILABLE = True
+except Exception as _sm_err:
+    build_strike_magnets = None  # type: ignore[assignment]
+    STRIKE_MAGNET_AVAILABLE = False
+    print(f"APEX strike magnets unavailable: {_sm_err}", flush=True)
+
 # APEX 4.5 nine-engine decision support system
 try:
     from apex_engines import build_institutional_decision as _build_institutional_decision
@@ -148,7 +166,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "6.5.0_APEX_FOUR_PILLAR"
+VERSION = "7.0.0_APEX_INSTITUTIONAL_INTELLIGENCE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -2421,6 +2439,7 @@ def run_scan_once(force: bool = False) -> bool:
                 "scan_in_progress": False,
                 "last_scan_duration_seconds": duration,
                 "circuit_breaker": BREAKER.snapshot(),
+                "last_result": result if isinstance(result, dict) else {},
             })
             status = STATE["last_scan_status"]
         print(status, flush=True)
@@ -3751,6 +3770,7 @@ def api_institutional_os():
                         session_state=_session_state_for_story,
                         market_state=canonical_ms or None,
                         auction_intel=auction_intel if isinstance(auction_intel, dict) else None,
+                        institutional_intelligence=result.get("institutional_intelligence") if isinstance(result.get("institutional_intelligence"), dict) else None,
                     )
                     result["story"] = story_v3
                     result["executive_summary"] = story_v3.get("executive_summary", result.get("executive_summary", ""))
@@ -3956,6 +3976,55 @@ def api_institutional_os():
                 except Exception as _pb2:
                     print(f"Playbook error (non-fatal): {_pb2}", flush=True)
 
+            # ── APEX 7.0 Market Drivers Engine ──
+            market_drivers_intel: Dict[str, Any] = {}
+            if MARKET_DRIVERS_AVAILABLE and build_market_drivers is not None:
+                try:
+                    # Build snapshot dict from heat_map scores
+                    _heat_items  = (result.get("heat_map") or {}).get("items") or []
+                    _hm_scores   = {str(it.get("ticker","")):_sf(it.get("score"),50.0) for it in _heat_items}
+                    _flow_biases = {str(it.get("ticker","")):"BULLISH" if _sf(it.get("score"),50.0)>=70 else "BEARISH" if _sf(it.get("score"),50.0)<=35 else "MIXED" for it in _heat_items}
+                    # Polygon daily bars snapshot for change_pct
+                    _md_snap: Dict[str, Any] = {}
+                    if POLYGON_API_KEY:
+                        try:
+                            from engine.market_drivers import SPX_CONSTITUENTS
+                            _md_tickers = [c["ticker"].replace(".", "/") for c in SPX_CONSTITUENTS]
+                            _md_url = f"https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers"
+                            _md_data = safe_get_json(_md_url, params={"tickers": ",".join(_md_tickers)}, timeout=12)
+                            if _md_data and "tickers" in _md_data:
+                                for t in _md_data["tickers"]:
+                                    tkr  = str(t.get("ticker","")).upper()
+                                    chg  = _sf((t.get("todaysChangePerc") or t.get("day", {}).get("c", 0)))
+                                    vol  = _sf(t.get("day", {}).get("v", 0))
+                                    avol = _sf(t.get("prevDay", {}).get("v", 1) or 1)
+                                    _md_snap[tkr] = {"change_pct": chg, "volume_relative": vol/avol if avol else 1.0}
+                        except Exception:
+                            pass
+                    market_drivers_intel = build_market_drivers(
+                        snapshot_data   = _md_snap,
+                        heat_map_scores = _hm_scores,
+                        flow_biases     = _flow_biases,
+                    )
+                    result["market_drivers"] = market_drivers_intel
+                except Exception as _md2:
+                    print(f"Market drivers error (non-fatal): {_md2}", flush=True)
+
+            # ── APEX 7.0 Strike Magnet Engine ──
+            strike_magnets_intel: Dict[str, Any] = {}
+            if STRIKE_MAGNET_AVAILABLE and build_strike_magnets is not None:
+                try:
+                    strike_magnets_intel = build_strike_magnets(
+                        gamma_regime  = result.get("gamma_regime") or {},
+                        market_state  = canonical_ms or {},
+                        auction_intel = auction_intel if isinstance(auction_intel, dict) else None,
+                        dte           = 0.0,
+                        minutes_open  = int(_sf((canonical_ms or {}).get("minutes_open"))),
+                    )
+                    result["strike_magnets"] = strike_magnets_intel
+                except Exception as _sm2:
+                    print(f"Strike magnets error (non-fatal): {_sm2}", flush=True)
+
             # ── APEX 6.5 Options Chain Intelligence ──
             options_chain_intel: Dict[str, Any] = {}
             if OPTIONS_CHAIN_AVAILABLE and build_options_chain_intelligence is not None:
@@ -4016,7 +4085,9 @@ def api_institutional_os():
                         dealer_positioning = dealer_pos if isinstance(dealer_pos, dict) else {},
                         options_chain      = options_chain_intel if isinstance(options_chain_intel, dict) else None,
                         volatility         = vol_intel if isinstance(vol_intel, dict) else None,
+                        strike_magnets     = strike_magnets_intel if isinstance(strike_magnets_intel, dict) else None,
                         flow_intel_2       = flow_intel_2 if isinstance(flow_intel_2, dict) else {},
+                        market_drivers     = market_drivers_intel if isinstance(market_drivers_intel, dict) else None,
                         story              = result.get("story") if isinstance(result.get("story"), dict) else None,
                         trade_coach        = result.get("trade_coach") if isinstance(result.get("trade_coach"), dict) else None,
                         risk               = result.get("risk") if isinstance(result.get("risk"), dict) else None,
@@ -5427,6 +5498,85 @@ def _fetch_flow_tape_rows(tickers: List[str], size_per_ticker: int = 50) -> List
                     r["ticker"] = qd_ticker
                 all_rows.append(r)
     return all_rows
+
+
+@app.route("/api/market_drivers")
+def api_market_drivers():
+    """GET /api/market_drivers?ticker=SPX — which stocks are moving the index."""
+    ticker = normalize_signal_ticker(request.args.get("ticker", ASSISTANT_TICKER))
+    with STATE_LOCK:
+        cached = STATE.get("last_result") or {}
+    md = cached.get("market_drivers")
+    if md and isinstance(md, dict):
+        return jsonify({"ok": True, "ticker": ticker, **md})
+    return jsonify({"ok": False, "available": False,
+                    "reason": "Market drivers not yet computed. Run a scan first.",
+                    "quality_flags": ["NOT_YET_COMPUTED"]})
+
+
+@app.route("/api/strike_magnets")
+def api_strike_magnets():
+    """GET /api/strike_magnets?ticker=SPX — price magnet map."""
+    ticker = normalize_signal_ticker(request.args.get("ticker", ASSISTANT_TICKER))
+    with STATE_LOCK:
+        cached = STATE.get("last_result") or {}
+    sm = cached.get("strike_magnets")
+    if sm and isinstance(sm, dict):
+        return jsonify({"ok": True, "ticker": ticker, **sm})
+    # Try live build if gamma data available
+    gamma = cached.get("gamma_regime") or {}
+    ms    = cached.get("market_state") or {}
+    if gamma and STRIKE_MAGNET_AVAILABLE and build_strike_magnets is not None:
+        try:
+            sm = build_strike_magnets(gamma_regime=gamma, market_state=ms, dte=0.0)
+            return jsonify({"ok": True, "ticker": ticker, **sm})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)})
+    return jsonify({"ok": False, "available": False,
+                    "reason": "Strike magnets require a completed scan cycle.",
+                    "quality_flags": ["NOT_YET_COMPUTED"]})
+
+
+@app.route("/api/dealer_positioning")
+def api_dealer_positioning():
+    """GET /api/dealer_positioning?ticker=SPX — full dealer positioning object."""
+    ticker = normalize_signal_ticker(request.args.get("ticker", ASSISTANT_TICKER))
+    with STATE_LOCK:
+        cached = STATE.get("last_result") or {}
+    dp = cached.get("dealer_positioning")
+    if dp and isinstance(dp, dict):
+        return jsonify({"ok": True, "ticker": ticker, **dp})
+    return jsonify({"ok": False, "available": False,
+                    "reason": "Dealer positioning not yet computed.",
+                    "quality_flags": ["NOT_YET_COMPUTED"]})
+
+
+@app.route("/api/options_chain_intelligence")
+def api_options_chain_intelligence():
+    """GET /api/options_chain_intelligence?ticker=SPX — options chain intel."""
+    ticker = normalize_signal_ticker(request.args.get("ticker", ASSISTANT_TICKER))
+    with STATE_LOCK:
+        cached = STATE.get("last_result") or {}
+    oc = cached.get("options_chain")
+    if oc and isinstance(oc, dict):
+        return jsonify({"ok": True, "ticker": ticker, **oc})
+    return jsonify({"ok": False, "available": False,
+                    "reason": "Options chain intelligence not yet computed.",
+                    "quality_flags": ["NOT_YET_COMPUTED"]})
+
+
+@app.route("/api/institutional_intelligence")
+def api_institutional_intelligence():
+    """GET /api/institutional_intelligence?ticker=SPX — canonical intelligence object."""
+    ticker = normalize_signal_ticker(request.args.get("ticker", ASSISTANT_TICKER))
+    with STATE_LOCK:
+        cached = STATE.get("last_result") or {}
+    ii = cached.get("institutional_intelligence")
+    if ii and isinstance(ii, dict):
+        return jsonify({"ok": True, "ticker": ticker, **ii})
+    return jsonify({"ok": False, "available": False,
+                    "reason": "Institutional intelligence not yet computed. Run a scan first.",
+                    "quality_flags": ["NOT_YET_COMPUTED"]})
 
 
 @app.route("/api/flow_tape")
