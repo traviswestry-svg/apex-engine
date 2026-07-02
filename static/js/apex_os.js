@@ -1594,6 +1594,7 @@ async function loadOS() {
     renderAuctionLadder(data);
     renderDealerPanel(data);
     renderPlaybook(data);
+    renderInstitutionalIntelligence(data);
 
     // Render market status banner from data if present
     if (data.market_status) renderMarketStatusBanner(data.market_status);
@@ -2490,6 +2491,66 @@ function renderPlaybook(d) {
     </div>
 
     <div class="pb-next">${esc(pb.next_event||'')}</div>
+  `;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   INSTITUTIONAL INTELLIGENCE — Four Pillar dashboard panel
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderInstitutionalIntelligence(d) {
+  const el = $('instIntelPanel');
+  if (!el || !d) return;
+
+  const ii = d.institutional_intelligence;
+  if (!ii || !ii.available) {
+    el.innerHTML = '<div class="sk-waiting">⌛ Building institutional intelligence...</div>';
+    return;
+  }
+
+  const pillars = ii.pillars || {};
+  const p1 = pillars.market_structure || {};
+  const p2 = pillars.dealer           || {};
+  const p3 = pillars.institutional    || {};
+  const p4 = pillars.execution        || {};
+
+  const alignColor = ii.alignment.includes('FULL') && ii.alignment.includes('BULL') ? 'var(--green)' :
+                     ii.alignment.includes('FULL') && ii.alignment.includes('BEAR') ? 'var(--red)'   :
+                     ii.alignment.includes('PARTIAL') ? 'var(--amber)' : 'var(--faint)';
+
+  const scoreColor = s => s >= 70 ? 'var(--green)' : s >= 50 ? 'var(--amber)' : 'var(--red)';
+
+  const _pillar = (label, emoji, score, dir, note) => `
+    <div class="ii-pillar">
+      <div class="ii-pillar-header">
+        <span class="ii-pillar-emoji">${emoji}</span>
+        <span class="ii-pillar-label">${label}</span>
+        <span class="ii-pillar-score" style="color:${scoreColor(score)}">${fmtI(score)}</span>
+      </div>
+      <div class="ii-pillar-dir ${dir === 'BULLISH' ? 'ii-bull' : dir === 'BEARISH' ? 'ii-bear' : 'ii-neut'}">${esc(dir)}</div>
+      <div class="ii-pillar-note">${esc(note.slice(0,120))}${note.length > 120 ? '…' : ''}</div>
+    </div>`;
+
+  el.innerHTML = `
+    <div class="ii-overall">
+      <div class="ii-score" style="color:${scoreColor(ii.overall_score)}">${fmtI(ii.overall_score)}</div>
+      <div class="ii-alignment" style="color:${alignColor}">${esc((ii.alignment||'').replace(/_/g,' '))}</div>
+    </div>
+    <div class="ii-read">${esc(ii.primary_read||'')}</div>
+    <div class="ii-pillar-grid">
+      ${_pillar('Market Structure', '📊', p1.score||0, p1.direction||'NEUTRAL', p1.narrative||'')}
+      ${_pillar('Dealer',           '🏦', p2.score||0, p2.direction||'NEUTRAL', p2.narrative||'')}
+      ${_pillar('Institutional',    '🌊', p3.score||0, p3.direction||'NEUTRAL', p3.narrative||'')}
+      ${_pillar('Execution',        '⚡', p4.score||0, p4.decision_state||'NO TRADE', p4.narrative||'')}
+    </div>
+    <div class="ii-what">
+      <div class="ii-what-label">What institutions are doing</div>
+      <div class="ii-what-text">${esc(ii.what_institutions||'')}</div>
+    </div>
+    <div class="ii-what">
+      <div class="ii-what-label">What dealers are doing</div>
+      <div class="ii-what-text">${esc((ii.what_dealers||'').slice(0,200))}${(ii.what_dealers||'').length > 200 ? '…' : ''}</div>
+    </div>
   `;
 }
 
