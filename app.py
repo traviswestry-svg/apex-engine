@@ -76,6 +76,33 @@ except Exception as _ai_err:
     AUCTION_INTEL_AVAILABLE = False
     print(f"APEX auction intelligence unavailable: {_ai_err}", flush=True)
 
+# APEX 6.5 — Dealer Positioning Engine
+try:
+    from engine.dealer_positioning import build_dealer_positioning
+    DEALER_POSITIONING_AVAILABLE = True
+except Exception as _dp_err:
+    build_dealer_positioning = None  # type: ignore[assignment]
+    DEALER_POSITIONING_AVAILABLE = False
+    print(f"APEX dealer positioning unavailable: {_dp_err}", flush=True)
+
+# APEX 6.5 — Flow Intelligence 2.0
+try:
+    from engine.flow_intelligence import build_flow_intelligence_2
+    FLOW_INTEL_2_AVAILABLE = True
+except Exception as _fi2_err:
+    build_flow_intelligence_2 = None  # type: ignore[assignment]
+    FLOW_INTEL_2_AVAILABLE = False
+    print(f"APEX flow intelligence 2.0 unavailable: {_fi2_err}", flush=True)
+
+# APEX 6.5 — Institutional Playbook
+try:
+    from engine.playbook import build_institutional_playbook
+    PLAYBOOK_AVAILABLE = True
+except Exception as _pb_err:
+    build_institutional_playbook = None  # type: ignore[assignment]
+    PLAYBOOK_AVAILABLE = False
+    print(f"APEX institutional playbook unavailable: {_pb_err}", flush=True)
+
 # APEX 4.5 nine-engine decision support system
 try:
     from apex_engines import build_institutional_decision as _build_institutional_decision
@@ -3828,7 +3855,55 @@ def api_institutional_os():
                                 SCANNER_STATE["bars_above_poc"] = 0
                 except Exception as _ai_err2:
                     print(f"Auction intelligence error (non-fatal): {_ai_err2}", flush=True)
+
+            # ── APEX 6.5 Dealer Positioning Engine ──
+            dealer_pos: Dict[str, Any] = {}
+            if DEALER_POSITIONING_AVAILABLE and build_dealer_positioning is not None:
+                try:
+                    dealer_pos = build_dealer_positioning(
+                        gamma_regime  = result.get("gamma_regime") or {},
+                        flow_snapshot = flow_snapshot,
+                        auction_state = auction_intel.get("auction_state") or {},
+                        market_state  = canonical_ms or {},
+                        dte           = 0.0,
+                    )
+                    result["dealer_positioning"] = dealer_pos
+                except Exception as _dp2:
+                    print(f"Dealer positioning error (non-fatal): {_dp2}", flush=True)
+
+            # ── APEX 6.5 Flow Intelligence 2.0 ──
+            flow_intel_2: Dict[str, Any] = {}
+            if FLOW_INTEL_2_AVAILABLE and build_flow_intelligence_2 is not None:
+                try:
+                    _fi2_rows = (result.get("flow_tape") or {}).get("rows") or []
+                    _fi2_sum  = (result.get("flow_tape") or {}).get("summary") or {}
+                    flow_intel_2 = build_flow_intelligence_2(
+                        flow_snapshot = flow_snapshot,
+                        tape_rows     = _fi2_rows,
+                        tape_summary  = _fi2_sum,
+                        dealer_delta  = dealer_pos.get("delta"),
+                        dealer_gamma  = dealer_pos.get("gamma"),
+                    )
+                    result["flow_intelligence_2"] = flow_intel_2
+                except Exception as _fi2_2:
+                    print(f"Flow Intelligence 2.0 error (non-fatal): {_fi2_2}", flush=True)
+
             _session_state_now = session_ctx.get("session_state", "MARKET_OPEN")
+
+            # ── APEX 6.5 Institutional Playbook ──
+            if PLAYBOOK_AVAILABLE and build_institutional_playbook is not None:
+                try:
+                    playbook = build_institutional_playbook(
+                        dealer_positioning = dealer_pos,
+                        auction_intel      = auction_intel,
+                        flow_intel_2       = flow_intel_2,
+                        market_state       = canonical_ms or {},
+                        overnight_plan     = result.get("overnight_game_plan") if _session_state_now in ("OVERNIGHT","PREMARKET") else None,
+                        session_state      = _session_state_now,
+                    )
+                    result["playbook"] = playbook
+                except Exception as _pb2:
+                    print(f"Playbook error (non-fatal): {_pb2}", flush=True)
             if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:
                 try:
                     # Fetch ES overnight bars if not already in volume_bundle
