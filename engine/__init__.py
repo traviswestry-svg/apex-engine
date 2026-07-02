@@ -10,6 +10,9 @@ from .story import build_story_v3
 from .trade_coach import build_trade_coach_v3
 from .market_state import build_canonical_market_state
 from .auction_intelligence import build_auction_intelligence
+from .dealer_positioning import build_dealer_positioning
+from .flow_intelligence import build_flow_intelligence_2
+from .playbook import build_institutional_playbook
 
 __all__ = [
     "build_gamma_from_quantdata_response",
@@ -24,4 +27,7 @@ __all__ = [
     "build_trade_coach_v3",
     "build_canonical_market_state",
     "build_auction_intelligence",
+    "build_dealer_positioning",
+    "build_flow_intelligence_2",
+    "build_institutional_playbook",
 ]
