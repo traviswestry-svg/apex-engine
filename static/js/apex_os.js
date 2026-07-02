@@ -1592,6 +1592,8 @@ async function loadOS() {
     renderDecisionTree(data);
     captureTimelineEvent(data);
     renderAuctionLadder(data);
+    renderDealerPanel(data);
+    renderPlaybook(data);
 
     // Render market status banner from data if present
     if (data.market_status) renderMarketStatusBanner(data.market_status);
@@ -2394,6 +2396,101 @@ function renderExecutiveSummary(d) {
     </div>
     <div class="exec-narrative ${isActionable ? 'exec-narrative-active' : ''}">${esc(summary)}</div>
     ${blockHtml}`;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   DEALER POSITIONING PANEL
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderDealerPanel(d) {
+  const el = $('dealerPanel');
+  if (!el || !d) return;
+  const dp = d.dealer_positioning;
+  if (!dp || !dp.available) {
+    el.innerHTML = '<div class="sk-waiting">⌛ Building dealer model...</div>';
+    return;
+  }
+
+  const g   = dp.gamma   || {};
+  const dt_ = dp.delta   || {};
+  const ch  = dp.charm   || {};
+  const ve  = dp.vega    || {};
+  const hp  = dp.hedging_pressure || {};
+  const pin = dp.pin_probability  || {};
+  const mom = dp.momentum_probability || {};
+
+  const regimeColor = g.regime === 'POSITIVE_GAMMA' ? 'var(--green)' : g.regime === 'NEGATIVE_GAMMA' ? 'var(--red)' : 'var(--muted)';
+  const deltaColor  = dt_.bias === 'BUYING' ? 'var(--green)' : dt_.bias === 'SELLING' ? 'var(--red)' : 'var(--muted)';
+  const charmColor  = ch.charm === 'POSITIVE' ? 'var(--green)' : ch.charm === 'NEGATIVE' ? 'var(--red)' : 'var(--muted)';
+  const momColor    = mom.probability >= 70 ? 'var(--green)' : mom.probability >= 45 ? 'var(--amber)' : 'var(--red)';
+
+  const _row = (label, val, color, sub='') => `
+    <div class="dp-row">
+      <div class="dp-label">${label}</div>
+      <div class="dp-val" style="color:${color}">${esc(val)}</div>
+      ${sub ? `<div class="dp-sub">${esc(sub)}</div>` : ''}
+    </div>`;
+
+  el.innerHTML = `
+    ${_row('Gamma',    (g.regime||'--').replace(/_/g,' '),    regimeColor, g.expected_volatility ? 'Vol: '+g.expected_volatility : '')}
+    ${_row('Delta',    dt_.bias||'--',                        deltaColor,  dt_.confidence ? `${dt_.confidence.toFixed(0)}% confidence` : '')}
+    ${_row('Charm',    ch.charm||'--',                        charmColor,  ch.charm_bias ? ch.charm_bias.replace(/_/g,' ') : '')}
+    ${_row('Vega',     ve.vega||'--',                         'var(--muted)', ve.vix_environment ? ve.vix_environment.replace(/_/g,' ') : '')}
+    ${_row('Hedging',  hp.level||'--',                        hp.level==='HIGH'?'var(--amber)':'var(--muted)', hp.direction||'')}
+    ${_row('Pin Prob', `${fmtI(pin.probability||0)}%`,        pin.level==='HIGH'?'var(--amber)':'var(--muted)', pin.pin_note||'')}
+    ${_row('Momentum', `${fmtI(mom.probability||0)}%`,        momColor,    mom.level||'')}
+    <div class="dp-summary">${esc(dp.dealer_summary||'')}</div>
+  `;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   INSTITUTIONAL PLAYBOOK PANEL
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderPlaybook(d) {
+  const el = $('playbookPanel');
+  if (!el || !d) return;
+  const pb = d.playbook;
+  if (!pb || !pb.available) {
+    el.innerHTML = '<div class="sk-waiting">⌛ Building playbook...</div>';
+    return;
+  }
+
+  const st  = pb.session_type || {};
+  const pri = pb.primary_scenario || {};
+  const alt = pb.alternate_scenario || {};
+  const priColor = pri.direction === 'BULLISH' ? 'var(--green)' : pri.direction === 'BEARISH' ? 'var(--red)' : 'var(--muted)';
+  const altColor = alt.direction === 'BULLISH' ? 'var(--green)' : alt.direction === 'BEARISH' ? 'var(--red)' : 'var(--muted)';
+
+  el.innerHTML = `
+    <div class="pb-session-type">${esc(st.type||'').replace(/_/g,' ')}</div>
+    <div class="pb-dealer">${esc(pb.dealer_header||'')}</div>
+
+    <div class="pb-scenario pb-primary">
+      <div class="pb-scenario-label" style="color:${priColor}">Primary — ${esc(pri.direction||'')} · ${fmtI(pri.probability||0)}%</div>
+      <div class="pb-scenario-title">${esc(pri.title||'')}</div>
+      <div class="pb-scenario-path">${esc(pri.path||'')}</div>
+      <div class="pb-scenario-entry">Entry: ${esc(pri.entry||'--')}</div>
+      <div class="pb-scenario-meta">
+        <span>T: ${esc(pri.target||'--')}</span>
+        <span>Stop: ${esc(pri.stop||'--')}</span>
+      </div>
+    </div>
+
+    <div class="pb-scenario pb-alternate">
+      <div class="pb-scenario-label" style="color:${altColor}">Alternate — ${esc(alt.direction||'')} · ${fmtI(alt.probability||0)}%</div>
+      <div class="pb-scenario-title">${esc(alt.title||'')}</div>
+      <div class="pb-scenario-path">${esc(alt.path||'')}</div>
+      <div class="pb-trigger">Trigger: ${esc(alt.trigger||'--')}</div>
+    </div>
+
+    <div class="pb-invalidation">
+      <div class="pb-inv-label">Invalidation</div>
+      <div class="pb-inv-text">${esc(pb.invalidation||'')}</div>
+    </div>
+
+    <div class="pb-next">${esc(pb.next_event||'')}</div>
+  `;
 }
 
 /* ── Ticker selector ──────────────────────────────────────────────────────── */
