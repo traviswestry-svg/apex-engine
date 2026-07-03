@@ -65,219 +65,287 @@
   <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
   <div id="tab-dashboard" class="tab-pane active">
 
-<!-- ══ BAND 1: DECISION COMMAND CENTER ══════════════════════════════════════ -->
-<!-- Answers: What kind of day is this? Should I trade? Why? -->
-<div class="dcc-wrap sec-mb">
+  <!-- ════════════════════════════════════════════════════════════════════
+       ZONE 1 + 2 + 3 — Command Row (full width, decision-first)
+       ════════════════════════════════════════════════════════════════════ -->
+  <div class="ws-command-row sec-mb">
 
-  <!-- Row 1: Market Status Bar -->
-  <div class="dcc-status-bar" id="dccStatusBar">
-    <div class="dcc-status-item">
-      <span class="dcc-status-label">Market</span>
-      <span class="dcc-status-val" id="dccMarketState">--</span>
-    </div>
-    <div class="dcc-status-sep"></div>
-    <div class="dcc-status-item">
-      <span class="dcc-status-label">Session Type</span>
-      <span class="dcc-status-val" id="dccSessionType">--</span>
-    </div>
-    <div class="dcc-status-sep"></div>
-    <div class="dcc-status-item">
-      <span class="dcc-status-label">Dealer Env.</span>
-      <span class="dcc-status-val" id="dccDealerEnv">--</span>
-    </div>
-    <div class="dcc-status-sep"></div>
-    <div class="dcc-status-item">
-      <span class="dcc-status-label">Inst. Bias</span>
-      <span class="dcc-status-val" id="dccInstBias">--</span>
-    </div>
-    <div class="dcc-status-sep"></div>
-    <div class="dcc-status-item">
-      <span class="dcc-status-label">Price</span>
-      <span class="dcc-status-val rv-blue" id="dccPrice">--</span>
-    </div>
-    <div class="dcc-status-sep"></div>
-    <div class="dcc-status-item">
-      <span class="dcc-status-label">ES</span>
-      <span class="dcc-status-val rv-blue" id="dccES">--</span>
-    </div>
-    <div class="dcc-status-right">
-      <span id="dccClock" class="dcc-clock">--</span>
-    </div>
-  </div>
-
-  <!-- Row 2: Executive Summary + Trade Decision + Why + Invalidation -->
-  <div class="dcc-main">
-
-    <!-- Executive Summary -->
-    <div class="dcc-exec-col">
-      <div class="dcc-col-label">Executive Summary</div>
-      <div id="dccExecSummary" class="dcc-exec-text">
-        <div class="sk-waiting">⌛ Loading institutional read...</div>
-      </div>
-    </div>
-
-    <!-- Trade Decision + Execution Stage -->
-    <div class="dcc-decision-col">
-      <div class="dcc-col-label">Trade Decision</div>
-      <div id="dccDecision" class="dcc-decision-badge dcc-neutral">-- LOADING</div>
-      <!-- Execution countdown ring -->
-      <div class="dcc-exec-ring-wrap">
-        <svg class="dcc-exec-ring" viewBox="0 0 80 80">
-          <circle class="dcc-ring-bg"   cx="40" cy="40" r="34" />
-          <circle class="dcc-ring-fill" cx="40" cy="40" r="34" id="dccRingFill"
-            stroke-dasharray="213.6" stroke-dashoffset="213.6" />
+    <!-- ── Zone 1: Execution Gauge (hero) ─────────────────────────────── -->
+    <div class="ws-gauge-zone">
+      <!-- Large ring -->
+      <div class="ws-gauge-wrap">
+        <svg class="ws-gauge-svg" viewBox="0 0 200 200">
+          <circle class="ws-gauge-bg"   cx="100" cy="100" r="88"/>
+          <circle class="ws-gauge-fill" cx="100" cy="100" r="88"
+            id="wsGaugeFill"
+            stroke-dasharray="552.9" stroke-dashoffset="552.9"/>
         </svg>
-        <div class="dcc-ring-inner">
-          <div class="dcc-ring-score" id="dccExecScore">--</div>
-          <div class="dcc-ring-stage" id="dccExecStage">WATCH</div>
+        <div class="ws-gauge-inner">
+          <div class="ws-gauge-score"   id="wsExecScore">--</div>
+          <div class="ws-gauge-stage"   id="wsExecStage">LOADING</div>
+          <div class="ws-gauge-sub"     id="wsGaugeSub">Initializing</div>
         </div>
       </div>
-      <div class="dcc-exec-stage-label" id="dccExecStageDesc">Monitoring conditions</div>
-    </div>
-
-    <!-- Why panel -->
-    <div class="dcc-why-col">
-      <div class="dcc-col-label" id="dccWhyLabel">Why</div>
-      <div id="dccWhyBullets" class="dcc-why-list"></div>
-    </div>
-
-    <!-- Invalidation -->
-    <div class="dcc-inv-col">
-      <div class="dcc-col-label">Invalidation</div>
-      <div id="dccInvalidation" class="dcc-inv-text">--</div>
-      <!-- Confidence Pyramid -->
-      <div class="dcc-col-label" style="margin-top:12px">Confidence Pyramid</div>
-      <div id="dccConfidencePyramid" class="dcc-pyramid"></div>
-    </div>
-
-  </div><!-- /dcc-main -->
-
-</div><!-- /dcc-wrap -->
-
-    <!-- Legacy ID anchors (hidden) — JS backwards compat -->
-    <div style="display:none">
-      <div id="decisionBadge" class="decision-badge db-neutral">--</div>
-      <div id="readinessNum">--</div>
-      <div id="iciFill"></div>
-      <div id="iciPanel"></div>
-      <div id="iciCtxLabel"></div>
-      <div id="gateChecks"></div>
-      <div id="whyLabel"></div>
-      <div id="decisionMsg"></div>
-      <div id="decisionAction"></div>
-      <div id="decayBar" style="width:0%"></div>
-      <div id="decayAge"></div>
-      <div id="decayExp"></div>
-    </div>
-
-    <!-- ══ BAND 3: AUCTION · FLOW · DRIVERS · DEALER (4-col) ════════════════ -->
-    <div class="op-intel-band op-intel-band-4col sec-mb">
-
-      <!-- Col 1: Auction Intelligence -->
-      <div class="op-intel-col">
-        <div class="op-intel-col-hdr">📊 Auction</div>
-        <div id="auctionLadder"></div>
-        <div class="op-intel-sub-div"></div>
-        <div class="op-intel-col-hdr">Value Area</div>
-        <div id="auctionPanel"><div class="sk-waiting">⌛ Building profile...</div></div>
+      <!-- Bias + agreement below gauge -->
+      <div class="ws-gauge-footer">
+        <div class="ws-bias"          id="wsBias">-- LOADING</div>
+        <div class="ws-agreement"     id="wsAgreement">-- engines</div>
+        <div class="ws-confidence"    id="wsConfidence"></div>
       </div>
+    </div>
 
-      <div class="op-intel-divider"></div>
+    <!-- ── Zone 2: Institutional Consensus ────────────────────────────── -->
+    <div class="ws-consensus-zone">
+      <div class="ws-zone-label">Institutional Consensus</div>
+      <div id="wsConsensus" class="ws-consensus-grid">
+        <!-- Populated by renderWorkspace() -->
+      </div>
+      <div class="ws-zone-label" style="margin-top:12px">Market Status</div>
+      <div class="ws-status-strip">
+        <div class="ws-stat"><span class="ws-stat-label">Market</span><span class="ws-stat-val" id="wsMarket">--</span></div>
+        <div class="ws-stat"><span class="ws-stat-label">Dealer</span><span class="ws-stat-val" id="wsDealer">--</span></div>
+        <div class="ws-stat"><span class="ws-stat-label">POC</span><span class="ws-stat-val"    id="wsPOC">--</span></div>
+        <div class="ws-stat"><span class="ws-stat-label">Flow</span><span class="ws-stat-val"   id="wsFlow">--</span></div>
+        <div class="ws-stat"><span class="ws-stat-label">Gamma</span><span class="ws-stat-val"  id="wsGamma">--</span></div>
+        <div class="ws-stat"><span class="ws-stat-label">Price</span><span class="ws-stat-val rv-blue" id="wsPrice">--</span></div>
+      </div>
+    </div>
 
-      <!-- Col 2: Institutional Flow -->
-      <div class="op-intel-col">
-        <div class="op-intel-col-hdr">🌊 Institutional Flow</div>
-        <div id="opFlowPanel"></div>
-        <div class="op-intel-sub-div"></div>
-        <div class="op-intel-col-hdr">Timeline <span class="live-dot-badge">LIVE</span></div>
-        <div id="institutionalTimeline" class="itl-wrap">
-          <div class="sk-waiting">Session events appear here.</div>
+    <!-- ── Zone 3: Execution Timeline ────────────────────────────────── -->
+    <div class="ws-timeline-zone">
+      <div class="ws-zone-label">Execution Timeline <span class="live-dot-badge">LIVE</span></div>
+      <!-- Stage progression bar -->
+      <div class="ws-stage-bar">
+        <div class="ws-stage-step" data-stage="WATCH">
+          <div class="ws-stage-dot" id="wsStepWatch"></div>
+          <div class="ws-stage-lbl">Watch</div>
+        </div>
+        <div class="ws-stage-line"></div>
+        <div class="ws-stage-step" data-stage="PREPARE">
+          <div class="ws-stage-dot" id="wsStepPrepare"></div>
+          <div class="ws-stage-lbl">Prepare</div>
+        </div>
+        <div class="ws-stage-line"></div>
+        <div class="ws-stage-step" data-stage="ARMED">
+          <div class="ws-stage-dot" id="wsStepArmed"></div>
+          <div class="ws-stage-lbl">Armed</div>
+        </div>
+        <div class="ws-stage-line"></div>
+        <div class="ws-stage-step" data-stage="EXECUTE">
+          <div class="ws-stage-dot" id="wsStepExecute"></div>
+          <div class="ws-stage-lbl">Execute</div>
         </div>
       </div>
-
-      <div class="op-intel-divider"></div>
-
-      <!-- Col 3: SPX Market Drivers -->
-      <div class="op-intel-col">
-        <div class="op-intel-col-hdr">📈 SPX Market Drivers</div>
-        <div id="marketDriversPanel"></div>
-        <div class="op-intel-sub-div"></div>
-        <div class="op-intel-col-hdr">Strike Magnets</div>
-        <div id="strikeMagnetPanel"></div>
+      <!-- Timeline history feed -->
+      <div class="ws-tl-feed" id="wsTimelineFeed">
+        <div class="ws-tl-empty">Execution history will appear as score evolves.</div>
       </div>
-
-      <div class="op-intel-divider"></div>
-
-      <!-- Col 4: Dealer Dashboard -->
-      <div class="op-intel-col">
-        <div class="op-intel-col-hdr">🏦 Dealer Intelligence</div>
-        <div id="dealerPanel"></div>
-        <div class="op-intel-sub-div"></div>
-        <div class="op-intel-col-hdr">Today's Playbook</div>
-        <div id="playbookPanel"></div>
+      <!-- Executive summary (AI sentence layer) -->
+      <div class="ws-ai-line" id="wsAILine">
+        <span class="ws-ai-icon">⬡</span>
+        <span id="wsAIText">Loading institutional read...</span>
       </div>
+    </div>
 
-    </div><!-- /op-intel-band -->
+  </div><!-- /ws-command-row -->
 
-    <!-- ══ BAND 4: SCANNER + ANALYTICS TABS ════════════════════════════════ -->
-    <div class="db-bottom-grid">
+  <!-- ════════════════════════════════════════════════════════════════════
+       ZONE 4 + 5 — Pressure Panel + Trade Card
+       ════════════════════════════════════════════════════════════════════ -->
+  <div class="ws-action-row sec-mb">
 
-      <!-- Scanner -->
-      <div class="card scanner-primary">
-        <div class="scanner-card-head">
-          <div class="card-label">Scanner <span class="live-dot-badge">LIVE</span></div>
-          <div class="scanner-actions">
-            <button class="btn btn-scan" id="runScanBtnPanel">&#9654; Run Scan</button>
-            <button class="btn btn-ghost btn-mini" id="refreshScannerBtn">Refresh</button>
+    <!-- ── Zone 4: Institutional Pressure Panel ───────────────────────── -->
+    <div class="ws-pressure-zone card">
+      <div class="ws-zone-label">Institutional Pressure</div>
+      <div id="wsPressurePanel" class="ws-pressure-grid">
+        <!-- Populated by renderWorkspace() -->
+      </div>
+      <!-- Why bullets -->
+      <div class="ws-why-section">
+        <div class="ws-zone-label" id="wsWhyLabel" style="margin-top:10px">Why</div>
+        <div id="wsWhyBullets" class="ws-why-list"></div>
+      </div>
+    </div>
+
+    <!-- ── Zone 5: Professional Trade Card ────────────────────────────── -->
+    <div class="ws-trade-zone" id="wsTradeZone">
+      <!-- Hidden until execution score crosses threshold -->
+      <div class="ws-trade-card card" id="wsTradeCard">
+        <div class="ws-trade-header">
+          <div class="ws-trade-direction" id="wsTradeDir">--</div>
+          <div class="ws-trade-prob" id="wsTradeProb"></div>
+        </div>
+        <div class="ws-trade-body">
+          <div class="ws-trade-row ws-tr-entry">
+            <span class="ws-tr-label">Entry Zone</span>
+            <span class="ws-tr-val"  id="wsTradeEntry">--</span>
+          </div>
+          <div class="ws-trade-row">
+            <span class="ws-tr-label">Stop</span>
+            <span class="ws-tr-val ws-tr-stop" id="wsTradeStop">--</span>
+          </div>
+          <div class="ws-trade-row">
+            <span class="ws-tr-label">Target 1</span>
+            <span class="ws-tr-val ws-tr-tgt" id="wsTradeT1">--</span>
+          </div>
+          <div class="ws-trade-row">
+            <span class="ws-tr-label">Target 2</span>
+            <span class="ws-tr-val ws-tr-tgt" id="wsTradeT2">--</span>
+          </div>
+          <div class="ws-trade-row ws-tr-risk-row">
+            <div class="ws-tr-risk">
+              <span class="ws-tr-risk-label">Risk</span>
+              <span class="ws-tr-risk-val" id="wsTradeRisk">--</span>
+            </div>
+            <div class="ws-tr-risk">
+              <span class="ws-tr-risk-label">Reward</span>
+              <span class="ws-tr-risk-val ws-tr-reward" id="wsTradeReward">--</span>
+            </div>
+            <div class="ws-tr-risk">
+              <span class="ws-tr-risk-label">Duration</span>
+              <span class="ws-tr-risk-val" id="wsTradeDuration">5–15 min</span>
+            </div>
           </div>
         </div>
-        <div id="scannerIdeasPanel" class="scanner-ideas-panel scanner-ideas-compact"><div class="sk-waiting">⌛ Loading...</div></div>
+        <div class="ws-trade-contract" id="wsTradeContract"></div>
+        <div class="ws-trade-invalidation" id="wsTradeInvalidation"></div>
       </div>
+      <!-- Shown when score below threshold -->
+      <div class="ws-trade-waiting card" id="wsTradeWaiting">
+        <div class="ws-tw-ring" id="wsTWRing">
+          <svg viewBox="0 0 60 60">
+            <circle cx="30" cy="30" r="24" fill="none" stroke="rgba(100,116,139,.15)" stroke-width="4"/>
+            <circle cx="30" cy="30" r="24" fill="none" id="wsTWRingFill"
+              stroke-dasharray="150.8" stroke-dashoffset="150.8"
+              stroke-linecap="round" style="transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .6s,stroke .3s"/>
+          </svg>
+          <span id="wsTWScore">--</span>
+        </div>
+        <div class="ws-tw-stage" id="wsTWStage">WATCHING</div>
+        <div class="ws-tw-desc" id="wsTWDesc">Monitoring for institutional setup</div>
+        <div class="ws-tw-need">Trade card appears when execution score ≥ 75</div>
+      </div>
+    </div>
 
-      <!-- Tabbed deep-dive analytics -->
-      <div class="card db-analytics-card">
-        <div class="db-inner-tabs">
-          <button class="db-inner-tab active" data-inner="ii">Intelligence</button>
-          <button class="db-inner-tab" data-inner="eie">Execution</button>
-          <button class="db-inner-tab" data-inner="coach">Trade Coach</button>
-          <button class="db-inner-tab" data-inner="auction-intel">Auction Intel</button>
-          <button class="db-inner-tab" data-inner="command">Command Ctr</button>
-          <button class="db-inner-tab" data-inner="engines">Engines</button>
-          <button class="db-inner-tab" data-inner="heat">Heat Map</button>
-          <button class="db-inner-tab" data-inner="ici-tl">ICI Timeline</button>
-          <button class="db-inner-tab" data-inner="overlays">Overlays</button>
+  </div><!-- /ws-action-row -->
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       ZONE 6 — Supporting Intelligence (reference panels)
+       ════════════════════════════════════════════════════════════════════ -->
+  <div class="ws-intel-row sec-mb">
+
+    <div class="ws-intel-col card">
+      <div class="ws-zone-label">📊 Auction &amp; Value</div>
+      <div id="auctionLadder"></div>
+      <div class="op-intel-sub-div"></div>
+      <div id="auctionPanel"><div class="sk-waiting">⌛ Building profile...</div></div>
+    </div>
+
+    <div class="ws-intel-col card">
+      <div class="ws-zone-label">🌊 Institutional Flow</div>
+      <div id="opFlowPanel"></div>
+      <div class="op-intel-sub-div"></div>
+      <div class="ws-zone-label" style="margin-top:8px">Timeline <span class="live-dot-badge">LIVE</span></div>
+      <div id="institutionalTimeline" class="itl-wrap"><div class="sk-waiting">Session events appear here.</div></div>
+    </div>
+
+    <div class="ws-intel-col card">
+      <div class="ws-zone-label">📈 SPX Market Drivers</div>
+      <div id="marketDriversPanel"></div>
+      <div class="op-intel-sub-div"></div>
+      <div class="ws-zone-label" style="margin-top:8px">Strike Magnets</div>
+      <div id="strikeMagnetPanel"></div>
+    </div>
+
+    <div class="ws-intel-col card">
+      <div class="ws-zone-label">🏦 Dealer Intelligence</div>
+      <div id="dealerPanel"></div>
+      <div class="op-intel-sub-div"></div>
+      <div class="ws-zone-label" style="margin-top:8px">Playbook</div>
+      <div id="playbookPanel"></div>
+    </div>
+
+  </div><!-- /ws-intel-row -->
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       SCANNER + DEEP-DIVE TABS (reference / drill-down)
+       ════════════════════════════════════════════════════════════════════ -->
+  <div class="db-bottom-grid">
+
+    <!-- Scanner — status strip only -->
+    <div class="card scanner-primary">
+      <div class="scanner-card-head">
+        <div class="card-label">Scanner <span class="live-dot-badge">LIVE</span></div>
+        <button class="btn btn-ghost btn-mini" id="refreshScannerBtn">↺ Refresh</button>
+      </div>
+      <div id="scannerIdeasPanel" class="scanner-ideas-panel scanner-ideas-compact"><div class="sk-waiting">⌛ Loading...</div></div>
+    </div>
+
+    <!-- Tabbed deep-dive analytics -->
+    <div class="card db-analytics-card">
+      <div class="db-inner-tabs">
+        <button class="db-inner-tab active" data-inner="ii">Intelligence</button>
+        <button class="db-inner-tab" data-inner="eie">Execution</button>
+        <button class="db-inner-tab" data-inner="coach">Trade Coach</button>
+        <button class="db-inner-tab" data-inner="auction-intel">Auction Intel</button>
+        <button class="db-inner-tab" data-inner="command">Command Ctr</button>
+        <button class="db-inner-tab" data-inner="engines">Engines</button>
+        <button class="db-inner-tab" data-inner="heat">Heat Map</button>
+        <button class="db-inner-tab" data-inner="ici-tl">ICI Timeline</button>
+        <button class="db-inner-tab" data-inner="overlays">Overlays</button>
+      </div>
+      <div id="db-inner-ii"            class="db-inner-pane active"><div id="instIntelPanel"></div></div>
+      <div id="db-inner-eie"           class="db-inner-pane"><div id="executionPanel"></div></div>
+      <div id="db-inner-coach"         class="db-inner-pane"><div id="tradeCoach"></div></div>
+      <div id="db-inner-auction-intel" class="db-inner-pane"><div id="auctionIntelPanel"></div></div>
+      <div id="db-inner-command"       class="db-inner-pane"><div id="commandCenter"></div></div>
+      <div id="db-inner-engines"       class="db-inner-pane">
+        <div id="consensusBar" class="sec-mb"></div>
+        <div id="engineMatrix" class="engine-matrix"></div>
+        <div style="margin-top:10px"><div id="engineHealthPanel"></div></div>
+      </div>
+      <div id="db-inner-heat"          class="db-inner-pane"><div id="heatGrid" class="heat-grid"></div></div>
+      <div id="db-inner-ici-tl"        class="db-inner-pane">
+        <div class="db-pane-headline">
+          <div class="db-pane-label">ICI Timeline</div>
+          <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
         </div>
-        <div id="db-inner-ii"            class="db-inner-pane active"><div id="instIntelPanel"></div></div>
-        <div id="db-inner-eie"           class="db-inner-pane"><div id="executionPanel"></div></div>
-        <div id="db-inner-coach"         class="db-inner-pane"><div id="tradeCoach"></div></div>
-        <div id="db-inner-auction-intel" class="db-inner-pane"><div id="auctionIntelPanel"></div></div>
-        <div id="db-inner-command"       class="db-inner-pane"><div id="commandCenter"></div></div>
-        <div id="db-inner-engines"       class="db-inner-pane">
-          <div id="consensusBar" class="sec-mb"></div>
-          <div id="engineMatrix" class="engine-matrix"></div>
-          <div style="margin-top:10px"><div id="engineHealthPanel"></div></div>
-        </div>
-        <div id="db-inner-heat"          class="db-inner-pane"><div id="heatGrid" class="heat-grid"></div></div>
-        <div id="db-inner-ici-tl"        class="db-inner-pane">
-          <div class="db-pane-headline">
-            <div class="db-pane-label">ICI Timeline</div>
-            <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
-          </div>
-          <div id="confidenceTimeline" class="confidence-timeline"><div class="sk-waiting">Waiting for first scan...</div></div>
-        </div>
-        <div id="db-inner-overlays" class="db-inner-pane">
-          <div class="db-pane-label">Chart Overlays</div>
-          <div class="overlay-toggles" id="overlayToggles">
-            <button class="overlay-btn active" data-group="gamma">Gamma</button>
-            <button class="overlay-btn active" data-group="volumeProfile">Vol Profile</button>
-            <button class="overlay-btn active" data-group="vwap">VWAP</button>
-            <button class="overlay-btn active" data-group="previousDay">Prev Day</button>
-            <button class="overlay-btn active" data-group="openingRange">Open Range</button>
-          </div>
+        <div id="confidenceTimeline" class="confidence-timeline"><div class="sk-waiting">Waiting for first scan...</div></div>
+      </div>
+      <div id="db-inner-overlays" class="db-inner-pane">
+        <div class="db-pane-label">Chart Overlays</div>
+        <div class="overlay-toggles" id="overlayToggles">
+          <button class="overlay-btn active" data-group="gamma">Gamma</button>
+          <button class="overlay-btn active" data-group="volumeProfile">Vol Profile</button>
+          <button class="overlay-btn active" data-group="vwap">VWAP</button>
+          <button class="overlay-btn active" data-group="previousDay">Prev Day</button>
+          <button class="overlay-btn active" data-group="openingRange">Open Range</button>
         </div>
       </div>
+    </div>
 
-    </div><!-- /db-bottom-grid -->
+  </div><!-- /db-bottom-grid -->
+
+  <!-- Legacy hidden anchors — JS backwards compatibility -->
+  <div style="display:none">
+    <div id="decisionBadge" class="decision-badge db-neutral">--</div>
+    <div id="readinessNum">--</div><div id="iciFill"></div>
+    <div id="iciPanel"></div><div id="iciCtxLabel"></div>
+    <div id="gateChecks"></div><div id="whyLabel"></div>
+    <div id="decisionMsg"></div><div id="decisionAction"></div>
+    <div id="decayBar" style="width:0%"></div>
+    <div id="decayAge"></div><div id="decayExp"></div>
+    <!-- DCC legacy IDs still populated for backwards compat -->
+    <div id="dccStatusBar"></div><div id="dccMarketState"></div>
+    <div id="dccSessionType"></div><div id="dccDealerEnv"></div>
+    <div id="dccInstBias"></div><div id="dccPrice"></div>
+    <div id="dccES"></div><div id="dccClock"></div>
+    <div id="dccExecSummary"></div><div id="dccDecision"></div>
+    <div id="dccRingFill"></div><div id="dccExecScore"></div>
+    <div id="dccExecStage"></div><div id="dccExecStageDesc"></div>
+    <div id="dccWhyBullets"></div><div id="dccWhyLabel"></div>
+    <div id="dccInvalidation"></div><div id="dccConfidencePyramid"></div>
+  </div>
 
   </div><!-- /tab-dashboard -->
 
