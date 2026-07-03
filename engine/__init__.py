@@ -1,64 +1,39 @@
-"""APEX Institutional OS 8.0 engine package — Four Pillar + Dependency Scheduler."""
+"""engine/common — APEX 8.0 shared utilities barrel.
 
-# ── 8.0 shared utilities (import first so engines can use them) ──────────────
-from . import common
-from .common import sf, clamp, fmt_pts, fmt_m, fmt_pct, fmt_price
-from .common import EngineResult, DealerState, AuctionState, FlowState
-from .common import GammaState, ExecutionState, TradePlan, MarketDrivers
-from .common import InstitutionalContext, RiskState, VolatilityState
-from .common import EngineCache, apex_logger, engine_timer
-from .scheduler import EngineScheduler
+The 8.0 refactor points engine/__init__.py and several modules at
+`engine.common`. The underlying implementations live in the sibling leaf
+modules (engine.types, engine.math, engine.format, engine.cache,
+engine.logging); this package re-exports them under the `common` namespace
+so both `from .common import X` and `from .common.<sub> import X` resolve.
 
-from .gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
-from .data_bus import build_market_state
-from .diagnostics import DiagnosticsTrace
-from .volume_profile import build_volume_profile, build_previous_day_profile
-from .auction import build_auction_state
-from .flow_tape import build_flow_tape
-from .story import build_story_v3
-from .trade_coach import build_trade_coach_v3
-from .market_state import build_canonical_market_state
-from .auction_intelligence import build_auction_intelligence
-from .dealer_positioning import build_dealer_positioning
-from .flow_intelligence import build_flow_intelligence_2
-from .playbook import build_institutional_playbook
-from .options_chain import build_options_chain_intelligence
-from .volatility import build_volatility_intelligence
-from .rotation import build_rotation_intelligence
-from .institutional_intelligence import build_institutional_intelligence
-from .market_drivers import build_market_drivers
-from .strike_magnet import build_strike_magnets
-from .execution_intelligence import build_execution_intelligence
+Kept as a thin re-export layer so there is a single source of truth and no
+duplicated logic. Leaf modules have no intra-engine imports, so importing
+this package early in engine/__init__.py cannot create a cycle.
+"""
+
+from ..math import sf, clamp, pct_chg, pts_dist, pct_dist
+from ..format import fmt_pts, fmt_m, fmt_pct, fmt_price
+from ..cache import EngineCache
+from ..logging import apex_logger, engine_timer, EngineTimer
+from ..types import (
+    EngineResult,
+    GammaState,
+    DealerState,
+    AuctionState,
+    FlowState,
+    MarketDrivers,
+    VolatilityState,
+    RiskState,
+    ExecutionState,
+    TradePlan,
+    InstitutionalContext,
+)
 
 __all__ = [
-    "build_gamma_from_quantdata_response",
-    "normalize_index_level_v6",
-    "build_market_state",
-    "DiagnosticsTrace",
-    "build_volume_profile",
-    "build_previous_day_profile",
-    "build_auction_state",
-    "build_flow_tape",
-    "build_story_v3",
-    "build_trade_coach_v3",
-    "build_canonical_market_state",
-    "build_auction_intelligence",
-    "build_dealer_positioning",
-    "build_flow_intelligence_2",
-    "build_institutional_playbook",
-    "build_options_chain_intelligence",
-    "build_volatility_intelligence",
-    "build_rotation_intelligence",
-    "build_institutional_intelligence",
-    "build_market_drivers",
-    "build_strike_magnets",
-    "build_execution_intelligence",
-    # 8.0 common utilities
-    "common",
-    "sf", "clamp", "fmt_pts", "fmt_m", "fmt_pct", "fmt_price",
-    "EngineResult", "DealerState", "AuctionState", "FlowState",
-    "GammaState", "ExecutionState", "TradePlan", "MarketDrivers",
-    "InstitutionalContext", "RiskState", "VolatilityState",
-    "EngineCache", "apex_logger", "engine_timer",
-    "EngineScheduler",
+    "sf", "clamp", "pct_chg", "pts_dist", "pct_dist",
+    "fmt_pts", "fmt_m", "fmt_pct", "fmt_price",
+    "EngineCache", "apex_logger", "engine_timer", "EngineTimer",
+    "EngineResult", "GammaState", "DealerState", "AuctionState", "FlowState",
+    "MarketDrivers", "VolatilityState", "RiskState", "ExecutionState",
+    "TradePlan", "InstitutionalContext",
 ]
