@@ -19,6 +19,7 @@ from .rotation import build_rotation_intelligence
 from .institutional_intelligence import build_institutional_intelligence
 from .market_drivers import build_market_drivers
 from .strike_magnet import build_strike_magnets
+from .execution_intelligence import build_execution_intelligence
 
 __all__ = [
     "build_gamma_from_quantdata_response",
@@ -42,4 +43,5 @@ __all__ = [
     "build_institutional_intelligence",
     "build_market_drivers",
     "build_strike_magnets",
+    "build_execution_intelligence",
 ]
