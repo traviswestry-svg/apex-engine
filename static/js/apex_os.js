@@ -1568,52 +1568,52 @@ async function loadOS() {
       }
     }
 
+    const _r = (fn, d) => { try { fn(d); } catch(e) { console.warn('Render error in ' + fn.name + ':', e.message); } };
+    const _ra = async (fn, d) => { try { await fn(d); } catch(e) { console.warn('Render error in ' + fn.name + ':', e.message); } };
+
     // 6.0.3 panels
-    renderRibbon(data);
-    renderICI(data);
-    renderDecision(data);
-    renderTradeCoach(data);
-    renderEngineMatrix(data);
-    renderSession(data);
-    renderHeatmap(data);
-    recordConfidencePoint(data);
-    renderCommandCenter(data);
-    renderAuctionPanel(data);
-    renderCoachSnapshot(data);
-    await loadConfidenceTimeline();
+    _r(renderRibbon, data);
+    _r(renderICI, data);
+    _r(renderDecision, data);
+    _r(renderTradeCoach, data);
+    _r(renderEngineMatrix, data);
+    _r(renderSession, data);
+    _r(renderHeatmap, data);
+    _r(recordConfidencePoint, data);
+    _r(renderCommandCenter, data);
+    _r(renderAuctionPanel, data);
+    _r(renderCoachSnapshot, data);
+    await _ra(loadConfidenceTimeline);
 
     // 6.0.4 panels
-    renderFlow2(data);
-    renderStory(data);
-    renderOvernightGamePlan(data);
-    renderExecutiveSummary(data);
-    renderOpFlow(data);
-    renderAuctionIntel(data);
-    renderDecisionTree(data);
-    captureTimelineEvent(data);
-    renderAuctionLadder(data);
-    renderDealerPanel(data);
-    renderPlaybook(data);
-    renderInstitutionalIntelligence(data);
+    _r(renderFlow2, data);
+    _r(renderStory, data);
+    _r(renderOvernightGamePlan, data);
+    _r(renderExecutiveSummary, data);
+    _r(renderOpFlow, data);
+    _r(renderAuctionIntel, data);
+    _r(renderDecisionTree, data);
+    _r(captureTimelineEvent, data);
+    _r(renderAuctionLadder, data);
+    _r(renderDealerPanel, data);
+    _r(renderPlaybook, data);
+    _r(renderInstitutionalIntelligence, data);
 
     // Sprint 8 — Decision Command Center + new panels
-    renderDCC(data);
-    renderMarketDriversPanel(data);
-    renderStrikeMagnetPanel(data);
-    renderFlowMeter(data);
-    renderEIE(data);
+    _r(renderDCC, data);
+    _r(renderMarketDriversPanel, data);
+    _r(renderStrikeMagnetPanel, data);
+    _r(renderFlowMeter, data);
+    _r(renderEIE, data);
 
     // Sprint 9 — Professional Workspace
-    renderWorkspace(data);
+    _r(renderWorkspace, data);
 
-    // Render market status banner from data if present
-    if (data.market_status) renderMarketStatusBanner(data.market_status);
+    if (data.market_status) _r(renderMarketStatusBanner, data.market_status);
 
-    // Replay + Review capture
-    captureReplaySnap(data);
-    addReviewEntry(data);
+    _r(captureReplaySnap, data);
+    _r(addReviewEntry, data);
 
-    // 6.3.2 — refresh flow tape on each OS load
     loadFlowTape();
 
     const lu = $('lastUpdated');
