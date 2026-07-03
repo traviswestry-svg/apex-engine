@@ -139,6 +139,15 @@ except Exception as _ii_err:
     INST_INTEL_AVAILABLE = False
     print(f"APEX institutional intelligence unavailable: {_ii_err}", flush=True)
 
+# APEX 8.0 — Execution Intelligence Engine
+try:
+    from engine.execution_intelligence import build_execution_intelligence
+    EIE_AVAILABLE = True
+except Exception as _eie_err:
+    build_execution_intelligence = None  # type: ignore[assignment]
+    EIE_AVAILABLE = False
+    print(f"APEX execution intelligence unavailable: {_eie_err}", flush=True)
+
 # APEX 7.0 — Market Drivers Engine
 try:
     from engine.market_drivers import build_market_drivers
@@ -258,6 +267,10 @@ SCANNER_STATE: Dict[str, Any] = {
     "bars_above_poc":         0,
     "bars_below_poc":         0,
     "_bar_day":               None,
+    # EIE history buffers (rolling 10-cycle window)
+    "flow_history":           [],   # net_premium per scan cycle
+    "delta_score_history":    [],   # ICI score per scan cycle
+    "exec_score_history":     [],   # execution probability per cycle
 }
 
 TRADE_ASSISTANT_STATE: Dict[str, Any] = {
@@ -4100,6 +4113,40 @@ def api_institutional_os():
                     result["institutional_intelligence"] = inst_intel
                 except Exception as _ii2:
                     print(f"Institutional intelligence error (non-fatal): {_ii2}", flush=True)
+
+            # ── APEX 8.0 Execution Intelligence Engine ──────────────────────
+            if EIE_AVAILABLE and build_execution_intelligence is not None:
+                try:
+                    # Update rolling history buffers (max 12 cycles)
+                    with STATE_LOCK:
+                        _net_p = _sf(flow_snapshot.get("net_premium"))
+                        _ici_s = _sf((result.get("ici") or {}).get("ici"), 0.0)
+                        _fh = SCANNER_STATE.get("flow_history", [])
+                        _dh = SCANNER_STATE.get("delta_score_history", [])
+                        _fh.append(_net_p); SCANNER_STATE["flow_history"]        = _fh[-12:]
+                        _dh.append(_ici_s); SCANNER_STATE["delta_score_history"] = _dh[-12:]
+                        _flow_hist  = list(SCANNER_STATE["flow_history"])
+                        _delta_hist = list(SCANNER_STATE["delta_score_history"])
+
+                    eie = build_execution_intelligence(
+                        institutional_intelligence = result.get("institutional_intelligence") or {},
+                        auction_intel              = auction_intel if isinstance(auction_intel, dict) else {},
+                        dealer_positioning         = dealer_pos   if isinstance(dealer_pos, dict)   else {},
+                        flow_snapshot              = flow_snapshot,
+                        market_state               = canonical_ms or {},
+                        flow_history               = _flow_hist,
+                        delta_score_history        = _delta_hist,
+                        session_state              = _session_state_now,
+                    )
+                    result["execution_intelligence"] = eie
+
+                    # Update exec score history
+                    with STATE_LOCK:
+                        _eh = SCANNER_STATE.get("exec_score_history", [])
+                        _eh.append(_sf(eie.get("exec_probability")))
+                        SCANNER_STATE["exec_score_history"] = _eh[-12:]
+                except Exception as _eie2:
+                    print(f"Execution intelligence error (non-fatal): {_eie2}", flush=True)
             if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:
                 try:
                     # Fetch ES overnight bars if not already in volume_bundle
@@ -5498,6 +5545,22 @@ def _fetch_flow_tape_rows(tickers: List[str], size_per_ticker: int = 50) -> List
                     r["ticker"] = qd_ticker
                 all_rows.append(r)
     return all_rows
+
+
+@app.route("/api/execution_intelligence")
+def api_execution_intelligence():
+    """GET /api/execution_intelligence?ticker=SPX — is NOW the moment to enter?"""
+    ticker = normalize_signal_ticker(request.args.get("ticker", ASSISTANT_TICKER))
+    with STATE_LOCK:
+        cached = STATE.get("last_result") or {}
+    eie = cached.get("execution_intelligence")
+    if eie and isinstance(eie, dict):
+        return jsonify({"ok": True, "ticker": ticker, **eie})
+    return jsonify({
+        "ok": False, "available": False,
+        "reason": "Execution intelligence not yet computed. Run a scan first.",
+        "quality_flags": ["NOT_YET_COMPUTED"],
+    })
 
 
 @app.route("/api/market_drivers")
