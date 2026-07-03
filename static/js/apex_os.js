@@ -1601,6 +1601,7 @@ async function loadOS() {
     renderMarketDriversPanel(data);
     renderStrikeMagnetPanel(data);
     renderFlowMeter(data);
+    renderEIE(data);
 
     // Render market status banner from data if present
     if (data.market_status) renderMarketStatusBanner(data.market_status);
@@ -3237,12 +3238,14 @@ function renderDCC(d) {
     decEl.className   = 'dcc-decision-badge ' + dccDecisionClass(decision);
   }
 
-  // Execution score and stage from ICI + gate alignment
-  const execScore = Math.round(iciScore);
-  const stage = execScore >= 90 ? 'EXECUTE' :
+  // Execution score and stage — prefer EIE engine, fall back to ICI
+  const eie = d.execution_intelligence;
+  const execScore = eie && eie.available ? Math.round(eie.exec_probability || 0) : Math.round(iciScore);
+  const stage = eie && eie.stage ? eie.stage :
+                execScore >= 90 ? 'EXECUTE' :
                 execScore >= 75 ? 'ARMED'   :
                 execScore >= 55 ? 'PREPARE' : 'WATCH';
-  const stageColor = dccStageColor(stage);
+  const stageColor = eie && eie.stage_color ? eie.stage_color : dccStageColor(stage);
 
   if (ringEl) {
     const circ = 213.6;
@@ -3557,3 +3560,131 @@ function renderFlowMeter(d) {
     ${dealRead  ? `<div class="fm-dealer-read">${esc(dealRead.slice(0,100))}</div>` : ''}
   `;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   EXECUTION INTELLIGENCE ENGINE — Sprint 8.0 Dashboard Panel
+   Answers: "Is NOW the highest-probability moment to enter?"
+   ════════════════════════════════════════════════════════════════════════════ */
+
+function renderEIE(d) {
+  const el = $('executionPanel');
+  if (!el || !d) return;
+
+  const eie = d.execution_intelligence;
+  if (!eie || !eie.available) {
+    el.innerHTML = `
+      <div class="eie-loading">
+        <div class="eie-trigger eie-not-ready">NOT READY</div>
+        <div class="sk-waiting" style="margin-top:10px">⌛ Execution engine initializing...<br>
+        <span style="font-size:10px;color:var(--faint)">Populates after first scan cycle. Requires market to be open.</span></div>
+      </div>`;
+    return;
+  }
+
+  const prob   = Number(eie.exec_probability || 0);
+  const stage  = eie.stage || 'WATCH';
+  const sc     = eie.stage_color || '#64748b';
+  const timing = eie.timing || 'EARLY';
+  const tc     = eie.timing_color || '#64748b';
+  const trigger = eie.trigger_active || false;
+  const tLabel  = eie.trigger_label  || 'NOT READY';
+  const tColor  = eie.trigger_color  || '#64748b';
+
+  // Ring fill
+  const circ   = 201.1;  // 2π × 32
+  const offset = circ * (1 - prob / 100);
+
+  // Module scores
+  const scores = eie.scores || {};
+  const m1 = eie.pressure_acceleration || {};
+  const m3 = eie.absorption || {};
+  const m4 = eie.exhaustion || {};
+  const m5 = eie.delta_acceleration || {};
+  const m6 = eie.auction_acceptance  || {};
+  const m7 = eie.gamma_wall || {};
+
+  const barC = s => Number(s) >= 75 ? 'var(--green)' : Number(s) >= 55 ? 'var(--blue)' : Number(s) >= 40 ? 'var(--amber)' : 'var(--red)';
+  const _bar = (label, score, note) => `
+    <div class="eie-module">
+      <div class="eie-mod-header">
+        <span class="eie-mod-label">${label}</span>
+        <span class="eie-mod-score" style="color:${barC(score)}">${Math.round(Number(score))}</span>
+      </div>
+      <div class="eie-mod-track"><div class="eie-mod-fill" style="width:${Math.min(Number(score)||0,100)}%;background:${barC(score)}"></div></div>
+      ${note ? `<div class="eie-mod-note">${esc(note)}</div>` : ''}
+    </div>`;
+
+  // Why bullets
+  const bullets = eie.why_bullets || [];
+
+  // Timing badge
+  const timingLabel = { PERFECT: '✦ PERFECT', GOOD: '✓ GOOD', EARLY: '◷ EARLY', LATE: '◷ LATE', MISSED: '✗ MISSED' };
+  const timingClass = { PERFECT: 'eie-t-perfect', GOOD: 'eie-t-good', EARLY: 'eie-t-early', LATE: 'eie-t-late', MISSED: 'eie-t-missed' };
+
+  el.innerHTML = `
+    <!-- ── Institutional Trigger (hero) ──────────────────────────────────── -->
+    <div class="eie-hero">
+      <!-- Ring -->
+      <div class="eie-ring-wrap">
+        <svg class="eie-ring" viewBox="0 0 80 80">
+          <circle class="eie-ring-bg"   cx="40" cy="40" r="32"/>
+          <circle class="eie-ring-fill" cx="40" cy="40" r="32"
+            stroke="${sc}"
+            stroke-dasharray="${circ}" stroke-dashoffset="${offset}"
+            style="transition:stroke-dashoffset .6s,stroke .3s"/>
+        </svg>
+        <div class="eie-ring-inner">
+          <div class="eie-ring-prob"  style="color:${sc}">${Math.round(prob)}</div>
+          <div class="eie-ring-label" style="color:${sc}">%</div>
+        </div>
+      </div>
+
+      <!-- Trigger + Stage -->
+      <div class="eie-trigger-col">
+        <div class="eie-trigger" style="color:${tColor};border-color:${tColor};background:${tColor}18">${esc(tLabel)}</div>
+        <div class="eie-stage"   style="color:${sc}">${esc(stage)}</div>
+        <div class="eie-stage-desc">${esc(eie.stage_description||'')}</div>
+        <div class="eie-timing ${timingClass[timing]||'eie-t-early'}">${timingLabel[timing]||timing}</div>
+      </div>
+    </div>
+
+    <div class="eie-narrative">${esc(eie.narrative||'')}</div>
+
+    <!-- ── Why bullets ─────────────────────────────────────────────────── -->
+    ${bullets.length ? `
+    <div class="eie-bullets">
+      ${bullets.map(b => `
+        <div class="eie-bullet-row">
+          <span class="eie-bullet-dot ${b.ok?'eie-ok':'eie-no'}">${b.ok?'✓':'✗'}</span>
+          <span class="eie-bullet-label ${b.ok?'eie-ok':'eie-no'}">${esc(b.label||b.text||'')}</span>
+          <span class="eie-bullet-note">${esc(b.note||'')}</span>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <!-- ── Module scores ───────────────────────────────────────────────── -->
+    <div class="eie-modules">
+      ${_bar('Pressure Acceleration', scores.pressure   || m1.score||50, (m1.note||'').slice(0,60))}
+      ${_bar('Liquidity Absorption',  scores.absorption || m3.score||50, m3.status||'')}
+      ${_bar('Auction Acceptance',    scores.auction_acceptance || m6.score||50, m6.state_label||'')}
+      ${_bar('Gamma Wall',            scores.gamma_wall || m7.score||50, (m7.interaction||'').replace(/_/g,' '))}
+      ${_bar('Delta Acceleration',    m5.score||50, (m5.direction||'').replace(/_/g,' '))}
+      ${_bar('Execution',             scores.execution  || prob, 'Composite execution score')}
+    </div>
+
+    <!-- ── Key module reads ─────────────────────────────────────────────── -->
+    <div class="eie-reads">
+      ${m4.state ? `<div class="eie-read-row"><span class="eie-read-label">Exhaustion</span><span class="eie-read-val" style="color:${m4.state==='BALANCED'?'var(--muted)':m4.state.includes('BUYER')?'var(--amber)':'var(--amber)'}">${esc(m4.state.replace(/_/g,' '))}</span></div>` : ''}
+      ${m7.wall_at ? `<div class="eie-read-row"><span class="eie-read-label">Wall Interaction</span><span class="eie-read-val">$${fmt(m7.wall_at)} — ${esc((m7.interaction||'').replace(/_/g,' '))}</span></div>` : ''}
+      ${m1.direction ? `<div class="eie-read-row"><span class="eie-read-label">Pressure</span><span class="eie-read-val">${esc((m1.direction||'').replace(/_/g,' '))}</span></div>` : ''}
+    </div>
+
+    <!-- ── Invalidation ─────────────────────────────────────────────────── -->
+    ${eie.invalidation ? `
+    <div class="eie-invalidation">
+      <div class="eie-inv-label">Invalidation</div>
+      <div class="eie-inv-text">${esc(eie.invalidation)}</div>
+    </div>` : ''}
+  `;
+}
+
+// Wire EIE into loadOS and refresh cycle
