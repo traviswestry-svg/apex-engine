@@ -438,19 +438,50 @@ def now_et() -> dt.datetime:
     return dt.datetime.now(EASTERN)
 
 
+# NYSE/Nasdaq full-day closures. Equity options (SPX/SPXW) do not trade on these
+# days, so there is no live options flow — the dashboard must read CLOSED, not
+# AFTER_HOURS. Keyed by ISO date. Update annually.
+US_MARKET_HOLIDAYS = frozenset({
+    # 2026
+    "2026-01-01",  # New Year's Day
+    "2026-01-19",  # Martin Luther King Jr. Day
+    "2026-02-16",  # Washington's Birthday (Presidents' Day)
+    "2026-04-03",  # Good Friday
+    "2026-05-25",  # Memorial Day
+    "2026-06-19",  # Juneteenth
+    "2026-07-03",  # Independence Day (observed — July 4 is a Saturday)
+    "2026-09-07",  # Labor Day
+    "2026-11-26",  # Thanksgiving Day
+    "2026-12-25",  # Christmas Day
+    # 2027
+    "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
+    "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+})
+
+
+def is_market_holiday(n: Optional[dt.datetime] = None) -> bool:
+    """True if the given ET datetime falls on a full-day US equity market holiday."""
+    n = n or now_et()
+    return n.strftime("%Y-%m-%d") in US_MARKET_HOLIDAYS
+
+
 def session_status() -> str:
     """Returns the current market session state string.
 
     States:
-      MARKET_OPEN     — RTH 9:30–16:00 ET, Mon–Fri
-      PREMARKET       — 4:00–9:30 ET, Mon–Fri
+      MARKET_OPEN     — RTH 9:30–16:00 ET, Mon–Fri (non-holiday)
+      PREMARKET       — 4:00–9:30 ET, Mon–Fri (non-holiday)
       AFTER_HOURS     — 16:00–18:00 ET, Mon–Fri (ES still trading)
       OVERNIGHT       — 18:00 ET Mon–Fri through 4:00 ET next day, or Sun 18:00+
-      CLOSED          — Saturday all day, Sunday before 18:00 ET
+      CLOSED          — Saturday, Sunday before 18:00 ET, or a market holiday
     """
     n = now_et()
     wd = n.weekday()       # 0=Mon … 6=Sun
     minutes = n.hour * 60 + n.minute
+
+    # Full-day market holiday — no equity/options session regardless of weekday
+    if is_market_holiday(n):
+        return "CLOSED"
 
     # Saturday — fully closed
     if wd == 5:
@@ -497,6 +528,57 @@ def _next_rth_open() -> str:
         days_ahead += 1
         if days_ahead > 7:
             return "Monday 9:30 AM ET"
+
+
+def system_mode(session: Optional[str] = None) -> Dict[str, Any]:
+    """Canonical operator-facing system mode.
+
+    Collapses the internal session states into four labels a trader can trust at
+    a glance, each with a plain-English message and whether live SPX options flow
+    is expected. This is the single source of truth for the header pill and the
+    server-rendered status banner (so the first paint is meaningful before JS).
+
+      LIVE      — RTH open. Live SPX options flow.
+      PRE-RTH   — Pre-market on a trading day. Building next-session game plan.
+      OVERNIGHT — Post-close / futures session. Cash closed, ES trading.
+      CLOSED    — Weekend or market holiday. No session imminent.
+    """
+    session = session or session_status()
+    next_open = _next_rth_open()
+
+    if session == "MARKET_OPEN":
+        mode, flow_live = "LIVE", True
+        title = "LIVE — RTH SESSION"
+        message = "Live SPX options flow. Real-time institutional read."
+    elif session == "PREMARKET":
+        mode, flow_live = "PRE-RTH", False
+        title = "PRE-RTH — PRE-MARKET"
+        message = ("Pre-market. Building the next-session game plan. "
+                   "No live SPX options flow yet.")
+    elif session in ("AFTER_HOURS", "OVERNIGHT"):
+        mode, flow_live = "OVERNIGHT", False
+        title = "OVERNIGHT — REVIEW MODE"
+        message = ("Cash market closed, ES futures trading. No live SPX options "
+                   "flow. Showing last profile and next-session game plan.")
+    else:  # CLOSED
+        mode, flow_live = "CLOSED", False
+        holiday = is_market_holiday()
+        title = "CLOSED — MARKET HOLIDAY" if holiday else "CLOSED — WEEKEND"
+        message = ("Market closed" + (" for the holiday" if holiday else "") +
+                   ". No live SPX options flow. Showing last profile and "
+                   "next-session game plan.")
+
+    return {
+        "mode":       mode,               # LIVE | PRE-RTH | OVERNIGHT | CLOSED
+        "session":    session,            # underlying internal session state
+        "flow_live":  flow_live,          # is live SPX options flow expected?
+        "title":      title,
+        "message":    message,
+        "next_rth":   next_open,
+        "pill_class": "sess-open" if mode == "LIVE" else (
+                      "sess-closed" if mode == "CLOSED" else "sess-pre"),
+        "is_holiday": is_market_holiday(),
+    }
 
 
 def _build_market_status_panel(session: str) -> Dict[str, Any]:
@@ -3417,7 +3499,12 @@ def dashboard_json():
 @app.route("/api/status")
 def api_status():
     with STATE_LOCK:
-        return jsonify(dict(STATE))
+        payload = dict(STATE)
+    payload["version"] = VERSION
+    _mode = system_mode()
+    payload["system_mode"] = _mode["mode"]
+    payload["system_mode_detail"] = _mode
+    return jsonify(payload)
 
 
 @app.route("/api/scanner_ideas")
@@ -3523,7 +3610,13 @@ def api_market_status():
     """GET /api/market_status — current session state and per-component status panel."""
     session = session_status()
     panel   = _build_market_status_panel(session)
-    return jsonify({"ok": True, "version": VERSION, **panel})
+    _mode   = system_mode(session)
+    return jsonify({
+        "ok": True, "version": VERSION,
+        "system_mode": _mode["mode"],
+        "system_mode_detail": _mode,
+        **panel,
+    })
 
 
 @app.route("/health")
@@ -3533,9 +3626,13 @@ def health():
         s_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
         s_sources  = SCANNER_STATE.get("data_sources") or STATE.get("data_sources")
         s_session  = session_status()
+        _mode = system_mode(s_session)
         return jsonify({
             "ok":                         True,
-            "mode":                       VERSION,
+            "version":                    VERSION,
+            "mode":                       VERSION,   # legacy alias — kept for back-compat
+            "system_mode":                _mode["mode"],
+            "system_mode_detail":         _mode,
             "session":                    s_session,
             "updated_at":                 s_updated,
             "scanner_started":            SCANNER_STARTED,
@@ -3551,8 +3648,13 @@ def health():
 
 @app.route("/apex_os")
 def apex_os_dashboard():
-    """APEX Institutional OS — the full v4.5 dashboard."""
-    return render_template("apex_os.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
+    mode = system_mode()
+    return render_template(
+        "apex_os.html",
+        version=VERSION,
+        asset_version=STATIC_ASSET_VERSION,
+        mode=mode,
+    )
 
 
 # ── Institutional OS response cache ──────────────────────────────────────────
