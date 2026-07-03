@@ -3007,3 +3007,10 @@ body {
   .mc-hero { grid-template-columns: 1fr; }
   .mc-intel, .mc-cols { grid-template-columns: 1fr; }
 }
+
+/* Chart tab iframe (restored pane) */
+.mc-chart-frame {
+  width: 100%; height: 78vh; min-height: 520px;
+  border: 1px solid var(--bdr); border-radius: var(--radius);
+  background: var(--surf);
+}
