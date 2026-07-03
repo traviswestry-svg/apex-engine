@@ -3993,3 +3993,54 @@ function renderWorkspace(d) {
 }
 
 // Wire renderWorkspace into the load cycle
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 8.0 — ENGINE HEALTH DASHBOARD
+   Reads from /api/engine_health — shows Green/Yellow/Red per engine
+   ════════════════════════════════════════════════════════════════════════════ */
+
+async function loadEngineHealth() {
+  const el = $('engineHealthPanel');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/engine_health', { cache: 'no-store' });
+    if (!r.ok) return;
+    const h = await r.json();
+    if (!h.ok) return;
+
+    const statusColor = s => s === 'GREEN' ? 'var(--green)' : s === 'YELLOW' ? 'var(--amber)' : 'var(--red)';
+    const statusDot   = s => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColor(s)};margin-right:5px;flex-shrink:0"></span>`;
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;gap:16px;margin-bottom:10px;flex-wrap:wrap">
+        <div style="font-family:var(--mono);font-size:10px;font-weight:800;color:var(--faint)">ENGINE HEALTH</div>
+        <div style="font-size:10px;color:var(--green)">${h.engines_available}/${h.engines_total} available</div>
+        ${h.engines_red > 0    ? `<div style="font-size:10px;color:var(--red)">${h.engines_red} offline</div>` : ''}
+        ${h.engines_yellow > 0 ? `<div style="font-size:10px;color:var(--amber)">${h.engines_yellow} degraded</div>` : ''}
+        ${h.last_response_ms   ? `<div style="font-size:9px;color:var(--faint)">last scan ${h.last_response_ms}ms${h.last_partial?' ⚡partial':''}</div>` : ''}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:5px">
+        ${(h.engines || []).map(e => `
+          <div style="display:flex;align-items:center;padding:6px 8px;background:var(--surf2);border:1px solid var(--bdr);border-left:2px solid ${statusColor(e.status)};border-radius:5px;gap:4px">
+            ${statusDot(e.status)}
+            <span style="font-size:10px;font-weight:600;color:var(--muted);flex:1">${esc(e.engine.replace(/_/g,' '))}</span>
+            ${e.exec_ms ? `<span style="font-size:9px;color:var(--faint);font-family:var(--mono)">${e.exec_ms}ms</span>` : ''}
+            ${e.error ? `<span title="${esc(e.error)}" style="font-size:9px;color:var(--red);cursor:help">⚠</span>` : ''}
+          </div>`).join('')}
+      </div>
+      ${h.timed_out_last && h.timed_out_last.length ? `
+        <div style="margin-top:8px;font-size:10px;color:var(--amber)">
+          ⏱ Timed out last run: ${h.timed_out_last.join(', ')}
+        </div>` : ''}
+    `;
+  } catch (e) {
+    console.warn('[APEX] Engine health load failed:', e.message);
+  }
+}
+
+// Load engine health when Engines tab is opened
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.db-inner-tab[data-inner="engines"]').forEach(btn => {
+    btn.addEventListener('click', loadEngineHealth);
+  });
+});
