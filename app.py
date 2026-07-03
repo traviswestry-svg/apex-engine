@@ -3555,23 +3555,82 @@ def apex_os_dashboard():
     return render_template("apex_os.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
 
 
+# ── Institutional OS response cache ──────────────────────────────────────────
+# Per-ticker cache to return stale data instantly when a refresh is in progress
+# or when the last response was < CACHE_TTL seconds ago.
+_IOS_CACHE: Dict[str, Any] = {}          # {ticker: {data, ts, in_progress}}
+_IOS_CACHE_LOCK = threading.Lock()
+_IOS_CACHE_TTL  = float(os.getenv("IOS_CACHE_TTL_SECONDS", "8"))
+_FETCH_TIMEOUT  = float(os.getenv("IOS_FETCH_TIMEOUT_SECONDS", "3"))
+
+
+def _ios_cached(ticker: str) -> Optional[Dict[str, Any]]:
+    with _IOS_CACHE_LOCK:
+        entry = _IOS_CACHE.get(ticker)
+    if not entry:
+        return None
+    age = time.monotonic() - entry["ts"]
+    if age < _IOS_CACHE_TTL or entry.get("in_progress"):
+        return entry.get("data")
+    return None
+
+
+def _ios_set_cache(ticker: str, data: Dict[str, Any]) -> None:
+    with _IOS_CACHE_LOCK:
+        _IOS_CACHE[ticker] = {"data": data, "ts": time.monotonic(), "in_progress": False}
+
+
+def _ios_mark_in_progress(ticker: str, flag: bool) -> None:
+    with _IOS_CACHE_LOCK:
+        if ticker not in _IOS_CACHE:
+            _IOS_CACHE[ticker] = {"data": None, "ts": 0.0, "in_progress": flag}
+        else:
+            _IOS_CACHE[ticker]["in_progress"] = flag
+
+
+def _safe_result(future, label: str, default: Any, timeout: float = _FETCH_TIMEOUT) -> Tuple[Any, Optional[str]]:
+    """Resolve a future with timeout; return (value, timed_out_label_or_None)."""
+    try:
+        return future.result(timeout=timeout), None
+    except Exception as e:
+        print(f"[IOS] {label} timed out / failed ({type(e).__name__}: {e})", flush=True)
+        return default, label
+
+
 @app.route("/api/institutional_os")
 def api_institutional_os():
     """
     Master endpoint for the APEX Institutional OS dashboard.
-    When apex_engines.py is available, runs the full nine-engine pipeline.
-    Falls back to the 4.5 build_institutional_os() if apex_engines not loaded.
+    Improvements (v7.0.1):
+      - Per-ticker response cache with configurable TTL
+      - Returns stale data immediately when a refresh is in-progress
+      - Per-component timeouts — partial data instead of full failure
+      - Response timing metadata: response_ms, partial, stale, timed_out_components
     """
+    t_start = time.monotonic()
     ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
-    include_heatmap = request.args.get("heatmap", "1") == "1"
+    include_heatmap = request.args.get("heatmap", "0") == "1"   # default OFF — loaded lazily
+    force = request.args.get("force", "0") == "1"
+
+    # ── Return cached data immediately if a refresh is already running ──────
+    if not force:
+        cached = _ios_cached(ticker)
+        if cached is not None and _IOS_CACHE.get(ticker, {}).get("in_progress"):
+            payload = dict(cached)
+            payload.update({"stale": True, "status": "refresh_in_progress",
+                             "response_ms": round((time.monotonic()-t_start)*1000, 1)})
+            return jsonify(payload)
+
+    _ios_mark_in_progress(ticker, True)
 
     if APEX_ENGINES_AVAILABLE and _build_institutional_decision is not None:
         try:
             with TRADE_ASSISTANT_LOCK:
                 last_signal = TRADE_ASSISTANT_STATE.get("last_signal")
             session_ctx = market_session_context()
+            timed_out: List[str] = []
 
-            # Fetch all data inputs in parallel
+            # Fetch all data inputs in parallel with per-component timeouts
             with ThreadPoolExecutor(max_workers=6, thread_name_prefix="apex-os-fetch") as pool:
                 f_flow    = pool.submit(quantdata_flow_snapshot, ticker)
                 f_spy     = pool.submit(get_daily_bars, "SPY", 260)
@@ -3580,13 +3639,22 @@ def api_institutional_os():
                 f_intra   = pool.submit(get_intraday_bars, ticker, 5, 3)
                 f_vix     = pool.submit(get_vix_price)
 
-            flow_snapshot = f_flow.result()
-            volume_bundle = _volume_profile_bundle(ticker=ticker, days=1, multiplier=5)
-            spy_bars      = f_spy.result()
-            qqq_bars      = f_qqq.result()
-            daily_bars    = f_daily.result()
-            intraday_bars = f_intra.result()
-            vix_price     = f_vix.result()
+            flow_snapshot, to1 = _safe_result(f_flow,  "flow_snapshot",  {})
+            spy_bars,      to2 = _safe_result(f_spy,   "spy_bars",       [])
+            qqq_bars,      to3 = _safe_result(f_qqq,   "qqq_bars",       [])
+            daily_bars,    to4 = _safe_result(f_daily, "daily_bars",     [])
+            intraday_bars, to5 = _safe_result(f_intra, "intraday_bars",  [])
+            vix_price,     to6 = _safe_result(f_vix,   "vix_price",      None)
+            for t in [to1,to2,to3,to4,to5,to6]:
+                if t: timed_out.append(t)
+
+            # Volume profile with its own timeout protection
+            try:
+                volume_bundle = _volume_profile_bundle(ticker=ticker, days=1, multiplier=5)
+            except Exception as vp_err:
+                print(f"[IOS] volume_profile failed: {vp_err}", flush=True)
+                volume_bundle = {}
+                timed_out.append("volume_profile")
 
             # Run nine-engine pipeline
             result = _build_institutional_decision(
@@ -4193,13 +4261,24 @@ def api_institutional_os():
                 )
 
             _record_confidence_timeline_point(ticker, result)
-            # Cache for /api/market_drivers, /api/strike_magnets, /api/dealer_positioning etc.
+            # Cache the result for stale-data fallback and sub-endpoints
             with STATE_LOCK:
                 STATE["last_result"] = result
-            return jsonify({"ok": True, **result})
+            result_payload = {
+                "ok": True,
+                "stale": False,
+                "partial": len(timed_out) > 0,
+                "timed_out_components": timed_out,
+                "response_ms": round((time.monotonic() - t_start) * 1000, 1),
+                **result,
+            }
+            _ios_set_cache(ticker, result_payload)
+            _ios_mark_in_progress(ticker, False)
+            return jsonify(result_payload)
 
         except Exception as e:
             # Nine-engine pipeline failed — fall back to 4.5 build_institutional_os
+            _ios_mark_in_progress(ticker, False)
             print(f"Nine-engine pipeline error (falling back): {e}", flush=True)
             try:
                 data = build_institutional_os(ticker, include_heatmap=include_heatmap)
@@ -4344,15 +4423,22 @@ def api_nine_engines():
             f_intra = pool.submit(get_intraday_bars, ticker, 5, 3)
             f_vix   = pool.submit(get_vix_price)
 
+        _fb_flow,  _ = _safe_result(f_flow,  "fb_flow",  {})
+        _fb_spy,   _ = _safe_result(f_spy,   "fb_spy",   [])
+        _fb_qqq,   _ = _safe_result(f_qqq,   "fb_qqq",   [])
+        _fb_daily, _ = _safe_result(f_daily, "fb_daily", [])
+        _fb_intra, _ = _safe_result(f_intra, "fb_intra", [])
+        _fb_vix,   _ = _safe_result(f_vix,   "fb_vix",   None)
+
         result = _build_institutional_decision(
             ticker=ticker,
-            flow_snapshot=f_flow.result(),
-            spy_bars=f_spy.result(),
-            qqq_bars=f_qqq.result(),
-            daily_bars=f_daily.result(),
-            intraday_bars=f_intra.result(),
+            flow_snapshot=_fb_flow,
+            spy_bars=_fb_spy,
+            qqq_bars=_fb_qqq,
+            daily_bars=_fb_daily,
+            intraday_bars=_fb_intra,
             signal=last_signal,
-            vix_price=f_vix.result(),
+            vix_price=_fb_vix,
             default_risk_points=ASSISTANT_DEFAULT_RISK_POINTS,
             target1_r_mult=ASSISTANT_TARGET1_R_MULT,
             target2_r_mult=ASSISTANT_TARGET2_R_MULT,
