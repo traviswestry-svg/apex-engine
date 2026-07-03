@@ -46,7 +46,8 @@
     </div>
     <div class="toolbar-divider"></div>
     <div class="tab-bar">
-      <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+      <button class="tab-btn active" data-tab="mission">Mission Control</button>
+      <button class="tab-btn" data-tab="dashboard">Institutional Analysis</button>
       <button class="tab-btn" data-tab="chart">Chart</button>
       <button class="tab-btn" data-tab="flow2">Flow Intelligence</button>
       <button class="tab-btn" data-tab="story">Story Engine</button>
@@ -62,8 +63,159 @@
     </div>
   </div>
 
-  <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
-  <div id="tab-dashboard" class="tab-pane active">
+  <!-- ════════════════════════════════════════════════════════════════════════
+       TAB: MISSION CONTROL — APEX 8.0 default workspace
+       Consumes /api/mission_control (pure composition, single lightweight poll).
+       Answers in one view: What are institutions doing? Should I trade?
+       Is now the moment? What is the expected path?
+       ════════════════════════════════════════════════════════════════════════ -->
+  <div id="tab-mission" class="tab-pane active">
+    <div class="mc" id="mcRoot">
+
+      <!-- Warming-up / empty state -->
+      <div class="mc-empty" id="mcEmpty">
+        <div class="mc-empty-dot"></div>
+        <div class="mc-empty-txt" id="mcEmptyTxt">Waiting for first scan cycle…</div>
+      </div>
+
+      <div class="mc-grid" id="mcGrid" style="display:none">
+
+        <!-- ══ HERO: DECISION ═══════════════════════════════════════════════ -->
+        <section class="mc-hero">
+          <!-- Left: execution gauge -->
+          <div class="mc-gauge-col">
+            <div class="mc-gauge">
+              <svg viewBox="0 0 180 180" class="mc-gauge-svg">
+                <circle class="mc-gauge-track" cx="90" cy="90" r="78"/>
+                <circle class="mc-gauge-arc" id="mcGaugeArc" cx="90" cy="90" r="78"
+                        stroke-dasharray="490" stroke-dashoffset="490"/>
+              </svg>
+              <div class="mc-gauge-face">
+                <div class="mc-gauge-score" id="mcExecScore">--</div>
+                <div class="mc-gauge-cap">EXECUTION</div>
+              </div>
+            </div>
+            <div class="mc-bias" id="mcBias">—</div>
+          </div>
+
+          <!-- Center: stage ladder + narrative -->
+          <div class="mc-center-col">
+            <div class="mc-stage-ladder" id="mcStageLadder">
+              <div class="mc-stage" data-stage="WATCH"><span class="mc-stage-i"></span><label>Watch</label></div>
+              <div class="mc-stage-rail"></div>
+              <div class="mc-stage" data-stage="PREPARE"><span class="mc-stage-i"></span><label>Prepare</label></div>
+              <div class="mc-stage-rail"></div>
+              <div class="mc-stage" data-stage="ARMED"><span class="mc-stage-i"></span><label>Armed</label></div>
+              <div class="mc-stage-rail"></div>
+              <div class="mc-stage" data-stage="EXECUTE"><span class="mc-stage-i"></span><label>Execute</label></div>
+            </div>
+            <div class="mc-timing" id="mcTiming">—</div>
+            <div class="mc-narrative" id="mcNarrative">Awaiting institutional read…</div>
+            <div class="mc-agree-row">
+              <div class="mc-agree-bar"><div class="mc-agree-fill" id="mcAgreeFill"></div></div>
+              <div class="mc-agree-label" id="mcAgreeLabel">-- / -- engines</div>
+            </div>
+          </div>
+
+          <!-- Right: confidence + score history -->
+          <div class="mc-conf-col">
+            <div class="mc-conf-ring">
+              <div class="mc-conf-num" id="mcConf">--</div>
+              <div class="mc-conf-cap">INST. CONFIDENCE</div>
+              <div class="mc-conf-label" id="mcConfLabel">—</div>
+            </div>
+            <svg class="mc-spark" id="mcSpark" viewBox="0 0 120 32" preserveAspectRatio="none"></svg>
+          </div>
+        </section>
+
+        <!-- ══ INTELLIGENCE STRIP: Flow · Dealer · Auction ══════════════════ -->
+        <section class="mc-intel">
+          <div class="mc-intel-cell" id="mcFlowCell">
+            <div class="mc-intel-head">FLOW</div>
+            <div class="mc-intel-main" id="mcFlowBias">—</div>
+            <div class="mc-intel-sub" id="mcFlowSub">conviction — · urgency —</div>
+          </div>
+          <div class="mc-intel-cell" id="mcDealerCell">
+            <div class="mc-intel-head">DEALER</div>
+            <div class="mc-intel-main" id="mcDealerBias">—</div>
+            <div class="mc-intel-sub" id="mcDealerSub">gamma — · pin —</div>
+          </div>
+          <div class="mc-intel-cell" id="mcAuctionCell">
+            <div class="mc-intel-head">AUCTION</div>
+            <div class="mc-intel-main" id="mcAuctionState">—</div>
+            <div class="mc-intel-sub" id="mcAuctionSub">acceptance —</div>
+          </div>
+        </section>
+
+        <!-- ══ TRADE CARD + EXPECTED PATH ═══════════════════════════════════ -->
+        <section class="mc-cols">
+          <!-- Trade card -->
+          <div class="mc-card" id="mcTradeCard">
+            <div class="mc-card-head">
+              <span>PROFESSIONAL TRADE CARD</span>
+              <span class="mc-card-badge" id="mcCardBadge">STANDBY</span>
+            </div>
+            <div class="mc-card-body" id="mcCardBody">
+              <div class="mc-card-idle" id="mcCardIdle">No armed setup. Card activates at ARMED / EXECUTE.</div>
+              <div class="mc-card-live" id="mcCardLive" style="display:none">
+                <div class="mc-card-dir" id="mcCardDir">—</div>
+                <div class="mc-card-levels">
+                  <div class="mc-lvl"><label>Entry</label><span id="mcCardEntry">--</span></div>
+                  <div class="mc-lvl"><label>Stop</label><span class="mc-lvl-red" id="mcCardStop">--</span></div>
+                  <div class="mc-lvl"><label>Target 1</label><span class="mc-lvl-green" id="mcCardT1">--</span></div>
+                  <div class="mc-lvl"><label>Target 2</label><span class="mc-lvl-green" id="mcCardT2">--</span></div>
+                  <div class="mc-lvl"><label>R:R → T1</label><span id="mcCardRR">--</span></div>
+                  <div class="mc-lvl"><label>Contract</label><span id="mcCardContract">--</span></div>
+                </div>
+                <div class="mc-card-invalid" id="mcCardInvalid"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Expected path -->
+          <div class="mc-path" id="mcPath">
+            <div class="mc-path-head">EXPECTED PATH</div>
+            <div class="mc-path-body" id="mcPathBody">
+              <div class="mc-path-above" id="mcPathAbove"></div>
+              <div class="mc-path-price">
+                <span class="mc-path-price-tag">NOW</span>
+                <span id="mcPathPrice">--</span>
+              </div>
+              <div class="mc-path-below" id="mcPathBelow"></div>
+              <div class="mc-path-pin" id="mcPathPin"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ══ CONSENSUS + WHY ══════════════════════════════════════════════ -->
+        <section class="mc-cols">
+          <div class="mc-consensus" id="mcConsensus">
+            <div class="mc-sec-head">ENGINE CONSENSUS</div>
+            <div class="mc-vote-rows" id="mcVoteRows"></div>
+          </div>
+          <div class="mc-why" id="mcWhy">
+            <div class="mc-sec-head">WHY <span class="mc-risk-inline" id="mcPrimaryRisk"></span></div>
+            <ul class="mc-why-list" id="mcWhyList"></ul>
+          </div>
+        </section>
+
+        <!-- ══ ENGINE HEALTH FOOTER ═════════════════════════════════════════ -->
+        <section class="mc-health" id="mcHealth">
+          <div class="mc-health-counts" id="mcHealthCounts">
+            <span class="mc-hc"><b id="mcHcAvail">--</b> available</span>
+            <span class="mc-hc mc-hc-y"><b id="mcHcYellow">--</b> degraded</span>
+            <span class="mc-hc mc-hc-r"><b id="mcHcRed">--</b> offline</span>
+          </div>
+          <div class="mc-health-dots" id="mcHealthDots"></div>
+          <div class="mc-health-upd" id="mcHealthUpd">—</div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TAB: DASHBOARD (retained as "Institutional Analysis") ──────────── -->
+  <div id="tab-dashboard" class="tab-pane">
 
   <!-- ══ BAND 1: STATUS BAR ══════════════════════════════════════════════════ -->
   <div class="op-status-band">
