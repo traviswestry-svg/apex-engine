@@ -1420,14 +1420,12 @@ function setScanStatus(text, tone = 'muted') {
 }
 
 function setScanButtons(disabled) {
-  [$('runScanBtn')].filter(Boolean).forEach(btn => {
-    const b = $(id);
-    if (b) {
-      b.disabled = !!disabled;
-      b.classList.toggle('is-loading', !!disabled);
-      b.textContent = disabled ? 'Scanning...' : '▶ Run Scan';
-    }
-  });
+  const b = $('runScanBtn');
+  if (b) {
+    b.disabled = !!disabled;
+    b.classList.toggle('is-loading', !!disabled);
+    b.textContent = disabled ? 'Scanning...' : '▶ Run Scan';
+  }
 }
 
 function renderScannerIdeas(payload) {
@@ -1521,10 +1519,8 @@ async function runManualScan() {
 }
 
 function initRunScanButtons() {
-  [$('runScanBtn')].filter(Boolean).forEach(btn => {
-    const b = $(id);
-    if (b) b.addEventListener('click', runManualScan);
-  });
+  const scanBtn = $('runScanBtn');
+  if (scanBtn) scanBtn.addEventListener('click', runManualScan);
   const refreshScanner = $('refreshScannerBtn');
   if (refreshScanner) refreshScanner.addEventListener('click', loadScannerIdeas);
   const resetTimeline = $('resetTimelineBtn');
