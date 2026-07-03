@@ -1419,7 +1419,7 @@ function setScanStatus(text, tone = 'muted') {
 }
 
 function setScanButtons(disabled) {
-  ['runScanBtn', 'runScanBtnPanel'].forEach(id => {
+  [$('runScanBtn')].filter(Boolean).forEach(btn => {
     const b = $(id);
     if (b) {
       b.disabled = !!disabled;
@@ -1520,7 +1520,7 @@ async function runManualScan() {
 }
 
 function initRunScanButtons() {
-  ['runScanBtn', 'runScanBtnPanel'].forEach(id => {
+  [$('runScanBtn')].filter(Boolean).forEach(btn => {
     const b = $(id);
     if (b) b.addEventListener('click', runManualScan);
   });
@@ -1602,6 +1602,9 @@ async function loadOS() {
     renderStrikeMagnetPanel(data);
     renderFlowMeter(data);
     renderEIE(data);
+
+    // Sprint 9 — Professional Workspace
+    renderWorkspace(data);
 
     // Render market status banner from data if present
     if (data.market_status) renderMarketStatusBanner(data.market_status);
@@ -3688,3 +3691,259 @@ function renderEIE(d) {
 }
 
 // Wire EIE into loadOS and refresh cycle
+
+/* ════════════════════════════════════════════════════════════════════════════
+   WORKSPACE — Six-Zone Professional Trading Layout (Sprint 9.0)
+   Reads from: institutional_intelligence, execution_intelligence, trade_coach,
+               dealer_positioning, market_drivers, flow_intelligence_2
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Execution timeline history — persisted in-session */
+const _wsTLHistory = [];
+let   _wsLastStage = '';
+let   _wsLastScore = 0;
+
+function renderWorkspace(d) {
+  if (!d) return;
+
+  const ii  = (d.institutional_intelligence && d.institutional_intelligence.available) ? d.institutional_intelligence : null;
+  const eie = (d.execution_intelligence && d.execution_intelligence.available)         ? d.execution_intelligence     : null;
+  const tc  = d.trade_coach   || {};
+  const dp  = d.dealer_positioning || {};
+  const md  = d.market_drivers     || {};
+  const ms  = d.market_state       || d.ribbon || {};
+  const fi  = d.flow_intelligence_2 || d.flow || {};
+  const ici = d.ici || {};
+  const pb  = d.playbook || {};
+
+  const execScore   = eie ? eie.exec_probability : Number(ici.ici || 0);
+  const stage       = eie ? eie.stage : (execScore >= 90 ? 'EXECUTE' : execScore >= 75 ? 'ARMED' : execScore >= 55 ? 'PREPARE' : 'WATCH');
+  const stageColor  = eie ? (eie.stage_color || '#64748b') :
+    (stage === 'EXECUTE' ? '#22c55e' : stage === 'ARMED' ? '#f59e0b' : stage === 'PREPARE' ? '#60a5fa' : '#64748b');
+  const decision    = (ii && ii.decision_state) || d.decision_state || 'NO_TRADE';
+  const instBias    = (ii && ii.institutional_bias) || 'NEUTRAL';
+  const dealerBias  = (ii && ii.delta_bias) || 'NEUTRAL';
+  const gammaR      = (ii && ii.gamma_regime) || 'NEUTRAL_GAMMA';
+  const flowBias    = (ii && ii.flow_bias) || 'MIXED';
+  const pocMig      = (ii && ii.poc_migration) || 'STABLE';
+  const acceptance  = (ii && ii.acceptance) || '';
+  const price       = Number(ms.spx_price || ms.price || (d.ribbon || {}).spx_price || 0);
+  const sessionSt   = (ii && ii.session_state) || '';
+
+  // ── Zone 1: Execution Gauge ──────────────────────────────────────────────
+  const scoreEl = $('wsExecScore');
+  const stageEl = $('wsExecStage');
+  const subEl   = $('wsGaugeSub');
+  const fillEl  = $('wsGaugeFill');
+  const biasEl  = $('wsBias');
+  const agrEl   = $('wsAgreement');
+  const confEl  = $('wsConfidence');
+
+  if (scoreEl) { scoreEl.textContent = Math.round(execScore); scoreEl.style.color = stageColor; }
+  if (stageEl) { stageEl.textContent = stage; stageEl.style.color = stageColor; }
+  if (subEl) {
+    const subMap = { EXECUTE: 'Pull the trigger', ARMED: 'Align final trigger', PREPARE: 'Conditions building', WATCH: 'Monitoring' };
+    subEl.textContent = eie ? (eie.stage_description || subMap[stage] || '') : subMap[stage] || '';
+  }
+  if (fillEl) {
+    const circ = 552.9; // 2π × 88
+    fillEl.style.strokeDashoffset = (circ * (1 - execScore / 100)).toString();
+    fillEl.style.stroke = stageColor;
+    // Pulse on increase
+    if (execScore > _wsLastScore) {
+      fillEl.closest('svg') && fillEl.closest('svg').classList.add('ws-gauge-pulse');
+      setTimeout(() => fillEl.closest('svg') && fillEl.closest('svg').classList.remove('ws-gauge-pulse'), 800);
+    }
+  }
+  _wsLastScore = execScore;
+
+  // Bias label
+  const biasLabel = decision.startsWith('ENTER_CALL') || decision.startsWith('WATCH_CALL') ? 'CALLS' :
+                    decision.startsWith('ENTER_PUT')  || decision.startsWith('WATCH_PUT')  ? 'PUTS'  :
+                    decision === 'READY' ? 'READY' : instBias === 'NEUTRAL' ? 'WAIT' : 'NO TRADE';
+  const biasColor = biasLabel === 'CALLS' ? 'var(--green)' : biasLabel === 'PUTS' ? 'var(--red)' : 'var(--faint)';
+  if (biasEl) { biasEl.textContent = biasLabel; biasEl.style.color = biasColor; }
+
+  // Agreement count
+  const evidence = (ii && ii.evidence) || [];
+  const bullSig  = (ii && ii.bull_signals) || evidence.filter(e => e.direction === 'BULLISH').length;
+  const bearSig  = (ii && ii.bear_signals) || evidence.filter(e => e.direction === 'BEARISH').length;
+  const totalEng = 7;
+  const agreeCount = Math.min(totalEng, Math.max(bullSig, bearSig));
+  if (agrEl) agrEl.textContent = `${agreeCount}/${totalEng} engines aligned`;
+  if (confEl) {
+    const conf = Math.round(Number((ii && ii.overall_score) || execScore));
+    confEl.textContent = `${conf}% confidence`;
+    confEl.style.color = conf >= 75 ? 'var(--green)' : conf >= 55 ? 'var(--amber)' : 'var(--faint)';
+  }
+
+  // Status strip
+  const setWS = (id, text, color) => { const el = $(id); if (el) { el.textContent = text; if (color) el.style.color = color; } };
+  setWS('wsMarket', sessionSt === 'MARKET_OPEN' ? 'OPEN' : sessionSt.replace(/_/g,' '), sessionSt === 'MARKET_OPEN' ? 'var(--green)' : 'var(--amber)');
+  setWS('wsDealer', (gammaR || 'NEUTRAL').replace('_GAMMA','').replace('_',' '), gammaR === 'NEGATIVE_GAMMA' ? 'var(--red)' : gammaR === 'POSITIVE_GAMMA' ? 'var(--green)' : 'var(--muted)');
+  setWS('wsPOC',   pocMig === 'RISING' ? '▲ Rising' : pocMig === 'FALLING' ? '▼ Falling' : '— Stable', pocMig === 'RISING' ? 'var(--green)' : pocMig === 'FALLING' ? 'var(--red)' : 'var(--faint)');
+  setWS('wsFlow',  flowBias, flowBias === 'BULLISH' ? 'var(--green)' : flowBias === 'BEARISH' ? 'var(--red)' : 'var(--faint)');
+  setWS('wsGamma', (gammaR || '--').replace(/_/g,' ').replace('GAMMA','').trim() || 'NEUTRAL', '');
+  setWS('wsPrice', price > 0 ? '$' + fmt(price) : '--', 'var(--blue)');
+
+  // ── Zone 2: Institutional Consensus ──────────────────────────────────────
+  const consEl = $('wsConsensus');
+  if (consEl) {
+    const engines = [
+      { label: 'Market Regime', ok: instBias !== 'NEUTRAL', note: instBias },
+      { label: 'Gamma',         ok: gammaR !== 'NEUTRAL_GAMMA', note: gammaR.replace(/_/g,' ').replace('GAMMA','').trim() },
+      { label: 'Flow',          ok: flowBias !== 'MIXED',  note: flowBias },
+      { label: 'Auction',       ok: acceptance === 'ACCEPTING' || pocMig !== 'STABLE', note: acceptance || pocMig },
+      { label: 'Dealer',        ok: dealerBias !== 'NEUTRAL', note: dealerBias + ' delta' },
+      { label: 'ICI',           ok: Number(ici.ici || 0) >= 60, note: fmtI(Number(ici.ici || 0)) + '/100' },
+      { label: 'Risk',          ok: !(ii && ii.primary_risk && ii.primary_risk.startsWith('Excess')), note: 'Approved' },
+    ];
+    const agreeTotal = engines.filter(e => e.ok).length;
+    consEl.innerHTML = engines.map(e => `
+      <div class="ws-eng-row ${e.ok ? 'ws-eng-ok' : 'ws-eng-no'}">
+        <span class="ws-eng-check">${e.ok ? '✔' : '✗'}</span>
+        <span class="ws-eng-label">${e.label}</span>
+        <span class="ws-eng-note">${esc(e.note || '')}</span>
+      </div>`).join('');
+    if (agreeTotal < 4 && !consEl.querySelector('.ws-no-trade-warn')) {
+      consEl.innerHTML += `<div class="ws-no-trade-warn">Only ${agreeTotal}/7 aligned — no trade.</div>`;
+    }
+  }
+
+  // ── Zone 3: Execution Timeline ────────────────────────────────────────────
+  // Stage step highlights
+  const stageOrder = ['WATCH', 'PREPARE', 'ARMED', 'EXECUTE'];
+  const stageColors = { WATCH: '#60a5fa', PREPARE: '#fbbf24', ARMED: '#f59e0b', EXECUTE: '#22c55e' };
+  stageOrder.forEach(s => {
+    const dotEl = $('wsStep' + s.charAt(0) + s.slice(1).toLowerCase());
+    if (dotEl) {
+      const active = stageOrder.indexOf(s) <= stageOrder.indexOf(stage);
+      dotEl.style.background = active ? stageColors[s] : 'rgba(100,116,139,.15)';
+      dotEl.style.boxShadow  = s === stage ? `0 0 8px ${stageColors[s]}` : 'none';
+    }
+  });
+
+  // Add timeline entry when stage changes
+  const now_str = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false });
+  if (stage !== _wsLastStage) {
+    _wsTLHistory.unshift({ time: now_str, stage, score: Math.round(execScore), color: stageColors[stage] || '#64748b' });
+    if (_wsTLHistory.length > 12) _wsTLHistory.pop();
+    _wsLastStage = stage;
+  }
+  const feedEl = $('wsTimelineFeed');
+  if (feedEl && _wsTLHistory.length) {
+    feedEl.innerHTML = _wsTLHistory.map(h => `
+      <div class="ws-tl-entry">
+        <span class="ws-tl-time">${h.time}</span>
+        <span class="ws-tl-stage" style="color:${h.color}">${h.stage}</span>
+        <span class="ws-tl-score" style="color:${h.color}">${h.score}</span>
+      </div>`).join('');
+  }
+
+  // AI summary sentence
+  const aiEl = $('wsAIText');
+  if (aiEl) {
+    const exec_sum = (ii && ii.executive_summary) || (d.story && d.story.executive_summary) || '';
+    aiEl.textContent = exec_sum ? exec_sum.split('.')[0] + '.' : 'Loading institutional read...';
+  }
+
+  // ── Zone 4: Pressure Panel ────────────────────────────────────────────────
+  const pressEl = $('wsPressurePanel');
+  if (pressEl) {
+    const m1 = (eie && eie.pressure_acceleration) || {};
+    const m3 = (eie && eie.absorption) || {};
+    const m4 = (eie && eie.exhaustion) || {};
+    const m5 = (eie && eie.delta_acceleration) || {};
+    const fi2 = d.flow_intelligence_2 || {};
+    const swScore   = Number(fi2.sweep_pressure || 50);
+    const blkScore  = Number(fi2.block_conviction || 50);
+    const absScore  = Number(m3.score || 50);
+    const pAccel    = m1.direction || 'STABLE';
+    const dAccel    = m5.direction || 'STABLE';
+    const exhaust   = m4.state || 'BALANCED';
+
+    const arrow = dir => dir.includes('ACCELER') ? '↑↑' : dir.includes('DECEL') ? '↓' : dir === 'STABLE' ? '→' : '';
+    const arrowColor = dir => dir.includes('BULL') || dir === 'STABLE' ? 'var(--green)' : dir.includes('BEAR') ? 'var(--red)' : 'var(--faint)';
+    const bc = s => s >= 70 ? 'var(--green)' : s >= 45 ? 'var(--blue)' : 'var(--red)';
+
+    const _prow = (label, value, score, arrDir) => `
+      <div class="ws-pr-row">
+        <span class="ws-pr-label">${label}</span>
+        <span class="ws-pr-val" style="color:${bc(score)}">${esc(value)}</span>
+        <span class="ws-pr-arrow" style="color:${arrowColor(arrDir || '')}">${arrow(arrDir || '')}</span>
+        <div class="ws-pr-bar"><div style="width:${Math.min(score,100)}%;background:${bc(score)}"></div></div>
+      </div>`;
+
+    const premVel   = m1.avg_delta_m ? (m1.avg_delta_m > 0 ? 'Accelerating Calls' : 'Accelerating Puts') : 'Stable';
+    const deltaVel  = m5.direction ? m5.direction.replace(/_/g,' ').replace('ACCELERATING ','').replace('DECELERATING ','Slowing ') : 'Stable';
+    const exhLabel  = exhaust.includes('BUYER') ? 'Buyers Exhausted' : exhaust.includes('SELLER') ? 'Sellers Exhausted' : exhaust === 'BALANCED' ? 'Balanced' : 'Aggressive ' + exhaust.split('_')[0];
+
+    pressEl.innerHTML = `
+      ${_prow('Premium Velocity', premVel,   swScore,  pAccel)}
+      ${_prow('Delta Velocity',   deltaVel,  Number(m5.score || 50), dAccel)}
+      ${_prow('Sweep Pressure',   swScore >= 70 ? 'High Urgency' : swScore >= 45 ? 'Moderate' : 'Low',  swScore, pAccel)}
+      ${_prow('Block Conviction', blkScore >= 70 ? 'High Conviction' : 'Moderate',                       blkScore, '')}
+      ${_prow('Liquidity Abs.',   absScore >= 70 ? 'Absorbing' : 'Normal',                               absScore, '')}
+      ${_prow('Aggression',       exhLabel,  exhaust === 'BALANCED' ? 55 : 70, '')}
+    `;
+  }
+
+  // Why bullets (shared with DCC)
+  const whyEl    = $('wsWhyBullets');
+  const whyLbl   = $('wsWhyLabel');
+  if (whyEl && eie && eie.why_bullets) {
+    const isEnter = decision.startsWith('ENTER');
+    if (whyLbl) { whyLbl.textContent = isEnter ? 'Enter Because' : 'Blocked By'; whyLbl.style.color = isEnter ? 'var(--green)' : 'var(--red)'; }
+    whyEl.innerHTML = (eie.why_bullets || []).slice(0, 5).map(b => `
+      <div class="ws-why-row">
+        <span class="ws-why-dot ${b.ok ? 'eie-ok' : 'eie-no'}">${b.ok ? '✓' : '✗'}</span>
+        <span class="ws-why-text ${b.ok ? 'eie-ok' : 'eie-no'}">${esc(b.label || b.text || '')}</span>
+      </div>`).join('');
+  }
+
+  // ── Zone 5: Trade Card ────────────────────────────────────────────────────
+  const cardEl    = $('wsTradeCard');
+  const waitingEl = $('wsTradeWaiting');
+  const threshold = 75;
+  const showCard  = execScore >= threshold && decision !== 'NO_TRADE' && decision !== 'PREPARING';
+
+  if (cardEl && waitingEl) {
+    cardEl.style.display    = showCard ? '' : 'none';
+    waitingEl.style.display = showCard ? 'none' : '';
+  }
+
+  if (showCard && tc) {
+    const isCall   = decision.includes('CALL');
+    const cardColor = isCall ? 'var(--green)' : 'var(--red)';
+    const setTC = (id, val, col) => { const e = $(id); if (e) { e.textContent = val || '--'; if (col) e.style.color = col; } };
+    setTC('wsTradeDir',   isCall ? '▲ CALL' : '▼ PUT', cardColor);
+    setTC('wsTradeProb',  eie ? Math.round(eie.exec_probability) + '% probability' : '');
+    setTC('wsTradeEntry', tc.entry_zone || '--');
+    setTC('wsTradeStop',  tc.stop ? '$' + fmt(Number(tc.stop)) : '--');
+    setTC('wsTradeT1',    tc.target1 ? '$' + fmt(Number(tc.target1)) : '--');
+    setTC('wsTradeT2',    tc.target2 ? '$' + fmt(Number(tc.target2)) : '--');
+    setTC('wsTradeRisk',  '--');
+    setTC('wsTradeReward','--');
+    setTC('wsTradeDuration', tc.expected_holding_time || '5–15 min');
+    setTC('wsTradeContract', tc.contract_hint || '');
+    setTC('wsTradeInvalidation', eie ? eie.invalidation || '' : '');
+    if (cardEl) cardEl.style.borderColor = cardColor + '40';
+  }
+
+  // Waiting state mini-ring
+  const twRingFill = $('wsTWRingFill');
+  const twScore    = $('wsTWScore');
+  const twStage    = $('wsTWStage');
+  const twDesc     = $('wsTWDesc');
+  if (!showCard) {
+    if (twRingFill) {
+      twRingFill.style.strokeDashoffset = (150.8 * (1 - execScore / 100)).toString();
+      twRingFill.style.stroke = stageColor;
+    }
+    if (twScore) { twScore.textContent = Math.round(execScore); twScore.style.color = stageColor; }
+    if (twStage) { twStage.textContent = stage; twStage.style.color = stageColor; }
+    if (twDesc)  { twDesc.textContent  = eie ? (eie.stage_description || 'Monitoring') : 'Monitoring'; }
+  }
+}
+
+// Wire renderWorkspace into the load cycle
