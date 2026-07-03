@@ -65,90 +65,153 @@
   <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
   <div id="tab-dashboard" class="tab-pane active">
 
-    <!-- ══ BAND 1: MARKET STATUS + EXECUTIVE SUMMARY ══════════════════════ -->
-    <div class="op-band op-band-status sec-mb" id="execSummaryHero">
-      <div class="op-skeleton-hero"><div class="sk-badge">⏳ APEX LOADING</div><div class="sk-line sk-wide">Fetching institutional intelligence...</div><div class="sk-line sk-med">Session state · Auction · Flow · Gamma</div></div>
+<!-- ══ BAND 1: DECISION COMMAND CENTER ══════════════════════════════════════ -->
+<!-- Answers: What kind of day is this? Should I trade? Why? -->
+<div class="dcc-wrap sec-mb">
+
+  <!-- Row 1: Market Status Bar -->
+  <div class="dcc-status-bar" id="dccStatusBar">
+    <div class="dcc-status-item">
+      <span class="dcc-status-label">Market</span>
+      <span class="dcc-status-val" id="dccMarketState">--</span>
+    </div>
+    <div class="dcc-status-sep"></div>
+    <div class="dcc-status-item">
+      <span class="dcc-status-label">Session Type</span>
+      <span class="dcc-status-val" id="dccSessionType">--</span>
+    </div>
+    <div class="dcc-status-sep"></div>
+    <div class="dcc-status-item">
+      <span class="dcc-status-label">Dealer Env.</span>
+      <span class="dcc-status-val" id="dccDealerEnv">--</span>
+    </div>
+    <div class="dcc-status-sep"></div>
+    <div class="dcc-status-item">
+      <span class="dcc-status-label">Inst. Bias</span>
+      <span class="dcc-status-val" id="dccInstBias">--</span>
+    </div>
+    <div class="dcc-status-sep"></div>
+    <div class="dcc-status-item">
+      <span class="dcc-status-label">Price</span>
+      <span class="dcc-status-val rv-blue" id="dccPrice">--</span>
+    </div>
+    <div class="dcc-status-sep"></div>
+    <div class="dcc-status-item">
+      <span class="dcc-status-label">ES</span>
+      <span class="dcc-status-val rv-blue" id="dccES">--</span>
+    </div>
+    <div class="dcc-status-right">
+      <span id="dccClock" class="dcc-clock">--</span>
+    </div>
+  </div>
+
+  <!-- Row 2: Executive Summary + Trade Decision + Why + Invalidation -->
+  <div class="dcc-main">
+
+    <!-- Executive Summary -->
+    <div class="dcc-exec-col">
+      <div class="dcc-col-label">Executive Summary</div>
+      <div id="dccExecSummary" class="dcc-exec-text">
+        <div class="sk-waiting">⌛ Loading institutional read...</div>
+      </div>
     </div>
 
-    <!-- ══ BAND 2: DECISION COMMAND ════════════════════════════════════════ -->
-    <div class="op-decision-band sec-mb">
-
-      <!-- Decision cell -->
-      <div class="op-decision-cell">
-        <div class="op-decision-label">Decision</div>
-        <div id="decisionBadge" class="decision-badge db-neutral">&#8212; Loading</div>
-        <div class="decay-wrap" style="margin-top:8px">
-          <div class="decay-bar"><div class="decay-fill" id="decayBar" style="width:0%"></div></div>
-          <div class="decay-meta"><span id="decayAge">--</span><span id="decayExp">--</span></div>
+    <!-- Trade Decision + Execution Stage -->
+    <div class="dcc-decision-col">
+      <div class="dcc-col-label">Trade Decision</div>
+      <div id="dccDecision" class="dcc-decision-badge dcc-neutral">-- LOADING</div>
+      <!-- Execution countdown ring -->
+      <div class="dcc-exec-ring-wrap">
+        <svg class="dcc-exec-ring" viewBox="0 0 80 80">
+          <circle class="dcc-ring-bg"   cx="40" cy="40" r="34" />
+          <circle class="dcc-ring-fill" cx="40" cy="40" r="34" id="dccRingFill"
+            stroke-dasharray="213.6" stroke-dashoffset="213.6" />
+        </svg>
+        <div class="dcc-ring-inner">
+          <div class="dcc-ring-score" id="dccExecScore">--</div>
+          <div class="dcc-ring-stage" id="dccExecStage">WATCH</div>
         </div>
       </div>
+      <div class="dcc-exec-stage-label" id="dccExecStageDesc">Monitoring conditions</div>
+    </div>
 
-      <!-- Confidence meter -->
-      <div class="op-ici-cell">
-        <div class="op-ici-label">Institutional Confidence</div>
-        <div class="op-ici-meter">
-          <div class="op-ici-num" id="readinessNum">--</div>
-          <div class="op-ici-track">
-            <div class="op-ici-fill" id="iciFill" style="width:0%"></div>
-          </div>
-          <div class="op-ici-ctx" id="iciCtxLabel">--</div>
-        </div>
-        <div id="iciPanel" class="op-ici-comps"></div>
-      </div>
+    <!-- Why panel -->
+    <div class="dcc-why-col">
+      <div class="dcc-col-label" id="dccWhyLabel">Why</div>
+      <div id="dccWhyBullets" class="dcc-why-list"></div>
+    </div>
 
-      <!-- Why panel -->
-      <div class="op-why-cell">
-        <div class="op-why-label" id="whyLabel">Why</div>
-        <div id="gateChecks" class="op-why-gates"></div>
-      </div>
+    <!-- Invalidation -->
+    <div class="dcc-inv-col">
+      <div class="dcc-col-label">Invalidation</div>
+      <div id="dccInvalidation" class="dcc-inv-text">--</div>
+      <!-- Confidence Pyramid -->
+      <div class="dcc-col-label" style="margin-top:12px">Confidence Pyramid</div>
+      <div id="dccConfidencePyramid" class="dcc-pyramid"></div>
+    </div>
 
-      <!-- Decision message -->
-      <div class="op-msg-cell">
-        <div class="decision-msg" id="decisionMsg">--</div>
-        <div class="decision-action" id="decisionAction" style="margin-top:4px"></div>
-        <div class="action-bar" style="margin-top:10px">
-          <a href="/api/institutional_os" target="_blank" class="btn btn-ghost btn-mini">JSON &#8599;</a>
-          <a href="/assistant" class="btn btn-ghost btn-mini">Assistant</a>
-          <a href="/flow" class="btn btn-ghost btn-mini">Flow</a>
-        </div>
-      </div>
+  </div><!-- /dcc-main -->
 
-    </div><!-- /op-decision-band -->
+</div><!-- /dcc-wrap -->
 
-    <!-- ══ BAND 3: AUCTION + FLOW + GAMMA (3-col) ═══════════════════════════ -->
-    <div class="op-intel-band sec-mb">
+    <!-- Legacy ID anchors (hidden) — JS backwards compat -->
+    <div style="display:none">
+      <div id="decisionBadge" class="decision-badge db-neutral">--</div>
+      <div id="readinessNum">--</div>
+      <div id="iciFill"></div>
+      <div id="iciPanel"></div>
+      <div id="iciCtxLabel"></div>
+      <div id="gateChecks"></div>
+      <div id="whyLabel"></div>
+      <div id="decisionMsg"></div>
+      <div id="decisionAction"></div>
+      <div id="decayBar" style="width:0%"></div>
+      <div id="decayAge"></div>
+      <div id="decayExp"></div>
+    </div>
 
-      <!-- Auction -->
+    <!-- ══ BAND 3: AUCTION · FLOW · DRIVERS · DEALER (4-col) ════════════════ -->
+    <div class="op-intel-band op-intel-band-4col sec-mb">
+
+      <!-- Col 1: Auction Intelligence -->
       <div class="op-intel-col">
-        <div class="op-intel-col-hdr">Auction</div>
+        <div class="op-intel-col-hdr">📊 Auction</div>
         <div id="auctionLadder"></div>
         <div class="op-intel-sub-div"></div>
-        <div class="op-intel-col-hdr">POC / Value Area</div>
-        <div id="auctionPanel"><div class="sk-waiting">⌛ Building volume profile...</div></div>
+        <div class="op-intel-col-hdr">Value Area</div>
+        <div id="auctionPanel"><div class="sk-waiting">⌛ Building profile...</div></div>
       </div>
 
       <div class="op-intel-divider"></div>
 
-      <!-- Flow + Institutional Activity -->
+      <!-- Col 2: Institutional Flow -->
       <div class="op-intel-col">
-        <div class="op-intel-col-hdr">Institutional Flow</div>
+        <div class="op-intel-col-hdr">🌊 Institutional Flow</div>
         <div id="opFlowPanel"></div>
         <div class="op-intel-sub-div"></div>
-        <div class="op-intel-col-hdr">Institutional Timeline <span class="live-dot-badge">LIVE</span></div>
+        <div class="op-intel-col-hdr">Timeline <span class="live-dot-badge">LIVE</span></div>
         <div id="institutionalTimeline" class="itl-wrap">
-          <div class="sk-waiting">Timeline builds as the session progresses.</div>
+          <div class="sk-waiting">Session events appear here.</div>
         </div>
       </div>
 
       <div class="op-intel-divider"></div>
 
-      <!-- Playbook + Command -->
+      <!-- Col 3: SPX Market Drivers -->
       <div class="op-intel-col">
-        <div class="op-intel-col-hdr">Dealer Positioning</div>
-        <div id="dealerPanel"></div>
+        <div class="op-intel-col-hdr">📈 SPX Market Drivers</div>
+        <div id="marketDriversPanel"></div>
         <div class="op-intel-sub-div"></div>
-        <div class="op-intel-col-hdr">Decision Hierarchy</div>
-        <div id="decisionTreePanel"></div>
+        <div class="op-intel-col-hdr">Strike Magnets</div>
+        <div id="strikeMagnetPanel"></div>
+      </div>
+
+      <div class="op-intel-divider"></div>
+
+      <!-- Col 4: Dealer Dashboard -->
+      <div class="op-intel-col">
+        <div class="op-intel-col-hdr">🏦 Dealer Intelligence</div>
+        <div id="dealerPanel"></div>
         <div class="op-intel-sub-div"></div>
         <div class="op-intel-col-hdr">Today's Playbook</div>
         <div id="playbookPanel"></div>
@@ -175,6 +238,7 @@
       <div class="card db-analytics-card">
         <div class="db-inner-tabs">
           <button class="db-inner-tab active" data-inner="ii">Intelligence</button>
+          <button class="db-inner-tab" data-inner="eie">Execution</button>
           <button class="db-inner-tab" data-inner="coach">Trade Coach</button>
           <button class="db-inner-tab" data-inner="auction-intel">Auction Intel</button>
           <button class="db-inner-tab" data-inner="command">Command Ctr</button>
@@ -184,6 +248,7 @@
           <button class="db-inner-tab" data-inner="overlays">Overlays</button>
         </div>
         <div id="db-inner-ii"            class="db-inner-pane active"><div id="instIntelPanel"></div></div>
+        <div id="db-inner-eie"           class="db-inner-pane"><div id="executionPanel"></div></div>
         <div id="db-inner-coach"         class="db-inner-pane"><div id="tradeCoach"></div></div>
         <div id="db-inner-auction-intel" class="db-inner-pane"><div id="auctionIntelPanel"></div></div>
         <div id="db-inner-command"       class="db-inner-pane"><div id="commandCenter"></div></div>
