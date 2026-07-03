@@ -2651,6 +2651,7 @@ function initTickerSelect() {
       activeTicker = btn.dataset.ticker;
       document.querySelectorAll('.ticker-btn').forEach(b => b.classList.toggle('active', b.dataset.ticker === activeTicker));
       loadOS();
+      loadMissionControl();
       loadScannerIdeas();
     });
   });
@@ -2660,7 +2661,7 @@ function initTickerSelect() {
 function initRefreshBtn() {
   const btn = $('refreshBtn');
   if (!btn) return;
-  btn.addEventListener('click', async () => { await loadOS(); await loadScannerIdeas(); });
+  btn.addEventListener('click', async () => { await loadOS(); loadMissionControl(); await loadScannerIdeas(); });
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -3113,8 +3114,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initReviewForm();
   initReplayDatePicker();
 
-  // Activate first tab
-  document.querySelector('.tab-btn[data-tab="dashboard"]')?.click();
+  // Activate first tab — Mission Control (APEX 8.0 default workspace)
+  document.querySelector('.tab-btn[data-tab="mission"]')?.click();
 
   // Lazy-load chart iframe only when Chart tab is opened
   document.querySelector('.tab-btn[data-tab="chart"]')?.addEventListener('click', () => {
@@ -3123,6 +3124,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   loadOS();
+  loadMissionControl();
   loadScannerIdeas();
   loadFlowTape();
   loadReviewSummary();
@@ -3132,6 +3134,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSignalLog();
 
   setInterval(loadOS, AUTO_INTERVAL);
+  setInterval(loadMissionControl, 5000);
   setInterval(loadScannerIdeas, 30000);
   setInterval(loadFlowTape, 45000);
   setInterval(loadMarketStatus, 60000);
@@ -4044,3 +4047,269 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.addEventListener('click', loadEngineHealth);
   });
 });
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 8.0 — MISSION CONTROL
+   Self-contained module. Consumes /api/mission_control (pure composition).
+   Independent lightweight poll — decoupled from the heavy /api/institutional_os
+   loop so a failure here never affects Institutional Analysis and vice-versa.
+   ════════════════════════════════════════════════════════════════════════════ */
+let mcData = null;
+let mcLoading = false;
+
+async function loadMissionControl() {
+  if (mcLoading) return;
+  mcLoading = true;
+  try {
+    const url = '/api/mission_control?ticker=' + encodeURIComponent(activeTicker);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+    clearTimeout(t);
+    const d = await r.json();
+    if (!d || !d.ok || d.available === false) {
+      renderMissionEmpty(d && d.reason ? d.reason : 'Waiting for first scan cycle…');
+      return;
+    }
+    mcData = d;
+    renderMissionControl(d);
+  } catch (e) {
+    // Non-fatal: keep last good render if we have one, else show warming state
+    if (!mcData) renderMissionEmpty('Engines warming up — retrying…');
+    console.warn('[MC] loadMissionControl:', e.message);
+  } finally {
+    mcLoading = false;
+  }
+}
+
+function renderMissionEmpty(msg) {
+  const empty = $('mcEmpty'), grid = $('mcGrid'), txt = $('mcEmptyTxt');
+  if (txt) txt.textContent = msg;
+  if (empty) empty.style.display = 'flex';
+  if (grid)  grid.style.display  = 'none';
+}
+
+function renderMissionControl(d) {
+  const empty = $('mcEmpty'), grid = $('mcGrid');
+  if (empty) empty.style.display = 'none';
+  if (grid)  grid.style.display  = 'flex';
+
+  const dec  = d.decision || {};
+  const card = d.trade_card || {};
+  const path = d.expected_path || {};
+  const flow = d.flow || {}, dealer = d.dealer || {}, auc = d.auction || {};
+  const hp   = d.engine_health || {};
+
+  const isBull = s => /BULL|LONG|CALL/i.test(String(s || ''));
+  const isBear = s => /BEAR|SHORT|PUT/i.test(String(s || ''));
+
+  /* ── HERO: execution gauge ── */
+  const score = Number(dec.execution_score);
+  const arc = $('mcGaugeArc');
+  if (arc) {
+    const pct = isFinite(score) ? Math.max(0, Math.min(100, score)) : 0;
+    const C = 490;                       // 2πr, r=78
+    arc.style.strokeDashoffset = String(C - (C * pct / 100));
+    const col = pct >= 75 ? 'var(--green)' : pct >= 60 ? 'var(--amber)' : 'var(--blue)';
+    arc.style.stroke = col;
+  }
+  const es = $('mcExecScore');
+  if (es) es.textContent = isFinite(score) ? Math.round(score) : '--';
+
+  /* Bias badge */
+  const biasEl = $('mcBias');
+  if (biasEl) {
+    const b = dec.institutional_bias || 'NEUTRAL';
+    biasEl.textContent = String(b).replace(/_/g, ' ');
+    biasEl.className = 'mc-bias' + (isBull(b) ? ' bull' : isBear(b) ? ' bear' : '');
+  }
+
+  /* Stage ladder */
+  const order = ['WATCH', 'PREPARE', 'ARMED', 'EXECUTE'];
+  const cur = String(dec.stage || 'WATCH').toUpperCase();
+  const fire = !!dec.trigger_active || cur === 'EXECUTE';
+  const curIdx = Math.max(0, order.indexOf(cur === 'ENTER' ? 'EXECUTE' : cur));
+  document.querySelectorAll('#mcStageLadder .mc-stage').forEach((el, i) => {
+    el.classList.remove('done', 'active', 'fire');
+    if (i < curIdx) el.classList.add('done');
+    else if (i === curIdx) el.classList.add(fire && i === 3 ? 'fire' : 'active');
+  });
+  document.querySelectorAll('#mcStageLadder .mc-stage-rail').forEach((el, i) => {
+    el.style.background = i < curIdx ? 'var(--blue)' : 'var(--bdr)';
+  });
+
+  const timing = $('mcTiming');
+  if (timing) {
+    const parts = [];
+    if (dec.timing) parts.push(String(dec.timing).replace(/_/g, ' '));
+    if (dec.timing_note) parts.push(dec.timing_note);
+    timing.textContent = parts.join(' — ') || '—';
+  }
+  const narr = $('mcNarrative');
+  if (narr) narr.textContent = dec.narrative || dec.recommendation || 'Awaiting institutional read…';
+
+  /* Engine agreement */
+  const ea = dec.engine_agreement || {};
+  const aFill = $('mcAgreeFill'), aLabel = $('mcAgreeLabel');
+  if (aFill && ea.total) {
+    aFill.style.width = Math.round((ea.aligned / ea.total) * 100) + '%';
+    aFill.style.background = isBull(dec.institutional_bias) ? 'var(--green)'
+                            : isBear(dec.institutional_bias) ? 'var(--red)' : 'var(--blue)';
+  }
+  if (aLabel) aLabel.textContent = (ea.aligned != null ? ea.aligned : '--') + ' / ' + (ea.total || '--') + ' engines'
+              + (ea.label ? ' · ' + ea.label : '');
+
+  /* Confidence */
+  const conf = $('mcConf'), confLabel = $('mcConfLabel');
+  if (conf) conf.textContent = dec.institutional_confidence != null ? Math.round(dec.institutional_confidence) : '--';
+  if (confLabel) {
+    confLabel.textContent = dec.confidence_label || '—';
+    confLabel.style.color = dec.confidence_color || 'var(--muted)';
+  }
+  renderMcSpark(d.exec_score_history || []);
+
+  /* ── INTELLIGENCE STRIP ── */
+  setIntel('mcFlowCell', 'mcFlowBias', 'mcFlowSub', flow.bias,
+    'conviction ' + (flow.conviction != null ? Math.round(flow.conviction) : '—') +
+    ' · urgency ' + (flow.urgency || '—') +
+    (flow.contradictions && flow.contradictions.length ? ' · ⚠ ' + flow.contradictions.length + ' conflict' : ''));
+  setIntel('mcDealerCell', 'mcDealerBias', 'mcDealerSub', dealer.bias,
+    'gamma ' + String(dealer.gamma_regime || '—').replace(/_/g, ' ') +
+    ' · pin ' + (dealer.pin_probability != null ? Math.round(dealer.pin_probability) + '%' : '—'));
+  setIntel('mcAuctionCell', 'mcAuctionState', 'mcAuctionSub', auc.state,
+    'acceptance ' + (auc.acceptance || '—'), true);
+
+  /* ── TRADE CARD ── */
+  renderMcTradeCard(card, dec);
+
+  /* ── EXPECTED PATH ── */
+  renderMcPath(path);
+
+  /* ── CONSENSUS ── */
+  const vr = $('mcVoteRows');
+  if (vr) {
+    const votes = (d.consensus || []).filter(v => v && v.engine);
+    vr.innerHTML = votes.length ? votes.map(v => {
+      const vote = String(v.vote || 'NEUTRAL').toUpperCase();
+      return `<div class="mc-vote${v.skipped ? ' skipped' : ''}">
+        <span class="eng">${esc(v.engine)}</span>
+        <span class="strn">${v.strength != null ? esc(String(v.strength)) : ''}</span>
+        <span class="vt ${vote}">${vote}</span>
+      </div>`;
+    }).join('') : '<div class="mc-card-idle">No engine votes in last scan.</div>';
+  }
+
+  /* ── WHY ── */
+  const risk = $('mcPrimaryRisk');
+  if (risk) risk.textContent = d.primary_risk ? '· risk: ' + d.primary_risk : '';
+  const wl = $('mcWhyList');
+  if (wl) {
+    const bullets = d.why_bullets || [];
+    wl.innerHTML = bullets.length ? bullets.map(b => {
+      if (typeof b === 'string') return `<li>${esc(b)}</li>`;
+      const cls = b.ok === true ? 'ok' : b.ok === false ? 'miss' : '';
+      const label = b.label || b.text || '';
+      const note = b.note ? ' — ' + b.note : '';
+      return `<li class="${cls}">${esc(label + note)}</li>`;
+    }).join('') : '<li>No evidence chain in last scan.</li>';
+  }
+
+  /* ── HEALTH ── */
+  setText('mcHcAvail',  hp.available != null ? hp.available : '--');
+  setText('mcHcYellow', hp.yellow != null ? hp.yellow : (hp.degraded != null ? hp.degraded : '--'));
+  setText('mcHcRed',    hp.red != null ? hp.red : '--');
+  const dots = $('mcHealthDots');
+  if (dots) {
+    dots.innerHTML = (d.engine_health_rows || []).map(r => {
+      const st = String(r.status || '').toUpperCase();
+      const c = /RED|OFFLINE|MISSING|FAIL/.test(st) ? ' r'
+              : /YELLOW|DEGRADED|WAIT|STALE|PARTIAL/.test(st) ? ' y' : '';
+      return `<span class="mc-hd${c}" title="${esc(r.engine)}: ${esc(r.status)}"></span>`;
+    }).join('');
+  }
+  const upd = $('mcHealthUpd');
+  if (upd) {
+    const flags = [];
+    if (d.stale)   flags.push('cached');
+    if (d.partial) flags.push('partial');
+    upd.textContent = (d.updated_at_et || '—') + (flags.length ? ' · ' + flags.join(' · ') : '')
+                     + (d.price != null ? ' · ' + activeTicker + ' ' + fmt(d.price) : '');
+  }
+}
+
+function setText(id, v) { const el = $(id); if (el) el.textContent = v; }
+
+function setIntel(cellId, mainId, subId, main, sub, warnMode) {
+  const cell = $(cellId), m = $(mainId), s = $(subId);
+  if (m) m.textContent = String(main || '—').replace(/_/g, ' ');
+  if (s) s.textContent = sub;
+  if (cell) {
+    cell.className = 'mc-intel-cell';
+    if (warnMode) {
+      if (/REJECT|EXCESS|FAIL/i.test(String(main))) cell.classList.add('warn');
+      else if (/ACCEPT|BALANCE/i.test(String(main))) cell.classList.add('bull');
+    } else {
+      if (/BULL|LONG|CALL|POS/i.test(String(main))) cell.classList.add('bull');
+      else if (/BEAR|SHORT|PUT|NEG/i.test(String(main))) cell.classList.add('bear');
+    }
+  }
+}
+
+function renderMcTradeCard(card, dec) {
+  const root = $('mcTradeCard'), badge = $('mcCardBadge');
+  const idle = $('mcCardIdle'), live = $('mcCardLive');
+  const active = !!card.active;
+  if (root)  root.classList.toggle('armed', active);
+  if (badge) { badge.textContent = active ? 'ARMED' : 'STANDBY'; badge.classList.toggle('armed', active); }
+  if (idle)  idle.style.display = active ? 'none' : 'block';
+  if (live)  live.style.display = active ? 'block' : 'none';
+  if (!active) return;
+
+  const dir = $('mcCardDir');
+  const side = String(card.direction || '').toUpperCase();
+  if (dir) {
+    dir.textContent = side || (dec.institutional_bias || '');
+    dir.className = 'mc-card-dir' + (/CALL|LONG|BULL/.test(side) ? ' call' : /PUT|SHORT|BEAR/.test(side) ? ' put' : '');
+  }
+  const L = v => (v != null && v !== '') ? '$' + fmt(Number(v)) : '--';
+  setText('mcCardEntry', card.entry_zone || '--');
+  setText('mcCardStop',  L(card.stop));
+  setText('mcCardT1',    L(card.target1));
+  setText('mcCardT2',    L(card.target2));
+  setText('mcCardRR',    card.rr_to_t1 != null ? Number(card.rr_to_t1).toFixed(2) + ' : 1' : '--');
+  setText('mcCardContract', card.contract_hint || '--');
+  const inv = $('mcCardInvalid');
+  if (inv) inv.textContent = card.invalidation ? '⚠ Invalidation: ' + card.invalidation : '';
+}
+
+function renderMcPath(path) {
+  const above = $('mcPathAbove'), below = $('mcPathBelow'), pin = $('mcPathPin');
+  setText('mcPathPrice', path.current_price != null ? fmt(path.current_price) : '--');
+  const rowHtml = (lvl, side) => `<div class="mc-path-row ${side}">
+      <span class="lbl">${esc(lvl.label || '')}</span>
+      <span class="lvl">${lvl.level != null ? fmt(lvl.level) : '--'}</span>
+      <span class="dist">${lvl.distance != null ? (lvl.distance > 0 ? '+' : '') + lvl.distance : ''}</span>
+    </div>`;
+  if (above) above.innerHTML = (path.levels_above || []).slice().reverse().map(l => rowHtml(l, 'above')).join('');
+  if (below) below.innerHTML = (path.levels_below || []).map(l => rowHtml(l, 'below')).join('');
+  if (pin) {
+    const p = path.pin || {};
+    pin.textContent = (p.level != null)
+      ? `Pin ${fmt(p.level)} (${p.type || 'magnet'}) · ${p.probability != null ? Math.round(p.probability) + '%' : '—'} · risk ${p.risk || 'LOW'}`
+      : (path.scenario || '');
+  }
+}
+
+function renderMcSpark(hist) {
+  const svg = $('mcSpark');
+  if (!svg) return;
+  const pts = (hist || []).map(Number).filter(isFinite);
+  if (pts.length < 2) { svg.innerHTML = ''; return; }
+  const W = 120, H = 32, min = Math.min(...pts), max = Math.max(...pts);
+  const rng = (max - min) || 1;
+  const step = W / (pts.length - 1);
+  const path = pts.map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${(H - ((v - min) / rng) * (H - 4) - 2).toFixed(1)}`).join(' ');
+  const last = pts[pts.length - 1], prev = pts[pts.length - 2];
+  const col = last >= prev ? 'var(--green)' : 'var(--red)';
+  svg.innerHTML = `<path d="${path}" fill="none" stroke="${col}" stroke-width="1.5"/>`;
+}
