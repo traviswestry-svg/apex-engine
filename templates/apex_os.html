@@ -214,6 +214,20 @@
     </div>
   </div>
 
+  <!-- ── TAB: CHART ─────────────────────────────────────────────────────
+       Lazy-loads the /chart route (Lightweight Charts) into an iframe on
+       first open. Restores the Chart tab, whose pane was missing. -->
+  <div id="tab-chart" class="tab-pane">
+    <iframe id="chartTabFrame" class="mc-chart-frame" title="APEX Chart"></iframe>
+  </div>
+
+  <!-- ── TAB: FLOW INTELLIGENCE ─────────────────────────────────────────
+       renderFlow2() populates #flow2Panel. Restores the Flow Intelligence
+       tab, whose pane was missing. -->
+  <div id="tab-flow2" class="tab-pane">
+    <div id="flow2Panel"></div>
+  </div>
+
   <!-- ── TAB: DASHBOARD (retained as "Institutional Analysis") ──────────── -->
   <div id="tab-dashboard" class="tab-pane">
 
