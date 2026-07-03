@@ -1,55 +1,46 @@
-"""engine/math.py — APEX shared numeric helpers.
+"""engine/common/math.py — APEX 8.0 shared numeric utilities.
 
-This module must never import from engine.math or from the package root.
-It is imported very early by engine.__init__, so it must be dependency-light.
+Single source of truth for all safe-float, clamp, distance calculations.
+Replaces 16 duplicate _sf definitions across the codebase.
 """
 from __future__ import annotations
-
-import math as _math
+import math
 from typing import Any, Optional
 
 
-def sf(value: Any, default: float = 0.0) -> float:
-    """Safe float conversion with NaN/Inf protection."""
+def sf(v: Any, default: float = 0.0) -> float:
+    """Safe float conversion — never raises, never returns NaN/Inf."""
     try:
-        if value is None:
-            return default
-        v = float(value)
-        if _math.isnan(v) or _math.isinf(v):
-            return default
-        return v
+        f = float(v) if v is not None else default
+        return default if (math.isnan(f) or math.isinf(f)) else f
     except Exception:
         return default
 
 
-def safe_float(value: Any, default: float = 0.0) -> float:
-    return sf(value, default)
+# Backwards-compatible alias used throughout engines
+_sf = sf
 
 
-def clamp(value: Any, lo: float = 0.0, hi: float = 100.0) -> float:
-    v = sf(value, lo)
+def clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, v))
 
 
-def pct_chg(current: Any, prior: Any, default: float = 0.0) -> float:
-    c = sf(current, 0.0)
-    p = sf(prior, 0.0)
-    if p == 0:
-        return default
-    return round((c - p) / p * 100.0, 3)
-
-
-def pts_dist(price: Any, level: Any) -> Optional[float]:
-    p = sf(price, 0.0)
-    l = sf(level, 0.0)
-    if p <= 0 or l <= 0:
+def pct_chg(current: float, prior: float) -> Optional[float]:
+    """Percentage change. Returns None if prior is zero."""
+    if prior == 0:
         return None
-    return round(abs(p - l), 2)
+    return round((current - prior) / prior * 100, 4)
 
 
-def pct_dist(price: Any, level: Any) -> Optional[float]:
-    p = sf(price, 0.0)
-    l = sf(level, 0.0)
-    if p <= 0 or l <= 0:
+def pts_dist(a: float, b: float) -> Optional[float]:
+    """Absolute point distance. Returns None if either is zero/invalid."""
+    if a <= 0 or b <= 0:
         return None
-    return round(abs(p - l) / p * 100.0, 3)
+    return round(abs(a - b), 4)
+
+
+def pct_dist(price: float, level: float) -> Optional[float]:
+    """Percentage distance from price to level."""
+    if price <= 0 or level <= 0:
+        return None
+    return round(abs(price - level) / price * 100, 4)
