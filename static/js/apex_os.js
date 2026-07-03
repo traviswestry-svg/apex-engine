@@ -568,8 +568,20 @@ function renderSession(d) {
   const pill = $('sessionPill');
   if (pill) {
     const s = sess.session_state || '';
-    pill.textContent = s.replace(/_/g, ' ') || 'LOADING';
-    pill.className = 'session-pill ' + (s === 'MARKET_OPEN' ? 'sess-open' : 'sess-closed');
+    // Mirror the server's system_mode taxonomy so the pill is consistent
+    // (LIVE / PRE-RTH / OVERNIGHT / CLOSED) with matching colors.
+    const MODE = {
+      MARKET_OPEN: ['LIVE',      'sess-open'],
+      PREMARKET:   ['PRE-RTH',   'sess-pre'],
+      AFTER_HOURS: ['OVERNIGHT', 'sess-pre'],
+      OVERNIGHT:   ['OVERNIGHT', 'sess-pre'],
+      CLOSED:      ['CLOSED',    'sess-closed'],
+    };
+    const [label, cls] = sess.system_mode
+      ? [sess.system_mode, sess.system_mode === 'LIVE' ? 'sess-open' : (sess.system_mode === 'CLOSED' ? 'sess-closed' : 'sess-pre')]
+      : (MODE[s] || [s.replace(/_/g, ' ') || 'LOADING', 'sess-closed']);
+    pill.textContent = label;
+    pill.className = 'session-pill ' + cls;
   }
   const tickEl = $('tickerLabel');
   if (tickEl) tickEl.textContent = activeTicker;
