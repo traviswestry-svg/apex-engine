@@ -21,7 +21,7 @@
   <a href="/health" target="_blank">Health</a>
   <div class="nav-right">
     <span class="nav-clock"><span class="dot-live"></span><span id="clockEl">-- ET</span></span>
-    <span id="sessionPill" class="session-pill sess-closed">LOADING</span>
+    <span id="sessionPill" class="session-pill {{ mode.pill_class if mode else 'sess-closed' }}">{{ mode.mode if mode else 'LOADING' }}</span>
     <span class="nav-version">{{ version or "APEX" }}</span>
   </div>
 </nav>
@@ -30,8 +30,19 @@
 
   <div class="os-error" id="osError"></div>
 
-  <!-- Market Status Banner -->
-  <div id="marketStatusBanner" class="market-status-banner" style="display:none"></div>
+  <!-- Market Status Banner — server-rendered for a meaningful first paint
+       (before JS loads). The client replaces it with the full per-component
+       breakdown on the first poll. -->
+  <div id="marketStatusBanner"
+       class="market-status-banner msb-level-{{ ('green' if mode.mode == 'LIVE' else ('red' if mode.mode == 'CLOSED' else 'amber')) if mode else 'amber' }}">
+    {% if mode %}
+    <div class="msb-header">
+      <div class="msb-title">{{ mode.title }}</div>
+      <div class="msb-message">{{ mode.message }}</div>
+      <div class="msb-next">Next RTH: {{ mode.next_rth }}</div>
+    </div>
+    {% endif %}
+  </div>
 
   <!-- Institutional Ribbon -->
   <div id="ribbon" class="ribbon sec-mb"></div>
