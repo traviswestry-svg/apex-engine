@@ -2883,3 +2883,401 @@ body {
 .eie-invalidation { padding: 6px 8px; background: rgba(239,68,68,.04); border: 1px solid rgba(239,68,68,.1); border-radius: 5px; }
 .eie-inv-label    { font-size: 9px; font-weight: 800; color: var(--red); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 3px; }
 .eie-inv-text     { font-size: 10px; color: var(--muted); line-height: 1.5; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LAYOUT FIX — Remove internal scrolling from Execution + Flow panels
+   The panels should extend naturally; the page itself scrolls if needed.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Inner panes: no max-height cap — let content breathe */
+.db-inner-pane {
+  max-height: none !important;
+  overflow-y: visible !important;
+}
+
+/* Intel band columns: natural height, no cap */
+.op-intel-col {
+  max-height: none !important;
+  overflow-y: visible !important;
+}
+
+/* Timeline can still scroll since it's a live feed that grows */
+.itl-wrap {
+  max-height: 340px !important;
+  overflow-y: auto !important;
+}
+
+/* EIE + II panels: full natural height */
+#db-inner-eie,
+#db-inner-ii {
+  overflow-y: visible !important;
+  max-height: none !important;
+}
+
+/* Flow tape inside the flow panel — still scrollable since it's a log */
+.flow-tape-table { max-height: 320px; overflow-y: auto; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SPRINT 9 — PROFESSIONAL TRADING WORKSPACE
+   Six-zone layout: Decision first, evidence second, supporting third.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Zone labels ────────────────────────────────────────────────────────── */
+.ws-zone-label {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--faint);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Command Row (Zones 1 + 2 + 3) ─────────────────────────────────────── */
+.ws-command-row {
+  display: grid;
+  grid-template-columns: 320px 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+@media(max-width:1100px) { .ws-command-row { grid-template-columns: 280px 1fr; } }
+@media(max-width:800px)  { .ws-command-row { grid-template-columns: 1fr; } }
+
+/* ── Zone 1: Execution Gauge ────────────────────────────────────────────── */
+.ws-gauge-zone {
+  background: var(--surf);
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius);
+  padding: 20px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+.ws-gauge-wrap {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  flex-shrink: 0;
+}
+.ws-gauge-svg {
+  width: 200px;
+  height: 200px;
+  transform: rotate(-90deg);
+}
+.ws-gauge-bg   { fill: none; stroke: rgba(100,116,139,.12); stroke-width: 8; }
+.ws-gauge-fill {
+  fill: none;
+  stroke: #64748b;
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset .7s cubic-bezier(.4,0,.2,1), stroke .4s;
+}
+/* Pulse animation on increase */
+@keyframes ws-pulse {
+  0%   { filter: drop-shadow(0 0 0px currentColor); }
+  50%  { filter: drop-shadow(0 0 12px currentColor); }
+  100% { filter: drop-shadow(0 0 0px currentColor); }
+}
+.ws-gauge-pulse .ws-gauge-fill { animation: ws-pulse .8s ease-out; }
+
+.ws-gauge-inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.ws-gauge-score {
+  font-family: var(--mono);
+  font-size: 48px;
+  font-weight: 900;
+  line-height: 1;
+  transition: color .4s;
+}
+.ws-gauge-stage {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  transition: color .4s;
+}
+.ws-gauge-sub {
+  font-size: 9px;
+  color: var(--faint);
+  font-style: italic;
+}
+
+.ws-gauge-footer {
+  text-align: center;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ws-bias {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: .06em;
+}
+.ws-agreement  { font-size: 11px; color: var(--faint); }
+.ws-confidence { font-family: var(--mono); font-size: 11px; font-weight: 700; }
+
+/* Status strip */
+.ws-status-strip {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px 12px;
+  margin-top: 4px;
+}
+.ws-stat { display: flex; flex-direction: column; gap: 2px; }
+.ws-stat-label { font-size: 8px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); font-weight: 700; }
+.ws-stat-val   { font-family: var(--mono); font-size: 11px; font-weight: 700; }
+
+/* ── Zone 2: Institutional Consensus ────────────────────────────────────── */
+.ws-consensus-zone {
+  background: var(--surf);
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.ws-consensus-grid { display: flex; flex-direction: column; gap: 5px; }
+.ws-eng-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.ws-eng-ok    { background: rgba(34,197,94,.05); }
+.ws-eng-no    { background: rgba(239,68,68,.05); }
+.ws-eng-check { font-size: 13px; font-weight: 900; text-align: center; }
+.ws-eng-ok .ws-eng-check { color: var(--green); }
+.ws-eng-no .ws-eng-check { color: var(--red);   }
+.ws-eng-label { font-weight: 600; color: var(--muted); }
+.ws-eng-note  { font-size: 9px; color: var(--faint); font-family: var(--mono); }
+.ws-no-trade-warn {
+  margin-top: 8px;
+  padding: 5px 8px;
+  background: rgba(239,68,68,.08);
+  border: 1px solid rgba(239,68,68,.2);
+  border-radius: 5px;
+  font-size: 10px;
+  color: var(--red);
+  text-align: center;
+}
+
+/* ── Zone 3: Execution Timeline ─────────────────────────────────────────── */
+.ws-timeline-zone {
+  background: var(--surf);
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Stage progression bar */
+.ws-stage-bar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.ws-stage-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.ws-stage-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(100,116,139,.15);
+  transition: background .4s, box-shadow .4s;
+}
+.ws-stage-lbl { font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+.ws-stage-line { flex: 1; height: 1px; background: var(--bdr); margin: 0 6px; margin-bottom: 12px; }
+
+/* Timeline feed */
+.ws-tl-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 60px;
+  margin-bottom: 10px;
+  overflow-y: auto;
+  max-height: 160px;
+}
+.ws-tl-empty { font-size: 10px; color: var(--faint); font-style: italic; }
+.ws-tl-entry {
+  display: grid;
+  grid-template-columns: 44px 72px 1fr;
+  gap: 8px;
+  font-size: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(100,116,139,.06);
+}
+.ws-tl-time  { color: var(--faint); font-family: var(--mono); }
+.ws-tl-stage { font-family: var(--mono); font-weight: 800; font-size: 10px; }
+.ws-tl-score { font-family: var(--mono); font-weight: 700; }
+
+/* AI sentence */
+.ws-ai-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(56,189,248,.04);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid rgba(56,189,248,.25);
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  line-height: 1.55;
+}
+.ws-ai-icon { color: var(--blue); flex-shrink: 0; font-style: normal; margin-top: 1px; }
+
+/* ── Action Row (Zones 4 + 5) ───────────────────────────────────────────── */
+.ws-action-row {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 10px;
+  align-items: start;
+}
+@media(max-width:900px) { .ws-action-row { grid-template-columns: 1fr; } }
+
+/* ── Zone 4: Pressure Panel ─────────────────────────────────────────────── */
+.ws-pressure-zone { padding: 14px 16px; }
+.ws-pressure-grid { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.ws-pr-row {
+  display: grid;
+  grid-template-columns: 130px 1fr 20px 80px;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.ws-pr-label { color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.ws-pr-val   { font-weight: 600; color: var(--muted); }
+.ws-pr-arrow { font-family: var(--mono); font-size: 12px; font-weight: 900; text-align: center; }
+.ws-pr-bar   { height: 3px; background: rgba(100,116,139,.1); border-radius: 2px; overflow: hidden; }
+.ws-pr-bar div { height: 100%; border-radius: 2px; transition: width .5s; }
+
+/* Why bullets */
+.ws-why-section { border-top: 1px solid var(--bdr); padding-top: 10px; }
+.ws-why-list    { display: flex; flex-direction: column; gap: 5px; }
+.ws-why-row     { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; }
+.ws-why-dot     { font-family: var(--mono); font-weight: 900; flex-shrink: 0; margin-top: 1px; }
+.ws-why-text    { line-height: 1.4; }
+
+/* ── Zone 5: Trade Card ─────────────────────────────────────────────────── */
+.ws-trade-zone  { }
+.ws-trade-card  {
+  padding: 0;
+  border: 1px solid var(--bdr);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color .4s;
+}
+.ws-trade-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: rgba(15,23,42,.5);
+  border-bottom: 1px solid var(--bdr);
+}
+.ws-trade-direction {
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+.ws-trade-prob { font-size: 10px; color: var(--faint); font-family: var(--mono); font-weight: 700; }
+.ws-trade-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 7px; }
+.ws-trade-row  { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+.ws-tr-entry   { padding-bottom: 7px; border-bottom: 1px solid var(--bdr); }
+.ws-tr-label   { color: var(--faint); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.ws-tr-val     { font-family: var(--mono); font-size: 13px; font-weight: 800; color: var(--text); }
+.ws-tr-stop    { color: var(--red) !important; }
+.ws-tr-tgt     { color: var(--green) !important; }
+.ws-tr-risk-row{
+  display: flex; gap: 0;
+  padding-top: 7px;
+  border-top: 1px solid var(--bdr);
+  margin-top: 3px;
+}
+.ws-tr-risk     { flex: 1; display: flex; flex-direction: column; gap: 3px; text-align: center; }
+.ws-tr-risk-label { font-size: 8px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.ws-tr-risk-val   { font-family: var(--mono); font-size: 12px; font-weight: 800; }
+.ws-tr-reward { color: var(--green); }
+.ws-trade-contract {
+  padding: 4px 16px 0;
+  font-size: 9px;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-style: italic;
+}
+.ws-trade-invalidation {
+  margin: 8px 16px 12px;
+  padding: 6px 8px;
+  font-size: 9px;
+  color: var(--faint);
+  background: rgba(239,68,68,.04);
+  border: 1px solid rgba(239,68,68,.1);
+  border-radius: 4px;
+  line-height: 1.5;
+}
+
+/* Waiting state */
+.ws-trade-waiting {
+  padding: 24px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.ws-tw-ring {
+  position: relative;
+  width: 60px;
+  height: 60px;
+}
+.ws-tw-ring svg { width: 60px; height: 60px; }
+.ws-tw-ring span {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 900;
+}
+.ws-tw-stage { font-family: var(--mono); font-size: 13px; font-weight: 800; }
+.ws-tw-desc  { font-size: 10px; color: var(--faint); font-style: italic; }
+.ws-tw-need  { font-size: 9px; color: var(--faint); margin-top: 4px; }
+
+/* ── Zone 6: Supporting Intelligence ────────────────────────────────────── */
+.ws-intel-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+@media(max-width:1100px) { .ws-intel-row { grid-template-columns: 1fr 1fr; } }
+@media(max-width:700px)  { .ws-intel-row { grid-template-columns: 1fr; } }
+
+.ws-intel-col {
+  padding: 14px 16px;
+  min-width: 0;
+}
