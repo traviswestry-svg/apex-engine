@@ -2452,7 +2452,7 @@ def run_scan_once(force: bool = False) -> bool:
                 "scan_in_progress": False,
                 "last_scan_duration_seconds": duration,
                 "circuit_breaker": BREAKER.snapshot(),
-                "last_result": result if isinstance(result, dict) else {},
+                # last_result is populated by /api/institutional_os, not the scanner
             })
             status = STATE["last_scan_status"]
         print(status, flush=True)
@@ -4193,6 +4193,9 @@ def api_institutional_os():
                 )
 
             _record_confidence_timeline_point(ticker, result)
+            # Cache for /api/market_drivers, /api/strike_magnets, /api/dealer_positioning etc.
+            with STATE_LOCK:
+                STATE["last_result"] = result
             return jsonify({"ok": True, **result})
 
         except Exception as e:
