@@ -3790,13 +3790,13 @@ function renderWorkspace(d) {
     subEl.textContent = eie ? (eie.stage_description || subMap[stage] || '') : subMap[stage] || '';
   }
   if (fillEl) {
-    const circ = 552.9; // 2π × 88
+    const circ = 439.8; // 2π × 70 (new op-gauge r=70)
     fillEl.style.strokeDashoffset = (circ * (1 - execScore / 100)).toString();
     fillEl.style.stroke = stageColor;
     // Pulse on increase
     if (execScore > _wsLastScore) {
-      fillEl.closest('svg') && fillEl.closest('svg').classList.add('ws-gauge-pulse');
-      setTimeout(() => fillEl.closest('svg') && fillEl.closest('svg').classList.remove('ws-gauge-pulse'), 800);
+      fillEl.closest('svg') && fillEl.closest('svg').classList.add('op-gauge-pulsing');
+      setTimeout(() => fillEl.closest('svg') && fillEl.closest('svg').classList.remove('op-gauge-pulsing'), 800);
     }
   }
   _wsLastScore = execScore;
@@ -3823,7 +3823,9 @@ function renderWorkspace(d) {
 
   // Status strip
   const setWS = (id, text, color) => { const el = $(id); if (el) { el.textContent = text; if (color) el.style.color = color; } };
-  setWS('wsMarket', sessionSt === 'MARKET_OPEN' ? 'OPEN' : sessionSt.replace(/_/g,' '), sessionSt === 'MARKET_OPEN' ? 'var(--green)' : 'var(--amber)');
+  setWS('wsMarket',    sessionSt === 'MARKET_OPEN' ? 'OPEN' : sessionSt.replace(/_/g,' '), sessionSt === 'MARKET_OPEN' ? 'var(--green)' : 'var(--amber)');
+  setWS('wsSessionType', (d.playbook && d.playbook.session_type && d.playbook.session_type.type || sessionSt || '--').replace(/_/g,' '), '');
+  setWS('wsInstBias', instBias, instBias === 'BULLISH' ? 'var(--green)' : instBias === 'BEARISH' ? 'var(--red)' : 'var(--faint)');
   setWS('wsDealer', (gammaR || 'NEUTRAL').replace('_GAMMA','').replace('_',' '), gammaR === 'NEGATIVE_GAMMA' ? 'var(--red)' : gammaR === 'POSITIVE_GAMMA' ? 'var(--green)' : 'var(--muted)');
   setWS('wsPOC',   pocMig === 'RISING' ? '▲ Rising' : pocMig === 'FALLING' ? '▼ Falling' : '— Stable', pocMig === 'RISING' ? 'var(--green)' : pocMig === 'FALLING' ? 'var(--red)' : 'var(--faint)');
   setWS('wsFlow',  flowBias, flowBias === 'BULLISH' ? 'var(--green)' : flowBias === 'BEARISH' ? 'var(--red)' : 'var(--faint)');
@@ -3844,13 +3846,13 @@ function renderWorkspace(d) {
     ];
     const agreeTotal = engines.filter(e => e.ok).length;
     consEl.innerHTML = engines.map(e => `
-      <div class="ws-eng-row ${e.ok ? 'ws-eng-ok' : 'ws-eng-no'}">
-        <span class="ws-eng-check">${e.ok ? '✔' : '✗'}</span>
-        <span class="ws-eng-label">${e.label}</span>
-        <span class="ws-eng-note">${esc(e.note || '')}</span>
+      <div class="op-eng-row ${e.ok ? 'op-eng-ok' : 'op-eng-no'}">
+        <span class="op-eng-check">${e.ok ? '✔' : '✗'}</span>
+        <span class="op-eng-label">${e.label}</span>
+        <span class="op-eng-note">${esc(e.note || '')}</span>
       </div>`).join('');
     if (agreeTotal < 4 && !consEl.querySelector('.ws-no-trade-warn')) {
-      consEl.innerHTML += `<div class="ws-no-trade-warn">Only ${agreeTotal}/7 aligned — no trade.</div>`;
+      consEl.innerHTML += `<div class="op-no-trade-warn">Only ${agreeTotal}/7 aligned — no trade.</div>`;
     }
   }
 
@@ -3877,10 +3879,10 @@ function renderWorkspace(d) {
   const feedEl = $('wsTimelineFeed');
   if (feedEl && _wsTLHistory.length) {
     feedEl.innerHTML = _wsTLHistory.map(h => `
-      <div class="ws-tl-entry">
-        <span class="ws-tl-time">${h.time}</span>
-        <span class="ws-tl-stage" style="color:${h.color}">${h.stage}</span>
-        <span class="ws-tl-score" style="color:${h.color}">${h.score}</span>
+      <div class="op-tl-entry">
+        <span class="op-tl-time">${h.time}</span>
+        <span class="op-tl-stage" style="color:${h.color}">${h.stage}</span>
+        <span class="op-tl-score" style="color:${h.color}">${h.score}</span>
       </div>`).join('');
   }
 
@@ -3939,9 +3941,9 @@ function renderWorkspace(d) {
     const isEnter = decision.startsWith('ENTER');
     if (whyLbl) { whyLbl.textContent = isEnter ? 'Enter Because' : 'Blocked By'; whyLbl.style.color = isEnter ? 'var(--green)' : 'var(--red)'; }
     whyEl.innerHTML = (eie.why_bullets || []).slice(0, 5).map(b => `
-      <div class="ws-why-row">
-        <span class="ws-why-dot ${b.ok ? 'eie-ok' : 'eie-no'}">${b.ok ? '✓' : '✗'}</span>
-        <span class="ws-why-text ${b.ok ? 'eie-ok' : 'eie-no'}">${esc(b.label || b.text || '')}</span>
+      <div class="op-why-row">
+        <span class="op-why-dot ${b.ok ? 'eie-ok' : 'eie-no'}">${b.ok ? '✓' : '✗'}</span>
+        <span class="op-why-text ${b.ok ? 'eie-ok' : 'eie-no'}">${esc(b.label || b.text || '')}</span>
       </div>`).join('');
   }
 
