@@ -5636,16 +5636,12 @@ def _fetch_flow_tape_rows(tickers: List[str], size_per_ticker: int = 50) -> List
     return all_rows
 
 
-@app.route("/api/engine_health")
-def api_engine_health():
-    """GET /api/engine_health — per-engine health dashboard (APEX 8.0).
+def _compute_engine_health(last: dict) -> tuple:
+    """Shared engine health computation (APEX 8.0).
 
-    Returns Green/Yellow/Red status for every engine based on last run.
-    Reads from STATE["last_result"] populated by /api/institutional_os.
+    Returns (health_rows, counts) where counts = {green, yellow, red, total}.
+    Used by /api/engine_health and /api/mission_control.
     """
-    with STATE_LOCK:
-        last = STATE.get("last_result") or {}
-
     engines_checked = [
         ("gamma",                   "gamma_regime"),
         ("auction_intelligence",    "auction_intelligence"),
@@ -5704,13 +5700,36 @@ def api_engine_health():
             row["status"] = "YELLOW"
             row["flags"].append("TIMED_OUT_LAST_RUN")
 
+    counts = {
+        "green":  sum(1 for r in health_rows if r["status"] == "GREEN"),
+        "yellow": sum(1 for r in health_rows if r["status"] == "YELLOW"),
+        "red":    sum(1 for r in health_rows if r["status"] == "RED"),
+        "total":  len(health_rows),
+        "available": available_count,
+    }
+    return health_rows, counts
+
+
+@app.route("/api/engine_health")
+def api_engine_health():
+    """GET /api/engine_health — per-engine health dashboard (APEX 8.0).
+
+    Returns Green/Yellow/Red status for every engine based on last run.
+    Reads from STATE["last_result"] populated by /api/institutional_os.
+    """
+    with STATE_LOCK:
+        last = STATE.get("last_result") or {}
+
+    health_rows, counts = _compute_engine_health(last)
+    timed_out = last.get("timed_out_components") or []
+
     return jsonify({
         "ok":               True,
         "version":          VERSION,
-        "engines_total":    len(engines_checked),
-        "engines_available": available_count,
-        "engines_red":      sum(1 for r in health_rows if r["status"] == "RED"),
-        "engines_yellow":   sum(1 for r in health_rows if r["status"] == "YELLOW"),
+        "engines_total":    counts["total"],
+        "engines_available": counts["available"],
+        "engines_red":      counts["red"],
+        "engines_yellow":   counts["yellow"],
         "timed_out_last":   timed_out,
         "last_response_ms": last.get("response_ms"),
         "last_partial":     last.get("partial", False),
@@ -5811,6 +5830,230 @@ def api_institutional_intelligence():
     return jsonify({"ok": False, "available": False,
                     "reason": "Institutional intelligence not yet computed. Run a scan first.",
                     "quality_flags": ["NOT_YET_COMPUTED"]})
+
+
+# =============================================================================
+# APEX 8.0 — MISSION CONTROL (composite decision endpoint)
+# =============================================================================
+
+def _build_expected_path(last: dict) -> dict:
+    """Compose the Expected Path block from already-computed engine outputs.
+
+    Zero new math — pure composition of strike magnets, dealer walls,
+    volume profile levels, and the II highest-probability scenario.
+    """
+    ms  = last.get("market_state") or {}
+    sm  = last.get("strike_magnets") or {}
+    ii  = last.get("institutional_intelligence") or {}
+    dp  = last.get("dealer_positioning") or {}
+
+    def _f(v, d=0.0):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return d
+
+    price = _f(ms.get("price")) or _f(sm.get("price"))
+    if not price:
+        return {"available": False, "reason": "No price in last scan."}
+
+    levels = []
+    seen = set()
+
+    def _add(strike, label, kind, note=""):
+        s = _f(strike)
+        if s <= 0:
+            return
+        key = round(s, 1)
+        # Dedupe levels within 2 pts, keep first (higher-priority) label
+        for k in seen:
+            if abs(k - key) < 2:
+                return
+        seen.add(key)
+        levels.append({
+            "level":    round(s, 2),
+            "label":    label,
+            "kind":     kind,
+            "note":     note,
+            "distance": round(s - price, 2),
+            "side":     "ABOVE" if s > price else "BELOW",
+        })
+
+    # Magnets first (already ranked by score in the engine)
+    for m in (sm.get("magnets") or []):
+        if isinstance(m, dict):
+            _add(m.get("strike"), (m.get("type") or "MAGNET").replace("_", " ").title(),
+                 "MAGNET", m.get("role") or "")
+
+    # Dealer walls (may duplicate magnets — dedupe handles it)
+    d_gamma = dp.get("gamma") or {}
+    _add(d_gamma.get("call_wall"),  "Call Wall",  "DEALER", "Dealer resistance")
+    _add(d_gamma.get("put_wall"),   "Put Wall",   "DEALER", "Dealer support")
+    _add(d_gamma.get("zero_gamma"), "Zero Gamma", "DEALER", "Regime flip level")
+
+    # Value area
+    _add(ms.get("vah"), "VAH", "VALUE", "Value area high")
+    _add(ms.get("poc"), "POC", "VALUE", "Point of control")
+    _add(ms.get("val"), "VAL", "VALUE", "Value area low")
+
+    above = sorted([l for l in levels if l["side"] == "ABOVE"], key=lambda l: l["level"])[:5]
+    below = sorted([l for l in levels if l["side"] == "BELOW"], key=lambda l: -l["level"])[:5]
+
+    pin_prob = _f(ii.get("pin_probability"))
+    return {
+        "available":      True,
+        "current_price":  round(price, 2),
+        "scenario":       ii.get("highest_probability_scenario") or "",
+        "institutional_bias": ii.get("institutional_bias") or "NEUTRAL",
+        "pin": {
+            "level":       sm.get("nearest_magnet"),
+            "type":        sm.get("nearest_type"),
+            "probability": round(pin_prob, 1),
+            "risk":        sm.get("pin_risk") or "LOW",
+            "watch":       sm.get("watch") or "",
+        },
+        "levels_above":   above,
+        "levels_below":   below,
+    }
+
+
+@app.route("/api/mission_control")
+def api_mission_control():
+    """GET /api/mission_control?ticker=SPX — APEX 8.0 composite decision payload.
+
+    One lightweight call answering: What are institutions doing? Should I trade?
+    Is now the moment? What is the expected path?
+
+    Pure composition from STATE["last_result"] — never triggers a scan, never
+    calls external APIs. Stable contract for the Mission Control workspace,
+    Telegram, and future clients.
+    """
+    ticker = normalize_signal_ticker(request.args.get("ticker", ASSISTANT_TICKER))
+
+    with STATE_LOCK:
+        last = STATE.get("last_result") or {}
+        exec_hist = list(SCANNER_STATE.get("exec_score_history", []))
+
+    if not last:
+        return jsonify({
+            "ok": False, "available": False, "version": VERSION,
+            "reason": "No scan completed yet. Mission Control populates after the first /api/institutional_os cycle.",
+            "quality_flags": ["NOT_YET_COMPUTED"],
+        })
+
+    ii   = last.get("institutional_intelligence") or {}
+    eie  = last.get("execution_intelligence") or {}
+    cons = last.get("consensus") or {}
+    ici  = last.get("ici") or {}
+    risk = last.get("risk") or {}
+    ms   = last.get("market_state") or {}
+    fi2  = last.get("flow_intelligence_2") or {}
+    ai   = last.get("auction_intelligence") or {}
+    dp   = last.get("dealer_positioning") or {}
+    coach = last.get("trade_coach") or {}
+
+    health_rows, health_counts = _compute_engine_health(last)
+
+    # Freshness
+    updated_at = last.get("updated_at_et") or last.get("updated_at") or ""
+    session_state = str(ii.get("session_state") or last.get("session_state") or session_status())
+
+    # Decision block
+    exec_prob   = eie.get("exec_probability")
+    stage       = eie.get("stage") or "WATCH"
+    n_bull      = int(cons.get("n_bullish") or 0)
+    n_bear      = int(cons.get("n_bearish") or 0)
+    n_engines   = int(cons.get("n_engines") or 0)
+    aligned     = max(n_bull, n_bear)
+
+    decision = {
+        "institutional_bias":       ii.get("institutional_bias") or "NEUTRAL",
+        "overall_score":            ii.get("overall_score"),
+        "execution_score":          exec_prob,
+        "stage":                    stage,
+        "stage_color":              eie.get("stage_color"),
+        "stage_description":        eie.get("stage_description"),
+        "trigger_active":           bool(eie.get("trigger_active")),
+        "timing":                   eie.get("timing"),
+        "timing_note":              eie.get("timing_note"),
+        "institutional_confidence": ici.get("ici"),
+        "confidence_label":         ici.get("ici_label"),
+        "confidence_color":         ici.get("ici_color"),
+        "engine_agreement": {
+            "aligned":  aligned,
+            "total":    n_engines,
+            "bullish":  n_bull,
+            "bearish":  n_bear,
+            "neutral":  int(cons.get("n_neutral") or 0),
+            "label":    cons.get("consensus_label") or "",
+        },
+        "decision_state":           ii.get("decision_state") or last.get("decision_state") or "NO_TRADE",
+        "recommendation":           cons.get("recommendation") or last.get("recommendation") or "",
+        "action":                   cons.get("action") or "",
+        "narrative":                ii.get("executive_summary") or last.get("executive_summary") or "",
+        "pine_confirmed":           bool(eie.get("pine_confirmed") or ii.get("pine_confirmed")),
+    }
+
+    # Trade card — active when exec stage is ARMED/EXECUTE or trigger fired
+    card_active = bool(eie.get("trigger_active")) or stage in ("ARMED", "EXECUTE")
+    approved    = risk.get("approved_side") or ""
+    trade_card = {
+        "active":        card_active and bool(risk.get("entry_zone")),
+        "direction":     approved,
+        "probability":   exec_prob,
+        "entry_zone":    risk.get("entry_zone"),
+        "stop":          risk.get("stop"),
+        "target1":       risk.get("target1"),
+        "target2":       risk.get("target2"),
+        "rr_to_t1":      risk.get("rr_to_t1"),
+        "rr_to_t2":      risk.get("rr_to_t2"),
+        "contract_hint": risk.get("contract_hint"),
+        "invalidation":  eie.get("invalidation") or "",
+        "coach_state":   coach.get("state") or "",
+    }
+
+    payload = {
+        "ok":              True,
+        "available":       True,
+        "version":         VERSION,
+        "ticker":          ticker,
+        "updated_at_et":   updated_at,
+        "session_state":   session_state,
+        "stale":           bool(last.get("stale")),
+        "partial":         bool(last.get("partial")),
+        "engine_health":   health_counts,
+        "engine_health_rows": [
+            {"engine": r["engine"], "status": r["status"]} for r in health_rows
+        ],
+        "decision":        decision,
+        "trade_card":      trade_card,
+        "expected_path":   _build_expected_path(last),
+        "consensus":       [
+            {"engine": v.get("engine"), "vote": v.get("vote"),
+             "strength": v.get("strength"), "skipped": v.get("skipped", False)}
+            for v in (cons.get("vote_table") or []) if isinstance(v, dict)
+        ],
+        "why_bullets":     eie.get("why_bullets") or [],
+        "primary_risk":    ii.get("primary_risk") or "",
+        "exec_score_history": exec_hist,
+        "flow": {
+            "bias":       ii.get("flow_bias") or ms.get("flow_bias") or "MIXED",
+            "conviction": ii.get("flow_conviction"),
+            "urgency":    ii.get("flow_urgency") or fi2.get("urgency") or "LOW",
+            "contradictions": ii.get("flow_contradictions") or [],
+        },
+        "dealer": {
+            "gamma_regime": ii.get("gamma_regime") or "NEUTRAL_GAMMA",
+            "bias":         ii.get("dealer_bias") or "NEUTRAL",
+            "pin_probability": ii.get("pin_probability"),
+        },
+        "auction": {
+            "state":      ii.get("auction_state") or "UNKNOWN",
+            "acceptance": ii.get("acceptance") or "",
+        },
+        "price": ms.get("price"),
+    }
+    return jsonify(payload)
 
 
 @app.route("/api/flow_tape")
