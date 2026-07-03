@@ -28,6 +28,17 @@ def _sf(v: Any, d: float = 0.0) -> float:
         return d
 
 
+def _d(v: Any) -> Dict[str, Any]:
+    """Return v if it's a dict, else {}.
+
+    Guards against upstream engines returning a scalar (e.g. a string label
+    like "NEUTRAL") where a nested dict is expected. `x.get(k) or {}` does NOT
+    protect against this — a non-empty string is truthy and passes through,
+    then `.get()` on it raises 'str' object has no attribute 'get'.
+    """
+    return v if isinstance(v, dict) else {}
+
+
 def _fmtP(v: float) -> str:
     return f"${v:,.2f}"
 
@@ -229,17 +240,24 @@ def build_institutional_playbook(
 
     Single screen. No tab digging required.
     """
-    # Extract key inputs
-    d_gamma  = dealer_positioning.get("gamma") or {}
-    d_delta  = dealer_positioning.get("delta") or {}
-    d_charm  = dealer_positioning.get("charm") or {}
-    d_hedge  = dealer_positioning.get("hedging_pressure") or {}
-    d_pin    = dealer_positioning.get("pin_probability") or {}
-    d_mom    = dealer_positioning.get("momentum_probability") or {}
+    # Guard top-level inputs — an engine that degraded may hand back a string
+    # or None where a dict is expected.
+    dealer_positioning = _d(dealer_positioning)
+    auction_intel      = _d(auction_intel)
+    flow_intel_2       = _d(flow_intel_2)
+    market_state       = _d(market_state)
 
-    ai_state = (auction_intel.get("auction_state") or {})
-    ai_acc   = (auction_intel.get("acceptance") or {})
-    ai_poc   = (auction_intel.get("poc_migration") or {})
+    # Extract key inputs (each nested value guarded — see _d docstring)
+    d_gamma  = _d(dealer_positioning.get("gamma"))
+    d_delta  = _d(dealer_positioning.get("delta"))
+    d_charm  = _d(dealer_positioning.get("charm"))
+    d_hedge  = _d(dealer_positioning.get("hedging_pressure"))
+    d_pin    = _d(dealer_positioning.get("pin_probability"))
+    d_mom    = _d(dealer_positioning.get("momentum_probability"))
+
+    ai_state = _d(auction_intel.get("auction_state"))
+    ai_acc   = _d(auction_intel.get("acceptance"))
+    ai_poc   = _d(auction_intel.get("poc_migration"))
 
     price        = _sf(market_state.get("price"))
     poc          = _sf(market_state.get("poc"))
@@ -337,7 +355,8 @@ def build_institutional_playbook(
 
     # Overnight context
     overnight_context = ""
-    if overnight_plan and overnight_plan.get("game_plan"):
+    overnight_plan = _d(overnight_plan)
+    if overnight_plan.get("game_plan"):
         overnight_context = overnight_plan.get("executive_summary", "")
 
     return {
