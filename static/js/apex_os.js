@@ -1,3 +1,4 @@
+let osLoading = false;
 /**
  * APEX Institutional OS — 6.2.2 frontend route stability
  * Reads from /api/institutional_os  (nine-engine pipeline)
@@ -1534,43 +1535,93 @@ function initRunScanButtons() {
    MASTER LOAD
    ════════════════════════════════════════════════════════════════════════════ */
 
+/* ── Fix 4: AbortController timeout + Fix 6: heatmap=0 default ────────────
+   fetchInstitutionalOS():
+     - 6-second hard timeout via AbortController
+     - heatmap=0 by default (loaded lazily by its own panel)
+     - Returns stale osData on timeout rather than throwing
+     - Shows "Engines warming up" if no stale data available
+   ──────────────────────────────────────────────────────────────────────── */
 async function fetchInstitutionalOS() {
-  const primaryUrl = '/api/institutional_os?ticker=' + encodeURIComponent(activeTicker) + '&heatmap=1';
-  const fallbackUrl = '/api/institutional_os?ticker=' + encodeURIComponent(activeTicker) + '&heatmap=0';
+  // Fix 6: heatmap=0 — heatmap loads in its own lazy panel
+  const url = '/api/institutional_os?ticker=' + encodeURIComponent(activeTicker) + '&heatmap=0';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 6000);   // Fix 4: 6s hard timeout
+
   try {
-    const r = await fetch(primaryUrl, { cache: 'no-store' });
+    const r = await fetch(url, { cache: 'no-store', signal: controller.signal });
+    clearTimeout(timer);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     if (!data.ok) throw new Error(data.error || 'API error');
-    return { data, fallbackUsed: false, primaryError: null };
-  } catch (primaryErr) {
-    const r2 = await fetch(fallbackUrl, { cache: 'no-store' });
-    if (!r2.ok) throw new Error('Primary failed (' + primaryErr.message + '); fallback failed HTTP ' + r2.status);
-    const data2 = await r2.json();
-    if (!data2.ok) throw new Error('Primary failed (' + primaryErr.message + '); fallback failed: ' + (data2.error || 'API error'));
-    return { data: data2, fallbackUsed: true, primaryError: primaryErr.message };
+    return { data, timedOut: false, stale: !!data.stale };
+  } catch (err) {
+    clearTimeout(timer);
+    const wasTimeout = err.name === 'AbortError';
+    if (wasTimeout) console.warn('[APEX] /api/institutional_os timed out after 6s');
+    else            console.warn('[APEX] /api/institutional_os failed:', err.message);
+    // Fix 4: return stale data if available, otherwise signal warming-up state
+    if (osData) return { data: osData, timedOut: wasTimeout, stale: true };
+    return { data: null, timedOut: wasTimeout, stale: false };
   }
 }
 
 async function loadOS() {
+  // Fix 5: prevent overlapping refreshes
+  if (osLoading) { console.log('[APEX] loadOS skipped — already running'); return; }
+  osLoading = true;
   const errEl = $('osError');
   try {
     const apiResult = await fetchInstitutionalOS();
     const data = apiResult.data;
-    osData = data;
-    if (errEl) {
-      if (apiResult.fallbackUsed) {
+
+    // Fix 4: handle timeout / warm-up — never leave UI on LOADING forever
+    if (!data) {
+      if (errEl) {
         errEl.style.display = '';
-        errEl.textContent = 'Heatmap mode failed; dashboard loaded without heatmap. ' + (apiResult.primaryError || '');
+        errEl.textContent = apiResult.timedOut
+          ? '⌛ Engines warming up — retrying in 5 seconds…'
+          : '⚠ No data yet — retrying in 5 seconds…';
+      }
+      if (osData) await _renderAll(osData);   // render stale data if available
+      setTimeout(loadOS, 5000);
+      return;
+    }
+
+    osData = data;
+
+    // Banner: stale vs fresh
+    if (errEl) {
+      if (apiResult.stale || data.stale) {
+        errEl.style.display = '';
+        errEl.textContent = '⟳ Showing cached data — refresh in progress';
       } else {
         errEl.style.display = 'none';
         errEl.textContent = '';
       }
     }
 
-    const _r = (fn, d) => { try { fn(d); } catch(e) { console.warn('Render error in ' + fn.name + ':', e.message); } };
-    const _ra = async (fn, d) => { try { await fn(d); } catch(e) { console.warn('Render error in ' + fn.name + ':', e.message); } };
+    await _renderAll(data);
 
+    const lu = $('lastUpdated');
+    if (lu) {
+      const ms  = data.response_ms ? ' (' + data.response_ms + 'ms)' : '';
+      const par = data.partial ? ' ⚡partial' : '';
+      lu.textContent = 'Updated: ' + (data.updated_at_et || new Date().toLocaleTimeString()) + ms + par;
+    }
+  } catch (e) {
+    if (errEl) { errEl.style.display = ''; errEl.textContent = '⚠ Dashboard error: ' + e.message; }
+    console.error('[APEX] loadOS failed', e);
+  } finally {
+    osLoading = false;   // Fix 5: always release lock
+  }
+}
+
+/* _renderAll — render all panels from a data object (fresh or stale) */
+async function _renderAll(data) {
+  const _r  = (fn, d) => { try { fn(d); } catch(e) { console.warn('Render error in ' + fn.name + ':', e.message); } };
+  const _ra = async (fn) => { try { await fn(); } catch(e) { console.warn('Async render error:', e.message); } };
+  try {
     // 6.0.3 panels
     _r(renderRibbon, data);
     _r(renderICI, data);
@@ -1614,12 +1665,9 @@ async function loadOS() {
     _r(captureReplaySnap, data);
     _r(addReviewEntry, data);
 
-    loadFlowTape();
-
-    const lu = $('lastUpdated');
-    if (lu) lu.textContent = 'Updated: ' + (data.updated_at_et || new Date().toLocaleTimeString());
+    // Fix 7: loadFlowTape() has its own setInterval — do NOT call here
   } catch (e) {
-    if (errEl) { errEl.style.display = ''; errEl.textContent = 'Institutional OS data error: ' + e.message; } console.error('APEX OS load failed', e);
+    console.warn('[APEX] _renderAll error:', e.message);
   }
 }
 
