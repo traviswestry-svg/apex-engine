@@ -31,7 +31,7 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed, wait, FIRST_EXCEPTION
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
-from .common.logging import apex_logger, engine_timer
+from .logging import apex_logger, engine_timer
 
 
 class EngineNode:
