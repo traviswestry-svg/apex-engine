@@ -65,224 +65,194 @@
   <!-- ── TAB: DASHBOARD ─────────────────────────────────────────────── -->
   <div id="tab-dashboard" class="tab-pane active">
 
-  <!-- ════════════════════════════════════════════════════════════════════
-       ZONE 1 + 2 + 3 — Command Row (full width, decision-first)
-       ════════════════════════════════════════════════════════════════════ -->
-  <div class="ws-command-row sec-mb">
+  <!-- ══ BAND 1: STATUS BAR ══════════════════════════════════════════════════ -->
+  <div class="op-status-band">
+    <div class="op-sb-item"><span class="op-sb-label">Market</span><span class="op-sb-val" id="wsMarket">--</span></div>
+    <div class="op-sb-div"></div>
+    <div class="op-sb-item"><span class="op-sb-label">Session</span><span class="op-sb-val" id="wsSessionType">--</span></div>
+    <div class="op-sb-div"></div>
+    <div class="op-sb-item"><span class="op-sb-label">Dealer Gamma</span><span class="op-sb-val" id="wsDealer">--</span></div>
+    <div class="op-sb-div"></div>
+    <div class="op-sb-item"><span class="op-sb-label">Inst. Bias</span><span class="op-sb-val" id="wsInstBias">--</span></div>
+    <div class="op-sb-div"></div>
+    <div class="op-sb-item"><span class="op-sb-label">Flow</span><span class="op-sb-val" id="wsFlow">--</span></div>
+    <div class="op-sb-div"></div>
+    <div class="op-sb-item"><span class="op-sb-label">POC</span><span class="op-sb-val" id="wsPOC">--</span></div>
+    <div class="op-sb-div"></div>
+    <div class="op-sb-item"><span class="op-sb-label">SPX</span><span class="op-sb-val op-sb-price" id="wsPrice">--</span></div>
+    <div class="op-sb-div"></div>
+    <div class="op-sb-item"><span class="op-sb-label">ES</span><span class="op-sb-val op-sb-price" id="dccES">--</span></div>
+    <div class="op-sb-right"><span id="dccClock" class="op-sb-clock">-- ET</span></div>
+  </div>
 
-    <!-- ── Zone 1: Execution Gauge (hero) ─────────────────────────────── -->
-    <div class="ws-gauge-zone">
-      <!-- Large ring -->
-      <div class="ws-gauge-wrap">
-        <svg class="ws-gauge-svg" viewBox="0 0 200 200">
-          <circle class="ws-gauge-bg"   cx="100" cy="100" r="88"/>
-          <circle class="ws-gauge-fill" cx="100" cy="100" r="88"
+  <!-- ══ BAND 2: COMMAND CENTER ═══════════════════════════════════════════════
+       Left: Execution Gauge  |  Mid: Consensus + AI line  |  Right: Trade Card
+       ════════════════════════════════════════════════════════════════════════ -->
+  <div class="op-command-band sec-mb">
+
+    <!-- Execution Gauge -->
+    <div class="op-gauge-col">
+      <div class="op-gauge-wrap">
+        <svg class="op-gauge-svg" viewBox="0 0 160 160">
+          <circle class="op-gauge-bg"   cx="80" cy="80" r="70"/>
+          <circle class="op-gauge-fill" cx="80" cy="80" r="70"
             id="wsGaugeFill"
-            stroke-dasharray="552.9" stroke-dashoffset="552.9"/>
+            stroke-dasharray="439.8" stroke-dashoffset="439.8"/>
         </svg>
-        <div class="ws-gauge-inner">
-          <div class="ws-gauge-score"   id="wsExecScore">--</div>
-          <div class="ws-gauge-stage"   id="wsExecStage">LOADING</div>
-          <div class="ws-gauge-sub"     id="wsGaugeSub">Initializing</div>
+        <div class="op-gauge-inner">
+          <div class="op-gauge-score" id="wsExecScore">--</div>
+          <div class="op-gauge-stage" id="wsExecStage">LOADING</div>
         </div>
       </div>
-      <!-- Bias + agreement below gauge -->
-      <div class="ws-gauge-footer">
-        <div class="ws-bias"          id="wsBias">-- LOADING</div>
-        <div class="ws-agreement"     id="wsAgreement">-- engines</div>
-        <div class="ws-confidence"    id="wsConfidence"></div>
-      </div>
+      <div class="op-bias-badge" id="wsBias">LOADING</div>
+      <div class="op-agreement"  id="wsAgreement">-- / 7 engines</div>
     </div>
 
-    <!-- ── Zone 2: Institutional Consensus ────────────────────────────── -->
-    <div class="ws-consensus-zone">
-      <div class="ws-zone-label">Institutional Consensus</div>
-      <div id="wsConsensus" class="ws-consensus-grid">
+    <!-- Consensus + Timeline + AI -->
+    <div class="op-mid-col">
+
+      <!-- Engine consensus rows -->
+      <div class="op-consensus" id="wsConsensus">
         <!-- Populated by renderWorkspace() -->
       </div>
-      <div class="ws-zone-label" style="margin-top:12px">Market Status</div>
-      <div class="ws-status-strip">
-        <div class="ws-stat"><span class="ws-stat-label">Market</span><span class="ws-stat-val" id="wsMarket">--</span></div>
-        <div class="ws-stat"><span class="ws-stat-label">Dealer</span><span class="ws-stat-val" id="wsDealer">--</span></div>
-        <div class="ws-stat"><span class="ws-stat-label">POC</span><span class="ws-stat-val"    id="wsPOC">--</span></div>
-        <div class="ws-stat"><span class="ws-stat-label">Flow</span><span class="ws-stat-val"   id="wsFlow">--</span></div>
-        <div class="ws-stat"><span class="ws-stat-label">Gamma</span><span class="ws-stat-val"  id="wsGamma">--</span></div>
-        <div class="ws-stat"><span class="ws-stat-label">Price</span><span class="ws-stat-val rv-blue" id="wsPrice">--</span></div>
-      </div>
-    </div>
 
-    <!-- ── Zone 3: Execution Timeline ────────────────────────────────── -->
-    <div class="ws-timeline-zone">
-      <div class="ws-zone-label">Execution Timeline <span class="live-dot-badge">LIVE</span></div>
-      <!-- Stage progression bar -->
-      <div class="ws-stage-bar">
-        <div class="ws-stage-step" data-stage="WATCH">
-          <div class="ws-stage-dot" id="wsStepWatch"></div>
-          <div class="ws-stage-lbl">Watch</div>
-        </div>
-        <div class="ws-stage-line"></div>
-        <div class="ws-stage-step" data-stage="PREPARE">
-          <div class="ws-stage-dot" id="wsStepPrepare"></div>
-          <div class="ws-stage-lbl">Prepare</div>
-        </div>
-        <div class="ws-stage-line"></div>
-        <div class="ws-stage-step" data-stage="ARMED">
-          <div class="ws-stage-dot" id="wsStepArmed"></div>
-          <div class="ws-stage-lbl">Armed</div>
-        </div>
-        <div class="ws-stage-line"></div>
-        <div class="ws-stage-step" data-stage="EXECUTE">
-          <div class="ws-stage-dot" id="wsStepExecute"></div>
-          <div class="ws-stage-lbl">Execute</div>
-        </div>
+      <!-- Stage progression -->
+      <div class="op-stage-bar">
+        <div class="op-stage-step"><div class="op-stage-dot" id="wsStepWatch"></div><span>Watch</span></div>
+        <div class="op-stage-line"></div>
+        <div class="op-stage-step"><div class="op-stage-dot" id="wsStepPrepare"></div><span>Prepare</span></div>
+        <div class="op-stage-line"></div>
+        <div class="op-stage-step"><div class="op-stage-dot" id="wsStepArmed"></div><span>Armed</span></div>
+        <div class="op-stage-line"></div>
+        <div class="op-stage-step"><div class="op-stage-dot" id="wsStepExecute"></div><span>Execute</span></div>
       </div>
-      <!-- Timeline history feed -->
-      <div class="ws-tl-feed" id="wsTimelineFeed">
-        <div class="ws-tl-empty">Execution history will appear as score evolves.</div>
+
+      <!-- Score history feed -->
+      <div class="op-tl-feed" id="wsTimelineFeed">
+        <div class="op-tl-empty">Stage history appears here as score evolves.</div>
       </div>
-      <!-- Executive summary (AI sentence layer) -->
-      <div class="ws-ai-line" id="wsAILine">
-        <span class="ws-ai-icon">⬡</span>
+
+      <!-- AI executive sentence -->
+      <div class="op-ai-line">
+        <span class="op-ai-icon">⬡</span>
         <span id="wsAIText">Loading institutional read...</span>
       </div>
+
     </div>
 
-  </div><!-- /ws-command-row -->
+    <!-- Trade Card -->
+    <div class="op-card-col">
 
-  <!-- ════════════════════════════════════════════════════════════════════
-       ZONE 4 + 5 — Pressure Panel + Trade Card
-       ════════════════════════════════════════════════════════════════════ -->
-  <div class="ws-action-row sec-mb">
-
-    <!-- ── Zone 4: Institutional Pressure Panel ───────────────────────── -->
-    <div class="ws-pressure-zone card">
-      <div class="ws-zone-label">Institutional Pressure</div>
-      <div id="wsPressurePanel" class="ws-pressure-grid">
-        <!-- Populated by renderWorkspace() -->
-      </div>
-      <!-- Why bullets -->
-      <div class="ws-why-section">
-        <div class="ws-zone-label" id="wsWhyLabel" style="margin-top:10px">Why</div>
-        <div id="wsWhyBullets" class="ws-why-list"></div>
-      </div>
-    </div>
-
-    <!-- ── Zone 5: Professional Trade Card ────────────────────────────── -->
-    <div class="ws-trade-zone" id="wsTradeZone">
-      <!-- Hidden until execution score crosses threshold -->
-      <div class="ws-trade-card card" id="wsTradeCard">
-        <div class="ws-trade-header">
-          <div class="ws-trade-direction" id="wsTradeDir">--</div>
-          <div class="ws-trade-prob" id="wsTradeProb"></div>
-        </div>
-        <div class="ws-trade-body">
-          <div class="ws-trade-row ws-tr-entry">
-            <span class="ws-tr-label">Entry Zone</span>
-            <span class="ws-tr-val"  id="wsTradeEntry">--</span>
+      <!-- Active trade card (shown when exec ≥ 75) -->
+      <div class="op-trade-card" id="wsTradeCard" style="display:none">
+        <div class="op-tc-dir" id="wsTradeDir">--</div>
+        <div class="op-tc-prob" id="wsTradeProb"></div>
+        <div class="op-tc-rows">
+          <div class="op-tc-row op-tc-entry">
+            <span class="op-tc-label">Entry Zone</span>
+            <span class="op-tc-val"  id="wsTradeEntry">--</span>
           </div>
-          <div class="ws-trade-row">
-            <span class="ws-tr-label">Stop</span>
-            <span class="ws-tr-val ws-tr-stop" id="wsTradeStop">--</span>
+          <div class="op-tc-row">
+            <span class="op-tc-label">Stop</span>
+            <span class="op-tc-val op-tc-stop" id="wsTradeStop">--</span>
           </div>
-          <div class="ws-trade-row">
-            <span class="ws-tr-label">Target 1</span>
-            <span class="ws-tr-val ws-tr-tgt" id="wsTradeT1">--</span>
+          <div class="op-tc-row">
+            <span class="op-tc-label">T1</span>
+            <span class="op-tc-val op-tc-tgt"  id="wsTradeT1">--</span>
           </div>
-          <div class="ws-trade-row">
-            <span class="ws-tr-label">Target 2</span>
-            <span class="ws-tr-val ws-tr-tgt" id="wsTradeT2">--</span>
-          </div>
-          <div class="ws-trade-row ws-tr-risk-row">
-            <div class="ws-tr-risk">
-              <span class="ws-tr-risk-label">Risk</span>
-              <span class="ws-tr-risk-val" id="wsTradeRisk">--</span>
-            </div>
-            <div class="ws-tr-risk">
-              <span class="ws-tr-risk-label">Reward</span>
-              <span class="ws-tr-risk-val ws-tr-reward" id="wsTradeReward">--</span>
-            </div>
-            <div class="ws-tr-risk">
-              <span class="ws-tr-risk-label">Duration</span>
-              <span class="ws-tr-risk-val" id="wsTradeDuration">5–15 min</span>
-            </div>
+          <div class="op-tc-row">
+            <span class="op-tc-label">T2</span>
+            <span class="op-tc-val op-tc-tgt"  id="wsTradeT2">--</span>
           </div>
         </div>
-        <div class="ws-trade-contract" id="wsTradeContract"></div>
-        <div class="ws-trade-invalidation" id="wsTradeInvalidation"></div>
+        <div class="op-tc-footer">
+          <div><span class="op-tc-label">Duration</span><span class="op-tc-foot-val" id="wsTradeDuration">5–15 min</span></div>
+        </div>
+        <div class="op-tc-inv" id="wsTradeInvalidation"></div>
       </div>
-      <!-- Shown when score below threshold -->
-      <div class="ws-trade-waiting card" id="wsTradeWaiting">
-        <div class="ws-tw-ring" id="wsTWRing">
-          <svg viewBox="0 0 60 60">
-            <circle cx="30" cy="30" r="24" fill="none" stroke="rgba(100,116,139,.15)" stroke-width="4"/>
-            <circle cx="30" cy="30" r="24" fill="none" id="wsTWRingFill"
-              stroke-dasharray="150.8" stroke-dashoffset="150.8"
-              stroke-linecap="round" style="transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .6s,stroke .3s"/>
+
+      <!-- Waiting state (shown when exec < 75) -->
+      <div class="op-watch-card" id="wsTradeWaiting">
+        <div class="op-watch-ring">
+          <svg viewBox="0 0 80 80">
+            <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(100,116,139,.12)" stroke-width="5"/>
+            <circle cx="40" cy="40" r="32" fill="none" id="wsTWRingFill"
+              stroke-dasharray="201.1" stroke-dashoffset="201.1"
+              stroke-linecap="round"
+              style="transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .6s,stroke .3s"/>
           </svg>
           <span id="wsTWScore">--</span>
         </div>
-        <div class="ws-tw-stage" id="wsTWStage">WATCHING</div>
-        <div class="ws-tw-desc" id="wsTWDesc">Monitoring for institutional setup</div>
-        <div class="ws-tw-need">Trade card appears when execution score ≥ 75</div>
+        <div class="op-watch-stage" id="wsTWStage">WATCHING</div>
+        <div class="op-watch-desc"  id="wsTWDesc">Monitoring for institutional setup</div>
+        <div class="op-watch-need">Trade card appears at score ≥ 75</div>
+        <!-- Why bullets in waiting state -->
+        <div class="op-why-list" id="wsWhyBullets" style="margin-top:12px"></div>
       </div>
+
+      <!-- Confidence Pyramid -->
+      <div class="op-pyramid-wrap">
+        <div class="op-pyr-label">Confidence Layers</div>
+        <div id="dccConfidencePyramid" class="dcc-pyramid"></div>
+      </div>
+
     </div>
+  </div><!-- /op-command-band -->
 
-  </div><!-- /ws-action-row -->
+  <!-- ══ BAND 3: INTELLIGENCE GRID (4 equal columns) ══════════════════════════ -->
+  <div class="op-intel-band sec-mb">
 
-  <!-- ════════════════════════════════════════════════════════════════════
-       ZONE 6 — Supporting Intelligence (reference panels)
-       ════════════════════════════════════════════════════════════════════ -->
-  <div class="ws-intel-row sec-mb">
-
-    <div class="ws-intel-col card">
-      <div class="ws-zone-label">📊 Auction &amp; Value</div>
+    <div class="op-intel-col">
+      <div class="op-col-hdr">📊 Auction &amp; Value</div>
       <div id="auctionLadder"></div>
-      <div class="op-intel-sub-div"></div>
+      <div class="op-col-div"></div>
       <div id="auctionPanel"><div class="sk-waiting">⌛ Building profile...</div></div>
     </div>
 
-    <div class="ws-intel-col card">
-      <div class="ws-zone-label">🌊 Institutional Flow</div>
+    <div class="op-intel-divider"></div>
+
+    <div class="op-intel-col">
+      <div class="op-col-hdr">🌊 Flow Intelligence</div>
       <div id="opFlowPanel"></div>
-      <div class="op-intel-sub-div"></div>
-      <div class="ws-zone-label" style="margin-top:8px">Timeline <span class="live-dot-badge">LIVE</span></div>
+      <div class="op-col-div"></div>
+      <div class="op-col-hdr" style="margin-top:2px">Timeline <span class="live-dot-badge">LIVE</span></div>
       <div id="institutionalTimeline" class="itl-wrap"><div class="sk-waiting">Session events appear here.</div></div>
     </div>
 
-    <div class="ws-intel-col card">
-      <div class="ws-zone-label">📈 SPX Market Drivers</div>
+    <div class="op-intel-divider"></div>
+
+    <div class="op-intel-col">
+      <div class="op-col-hdr">📈 SPX Drivers</div>
       <div id="marketDriversPanel"></div>
-      <div class="op-intel-sub-div"></div>
-      <div class="ws-zone-label" style="margin-top:8px">Strike Magnets</div>
+      <div class="op-col-div"></div>
+      <div class="op-col-hdr" style="margin-top:2px">Strike Magnets</div>
       <div id="strikeMagnetPanel"></div>
     </div>
 
-    <div class="ws-intel-col card">
-      <div class="ws-zone-label">🏦 Dealer Intelligence</div>
+    <div class="op-intel-divider"></div>
+
+    <div class="op-intel-col">
+      <div class="op-col-hdr">🏦 Dealer Intelligence</div>
       <div id="dealerPanel"></div>
-      <div class="op-intel-sub-div"></div>
-      <div class="ws-zone-label" style="margin-top:8px">Playbook</div>
+      <div class="op-col-div"></div>
+      <div class="op-col-hdr" style="margin-top:2px">Today's Playbook</div>
       <div id="playbookPanel"></div>
     </div>
 
-  </div><!-- /ws-intel-row -->
+  </div><!-- /op-intel-band -->
 
-  <!-- ════════════════════════════════════════════════════════════════════
-       SCANNER + DEEP-DIVE TABS (reference / drill-down)
-       ════════════════════════════════════════════════════════════════════ -->
-  <div class="db-bottom-grid">
+  <!-- ══ BAND 4: SCANNER + DEEP-DIVE TABS ════════════════════════════════════ -->
+  <div class="op-bottom-band">
 
-    <!-- Scanner — status strip only -->
-    <div class="card scanner-primary">
-      <div class="scanner-card-head">
-        <div class="card-label">Scanner <span class="live-dot-badge">LIVE</span></div>
+    <div class="op-scanner-card card">
+      <div class="op-scanner-head">
+        <span class="card-label">Scanner <span class="live-dot-badge">LIVE</span></span>
         <button class="btn btn-ghost btn-mini" id="refreshScannerBtn">↺ Refresh</button>
       </div>
       <div id="scannerIdeasPanel" class="scanner-ideas-panel scanner-ideas-compact"><div class="sk-waiting">⌛ Loading...</div></div>
     </div>
 
-    <!-- Tabbed deep-dive analytics -->
-    <div class="card db-analytics-card">
+    <div class="op-tabs-card card">
       <div class="db-inner-tabs">
         <button class="db-inner-tab active" data-inner="ii">Intelligence</button>
         <button class="db-inner-tab" data-inner="eie">Execution</button>
@@ -304,8 +274,8 @@
         <div id="engineMatrix" class="engine-matrix"></div>
         <div style="margin-top:10px"><div id="engineHealthPanel"></div></div>
       </div>
-      <div id="db-inner-heat"          class="db-inner-pane"><div id="heatGrid" class="heat-grid"></div></div>
-      <div id="db-inner-ici-tl"        class="db-inner-pane">
+      <div id="db-inner-heat"    class="db-inner-pane"><div id="heatGrid" class="heat-grid"></div></div>
+      <div id="db-inner-ici-tl"  class="db-inner-pane">
         <div class="db-pane-headline">
           <div class="db-pane-label">ICI Timeline</div>
           <button id="resetTimelineBtn" class="btn btn-ghost btn-mini">Reset</button>
@@ -324,54 +294,30 @@
       </div>
     </div>
 
-  </div><!-- /db-bottom-grid -->
+  </div><!-- /op-bottom-band -->
 
-  <!-- Legacy hidden anchors — JS backwards compatibility -->
+  <!-- Legacy hidden anchors (JS backwards compat) -->
   <div style="display:none">
-    <div id="decisionBadge" class="decision-badge db-neutral">--</div>
-    <div id="readinessNum">--</div><div id="iciFill"></div>
-    <div id="iciPanel"></div><div id="iciCtxLabel"></div>
+    <div id="decisionBadge"></div><div id="readinessNum"></div>
+    <div id="iciFill"></div><div id="iciPanel"></div><div id="iciCtxLabel"></div>
     <div id="gateChecks"></div><div id="whyLabel"></div>
     <div id="decisionMsg"></div><div id="decisionAction"></div>
-    <div id="decayBar" style="width:0%"></div>
-    <div id="decayAge"></div><div id="decayExp"></div>
-    <!-- DCC legacy IDs still populated for backwards compat -->
+    <div id="decayBar"></div><div id="decayAge"></div><div id="decayExp"></div>
     <div id="dccStatusBar"></div><div id="dccMarketState"></div>
     <div id="dccSessionType"></div><div id="dccDealerEnv"></div>
     <div id="dccInstBias"></div><div id="dccPrice"></div>
-    <div id="dccES"></div><div id="dccClock"></div>
     <div id="dccExecSummary"></div><div id="dccDecision"></div>
     <div id="dccRingFill"></div><div id="dccExecScore"></div>
     <div id="dccExecStage"></div><div id="dccExecStageDesc"></div>
     <div id="dccWhyBullets"></div><div id="dccWhyLabel"></div>
-    <div id="dccInvalidation"></div><div id="dccConfidencePyramid"></div>
+    <div id="dccInvalidation"></div>
+    <div id="wsPressurePanel"></div>
+    <div id="wsGamma"></div><div id="wsSessionType"></div>
+    <div id="wsBias2"></div><div id="wsConfidence"></div>
+    <div id="wsAgreement2"></div><div id="wsAILine"></div>
+    <div id="wsGaugeSub"></div><div id="wsConsensus2"></div>
+    <div id="wsTWStage2"></div>
   </div>
-
-  </div><!-- /tab-dashboard -->
-
-  <!-- ── TAB: CHART ────────────────────────────────────────────────── -->
-  <!-- ── TAB: CHART ────────────────────────────────────────────────── -->
-  <div id="tab-chart" class="tab-pane">
-    <div class="card chart-tab-card">
-      <div class="chart-focus-head">
-        <div>
-          <div class="card-label">Chart Terminal</div>
-          <div class="workflow-sub">ES Futures (ESU6) · SPX Cash · Gamma &amp; volume profile overlays.</div>
-        </div>
-        <a href="/chart" target="_blank" class="btn btn-ghost btn-mini">Full Screen &#8599;</a>
-      </div>
-      <iframe class="chart-tab-frame" src="/chart" title="APEX Chart Terminal" id="chartTabFrame"></iframe>
-    </div>
-  </div>
-
-  <!-- ── TAB: FLOW INTELLIGENCE ─────────────────────────────────────── -->
-  <div id="tab-flow2" class="tab-pane">
-    <div class="card">
-      <div class="card-label">Flow Intelligence 2.0</div>
-      <div id="flow2Panel"></div>
-    </div>
-  </div>
-
   <!-- ── TAB: STORY ENGINE ─────────────────────────────────────────── -->
   <div id="tab-story" class="tab-pane">
     <div id="overnightPlanCard" class="card sec-mb overnight-plan-card" style="display:none">
