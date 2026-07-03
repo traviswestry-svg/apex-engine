@@ -1,4 +1,13 @@
-"""APEX Institutional OS 7.0 engine package — Institutional Intelligence Platform."""
+"""APEX Institutional OS 8.0 engine package — Four Pillar + Dependency Scheduler."""
+
+# ── 8.0 shared utilities (import first so engines can use them) ──────────────
+from . import common
+from .common import sf, clamp, fmt_pts, fmt_m, fmt_pct, fmt_price
+from .common import EngineResult, DealerState, AuctionState, FlowState
+from .common import GammaState, ExecutionState, TradePlan, MarketDrivers
+from .common import InstitutionalContext, RiskState, VolatilityState
+from .common import EngineCache, apex_logger, engine_timer
+from .scheduler import EngineScheduler
 
 from .gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
 from .data_bus import build_market_state
@@ -44,4 +53,12 @@ __all__ = [
     "build_market_drivers",
     "build_strike_magnets",
     "build_execution_intelligence",
+    # 8.0 common utilities
+    "common",
+    "sf", "clamp", "fmt_pts", "fmt_m", "fmt_pct", "fmt_price",
+    "EngineResult", "DealerState", "AuctionState", "FlowState",
+    "GammaState", "ExecutionState", "TradePlan", "MarketDrivers",
+    "InstitutionalContext", "RiskState", "VolatilityState",
+    "EngineCache", "apex_logger", "engine_timer",
+    "EngineScheduler",
 ]
