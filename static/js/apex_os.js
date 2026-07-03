@@ -1596,6 +1596,12 @@ async function loadOS() {
     renderPlaybook(data);
     renderInstitutionalIntelligence(data);
 
+    // Sprint 8 — Decision Command Center + new panels
+    renderDCC(data);
+    renderMarketDriversPanel(data);
+    renderStrikeMagnetPanel(data);
+    renderFlowMeter(data);
+
     // Render market status banner from data if present
     if (data.market_status) renderMarketStatusBanner(data.market_status);
 
@@ -2504,44 +2510,78 @@ function renderInstitutionalIntelligence(d) {
 
   const ii = d.institutional_intelligence;
   if (!ii || !ii.available) {
-    el.innerHTML = '<div class="sk-waiting">⌛ Building institutional intelligence...</div>';
+    el.innerHTML = '<div class="sk-waiting">⌛ Building institutional intelligence...<br><span style="font-size:10px;color:var(--faint)">Populates after the first completed scan cycle.</span></div>';
     return;
   }
 
+  const scoreColor = s => Number(s) >= 70 ? 'var(--green)' : Number(s) >= 50 ? 'var(--amber)' : 'var(--red)';
+  const alignment  = (ii.alignment || '').toString();
+  const alignColor = alignment.includes('FULL') && alignment.includes('BULL') ? 'var(--green)' :
+                     alignment.includes('FULL') && alignment.includes('BEAR') ? 'var(--red)'   :
+                     alignment.includes('PARTIAL') ? 'var(--amber)' : 'var(--faint)';
+
+  // Support both v6.5 pillars and v7.0 flat structure
   const pillars = ii.pillars || {};
   const p1 = pillars.market_structure || {};
   const p2 = pillars.dealer           || {};
   const p3 = pillars.institutional    || {};
   const p4 = pillars.execution        || {};
 
-  const alignColor = ii.alignment.includes('FULL') && ii.alignment.includes('BULL') ? 'var(--green)' :
-                     ii.alignment.includes('FULL') && ii.alignment.includes('BEAR') ? 'var(--red)'   :
-                     ii.alignment.includes('PARTIAL') ? 'var(--amber)' : 'var(--faint)';
+  const dp = d.dealer_positioning || {};
+  const md = d.market_drivers     || {};
 
-  const scoreColor = s => s >= 70 ? 'var(--green)' : s >= 50 ? 'var(--amber)' : 'var(--red)';
+  const msScore  = p1.score  || ii.market_structure_score  || 50;
+  const dScore   = p2.score  || ii.dealer_score             || 50;
+  const instScore= p3.score  || ii.institutional_score      || 50;
+  const execScore= p4.score  || ii.execution_score          || 50;
+  const msDir    = p1.direction || (ii.auction_bias||'').includes('HIGHER') ? 'BULLISH' : (ii.auction_bias||'').includes('LOWER') ? 'BEARISH' : 'NEUTRAL';
+  const dDir     = p2.direction || (ii.delta_bias === 'BUYING' ? 'BULLISH' : ii.delta_bias === 'SELLING' ? 'BEARISH' : 'NEUTRAL');
+  const instDir  = p3.direction || (ii.flow_bias === 'BULLISH' ? 'BULLISH' : ii.flow_bias === 'BEARISH' ? 'BEARISH' : 'NEUTRAL');
+  const execDir  = p4.decision_state || ii.decision_state || 'NO_TRADE';
+  const msNote   = p1.narrative || (ii.auction_state||'--') + ' · POC ' + (ii.poc_migration||'STABLE').toLowerCase();
+  const dNote    = p2.narrative || 'Gamma: ' + (ii.gamma_regime||'--').replace(/_/g,' ') + ' · Delta: ' + (ii.delta_bias||'--') + ' · Pin ' + (ii.pin_probability||0).toFixed(0) + '%';
+  const instNote = p3.narrative || 'Flow ' + (ii.flow_bias||'--') + ' · Conviction ' + (ii.flow_conviction||0).toFixed(0) + ' · ' + (ii.flow_urgency||'LOW') + ' urgency';
+  const execNote = p4.narrative || (ii.decision_state||'NO_TRADE').replace(/_/g,' ') + ' · ICI ' + (ii.ici_score||0).toFixed(0);
 
-  const _pillar = (label, emoji, score, dir, note) => `
-    <div class="ii-pillar">
+  const _pillar = (label, emoji, score, dir, note) => {
+    const n = (note||'').toString();
+    return `<div class="ii-pillar">
       <div class="ii-pillar-header">
         <span class="ii-pillar-emoji">${emoji}</span>
         <span class="ii-pillar-label">${label}</span>
         <span class="ii-pillar-score" style="color:${scoreColor(score)}">${fmtI(score)}</span>
       </div>
-      <div class="ii-pillar-dir ${dir === 'BULLISH' ? 'ii-bull' : dir === 'BEARISH' ? 'ii-bear' : 'ii-neut'}">${esc(dir)}</div>
-      <div class="ii-pillar-note">${esc(note.slice(0,120))}${note.length > 120 ? '…' : ''}</div>
+      <div class="ii-pillar-dir ${dir === 'BULLISH' ? 'ii-bull' : dir === 'BEARISH' ? 'ii-bear' : 'ii-neut'}">${esc(dir.replace(/_/g,' '))}</div>
+      <div class="ii-pillar-note">${esc(n.slice(0,130))}${n.length > 130 ? '…' : ''}</div>
     </div>`;
+  };
+
+  const evidence = (ii.evidence || []).slice(0, 5);
+  const evHtml = evidence.length ? `
+    <div class="ii-evidence">
+      <div class="ii-what-label">Evidence Chain</div>
+      ${evidence.map(e => `<div class="ii-evidence-row">
+        <span class="ii-ev-src">${esc(e.source||'')}</span>
+        <span class="ii-ev-dir ${e.direction==='BULLISH'?'ii-bull':e.direction==='BEARISH'?'ii-bear':'ii-neut'}">${esc(e.direction||'')}</span>
+        <span class="ii-ev-str" style="color:var(--faint)">${esc(e.strength||'')}</span>
+        <span class="ii-ev-note">${esc((e.note||'').slice(0,80))}${(e.note||'').length>80?'…':''}</span>
+      </div>`).join('')}
+    </div>` : '';
 
   el.innerHTML = `
     <div class="ii-overall">
-      <div class="ii-score" style="color:${scoreColor(ii.overall_score)}">${fmtI(ii.overall_score)}</div>
-      <div class="ii-alignment" style="color:${alignColor}">${esc((ii.alignment||'').replace(/_/g,' '))}</div>
+      <div class="ii-score" style="color:${scoreColor(ii.overall_score||50)}">${fmtI(ii.overall_score||0)}</div>
+      <div>
+        <div class="ii-alignment" style="color:${alignColor}">${esc(alignment.replace(/_/g,' '))}</div>
+        <div style="font-size:10px;color:${scoreColor(ii.overall_score||50)};font-family:var(--mono);font-weight:700">${esc(ii.institutional_bias||'')}</div>
+      </div>
     </div>
-    <div class="ii-read">${esc(ii.primary_read||'')}</div>
+    <div class="ii-read">${esc(ii.primary_read||ii.executive_summary||'')}</div>
     <div class="ii-pillar-grid">
-      ${_pillar('Market Structure', '📊', p1.score||0, p1.direction||'NEUTRAL', p1.narrative||'')}
-      ${_pillar('Dealer',           '🏦', p2.score||0, p2.direction||'NEUTRAL', p2.narrative||'')}
-      ${_pillar('Institutional',    '🌊', p3.score||0, p3.direction||'NEUTRAL', p3.narrative||'')}
-      ${_pillar('Execution',        '⚡', p4.score||0, p4.decision_state||'NO TRADE', p4.narrative||'')}
+      ${_pillar('Market Structure', '📊', msScore,   msDir,   msNote)}
+      ${_pillar('Dealer',           '🏦', dScore,    dDir,    dNote)}
+      ${_pillar('Institutional',    '🌊', instScore, instDir, instNote)}
+      ${_pillar('Execution',        '⚡', execScore, execDir, execNote)}
     </div>
     <div class="ii-what">
       <div class="ii-what-label">What institutions are doing</div>
@@ -2549,8 +2589,10 @@ function renderInstitutionalIntelligence(d) {
     </div>
     <div class="ii-what">
       <div class="ii-what-label">What dealers are doing</div>
-      <div class="ii-what-text">${esc((ii.what_dealers||'').slice(0,200))}${(ii.what_dealers||'').length > 200 ? '…' : ''}</div>
+      <div class="ii-what-text">${esc((ii.what_dealers||'').slice(0,250))}${(ii.what_dealers||'').length>250?'…':''}</div>
     </div>
+    ${evHtml}
+    ${ii.primary_risk ? `<div class="ii-what"><div class="ii-what-label" style="color:var(--red)">Primary Risk</div><div class="ii-what-text">${esc(ii.primary_risk)}</div></div>` : ''}
   `;
 }
 
@@ -3007,6 +3049,14 @@ document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initInnerTabs();
   initReplayControls();
+  // DCC clock — update every second
+  setInterval(() => {
+    const clockEl = $('dccClock');
+    if (clockEl) {
+      const et = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      clockEl.textContent = et + ' ET';
+    }
+  }, 1000);
   initTickerSelect();
   initRefreshBtn();
   initRunScanButtons();
@@ -3039,3 +3089,471 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(loadMarketStatus, 60000);
   setInterval(loadSignalLog, 30000);
 });
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SPRINT 8 — DECISION COMMAND CENTER + CONFIDENCE PYRAMID
+   Reads exclusively from institutional_intelligence + existing engine outputs.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Helpers ──────────────────────────────────────────────────────────────── */
+function dccBiasColor(b) {
+  return b === 'BULLISH' ? 'var(--green)' : b === 'BEARISH' ? 'var(--red)' : 'var(--muted)';
+}
+function dccStageColor(stage) {
+  return stage === 'EXECUTE' ? 'var(--green)'  :
+         stage === 'ARMED'   ? 'var(--amber)'  :
+         stage === 'PREPARE' ? '#60a5fa'        : 'var(--faint)';
+}
+function dccDecisionClass(state) {
+  if (!state) return 'dcc-neutral';
+  if (state.startsWith('ENTER_CALL'))  return 'dcc-call';
+  if (state.startsWith('ENTER_PUT'))   return 'dcc-put';
+  if (state.startsWith('WATCH_CALL'))  return 'dcc-watch-call';
+  if (state.startsWith('WATCH_PUT'))   return 'dcc-watch-put';
+  if (state === 'READY')               return 'dcc-watch-call';
+  return 'dcc-neutral';
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   renderDCC — Decision Command Center (Sprint 8.0.1)
+   Reads from: institutional_intelligence, market_drivers, dealer_positioning,
+               trade_coach, story, playbook, ribbon, ici
+   ────────────────────────────────────────────────────────────────────────── */
+function renderDCC(d) {
+  if (!d) return;
+
+  const ii    = (d.institutional_intelligence && d.institutional_intelligence.available)
+                  ? d.institutional_intelligence : null;
+  const tc    = d.trade_coach  || {};
+  const ms    = d.market_state || d.ribbon || {};
+  const rib   = d.ribbon || {};
+  const story = d.story  || {};
+  const ici   = d.ici    || {};
+  const pb    = d.playbook || {};
+  const dp    = d.dealer_positioning || {};
+  const md    = d.market_drivers || {};
+
+  const decision     = (ii && ii.decision_state)  || d.decision_state || 'NO_TRADE';
+  const instBias     = (ii && ii.institutional_bias) || 'NEUTRAL';
+  const dealerBias   = (ii && ii.delta_bias) || (dp.delta || {}).bias || 'NEUTRAL';
+  const gammaRegime  = (ii && ii.gamma_regime) || (dp.gamma || {}).regime || 'NEUTRAL_GAMMA';
+  const sessionState = (ii && ii.session_state) || d.session?.session_state || '';
+  const iciScore     = Number((ici.ici) || 0);
+  const pocMig       = (ii && ii.poc_migration) || ms.poc_migration || 'STABLE';
+  const flowBias     = (ii && ii.flow_bias) || 'MIXED';
+  const flowUrgency  = (ii && ii.flow_urgency) || 'LOW';
+  const pineConf     = (ii && ii.pine_confirmed) || false;
+  const pinProb      = Number((ii && ii.pin_probability) || 0);
+  const momProb      = Number((ii && ii.momentum_probability) || 0);
+  const acceptance   = (ii && ii.acceptance) || '';
+  const auctionBias  = (ii && ii.auction_bias) || '';
+
+  const price    = rib.spx_price || ms.price || 0;
+  const esPrice  = rib.es_price  || 0;
+
+  // ── Market Status Bar ────────────────────────────────────────────────────
+  const marketStatEl   = $('dccMarketState');
+  const sessionTypeEl  = $('dccSessionType');
+  const dealerEnvEl    = $('dccDealerEnv');
+  const instBiasEl     = $('dccInstBias');
+  const priceEl        = $('dccPrice');
+  const esEl           = $('dccES');
+
+  if (marketStatEl) {
+    const msl = sessionState === 'MARKET_OPEN' ? 'OPEN' :
+                sessionState === 'PREMARKET'   ? 'PRE-MARKET' :
+                sessionState === 'AFTER_HOURS' ? 'AFTER-HRS' :
+                sessionState === 'OVERNIGHT'   ? 'OVERNIGHT' : 'CLOSED';
+    marketStatEl.textContent = msl;
+    marketStatEl.style.color = sessionState === 'MARKET_OPEN' ? 'var(--green)' : 'var(--amber)';
+  }
+
+  // Session type from playbook or fallback
+  const pbSession = (pb.session_type || {}).type || '';
+  if (sessionTypeEl) {
+    sessionTypeEl.textContent = (pbSession || 'MONITORING').replace(/_/g, ' ');
+    sessionTypeEl.style.color = pbSession === 'TREND_DAY' ? 'var(--green)' :
+                                 pbSession === 'VOLATILE_DAY' ? 'var(--red)' :
+                                 pbSession === 'PINNING_DAY' ? 'var(--amber)' : 'var(--muted)';
+  }
+
+  if (dealerEnvEl) {
+    const denv = gammaRegime.replace('_GAMMA', '').replace('_', ' ');
+    dealerEnvEl.textContent = denv;
+    dealerEnvEl.style.color = gammaRegime === 'NEGATIVE_GAMMA' ? 'var(--red)' :
+                               gammaRegime === 'POSITIVE_GAMMA' ? 'var(--green)' : 'var(--muted)';
+  }
+  if (instBiasEl) {
+    instBiasEl.textContent = instBias;
+    instBiasEl.style.color = dccBiasColor(instBias);
+  }
+  if (priceEl && price) priceEl.textContent = '$' + fmt(price);
+  if (esEl && esPrice)  esEl.textContent    = '$' + fmt(esPrice);
+
+  // Clock
+  const clockEl = $('dccClock');
+  if (clockEl) {
+    const now = new Date();
+    const et  = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    clockEl.textContent = et + ' ET';
+  }
+
+  // ── Executive Summary ────────────────────────────────────────────────────
+  const execEl = $('dccExecSummary');
+  if (execEl) {
+    // Prefer institutional_intelligence executive_summary, then story, then playbook
+    const exec = (ii && ii.executive_summary) ||
+                 story.executive_summary ||
+                 (pb.primary_scenario || {}).path || '';
+
+    if (sessionState === 'OVERNIGHT' || sessionState === 'PREMARKET') {
+      const onPlan = d.overnight_game_plan || {};
+      const onBias = onPlan.bias || 'NEUTRAL';
+      const biasC  = onBias.includes('BULL') ? 'var(--green)' : onBias.includes('BEAR') ? 'var(--red)' : 'var(--amber)';
+      execEl.innerHTML = `
+        <div style="margin-bottom:6px">
+          <span style="font-family:var(--mono);font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--faint)">
+            ${sessionState === 'OVERNIGHT' ? '☾ OVERNIGHT' : '⊙ PRE-MARKET'}
+          </span>
+          <span style="margin-left:8px;font-family:var(--mono);font-size:11px;font-weight:800;color:${biasC}">${esc(onBias.replace(/_/g,' '))}</span>
+        </div>
+        <div class="dcc-exec-text-body">${esc(onPlan.executive_summary || exec || 'Building overnight context...')}</div>`;
+    } else if (exec) {
+      execEl.innerHTML = `<div class="dcc-exec-text-body">${esc(exec)}</div>`;
+    } else {
+      execEl.innerHTML = '<div class="sk-waiting">⌛ Loading institutional read...</div>';
+    }
+  }
+
+  // ── Trade Decision + Execution Ring ──────────────────────────────────────
+  const decEl   = $('dccDecision');
+  const ringEl  = $('dccRingFill');
+  const scoreEl = $('dccExecScore');
+  const stageEl = $('dccExecStage');
+  const stageDescEl = $('dccExecStageDesc');
+
+  if (decEl) {
+    decEl.textContent = decision.replace(/_/g, ' ');
+    decEl.className   = 'dcc-decision-badge ' + dccDecisionClass(decision);
+  }
+
+  // Execution score and stage from ICI + gate alignment
+  const execScore = Math.round(iciScore);
+  const stage = execScore >= 90 ? 'EXECUTE' :
+                execScore >= 75 ? 'ARMED'   :
+                execScore >= 55 ? 'PREPARE' : 'WATCH';
+  const stageColor = dccStageColor(stage);
+
+  if (ringEl) {
+    const circ = 213.6;
+    const offset = circ * (1 - execScore / 100);
+    ringEl.style.strokeDashoffset = offset.toString();
+    ringEl.style.stroke = stageColor;
+  }
+  if (scoreEl) { scoreEl.textContent = execScore; scoreEl.style.color = stageColor; }
+  if (stageEl) { stageEl.textContent = stage; stageEl.style.color = stageColor; }
+  if (stageDescEl) {
+    const stageDescs = {
+      EXECUTE: 'All gates aligned — entry permitted',
+      ARMED:   'Near entry — confirm Pine trigger',
+      PREPARE: 'Conditions building — stay alert',
+      WATCH:   'Monitoring — not ready to act',
+    };
+    stageDescEl.textContent = stageDescs[stage] || '';
+  }
+
+  // ── Why Bullets ───────────────────────────────────────────────────────────
+  const whyEl    = $('dccWhyBullets');
+  const whyLabel = $('dccWhyLabel');
+  if (whyEl) {
+    const isEnter = decision.startsWith('ENTER');
+    const isWatch = decision.startsWith('WATCH') || decision === 'READY';
+    if (whyLabel) {
+      whyLabel.textContent = isEnter ? 'Enter Because' : isWatch ? 'Watching Because' : 'Blocked By';
+      whyLabel.style.color = isEnter ? 'var(--green)' : isWatch ? 'var(--amber)' : 'var(--red)';
+    }
+
+    // Build evidence bullets from institutional_intelligence.evidence + gates
+    const evidence = (ii && ii.evidence) || [];
+    const bullets = [];
+
+    // From evidence chain
+    evidence.slice(0, 4).forEach(ev => {
+      const ok = ev.direction === instBias || ev.direction === 'BULLISH' && instBias === 'BULLISH' || ev.direction === 'BEARISH' && instBias === 'BEARISH';
+      bullets.push({ ok: ok && ev.strength !== 'LOW', label: ev.source.replace(/_/g, ' ') + ': ' + ev.note.slice(0, 55) });
+    });
+
+    // Append key gates
+    bullets.push({ ok: pineConf,   label: 'Pine signal confirmed and fresh' });
+    bullets.push({ ok: iciScore >= 70, label: `ICI ${fmtI(iciScore)}/100 — institutional alignment` });
+    if (pocMig === 'RISING')  bullets.push({ ok: true,  label: 'POC migrating higher — value accepted' });
+    if (pocMig === 'FALLING') bullets.push({ ok: true,  label: 'POC migrating lower — value accepted' });
+    if (flowUrgency === 'HIGH') bullets.push({ ok: flowBias !== 'MIXED', label: 'High-urgency institutional sweeps' });
+    if (!pineConf) bullets.push({ ok: false, label: 'Pine confirmation pending' });
+
+    // Deduplicate, keep top 7
+    const seen = new Set();
+    const unique = bullets.filter(b => { const k = b.label.slice(0,30); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 7);
+
+    whyEl.innerHTML = unique.map(b => `
+      <div class="dcc-why-row">
+        <span class="dcc-why-dot ${b.ok ? 'dcc-dot-ok' : 'dcc-dot-no'}">${b.ok ? '✓' : '✗'}</span>
+        <span class="dcc-why-text ${b.ok ? 'dcc-why-ok' : 'dcc-why-no'}">${esc(b.label)}</span>
+      </div>`).join('');
+  }
+
+  // ── Invalidation ─────────────────────────────────────────────────────────
+  const invEl = $('dccInvalidation');
+  if (invEl) {
+    const inv = (pb && pb.invalidation) ||
+                (ii && ii.primary_risk)  ||
+                (tc && tc.invalidation)  ||
+                'Monitoring for changes in flow, POC direction, or dealer positioning.';
+    invEl.textContent = inv;
+  }
+
+  // ── Confidence Pyramid ────────────────────────────────────────────────────
+  renderConfidencePyramid(d, ii);
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   renderConfidencePyramid — Sprint 8.1 Trust Layer
+   Shows which layer of the stack produced (or failed) the confidence score.
+   ────────────────────────────────────────────────────────────────────────── */
+function renderConfidencePyramid(d, ii) {
+  const el = $('dccConfidencePyramid');
+  if (!el) return;
+
+  const ici    = d.ici || {};
+  const comps  = ici.components || {};
+  const wts    = ici.weights    || {};
+  const rib    = d.ribbon || {};
+  const dp     = d.dealer_positioning || {};
+  const md     = d.market_drivers || {};
+  const ms     = d.market_state || {};
+
+  // Six pyramid layers, top to bottom (trade → foundational)
+  const layers = [
+    {
+      label: 'Trade',
+      score: Math.round(Number(ici.ici || 0)),
+      note:  'Final execution score',
+      source: 'ICI',
+    },
+    {
+      label: 'Dealer Position',
+      score: Math.round(Number((dp.gamma || {}).score || (dp.delta || {}).confidence || 50)),
+      note:  `${((dp.gamma || {}).regime || 'NEUTRAL').replace(/_/g,' ')} · Delta ${(dp.delta || {}).bias || '--'}`,
+      source: 'DEALER',
+    },
+    {
+      label: 'Institutional Flow',
+      score: Math.round(Number((ii && ii.flow_conviction) || comps.flow_momentum || 50)),
+      note:  `${(ii && ii.flow_bias) || '--'} bias · ${(ii && ii.flow_urgency) || '--'} urgency`,
+      source: 'FLOW',
+    },
+    {
+      label: 'Auction / Volume',
+      score: Math.round(Number(comps.conviction || 50)),
+      note:  `${(ii && ii.auction_state) || '--'} · POC ${(ii && ii.poc_migration) || '--'}`,
+      source: 'AUCTION',
+    },
+    {
+      label: 'Market Structure',
+      score: Math.round(Number(comps.gamma_stability || 50)),
+      note:  `GEX ${Math.round(Number((dp.gamma || {}).gex_score || 50))} · ${(ii && ii.vol_regime) || '--'} vol`,
+      source: 'STRUCTURE',
+    },
+    {
+      label: 'Market Drivers',
+      score: Math.round(Number((md.driver_score) || 50)),
+      note:  `${(md.leadership_label || '--')} · ${(md.breadth || 'MIXED').replace(/_/g,' ')}`,
+      source: 'DRIVERS',
+    },
+  ];
+
+  const barColor = s => s >= 75 ? 'var(--green)' : s >= 55 ? 'var(--blue)' : s >= 40 ? 'var(--amber)' : 'var(--red)';
+
+  // Pyramid renders top-to-bottom, widest at bottom (foundational)
+  // Invert: Trade is apex (narrow), Drivers is base (wide)
+  const layerCount = layers.length;
+
+  el.innerHTML = layers.map((lyr, i) => {
+    // Width: apex narrow (60%), base full (100%)
+    const pct  = Math.round(60 + (i / (layerCount - 1)) * 40);
+    const bc   = barColor(lyr.score);
+    const weak = lyr.score < 50;
+    return `
+      <div class="pyr-layer" style="width:${pct}%">
+        <div class="pyr-header">
+          <span class="pyr-label ${weak ? 'pyr-weak' : ''}">${esc(lyr.label)}</span>
+          <span class="pyr-score" style="color:${bc}">${lyr.score}</span>
+        </div>
+        <div class="pyr-bar-track">
+          <div class="pyr-bar-fill" style="width:${lyr.score}%;background:${bc}"></div>
+        </div>
+        <div class="pyr-note">${esc(lyr.note)}</div>
+      </div>`;
+  }).join('');
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   renderMarketDriversPanel — Sprint 8.0.3
+   Reads from: market_drivers (from /api/institutional_os)
+   ────────────────────────────────────────────────────────────────────────── */
+function renderMarketDriversPanel(d) {
+  const el = $('marketDriversPanel');
+  if (!el || !d) return;
+
+  const md = d.market_drivers;
+  if (!md || !md.available) {
+    el.innerHTML = '<div class="sk-waiting">⌛ Fetching constituent data...</div>';
+    return;
+  }
+
+  const biasColor = md.market_bias === 'BULLISH' ? 'var(--green)' :
+                    md.market_bias === 'BEARISH'  ? 'var(--red)'   : 'var(--muted)';
+
+  const bull = (md.top_bullish_drivers || []).slice(0, 4);
+  const bear = (md.top_bearish_drivers || []).slice(0, 2);
+
+  el.innerHTML = `
+    <div class="md-header">
+      <span class="md-bias" style="color:${biasColor}">${esc(md.market_bias||'MIXED')}</span>
+      <span class="md-breadth">${esc((md.breadth||'').replace(/_/g,' '))}</span>
+    </div>
+    <div class="md-leadership">${esc(md.leadership_label||'')}</div>
+    <div class="md-narrative">${esc(md.story_line||md.interpretation||'')}</div>
+    ${bull.length ? `
+    <div class="md-section-label">▲ Leading</div>
+    ${bull.map(dr => `
+      <div class="md-driver-row">
+        <span class="md-ticker">${esc(dr.ticker)}</span>
+        <span class="md-chg ${dr.change_pct>=0?'md-bull':'md-bear'}">${dr.change_pct>=0?'+':''}${(dr.change_pct||0).toFixed(2)}%</span>
+        <div class="md-impact-bar-wrap">
+          <div class="md-impact-bar" style="width:${Math.min(Math.abs(dr.weighted_impact||0)*8,100)}%;background:${dr.change_pct>=0?'var(--green)':'var(--red)'}"></div>
+        </div>
+        <span class="md-pts">${dr.change_pct>=0?'+':''}${(dr.weighted_impact||0).toFixed(1)}pt</span>
+      </div>`).join('')}` : ''}
+    ${bear.length ? `
+    <div class="md-section-label" style="color:var(--red)">▼ Dragging</div>
+    ${bear.map(dr => `
+      <div class="md-driver-row">
+        <span class="md-ticker">${esc(dr.ticker)}</span>
+        <span class="md-chg md-bear">${(dr.change_pct||0).toFixed(2)}%</span>
+        <div class="md-impact-bar-wrap">
+          <div class="md-impact-bar" style="width:${Math.min(Math.abs(dr.weighted_impact||0)*8,100)}%;background:var(--red)"></div>
+        </div>
+        <span class="md-pts">${(dr.weighted_impact||0).toFixed(1)}pt</span>
+      </div>`).join('')}` : ''}
+    <div class="md-net">Net impact: <b>${(md.net_index_impact_pts||0)>=0?'+':''}${(md.net_index_impact_pts||0).toFixed(1)} pts</b></div>`;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   renderStrikeMagnetPanel — Sprint 8.0.5
+   Reads from: strike_magnets
+   ────────────────────────────────────────────────────────────────────────── */
+function renderStrikeMagnetPanel(d) {
+  const el = $('strikeMagnetPanel');
+  if (!el || !d) return;
+
+  const sm = d.strike_magnets;
+  if (!sm || !sm.available) {
+    el.innerHTML = '<div class="sk-waiting">⌛ Building magnet map...</div>';
+    return;
+  }
+
+  const pinColor = sm.pin_risk === 'HIGH' ? 'var(--amber)' : sm.pin_risk === 'MEDIUM' ? 'var(--blue)' : 'var(--faint)';
+  const magnets  = (sm.magnets || []).slice(0, 5);
+  const price    = sm.price || 0;
+
+  el.innerHTML = `
+    <div class="sm-pin-row">
+      <span class="sm-pin-label">Pin Risk</span>
+      <span class="sm-pin-val" style="color:${pinColor}">${esc(sm.pin_risk||'--')}</span>
+    </div>
+    ${sm.max_pain ? `<div class="sm-maxpain">Max Pain ~$${fmt(sm.max_pain)} <span class="sm-est">(est.)</span></div>` : ''}
+    <div class="sm-magnets">
+      ${magnets.map(m => {
+        const above = m.side === 'ABOVE';
+        const mc    = m.type === 'CALL_WALL' ? 'var(--green)' :
+                      m.type === 'PUT_WALL'  ? 'var(--red)'   :
+                      m.type === 'ZERO_GAMMA'? 'var(--amber)'  :
+                      m.type === 'MAX_PAIN'  ? 'var(--purple)' : 'var(--faint)';
+        const dist  = Math.abs(m.distance||0).toFixed(2);
+        return `<div class="sm-row ${m.type === 'CALL_WALL' || m.type === 'PUT_WALL' ? 'sm-row-major' : ''}">
+          <span class="sm-strike" style="color:${mc}">$${fmt(m.strike)}</span>
+          <span class="sm-type">${esc((m.type||'').replace(/_/g,' '))}</span>
+          <span class="sm-dist" style="color:${above?'var(--green)':'var(--red)'}">${above?'↑':'↓'}${dist}</span>
+          <div class="sm-score-bar"><div style="width:${m.score||0}%;background:${mc}"></div></div>
+        </div>`}).join('')}
+    </div>
+    <div class="sm-watch">${esc((sm.watch||'').slice(0,100))}</div>`;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+   renderFlowMeter — Sprint 8.0.4
+   Reads from: flow_intelligence_2 inside the API response
+   ────────────────────────────────────────────────────────────────────────── */
+function renderFlowMeter(d) {
+  const el = $('opFlowPanel');
+  if (!el || !d) return;
+
+  const fi = d.flow_intelligence_2 || d.flow_intelligence || d.flow || {};
+  const ms = d.market_state || {};
+
+  const bias      = fi.flow_bias || fi.bias || ms.flow_bias || 'MIXED';
+  const conv      = Number(fi.flow_conviction || fi.conviction || 50);
+  const urgency   = fi.urgency || 'LOW';
+  const intent    = fi.flow_intent || fi.institutional_intent || 'MIXED';
+  const swPress   = Number(fi.sweep_pressure || 0);
+  const blkConv   = Number(fi.block_conviction || 0);
+  const splitAcc  = Number(fi.split_accumulation || 0);
+  const dealResp  = Number(fi.dealer_response || 50);
+  const netPrem   = Number(fi.net_premium || ms.net_premium || 0);
+  const callPrem  = Number(fi.call_premium || ms.call_premium || 0);
+  const putPrem   = Number(fi.put_premium  || ms.put_premium  || 0);
+  const sweeps    = Number(fi.sweep_count  || ms.tape_sweeps  || 0);
+  const narrative = fi.narrative || fi.interpretation || '';
+  const contras   = fi.contradictions || [];
+  const dpLine    = fi.dark_pool_line || '';
+  const dealRead  = fi.dealer_read    || '';
+
+  const biasColor = bias === 'BULLISH' ? 'var(--green)' : bias === 'BEARISH' ? 'var(--red)' : 'var(--muted)';
+  const urgColor  = urgency === 'HIGH' ? 'var(--amber)' : urgency === 'MEDIUM' ? 'var(--blue)' : 'var(--faint)';
+  const barColor  = s => s >= 70 ? 'var(--green)' : s >= 45 ? 'var(--blue)' : 'var(--red)';
+
+  const _meter = (label, score, hint) => `
+    <div class="fm-meter">
+      <div class="fm-meter-header">
+        <span class="fm-meter-label">${label}</span>
+        <span class="fm-meter-score" style="color:${barColor(score)}">${Math.round(score)}</span>
+      </div>
+      <div class="fm-meter-track"><div class="fm-meter-fill" style="width:${score}%;background:${barColor(score)}"></div></div>
+      ${hint ? `<div class="fm-meter-hint">${esc(hint)}</div>` : ''}
+    </div>`;
+
+  el.innerHTML = `
+    <div class="fm-header">
+      <span class="fm-bias" style="color:${biasColor}">${esc(bias)}</span>
+      <span class="fm-urgency" style="color:${urgColor}">${esc(urgency)} URGENCY</span>
+      <span class="fm-intent">${esc(intent.replace(/_/g,' '))}</span>
+    </div>
+
+    ${_meter('Sweep Pressure',    swPress,  sweeps > 0 ? sweeps + ' active sweep' + (sweeps>1?'s':'') : '')}
+    ${_meter('Block Conviction',  blkConv,  '')}
+    ${_meter('Split Accumulation',splitAcc, '')}
+    ${_meter('Dealer Response',   dealResp, '')}
+
+    <div class="fm-prems">
+      <div class="fm-prem-row"><span class="fm-prem-label">Call premium</span><span class="fm-prem-val rv-green">$${fmtM(callPrem)}</span></div>
+      <div class="fm-prem-row"><span class="fm-prem-label">Put premium</span><span class="fm-prem-val rv-red">$${fmtM(putPrem)}</span></div>
+      <div class="fm-prem-row"><span class="fm-prem-label">Net</span><span class="fm-prem-val" style="color:${netPrem>=0?'var(--green)':'var(--red)'}">${netPrem>=0?'+':''}$${fmtM(netPrem)}</span></div>
+    </div>
+
+    ${narrative ? `<div class="fm-narrative">${esc(narrative.slice(0,180))}</div>` : ''}
+    ${contras.length ? `<div class="fm-contra">⚡ ${esc(contras[0].slice(0,120))}</div>` : ''}
+    ${dpLine    ? `<div class="fm-dp">${esc(dpLine)}</div>` : ''}
+    ${dealRead  ? `<div class="fm-dealer-read">${esc(dealRead.slice(0,100))}</div>` : ''}
+  `;
+}
