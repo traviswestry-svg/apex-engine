@@ -175,7 +175,7 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
-VERSION = "7.0.0_APEX_INSTITUTIONAL_INTELLIGENCE"
+VERSION = "7.0.1_APEX_EIGHT_FOUNDATION"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -5634,6 +5634,88 @@ def _fetch_flow_tape_rows(tickers: List[str], size_per_ticker: int = 50) -> List
                     r["ticker"] = qd_ticker
                 all_rows.append(r)
     return all_rows
+
+
+@app.route("/api/engine_health")
+def api_engine_health():
+    """GET /api/engine_health — per-engine health dashboard (APEX 8.0).
+
+    Returns Green/Yellow/Red status for every engine based on last run.
+    Reads from STATE["last_result"] populated by /api/institutional_os.
+    """
+    with STATE_LOCK:
+        last = STATE.get("last_result") or {}
+
+    engines_checked = [
+        ("gamma",                   "gamma_regime"),
+        ("auction_intelligence",    "auction_intelligence"),
+        ("dealer_positioning",      "dealer_positioning"),
+        ("flow_intelligence_2",     "flow_intelligence_2"),
+        ("options_chain",           "options_chain"),
+        ("volatility",              "volatility"),
+        ("rotation",                "rotation"),
+        ("market_drivers",          "market_drivers"),
+        ("strike_magnets",          "strike_magnets"),
+        ("institutional_intelligence", "institutional_intelligence"),
+        ("execution_intelligence",  "execution_intelligence"),
+        ("story",                   "story"),
+        ("trade_coach",             "trade_coach"),
+        ("playbook",                "playbook"),
+    ]
+
+    health_rows = []
+    available_count = 0
+    for label, key in engines_checked:
+        obj = last.get(key)
+        if isinstance(obj, dict) and obj.get("available"):
+            status   = "GREEN"
+            qflags   = obj.get("quality_flags") or []
+            status   = "YELLOW" if qflags else "GREEN"
+            exec_ms  = obj.get("execution_ms") or 0
+            err      = obj.get("error")
+            available_count += 1
+        elif isinstance(obj, dict):
+            status   = "YELLOW"
+            qflags   = obj.get("quality_flags") or ["AVAILABLE_KEY_MISSING"]
+            exec_ms  = 0
+            err      = obj.get("error")
+        elif obj is None:
+            status   = "RED"
+            qflags   = ["NOT_IN_LAST_RESULT"]
+            exec_ms  = 0
+            err      = "Engine output missing from last scan"
+        else:
+            status   = "YELLOW"
+            qflags   = ["UNEXPECTED_TYPE"]
+            exec_ms  = 0
+            err      = None
+
+        health_rows.append({
+            "engine":   label,
+            "status":   status,
+            "error":    err,
+            "flags":    qflags[:3],
+            "exec_ms":  exec_ms,
+        })
+
+    timed_out = last.get("timed_out_components") or []
+    for row in health_rows:
+        if row["engine"] in timed_out:
+            row["status"] = "YELLOW"
+            row["flags"].append("TIMED_OUT_LAST_RUN")
+
+    return jsonify({
+        "ok":               True,
+        "version":          VERSION,
+        "engines_total":    len(engines_checked),
+        "engines_available": available_count,
+        "engines_red":      sum(1 for r in health_rows if r["status"] == "RED"),
+        "engines_yellow":   sum(1 for r in health_rows if r["status"] == "YELLOW"),
+        "timed_out_last":   timed_out,
+        "last_response_ms": last.get("response_ms"),
+        "last_partial":     last.get("partial", False),
+        "engines":          health_rows,
+    })
 
 
 @app.route("/api/execution_intelligence")
