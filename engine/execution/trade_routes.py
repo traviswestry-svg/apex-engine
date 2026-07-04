@@ -164,8 +164,31 @@ def register_trade_routes(
                 continue
             seen.add(c["time"])
             deduped.append(c)
+        # The underlying fetch over-fetches (~20 calendar days) so it can fall back
+        # to the last completed session when markets are closed. Trim to the last
+        # `days` ET trading sessions so the chart shows a clean intraday view.
+        try:
+            try:
+                from zoneinfo import ZoneInfo
+                _ET = ZoneInfo("America/New_York")
+            except Exception:
+                _ET = dt.timezone.utc
+            by_day = {}
+            order = []
+            for c in deduped:
+                d = dt.datetime.fromtimestamp(c["time"], _ET).strftime("%Y-%m-%d")
+                if d not in by_day:
+                    by_day[d] = []
+                    order.append(d)
+                by_day[d].append(c)
+            keep = order[-days:]
+            deduped = [c for d in keep for c in by_day[d]]
+            sessions = keep
+        except Exception:
+            sessions = []
         last = deduped[-1]["close"] if deduped else None
         return jsonify(envelope(bool(deduped), {"candles": deduped, "count": len(deduped),
+                                                "sessions": sessions,
                                                 "last": last, "tf": tf, "days": days}))
 
     @app.route("/api/trade/spx/project-levels", methods=["POST"])
