@@ -3014,3 +3014,89 @@ body {
   border: 1px solid var(--bdr); border-radius: var(--radius);
   background: var(--surf);
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 8.0 — FOUR-LAYER NAVIGATION  (Decision · Execution · Intelligence · Learning)
+   ════════════════════════════════════════════════════════════════════════════ */
+.layer-nav { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+.layer-group {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 0 12px; border-left: 1px solid var(--bdr);
+}
+.layer-group:first-child { padding-left: 0; border-left: none; }
+.layer-label {
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: .18em; text-transform: uppercase;
+  color: var(--faint); font-weight: 700; padding-left: 2px;
+}
+.layer-tabs { display: flex; gap: 3px; flex-wrap: wrap; }
+.layer-primary .tab-btn.active {
+  background: rgba(56,189,248,.14); border-color: rgba(56,189,248,.55);
+}
+.layer-primary .layer-label { color: var(--blue); }
+
+@media (max-width: 720px){
+  .layer-group { border-left: none; padding: 0 0 6px; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   EXECUTION INTELLIGENCE (Layer 2)
+   ════════════════════════════════════════════════════════════════════════════ */
+.exec-empty { display:flex; align-items:center; justify-content:center; gap:12px; padding:60px 20px; color:var(--muted); font-family:var(--mono); font-size:13px; }
+.exec { display:block; }
+#execGrid { display:flex; flex-direction:column; gap:12px; }
+
+.exec-head {
+  display:grid; grid-template-columns: 1.4fr 1fr 1.4fr; gap:16px; align-items:center;
+  background:linear-gradient(180deg,var(--surf2),var(--surf)); border:1px solid var(--bdr);
+  border-radius:var(--radius); padding:16px 20px;
+}
+.exec-stage-label { font-family:var(--mono); font-size:22px; font-weight:800; letter-spacing:.02em; }
+.exec-stage-desc { font-size:12px; color:var(--muted); margin-top:3px; }
+.exec-quality { text-align:center; }
+.exec-quality-num { font-family:var(--mono); font-size:40px; font-weight:800; line-height:1; color:var(--text); }
+.exec-quality-cap { font-family:var(--mono); font-size:9px; letter-spacing:1.5px; color:var(--faint); margin-top:4px; }
+.exec-timing { text-align:right; }
+.exec-timing-label { font-family:var(--mono); font-size:14px; font-weight:700; color:var(--text); }
+.exec-timing-note { font-size:11px; color:var(--muted); margin-top:3px; }
+
+.exec-card { background:var(--surf); border:1px solid var(--bdr); border-radius:var(--radius); padding:14px 16px; }
+.exec-card-head { display:flex; justify-content:space-between; align-items:center; font-family:var(--mono); font-size:10px; letter-spacing:2px; color:var(--faint); margin-bottom:11px; }
+.exec-sub { letter-spacing:0; text-transform:none; font-size:10px; color:var(--muted); }
+.exec-side { font-family:var(--mono); font-size:12px; font-weight:800; padding:2px 10px; border-radius:999px; letter-spacing:.05em; background:var(--surf2); color:var(--muted); }
+.exec-side.call { color:var(--green); background:rgba(34,197,94,.1); }
+.exec-side.put  { color:var(--red);   background:rgba(239,68,68,.1); }
+
+.exec-levels { display:grid; grid-template-columns:repeat(4,1fr); gap:8px 18px; }
+.exec-lvl { display:flex; flex-direction:column; gap:2px; border-bottom:1px dashed var(--bdr); padding:5px 0; }
+.exec-lvl label { font-size:10px; color:var(--muted); }
+.exec-lvl span { font-family:var(--mono); font-size:15px; font-weight:700; color:var(--text); }
+.exec-red { color:var(--red)!important; } .exec-green { color:var(--green)!important; }
+.exec-invalid { margin-top:11px; font-size:11px; color:var(--amber); font-family:var(--mono); }
+
+.exec-signals { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+.exec-sig { background:var(--surf2); border:1px solid var(--bdr); border-radius:var(--radius-sm); padding:9px 11px; border-left:3px solid var(--bdr); }
+.exec-sig.pos { border-left-color:var(--green); } .exec-sig.neg { border-left-color:var(--red); } .exec-sig.warn { border-left-color:var(--amber); }
+.exec-sig-top { display:flex; justify-content:space-between; align-items:baseline; }
+.exec-sig-name { font-family:var(--mono); font-size:9px; letter-spacing:1px; color:var(--faint); }
+.exec-sig-val { font-family:var(--mono); font-size:12px; font-weight:800; color:var(--text); }
+.exec-sig-note { font-size:10.5px; color:var(--muted); margin-top:5px; line-height:1.35; }
+.exec-sig-bar { height:4px; background:var(--bdr); border-radius:2px; margin-top:7px; overflow:hidden; }
+.exec-sig-fill { height:100%; background:var(--blue); border-radius:2px; }
+
+.exec-cols { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.exec-why, .exec-exits { list-style:none; display:flex; flex-direction:column; gap:7px; }
+.exec-why li, .exec-exits li { font-size:12px; color:var(--text); padding-left:18px; position:relative; line-height:1.4; }
+.exec-why li::before { content:'›'; position:absolute; left:4px; color:var(--blue); font-weight:700; }
+.exec-why li.ok::before { content:'✓'; color:var(--green); }
+.exec-why li.miss::before { content:'✕'; color:var(--red); }
+.exec-exits li::before { content:'•'; position:absolute; left:6px; color:var(--muted); }
+
+.exec-pending { opacity:.92; }
+.exec-pending-tag { font-family:var(--mono); font-size:8.5px; letter-spacing:.1em; color:var(--amber); background:rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.3); padding:2px 8px; border-radius:999px; }
+.exec-edge { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+.exec-edge-cell { text-align:center; padding:8px 0; background:var(--surf2); border-radius:var(--radius-sm); border:1px dashed var(--bdr); }
+.exec-edge-num { font-family:var(--mono); font-size:24px; font-weight:800; color:var(--faint); }
+.exec-edge-cap { font-size:10px; color:var(--muted); margin-top:3px; }
+.exec-pending-note { font-size:10.5px; color:var(--faint); margin-top:10px; line-height:1.4; font-style:italic; }
+
+@media (max-width:820px){ .exec-head, .exec-levels, .exec-cols, .exec-edge { grid-template-columns:1fr 1fr; } .exec-timing{text-align:left;} }
