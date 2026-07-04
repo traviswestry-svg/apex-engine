@@ -125,6 +125,34 @@ def register_trade_routes(
                                     "side": body.get("side")})
         return jsonify(envelope(True, {"selected": body}))
 
+    @app.route("/api/trade/spx/project-levels", methods=["POST"])
+    def _spx_project_levels():
+        """Server-side source of truth for the dual chart. Projects trade lines between
+        the SPX index axis and the option premium axis. Body:
+          { spot, base_premium, delta, gamma?, source_axis: 'spx'|'premium',
+            levels: {ENTRY,STOP,BREAKEVEN,TP1,TP2,TP3}, suggest?: bool }"""
+        from engine.execution import price_mapper as pm
+        body = request.get_json(silent=True) or {}
+        try:
+            spot = float(body.get("spot"))
+            base_premium = float(body.get("base_premium"))
+            delta = float(body.get("delta"))
+        except (TypeError, ValueError):
+            return jsonify(envelope(False, errors=["spot, base_premium and delta are required numbers"]))
+        gamma = float(body.get("gamma") or 0.0)
+        source_axis = str(body.get("source_axis", "premium")).lower()
+        data: Dict[str, Any] = {}
+        if body.get("suggest"):
+            data["suggested"] = pm.suggest_bracket(base_premium, spot=spot, delta=delta, gamma=gamma)
+        levels = body.get("levels") or {}
+        if levels:
+            try:
+                data["projected"] = pm.project_levels(levels, source_axis, spot=spot,
+                                                      base_premium=base_premium, delta=delta, gamma=gamma)
+            except ValueError as e:
+                return jsonify(envelope(False, errors=[str(e)]))
+        return jsonify(envelope(True, data))
+
     # ── entry preview / place ────────────────────────────────────────────
     @app.route("/api/trade/spx/preview-entry", methods=["POST"])
     def _preview_entry():
