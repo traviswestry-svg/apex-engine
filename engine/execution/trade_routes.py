@@ -50,6 +50,7 @@ def register_trade_routes(
     polygon_chain_fetcher: Optional[Callable] = None,
     spot_provider: Optional[Callable[[], float]] = None,
     expected_path_provider: Optional[Callable[[], Optional[float]]] = None,
+    spx_candles_provider: Optional[Callable[[int, int], Any]] = None,
 ) -> None:
     """Attach all trade routes. Optional hooks let app.py inject its existing
     QuantData / Polygon chain fetchers and SPX spot; failover order is
@@ -124,6 +125,48 @@ def register_trade_routes(
         audit("CONTRACT_SELECTED", {"osi_key": body.get("osi_key"), "strike": body.get("strike"),
                                     "side": body.get("side")})
         return jsonify(envelope(True, {"selected": body}))
+
+    @app.route("/api/trade/spx/candles")
+    def _spx_candles():
+        """SPX cash candles for the command-center chart, in Lightweight Charts shape.
+        Reuses APEX's existing SPX fetch (I:SPX). Returns UTC-second timestamps."""
+        try:
+            days = max(1, min(5, int(request.args.get("days", 1))))
+        except Exception:
+            days = 1
+        try:
+            tf = int(request.args.get("tf", 5))
+        except Exception:
+            tf = 5
+        tf = tf if tf in (1, 5, 15) else 5
+        if not spx_candles_provider:
+            return jsonify(envelope(False, errors=["SPX candle feed not wired on this deployment."]))
+        try:
+            raw = spx_candles_provider(days, tf) or []
+        except Exception as e:
+            return jsonify(envelope(False, errors=[f"candle fetch failed: {e}"]))
+        candles = []
+        for b in raw:
+            t = b.get("t")
+            if t is None:
+                continue
+            candles.append({
+                "time": int(float(t) / 1000.0),
+                "open": b.get("o"), "high": b.get("h"),
+                "low": b.get("l"), "close": b.get("c"),
+            })
+        candles.sort(key=lambda c: c["time"])
+        # de-dup identical timestamps (Lightweight Charts requires strictly ascending)
+        deduped = []
+        seen = set()
+        for c in candles:
+            if c["time"] in seen:
+                continue
+            seen.add(c["time"])
+            deduped.append(c)
+        last = deduped[-1]["close"] if deduped else None
+        return jsonify(envelope(bool(deduped), {"candles": deduped, "count": len(deduped),
+                                                "last": last, "tf": tf, "days": days}))
 
     @app.route("/api/trade/spx/project-levels", methods=["POST"])
     def _spx_project_levels():
