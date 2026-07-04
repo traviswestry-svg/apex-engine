@@ -7104,10 +7104,15 @@ try:
         except Exception:
             return None
 
+    def _spx_candles_provider(days, tf):
+        # Reuse APEX's existing SPX cash fetch (I:SPX) — real index bars.
+        return _chart_fetch_bars("I:SPX", days=days, multiplier=tf)
+
     register_trade_routes(
         app,
         spot_provider=_spx_spot_provider,
         expected_path_provider=_spx_expected_path_provider,
+        spx_candles_provider=_spx_candles_provider,
     )
     print("APEX Trade Command Center routes registered (sandbox).", flush=True)
 except Exception as e:
