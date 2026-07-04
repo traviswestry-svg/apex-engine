@@ -1647,6 +1647,7 @@ async function _renderAll(data) {
     // 6.0.4 panels
     _r(renderFlow2, data);
     _r(renderStory, data);
+    _r(renderExecutionIntel, data);
     _r(renderOvernightGamePlan, data);
     _r(renderExecutiveSummary, data);
     _r(renderOpFlow, data);
@@ -4325,3 +4326,85 @@ function renderMcSpark(hist) {
   const col = last >= prev ? 'var(--green)' : 'var(--red)';
   svg.innerHTML = `<path d="${path}" fill="none" stroke="${col}" stroke-width="1.5"/>`;
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 8.0 — EXECUTION INTELLIGENCE (Layer 2)
+   Consolidates the risk engine (entry/stop/targets/RR) and the execution engine
+   (stage/timing/exhaustion/absorption/gamma-wall/pressure/delta). Reads only
+   fields already produced each scan — no new computation, no fabricated stats.
+   ════════════════════════════════════════════════════════════════════════════ */
+function renderExecutionIntel(d) {
+  const grid = $('execGrid'), empty = $('execEmpty');
+  const eie = d.execution_intelligence || {};
+  const risk = d.risk || {};
+  if (!eie.stage && !risk.stop) { if (empty) empty.style.display = 'flex'; if (grid) grid.style.display = 'none'; return; }
+  if (empty) empty.style.display = 'none';
+  if (grid) grid.style.display = 'flex';
+
+  // Header
+  const stageEl = $('execStageLabel');
+  if (stageEl) { stageEl.textContent = eie.stage || 'WATCH'; stageEl.style.color = eie.stage_color || 'var(--text)'; }
+  setTextX('execStageDesc', eie.stage_description || eie.narrative || '—');
+  const q = eie.exec_probability != null ? eie.exec_probability : (eie.scores && eie.scores.execution);
+  setTextX('execQuality', (q != null && isFinite(q)) ? Math.round(q) + '%' : '--');
+  setTextX('execTiming', (eie.timing || '—').toString().replace(/_/g, ' '));
+  setTextX('execTimingNote', eie.timing_note || '');
+
+  // Trade card (risk engine)
+  const side = String(risk.approved_side || '').toUpperCase();
+  const sideEl = $('execSide');
+  if (sideEl) { sideEl.textContent = side || '—'; sideEl.className = 'exec-side' + (/CALL|LONG|BULL/.test(side) ? ' call' : /PUT|SHORT|BEAR/.test(side) ? ' put' : ''); }
+  const L = v => (v != null && v !== '' && isFinite(v)) ? Number(v).toFixed(2) : '--';
+  setTextX('execEntry', risk.entry_zone || '--');
+  setTextX('execStop', L(risk.stop));
+  setTextX('execT1', L(risk.target1));
+  setTextX('execT2', L(risk.target2));
+  setTextX('execRR1', risk.rr_to_t1 != null ? Number(risk.rr_to_t1).toFixed(2) + ' : 1' : '--');
+  setTextX('execRR2', risk.rr_to_t2 != null ? Number(risk.rr_to_t2).toFixed(2) + ' : 1' : '--');
+  setTextX('execContract', risk.contract_hint || '--');
+  setTextX('execRiskPts', risk.risk_points != null ? Number(risk.risk_points).toFixed(1) + ' pts' : '--');
+  const inv = $('execInvalid');
+  if (inv) inv.textContent = eie.invalidation ? '⚠ Invalidation: ' + eie.invalidation : '';
+
+  // Execution signals
+  const sig = $('execSignals');
+  if (sig) {
+    const cards = [
+      ['Exhaustion', eie.exhaustion, 'signal'],
+      ['Absorption', eie.absorption, 'signal'],
+      ['Gamma Wall', eie.gamma_wall, 'interaction'],
+      ['Pressure', eie.pressure_acceleration, 'direction'],
+      ['Delta', eie.delta_acceleration, 'direction'],
+    ];
+    sig.innerHTML = cards.map(([name, obj, valKey]) => {
+      obj = obj || {};
+      const val = String(obj[valKey] || '—').replace(/_/g, ' ');
+      const score = Number(obj.score);
+      const cls = /BULL|BUY|ACCEPT|POS|UP/i.test(val) ? 'pos' : /BEAR|SELL|EXHAUST|NEG|DOWN|REJECT/i.test(val) ? 'neg' : (isFinite(score) && score >= 65 ? 'warn' : '');
+      const bar = isFinite(score) ? `<div class="exec-sig-bar"><div class="exec-sig-fill" style="width:${Math.max(0,Math.min(100,score))}%"></div></div>` : '';
+      return `<div class="exec-sig ${cls}">
+        <div class="exec-sig-top"><span class="exec-sig-name">${esc(name)}</span><span class="exec-sig-val">${esc(val)}</span></div>
+        <div class="exec-sig-note">${esc(obj.note || '')}</div>${bar}
+      </div>`;
+    }).join('');
+  }
+
+  // Why
+  const why = $('execWhy');
+  if (why) {
+    const bullets = eie.why_bullets || [];
+    why.innerHTML = bullets.length ? bullets.map(b => {
+      const cls = b.ok === true ? 'ok' : b.ok === false ? 'miss' : '';
+      return `<li class="${cls}">${esc((b.label || '') + (b.note ? ' — ' + b.note : ''))}</li>`;
+    }).join('') : '<li>No execution evidence this cycle.</li>';
+  }
+
+  // Exit plan
+  const exits = $('execExits');
+  if (exits) {
+    const rules = risk.exit_rules || [];
+    exits.innerHTML = rules.length ? rules.map(r => `<li>${esc(r)}</li>`).join('') : '<li>Exit rules populate when a trade is approved.</li>';
+  }
+}
+
+function setTextX(id, v){ const el = document.getElementById(id); if (el) el.textContent = v; }
