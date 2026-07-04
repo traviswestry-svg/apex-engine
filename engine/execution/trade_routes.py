@@ -48,6 +48,7 @@ def register_trade_routes(
     *,
     quantdata_chain_fetcher: Optional[Callable] = None,
     polygon_chain_fetcher: Optional[Callable] = None,
+    polygon_expirations_provider: Optional[Callable[[], Any]] = None,
     spot_provider: Optional[Callable[[], float]] = None,
     expected_path_provider: Optional[Callable[[], Optional[float]]] = None,
     spx_candles_provider: Optional[Callable[[int, int], Any]] = None,
@@ -91,8 +92,19 @@ def register_trade_routes(
     # ── chain / contract selection ───────────────────────────────────────
     @app.route("/api/trade/spx/expirations")
     def _spx_expirations():
+        # Prefer Polygon's real SPX expirations; fall back to the E*TRADE adapter.
+        if polygon_expirations_provider:
+            try:
+                exps = polygon_expirations_provider() or []
+                if exps:
+                    return jsonify(envelope(True, {"expirations": exps, "source": "polygon"}))
+            except Exception as e:
+                # fall through to E*TRADE
+                pass
         r = _adapter().get_option_expirations("SPX")
-        return jsonify(envelope(r.ok, r.data, mode=r.mode, warnings=r.warnings, errors=r.errors))
+        data = dict(r.data or {})
+        data.setdefault("source", "etrade")
+        return jsonify(envelope(r.ok, data, mode=r.mode, warnings=r.warnings, errors=r.errors))
 
     @app.route("/api/trade/spx/chain")
     def _spx_chain():
