@@ -6,6 +6,8 @@ import time
 import threading
 import sqlite3
 import statistics
+import json
+import math
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -2209,6 +2211,380 @@ def resolve_open_trades() -> int:
     return resolved_count
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# APEX SIGNAL-OUTCOME SPINE  (Piece Two)
+# ───────────────────────────────────────────────────────────────────────────────
+# Logs every actionable APEX decision with its full entry context, then samples
+# price on each scan to track MFE / MAE and resolve WIN / LOSS / EXPIRED intraday.
+# This is the measurement foundation for calibrated conviction and pattern memory
+# — every number it produces comes from a realized outcome, never an estimate.
+#
+# Independent of tracked_ideas (daily swing) and trade_reviews (manual journal).
+# Non-fatal by construction: any storage problem disables the spine and leaves the
+# scanner untouched (SPINE_AVAILABLE stays False).
+# ═══════════════════════════════════════════════════════════════════════════════
+SPINE_ENABLED         = os.getenv("SPINE_ENABLED", "true").lower() == "true"
+SPINE_DB_PATH         = os.getenv("SPINE_DB_PATH", DB_PATH)
+SPINE_LOG_WHEN_CLOSED = os.getenv("SPINE_LOG_WHEN_CLOSED", "false").lower() == "true"
+SPINE_MIN_STAGE       = os.getenv("SPINE_MIN_STAGE", "PREPARE").upper()
+SPINE_MAX_HOLD_MIN    = int(os.getenv("SPINE_MAX_HOLD_MIN", "120"))   # EXPIRE after this many minutes open
+SPINE_LOCK            = threading.Lock()
+SPINE_AVAILABLE       = False
+
+# Stage ordering — a signal is logged once it reaches at least SPINE_MIN_STAGE.
+_SPINE_STAGE_RANK = {"WATCH": 0, "PREPARE": 1, "ARMED": 2, "EXECUTE": 3}
+
+
+def _spine_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(SPINE_DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_signal_spine() -> None:
+    """Create the apex_signals table. Must NEVER raise — mirrors init_tracking_db."""
+    global SPINE_AVAILABLE
+    if not SPINE_ENABLED:
+        SPINE_AVAILABLE = False
+        return
+    with SPINE_LOCK:
+        try:
+            db_dir = os.path.dirname(SPINE_DB_PATH)
+            if db_dir:
+                os.makedirs(db_dir, exist_ok=True)
+            conn = _spine_conn()
+            try:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS apex_signals (
+                        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                        signal_id     TEXT UNIQUE,
+                        ticker        TEXT NOT NULL,
+                        direction     TEXT NOT NULL,
+                        session_date  TEXT NOT NULL,
+                        created_at    TEXT NOT NULL,
+                        entry_price   REAL,
+                        entry_low     REAL,
+                        entry_high    REAL,
+                        stop          REAL,
+                        target1       REAL,
+                        target2       REAL,
+                        risk_points   REAL,
+                        contract      TEXT,
+                        stage         TEXT,
+                        pine_confirmed INTEGER DEFAULT 0,
+                        ici           REAL,
+                        flow_score    REAL,
+                        conviction    REAL,
+                        context_json  TEXT,
+                        status        TEXT DEFAULT 'OPEN',
+                        mfe           REAL DEFAULT 0,
+                        mae           REAL DEFAULT 0,
+                        mfe_r         REAL DEFAULT 0,
+                        mae_r         REAL DEFAULT 0,
+                        last_price    REAL,
+                        samples       INTEGER DEFAULT 0,
+                        exit_price    REAL,
+                        exit_at       TEXT,
+                        exit_reason   TEXT,
+                        hold_seconds  INTEGER,
+                        outcome_r     REAL,
+                        updated_at    TEXT
+                    )
+                """)
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_spine_open ON apex_signals (ticker, status)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_spine_date ON apex_signals (session_date)")
+                conn.commit()
+            finally:
+                conn.close()
+            SPINE_AVAILABLE = True
+        except Exception as e:
+            SPINE_AVAILABLE = False
+            print(f"APEX signal spine DISABLED — could not init DB at '{SPINE_DB_PATH}': {e}. "
+                  f"Scanner continues normally.", flush=True)
+
+
+def _spine_num(v):
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        return None if (math.isnan(f) or math.isinf(f)) else f
+    except Exception:
+        return None
+
+
+def _spine_extract(ticker, result):
+    """Pull the entry context out of a scan result, or None if not actionable."""
+    risk = result.get("risk") or {}
+    eie  = result.get("execution_intelligence") or {}
+    decision = result.get("decision") or {}
+
+    direction = str(risk.get("approved_side") or decision.get("approved_side") or "").upper()
+    if direction in ("CALL", "LONG", "BULLISH"):
+        direction = "CALL"
+    elif direction in ("PUT", "SHORT", "BEARISH"):
+        direction = "PUT"
+    else:
+        return None
+
+    entry_price = _spine_num((result.get("market_state") or {}).get("price")) or _spine_num(risk.get("price"))
+    stop    = _spine_num(risk.get("stop"))
+    target1 = _spine_num(risk.get("target1"))
+    target2 = _spine_num(risk.get("target2"))
+    if entry_price is None or stop is None or target1 is None:
+        return None
+
+    stage = str(eie.get("stage") or "WATCH").upper()
+    if _SPINE_STAGE_RANK.get(stage, 0) < _SPINE_STAGE_RANK.get(SPINE_MIN_STAGE, 1):
+        return None
+
+    risk_pts = _spine_num(risk.get("risk_points")) or abs(entry_price - stop)
+    if not risk_pts or risk_pts <= 0:
+        return None
+
+    ici = _spine_num((result.get("ici") or {}).get("ici")) or _spine_num(result.get("confidence"))
+    flow_score = _spine_num((result.get("flow") or {}).get("flow_score")) or \
+                 _spine_num((result.get("flow_intelligence") or {}).get("flow_score"))
+    conviction = _spine_num((result.get("consensus") or {}).get("leading_conviction")) or \
+                 _spine_num(result.get("confidence"))
+
+    ctx = {
+        "gamma_regime": (result.get("gamma_regime") or {}).get("regime_label"),
+        "auction_state": ((result.get("auction_intelligence") or {}).get("auction_state") or {}).get("state"),
+        "session_type": ((result.get("institutional_intelligence") or {}).get("playbook") or {}).get("session_type_label"),
+        "grade": result.get("grade"),
+        "poc_migration": (result.get("market_state") or {}).get("poc_migration"),
+        "vix": (result.get("volatility") or {}).get("vix"),
+    }
+
+    return {
+        "ticker": ticker, "direction": direction, "entry_price": entry_price,
+        "entry_low": _spine_num(risk.get("entry_low")), "entry_high": _spine_num(risk.get("entry_high")),
+        "stop": stop, "target1": target1, "target2": target2, "risk_points": risk_pts,
+        "contract": risk.get("contract_hint"), "stage": stage,
+        "pine_confirmed": 1 if eie.get("pine_confirmed") else 0,
+        "ici": ici, "flow_score": flow_score, "conviction": conviction,
+        "context_json": json.dumps(ctx, default=str),
+    }
+
+
+def log_apex_signal(ticker, result, session_state):
+    """Log a new signal the first time a ticker+direction setup becomes actionable.
+    De-dupes against an existing OPEN row for the same ticker+direction. Returns id or None."""
+    if not SPINE_AVAILABLE:
+        return None
+    if session_state != "MARKET_OPEN" and not SPINE_LOG_WHEN_CLOSED:
+        return None
+    ctx = _spine_extract(ticker, result)
+    if not ctx:
+        return None
+    now = now_et()
+    signal_id = f"{ticker}:{ctx['direction']}:{now.strftime('%Y%m%dT%H%M%S')}"
+    with SPINE_LOCK:
+        conn = _spine_conn()
+        try:
+            dup = conn.execute(
+                "SELECT id FROM apex_signals WHERE ticker=? AND direction=? AND status='OPEN'",
+                (ticker, ctx["direction"]),
+            ).fetchone()
+            if dup:
+                return None
+            conn.execute("""
+                INSERT INTO apex_signals (
+                    signal_id, ticker, direction, session_date, created_at,
+                    entry_price, entry_low, entry_high, stop, target1, target2,
+                    risk_points, contract, stage, pine_confirmed, ici, flow_score,
+                    conviction, context_json, status, last_price, samples, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'OPEN', ?, 0, ?)
+            """, (
+                signal_id, ticker, ctx["direction"], now.strftime("%Y-%m-%d"), now.isoformat(),
+                ctx["entry_price"], ctx["entry_low"], ctx["entry_high"], ctx["stop"],
+                ctx["target1"], ctx["target2"], ctx["risk_points"], ctx["contract"],
+                ctx["stage"], ctx["pine_confirmed"], ctx["ici"], ctx["flow_score"],
+                ctx["conviction"], ctx["context_json"], ctx["entry_price"], now.isoformat(),
+            ))
+            conn.commit()
+            return signal_id
+        except Exception as e:
+            print(f"log_apex_signal error ({ticker}): {e}", flush=True)
+            return None
+        finally:
+            conn.close()
+
+
+def update_open_signals(ticker, price, session_state):
+    """Sample price for every OPEN signal on this ticker: update MFE/MAE and resolve
+    WIN / LOSS / EXPIRED. Sampled resolution — if a target and the stop are both crossed
+    between samples we count the stop (never overstate win rate). Returns resolved count."""
+    if not SPINE_AVAILABLE:
+        return 0
+    price = _spine_num(price)
+    resolved = 0
+    now = now_et()
+    with SPINE_LOCK:
+        conn = _spine_conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM apex_signals WHERE ticker=? AND status='OPEN'", (ticker,)
+            ).fetchall()
+            for row in rows:
+                entry = row["entry_price"]; stop = row["stop"]
+                t1 = row["target1"]; t2 = row["target2"]
+                risk = row["risk_points"] or abs((entry or 0) - (stop or 0)) or 1.0
+                is_call = row["direction"] == "CALL"
+
+                fav = (price - entry) if (is_call and price is not None) else (entry - price) if price is not None else None
+                mfe = row["mfe"] or 0.0
+                mae = row["mae"] or 0.0
+                if fav is not None:
+                    if fav > mfe: mfe = fav
+                    if -fav > mae: mae = -fav
+
+                status, exit_price, exit_reason = "OPEN", None, None
+                if price is not None:
+                    if is_call:
+                        hit_stop = price <= stop
+                        hit_t2   = t2 is not None and price >= t2
+                        hit_t1   = price >= t1
+                    else:
+                        hit_stop = price >= stop
+                        hit_t2   = t2 is not None and price <= t2
+                        hit_t1   = price <= t1
+                    if hit_stop:
+                        status, exit_price, exit_reason = "LOSS", stop, "STOP"
+                    elif hit_t2:
+                        status, exit_price, exit_reason = "WIN", t2, "T2"
+                    elif hit_t1:
+                        status, exit_price, exit_reason = "WIN", t1, "T1"
+
+                try:
+                    opened = dt.datetime.fromisoformat(row["created_at"])
+                    held_s = int((now - opened).total_seconds())
+                except Exception:
+                    held_s = None
+                session_over = session_state != "MARKET_OPEN"
+                too_long = held_s is not None and held_s > SPINE_MAX_HOLD_MIN * 60
+                if status == "OPEN" and (session_over or too_long):
+                    status = "EXPIRED"
+                    exit_price = price if price is not None else row["last_price"]
+                    exit_reason = "SESSION_END" if session_over else "MAX_HOLD"
+
+                if status == "OPEN":
+                    conn.execute(
+                        "UPDATE apex_signals SET mfe=?, mae=?, mfe_r=?, mae_r=?, last_price=?, "
+                        "samples=samples+1, updated_at=? WHERE id=?",
+                        (mfe, mae, mfe / risk, mae / risk, price, now.isoformat(), row["id"]),
+                    )
+                else:
+                    ex = exit_price if exit_price is not None else (price if price is not None else entry)
+                    signed = (ex - entry) if is_call else (entry - ex)
+                    conn.execute(
+                        "UPDATE apex_signals SET status=?, mfe=?, mae=?, mfe_r=?, mae_r=?, "
+                        "last_price=?, samples=samples+1, exit_price=?, exit_at=?, exit_reason=?, "
+                        "hold_seconds=?, outcome_r=?, updated_at=? WHERE id=?",
+                        (status, mfe, mae, mfe / risk, mae / risk, price, ex, now.isoformat(),
+                         exit_reason, held_s, signed / risk, now.isoformat(), row["id"]),
+                    )
+                    resolved += 1
+            conn.commit()
+        except Exception as e:
+            print(f"update_open_signals error ({ticker}): {e}", flush=True)
+        finally:
+            conn.close()
+    return resolved
+
+
+def _spine_ingest(ticker, result):
+    """Non-fatal per-scan hook: update open signals first (freeing a resolved slot),
+    then log a fresh signal if the current read is actionable."""
+    if not SPINE_AVAILABLE:
+        return
+    try:
+        ms = result.get("market_state") or {}
+        price = ms.get("price")
+        session_state = (result.get("session") or {}).get("session_state") or ms.get("session_state") or session_status()
+        update_open_signals(ticker, price, session_state)
+        log_apex_signal(ticker, result, session_state)
+    except Exception as e:
+        print(f"_spine_ingest error ({ticker}): {e}", flush=True)
+
+
+def signal_spine_stats(direction=None):
+    """Aggregate edge statistics over resolved signals. Every figure is measured from
+    realized outcomes. win_rate is over decided trades (WIN+LOSS), excluding EXPIRED."""
+    empty = {
+        "available": SPINE_AVAILABLE, "ready": False, "n_total": 0, "n_open": 0,
+        "n_resolved": 0, "wins": 0, "losses": 0, "expired": 0, "win_rate": None,
+        "avg_outcome_r": None, "avg_hold_min": None, "avg_mfe_r": None,
+        "avg_mae_r": None, "min_sample_for_confidence": 20,
+    }
+    if not SPINE_AVAILABLE:
+        return empty
+    with SPINE_LOCK:
+        conn = _spine_conn()
+        try:
+            where = "" if not direction else f" AND direction='{direction.upper()}'"
+            rows = conn.execute(
+                f"SELECT status, outcome_r, hold_seconds, mfe_r, mae_r FROM apex_signals WHERE 1=1{where}"
+            ).fetchall()
+        except Exception as e:
+            print(f"signal_spine_stats error: {e}", flush=True)
+            return empty
+        finally:
+            conn.close()
+
+    n_open = sum(1 for r in rows if r["status"] == "OPEN")
+    wins   = [r for r in rows if r["status"] == "WIN"]
+    losses = [r for r in rows if r["status"] == "LOSS"]
+    expired = [r for r in rows if r["status"] == "EXPIRED"]
+    decided = wins + losses
+    resolved = decided + expired
+
+    def _avg(vals):
+        vals = [v for v in vals if v is not None]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    avg_hold_s = _avg([r["hold_seconds"] for r in resolved])
+    return {
+        "available": True,
+        "ready": len(resolved) > 0,
+        "n_total": len(rows),
+        "n_open": n_open,
+        "n_resolved": len(resolved),
+        "wins": len(wins),
+        "losses": len(losses),
+        "expired": len(expired),
+        "win_rate": round(100 * len(wins) / len(decided), 1) if decided else None,
+        "avg_outcome_r": _avg([r["outcome_r"] for r in resolved]),
+        "avg_hold_min": round(avg_hold_s / 60, 1) if avg_hold_s is not None else None,
+        "avg_mfe_r": _avg([r["mfe_r"] for r in resolved]),
+        "avg_mae_r": _avg([r["mae_r"] for r in resolved]),
+        "min_sample_for_confidence": 20,
+    }
+
+
+def get_apex_signals(limit=50, status=None):
+    """Return recent signals (newest first) as plain dicts for the API / Signal Log."""
+    if not SPINE_AVAILABLE:
+        return []
+    with SPINE_LOCK:
+        conn = _spine_conn()
+        try:
+            q = "SELECT * FROM apex_signals"
+            params = ()
+            if status:
+                q += " WHERE status=?"; params = (status.upper(),)
+            q += " ORDER BY id DESC LIMIT ?"
+            params = params + (int(limit),)
+            rows = conn.execute(q, params).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            print(f"get_apex_signals error: {e}", flush=True)
+            return []
+        finally:
+            conn.close()
+
+
 def _bar_date(bar: dict) -> Optional[dt.date]:
     ts = bar.get("t")
     if not ts:
@@ -3427,6 +3803,51 @@ def api_signal_log():
     return jsonify({"ok": True, "count": len(log), "signals": log})
 
 
+@app.route("/api/apex_signals")
+def api_apex_signals():
+    """GET /api/apex_signals — APEX signal-outcome spine (Piece Two).
+
+    Every actionable APEX decision logged with entry context, plus the tracked
+    outcome (MFE/MAE/WIN/LOSS/EXPIRED). Query params:
+      ?limit=N        (default 50)
+      ?status=OPEN|WIN|LOSS|EXPIRED
+    Returns the log AND measured edge statistics (never estimated).
+    """
+    try:
+        limit = max(1, min(500, int(request.args.get("limit", 50))))
+    except Exception:
+        limit = 50
+    status = request.args.get("status")
+    signals = get_apex_signals(limit=limit, status=status)
+    return jsonify({
+        "ok": True,
+        "version": VERSION,
+        "available": SPINE_AVAILABLE,
+        "count": len(signals),
+        "signals": signals,
+        "stats": signal_spine_stats(),
+    })
+
+
+@app.route("/api/edge_stats")
+def api_edge_stats():
+    """GET /api/edge_stats — measured edge statistics from realized outcomes.
+    Consumed by the Execution tab's Edge Statistics block. ?direction=CALL|PUT
+    to filter. `ready:false` means not enough resolved trades yet — show pending,
+    never a fabricated number."""
+    direction = request.args.get("direction")
+    return jsonify({
+        "ok": True,
+        "version": VERSION,
+        "available": SPINE_AVAILABLE,
+        "stats": signal_spine_stats(direction=direction),
+        "by_direction": {
+            "CALL": signal_spine_stats(direction="CALL"),
+            "PUT": signal_spine_stats(direction="PUT"),
+        },
+    })
+
+
 @app.route("/api/signal_outcome", methods=["POST"])
 def api_signal_outcome():
     """POST /api/signal_outcome — mark the outcome of a received signal.
@@ -4363,6 +4784,12 @@ def api_institutional_os():
                 )
 
             _record_confidence_timeline_point(ticker, result)
+            # APEX signal-outcome spine (Piece Two): log actionable signals and
+            # sample price to resolve open ones. Non-fatal by construction.
+            try:
+                _spine_ingest(ticker, result)
+            except Exception as _spine_err:
+                print(f"spine ingest error (non-fatal): {_spine_err}", flush=True)
             # Cache the result for stale-data fallback and sub-endpoints
             with STATE_LOCK:
                 STATE["last_result"] = result
@@ -6650,6 +7077,10 @@ try:
     _init_review_db()
 except Exception as e:
     print(f"APEX 6.4.0 review DB init error (non-fatal): {e}", flush=True)
+try:
+    init_signal_spine()
+except Exception as e:
+    print(f"APEX signal spine init error (non-fatal): {e}", flush=True)
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 
