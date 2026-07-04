@@ -18,6 +18,53 @@ from engine.execution import trade_risk_guard as guard
 from engine.execution.bracket_manager import BracketManager
 from engine.execution.broker_interface import OrderIntent, ChangeIntent
 from engine.execution import trade_audit
+from engine.execution import price_mapper as pm
+
+
+# ── 9. SPX ⇄ premium mapper (dual-chart keystone) ─────────────────────────────
+def test_premium_from_spx_call_moves_up():
+    # CALL delta > 0: SPX up 10 pts, delta 0.5 → premium up ~5.00
+    p = pm.premium_from_spx(spot=6300, spx_level=6310, base_premium=4.00, delta=0.50)
+    assert abs(p - 9.00) < 0.06
+
+
+def test_premium_from_spx_put_moves_down():
+    # PUT delta < 0: SPX up 10 pts, delta -0.5 → premium DOWN ~5.00
+    p = pm.premium_from_spx(spot=6300, spx_level=6310, base_premium=8.00, delta=-0.50)
+    assert abs(p - 3.00) < 0.06
+
+
+def test_spx_premium_roundtrip_is_stable():
+    # premium → SPX → premium returns the original within one tick (delta-only invertible)
+    spot, base, delta = 6300.0, 4.20, 0.42
+    target_prem = 5.20
+    spx = pm.spx_from_premium(spot, target_prem, base, delta)
+    back = pm.premium_from_spx(spot, spx, base, delta)
+    assert abs(back - target_prem) <= 0.06, (spx, back)
+
+
+def test_premium_never_negative():
+    p = pm.premium_from_spx(spot=6300, spx_level=6200, base_premium=2.00, delta=0.5)
+    assert p >= 0.0
+
+
+def test_spx_from_premium_guards_zero_delta():
+    assert pm.spx_from_premium(6300, 5.0, 4.0, 0.00005) is None
+
+
+def test_project_levels_returns_both_axes():
+    levels = {"ENTRY": 4.20, "STOP": 3.10, "TP1": 5.30}
+    out = pm.project_levels(levels, "premium", spot=6300, base_premium=4.20, delta=0.42)
+    assert set(out) == {"ENTRY", "STOP", "TP1"}
+    assert out["ENTRY"]["premium"] == 4.2 and out["ENTRY"]["spx"] is not None
+    # stop premium below entry → stop SPX below entry SPX (long call)
+    assert out["STOP"]["spx"] < out["ENTRY"]["spx"]
+
+
+def test_suggest_bracket_orders_targets():
+    b = pm.suggest_bracket(4.00, spot=6300, delta=0.42)
+    assert b["STOP"]["premium"] < b["ENTRY"]["premium"] < b["TP1"]["premium"] < b["TP2"]["premium"] < b["TP3"]["premium"]
+    assert b["BREAKEVEN"]["premium"] == b["ENTRY"]["premium"]
 
 
 # ── 1. OAuth 1.0a signing (canonical vector) ──────────────────────────────────
