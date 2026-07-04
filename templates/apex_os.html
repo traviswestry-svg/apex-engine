@@ -56,16 +56,37 @@
       <button class="ticker-btn" data-ticker="IWM">IWM</button>
     </div>
     <div class="toolbar-divider"></div>
-    <div class="tab-bar">
-      <button class="tab-btn active" data-tab="mission">Mission Control</button>
-      <button class="tab-btn" data-tab="dashboard">Institutional Analysis</button>
-      <button class="tab-btn" data-tab="chart">Chart</button>
-      <button class="tab-btn" data-tab="flow2">Flow Intelligence</button>
-      <button class="tab-btn" data-tab="story">Story Engine</button>
-      <button class="tab-btn" data-tab="tape">Flow Tape</button>
-      <button class="tab-btn" data-tab="replay">Replay</button>
-      <button class="tab-btn" data-tab="review">Signal Log</button>
-    </div>
+    <nav class="layer-nav" aria-label="Workspace layers">
+      <div class="layer-group layer-primary">
+        <span class="layer-label">Decision</span>
+        <div class="layer-tabs">
+          <button class="tab-btn active" data-tab="mission">Mission Control</button>
+        </div>
+      </div>
+      <div class="layer-group">
+        <span class="layer-label">Execution</span>
+        <div class="layer-tabs">
+          <button class="tab-btn" data-tab="exec">Execution</button>
+        </div>
+      </div>
+      <div class="layer-group">
+        <span class="layer-label">Institutional Intelligence</span>
+        <div class="layer-tabs">
+          <button class="tab-btn" data-tab="dashboard">Analysis</button>
+          <button class="tab-btn" data-tab="chart">Chart</button>
+          <button class="tab-btn" data-tab="flow2">Flow</button>
+          <button class="tab-btn" data-tab="story">Story</button>
+          <button class="tab-btn" data-tab="tape">Tape</button>
+        </div>
+      </div>
+      <div class="layer-group">
+        <span class="layer-label">Analytics &amp; Learning</span>
+        <div class="layer-tabs">
+          <button class="tab-btn" data-tab="replay">Replay</button>
+          <button class="tab-btn" data-tab="review">Signal Log</button>
+        </div>
+      </div>
+    </nav>
     <div class="toolbar-actions">
       <button class="btn btn-scan" id="runScanBtn">&#9654; Run Scan</button>
       <button class="btn btn-ghost" id="refreshBtn">&#8635; Refresh</button>
@@ -219,6 +240,92 @@
           </div>
           <div class="mc-health-dots" id="mcHealthDots"></div>
           <div class="mc-health-upd" id="mcHealthUpd">—</div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       TAB: EXECUTION INTELLIGENCE — Layer 2
+       Consolidates the risk engine (entry/stop/targets/RR) and the Execution
+       Intelligence engine (stage, timing, exhaustion, absorption, gamma wall,
+       pressure, delta) that are already computed each scan. Edge statistics
+       (win rate / hold / adverse excursion) are shown as pending until the
+       signal-outcome logging spine exists — they are never fabricated.
+       ════════════════════════════════════════════════════════════════════════ -->
+  <div id="tab-exec" class="tab-pane">
+    <div class="exec" id="execRoot">
+      <div class="exec-empty" id="execEmpty">
+        <div class="mc-empty-dot"></div>
+        <div class="mc-empty-txt">Waiting for first scan cycle…</div>
+      </div>
+
+      <div id="execGrid" style="display:none">
+
+        <!-- Header: stage + quality + timing -->
+        <section class="exec-head">
+          <div class="exec-stage" id="execStage">
+            <div class="exec-stage-label" id="execStageLabel">WATCH</div>
+            <div class="exec-stage-desc" id="execStageDesc">—</div>
+          </div>
+          <div class="exec-quality">
+            <div class="exec-quality-num" id="execQuality">--</div>
+            <div class="exec-quality-cap">EXECUTION QUALITY</div>
+          </div>
+          <div class="exec-timing">
+            <div class="exec-timing-label" id="execTiming">—</div>
+            <div class="exec-timing-note" id="execTimingNote">—</div>
+          </div>
+        </section>
+
+        <!-- The trade (risk engine) -->
+        <section class="exec-card" id="execTradeCard">
+          <div class="exec-card-head">
+            <span>THE TRADE</span>
+            <span class="exec-side" id="execSide">—</span>
+          </div>
+          <div class="exec-levels">
+            <div class="exec-lvl"><label>Entry</label><span id="execEntry">--</span></div>
+            <div class="exec-lvl"><label>Stop</label><span class="exec-red" id="execStop">--</span></div>
+            <div class="exec-lvl"><label>Target 1</label><span class="exec-green" id="execT1">--</span></div>
+            <div class="exec-lvl"><label>Target 2</label><span class="exec-green" id="execT2">--</span></div>
+            <div class="exec-lvl"><label>R:R → T1</label><span id="execRR1">--</span></div>
+            <div class="exec-lvl"><label>R:R → T2</label><span id="execRR2">--</span></div>
+            <div class="exec-lvl"><label>Contract</label><span id="execContract">--</span></div>
+            <div class="exec-lvl"><label>Risk</label><span id="execRiskPts">--</span></div>
+          </div>
+          <div class="exec-invalid" id="execInvalid"></div>
+        </section>
+
+        <!-- Execution signals (EIE) -->
+        <section class="exec-card">
+          <div class="exec-card-head"><span>EXECUTION SIGNALS</span><span class="exec-sub">live read from the execution engine</span></div>
+          <div class="exec-signals" id="execSignals"></div>
+        </section>
+
+        <!-- Why + exits -->
+        <section class="exec-cols">
+          <div class="exec-card">
+            <div class="exec-card-head"><span>WHY</span></div>
+            <ul class="exec-why" id="execWhy"></ul>
+          </div>
+          <div class="exec-card">
+            <div class="exec-card-head"><span>EXIT PLAN</span></div>
+            <ul class="exec-exits" id="execExits"></ul>
+          </div>
+        </section>
+
+        <!-- Edge stats — pending outcome data (honest placeholder) -->
+        <section class="exec-card exec-pending">
+          <div class="exec-card-head"><span>EDGE STATISTICS</span><span class="exec-pending-tag">AWAITING OUTCOME DATA</span></div>
+          <div class="exec-edge">
+            <div class="exec-edge-cell"><div class="exec-edge-num">—</div><div class="exec-edge-cap">Win rate</div></div>
+            <div class="exec-edge-cell"><div class="exec-edge-num">—</div><div class="exec-edge-cap">Avg hold</div></div>
+            <div class="exec-edge-cell"><div class="exec-edge-num">—</div><div class="exec-edge-cap">Max adverse excursion</div></div>
+            <div class="exec-edge-cell"><div class="exec-edge-num">—</div><div class="exec-edge-cap">Sample size</div></div>
+          </div>
+          <div class="exec-pending-note">These are measured from realized trades, not estimated. They begin populating once the signal-outcome logging spine is live — so a number here always means something.</div>
         </section>
 
       </div>
