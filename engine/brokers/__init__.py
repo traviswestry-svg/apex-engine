@@ -1,1 +1,1 @@
-"""APEX broker adapters."""
+"""APEX execution layer (Piece: Trade Command Center)."""
