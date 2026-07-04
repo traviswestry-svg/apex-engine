@@ -30,6 +30,7 @@
     candles: [],
     spxPane: null, premPane: null,
     drag: null, syncing: false, armed: false,
+    days: 1, tf: 5,
   };
 
   // ── mapper mirror (instant feedback; server reconciles on release) ──────────
@@ -103,9 +104,9 @@
 
   // ── data ─────────────────────────────────────────────────────────────────────
   async function loadCandles() {
-    log("loading SPX candles…");
+    log("loading SPX candles… (" + state.days + "D · " + state.tf + "m)");
     try {
-      const r = await fetch("/api/trade/spx/candles?days=1&tf=5");
+      const r = await fetch("/api/trade/spx/candles?days=" + state.days + "&tf=" + state.tf);
       const j = await r.json();
       const c = (j.data && j.data.candles) || [];
       if (!c.length) { log("no SPX candles (market closed or no key) — using inputs only"); return; }
@@ -113,9 +114,34 @@
       state.spxPane.series.setData(c.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
       if (state.spot == null && j.data.last) { state.spot = j.data.last; $("tccSpot").value = j.data.last; }
       renderPremiumSeries();
-      state.spxPane.chart.timeScale().fitContent();
-      log("SPX candles: " + c.length + " bars, last " + j.data.last);
+      if (state.armed) refreshLines();     // keep the trade lines after a reload
+      fitAll();
+      const sess = (j.data.sessions || []).length;
+      log("SPX candles: " + c.length + " bars, " + (sess || "?") + " session(s), last " + j.data.last);
     } catch (e) { log("candle load error: " + e); }
+  }
+
+  // timeframe / lookback / zoom controls -------------------------------------------
+  function setTf(tf) { state.tf = tf; markActive("tccTf", tf); loadCandles(); }
+  function setLookback(days) { state.days = days; markActive("tccLb", days); loadCandles(); }
+  function markActive(group, val) {
+    document.querySelectorAll("[data-" + group + "]").forEach((b) => {
+      b.classList.toggle("on", b.getAttribute("data-" + group) === String(val));
+    });
+  }
+  function zoom(factor) {
+    // narrow (<1) or widen (>1) the visible range around its center on both panes
+    [state.spxPane, state.premPane].forEach((pane) => {
+      if (!pane) return;
+      try {
+        const ts = pane.chart.timeScale();
+        const r = ts.getVisibleLogicalRange();
+        if (!r) return;
+        const center = (r.from + r.to) / 2;
+        const half = ((r.to - r.from) / 2) * factor;
+        ts.setVisibleLogicalRange({ from: center - half, to: center + half });
+      } catch (e) {}
+    });
   }
 
   function renderPremiumSeries() {
@@ -410,6 +436,14 @@
     $("tccModeBtn").addEventListener("click", toggleMode);
     $("tccModalClose").addEventListener("click", closeModal);
     $("tccReload").addEventListener("click", loadCandles);
+    document.querySelectorAll("[data-tccTf]").forEach((b) =>
+      b.addEventListener("click", () => setTf(parseInt(b.getAttribute("data-tccTf"), 10))));
+    document.querySelectorAll("[data-tccLb]").forEach((b) =>
+      b.addEventListener("click", () => setLookback(parseInt(b.getAttribute("data-tccLb"), 10))));
+    const zi = $("tccZoomIn"), zo = $("tccZoomOut"), ft = $("tccFit");
+    if (zi) zi.addEventListener("click", () => zoom(0.6));
+    if (zo) zo.addEventListener("click", () => zoom(1.6));
+    if (ft) ft.addEventListener("click", fitAll);
     loadCandles();
     log("command center ready — pick a contract or enter spot/premium/delta, then Arm Plan");
   }
