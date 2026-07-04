@@ -7108,11 +7108,31 @@ try:
         # Reuse APEX's existing SPX cash fetch (I:SPX) — real index bars.
         return _chart_fetch_bars("I:SPX", days=days, multiplier=tf)
 
+    # Real SPX option chain + expirations from Polygon (feeds the OptionsDataBus,
+    # ahead of the E*TRADE sandbox fallback).
+    from engine.options import polygon_chain as _polygon_chain
+    _POLY_UNDERLYING = os.getenv("POLYGON_OPTIONS_UNDERLYING", "I:SPX").strip() or "I:SPX"
+
+    def _poly_chain_fetcher(symbol, expiration, side):
+        if not POLYGON_API_KEY:
+            return None
+        return _polygon_chain.fetch_chain(
+            safe_get_json, expiration, side,
+            underlying=_POLY_UNDERLYING, next_page=_polygon_next_page)
+
+    def _poly_expirations_provider():
+        if not POLYGON_API_KEY:
+            return None
+        return _polygon_chain.fetch_expirations(
+            safe_get_json, underlying=_POLY_UNDERLYING, next_page=_polygon_next_page)
+
     register_trade_routes(
         app,
         spot_provider=_spx_spot_provider,
         expected_path_provider=_spx_expected_path_provider,
         spx_candles_provider=_spx_candles_provider,
+        polygon_chain_fetcher=_poly_chain_fetcher,
+        polygon_expirations_provider=_poly_expirations_provider,
     )
     print("APEX Trade Command Center routes registered (sandbox).", flush=True)
 except Exception as e:
