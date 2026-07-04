@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""
+E*TRADE OAuth 1.0a handshake helper  —  APEX Trade Command Center
+==================================================================
+
+Runs LOCALLY on your own machine (it opens a browser so you can approve access).
+Standalone: pure Python standard library, no pip installs, no repo needed.
+
+It walks the three-legged OAuth flow and prints the exact environment variables
+to paste into Render:
+
+    1. get a request token          (using your consumer key/secret)
+    2. you approve in the browser   (E*TRADE gives you a verification code)
+    3. exchange for an access token  (this is what APEX uses)
+    4. (bonus) list your accounts    so you also get ETRADE_ACCOUNT_ID_KEY
+
+Usage
+-----
+    python3 etrade_oauth_handshake.py
+        → prompts for everything
+
+    python3 etrade_oauth_handshake.py --key YOURKEY --secret YOURSECRET
+        → or pass them as flags
+
+    ETRADE_CONSUMER_KEY=... ETRADE_CONSUMER_SECRET=... python3 etrade_oauth_handshake.py
+        → or read them from the environment
+
+    python3 etrade_oauth_handshake.py --env production
+        → default is sandbox
+
+    python3 etrade_oauth_handshake.py --selftest
+        → just verify the OAuth signing is correct, then exit
+
+Heads up on sandbox tokens: E*TRADE sandbox access tokens go idle after ~2 hours
+of no use and fully expire at midnight US Eastern. When that happens the APEX
+broker status will flip Configured→NO / calls will fail — just re-run this helper
+to get fresh ETRADE_OAUTH_TOKEN / ETRADE_OAUTH_TOKEN_SECRET values and update them
+in Render. (Production tokens last far longer but the same renew rule applies.)
+"""
+
+import argparse
+import base64
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import webbrowser
+
+SANDBOX_BASE = "https://apisb.etrade.com"
+PROD_BASE = "https://api.etrade.com"
+AUTHORIZE_URL = "https://us.etrade.com/e/t/etws/authorize"
+
+
+# ── OAuth 1.0a signing (identical logic to APEX's etrade_adapter.py) ────────────
+def _pct(s):
+    """RFC 3986 percent-encoding as required by OAuth 1.0a."""
+    return urllib.parse.quote(str(s), safe="~")
+
+
+def signature_base_string(method, url, params):
+    norm = "&".join(f"{_pct(k)}={_pct(v)}" for k, v in sorted(params.items()))
+    return "&".join([method.upper(), _pct(url), _pct(norm)])
+
+
+def sign(method, url, params, consumer_secret, token_secret=""):
+    base = signature_base_string(method, url, params)
+    key = f"{_pct(consumer_secret)}&{_pct(token_secret)}"
+    digest = hmac.new(key.encode(), base.encode(), hashlib.sha1).digest()
+    return base64.b64encode(digest).decode()
+
+
+def base_oauth_params(consumer_key, token=None, extra=None):
+    p = {
+        "oauth_consumer_key": consumer_key,
+        "oauth_nonce": secrets.token_hex(16),
+        "oauth_signature_method": "HMAC-SHA1",
+        "oauth_timestamp": str(int(time.time())),
+        "oauth_version": "1.0",
+    }
+    if token:
+        p["oauth_token"] = token
+    if extra:
+        p.update(extra)
+    return p
+
+
+def auth_header(params):
+    inner = ", ".join(f'{_pct(k)}="{_pct(v)}"' for k, v in sorted(params.items()))
+    return "OAuth " + inner
+
+
+def oauth_get(url, params, consumer_secret, token_secret="", accept=None):
+    """Signed GET. Returns response body text. Raises with the server body on error."""
+    params = dict(params)
+    params["oauth_signature"] = sign("GET", url, params, consumer_secret, token_secret)
+    headers = {"Authorization": auth_header(params)}
+    if accept:
+        headers["Accept"] = accept
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read().decode()
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()
+        except Exception:
+            pass
+        raise SystemExit(
+            f"\n[HTTP {e.code}] {url}\n"
+            f"E*TRADE said: {body or e.reason}\n\n"
+            f"Common causes: wrong consumer key/secret, using prod keys against "
+            f"sandbox (or vice-versa), a clock that's off, or an expired verification code."
+        )
+    except urllib.error.URLError as e:
+        raise SystemExit(f"\nNetwork error reaching {url}: {e.reason}")
+
+
+# ── self-test against the OAuth Core 1.0 Appendix A.5.1 example ─────────────────
+def selftest():
+    params = {
+        "oauth_consumer_key": "dpf43f3p2l4k3l03",
+        "oauth_token": "nnch734d00sl2jdk",
+        "oauth_signature_method": "HMAC-SHA1",
+        "oauth_timestamp": "1191242096",
+        "oauth_nonce": "kllo9940pd9333jh",
+        "oauth_version": "1.0",
+        "file": "vacation.jpg",
+        "size": "original",
+    }
+    got = sign("GET", "http://photos.example.net/photos", params,
+               "kd94hf93k423kf44", "pfkkdhi9sl3r4s00")
+    expected = "tR3+Ty81lMeYAr/Fid0kMTYa/WM="
+    ok = got == expected
+    print(f"OAuth signing self-test: {'PASS' if ok else 'FAIL'}")
+    if not ok:
+        print(f"  expected {expected}\n  got      {got}")
+    return ok
+
+
+# ── the three-legged flow ───────────────────────────────────────────────────────
+def run(consumer_key, consumer_secret, base):
+    # 1) request token
+    print("\n[1/4] Requesting a request token …")
+    url = f"{base}/oauth/request_token"
+    params = base_oauth_params(consumer_key, extra={"oauth_callback": "oob"})
+    body = oauth_get(url, params, consumer_secret)
+    q = urllib.parse.parse_qs(body)
+    req_token = q.get("oauth_token", [""])[0]
+    req_secret = q.get("oauth_token_secret", [""])[0]
+    if not req_token or not req_secret:
+        raise SystemExit(f"Unexpected request_token response: {body}")
+    print("      ✓ got request token")
+
+    # 2) authorize in browser
+    authorize = f"{AUTHORIZE_URL}?key={_pct(consumer_key)}&token={_pct(req_token)}"
+    print("\n[2/4] Approve access in your browser:")
+    print("      " + authorize)
+    try:
+        webbrowser.open(authorize)
+        print("      (opened your browser — log in and click Accept)")
+    except Exception:
+        print("      (couldn't auto-open a browser — copy the URL above)")
+    verifier = input("\n      Paste the verification code E*TRADE shows you: ").strip()
+    if not verifier:
+        raise SystemExit("No verification code entered — aborting.")
+
+    # 3) access token
+    print("\n[3/4] Exchanging for an access token …")
+    url = f"{base}/oauth/access_token"
+    params = base_oauth_params(consumer_key, token=req_token,
+                               extra={"oauth_verifier": verifier})
+    body = oauth_get(url, params, consumer_secret, req_secret)
+    q = urllib.parse.parse_qs(body)
+    access_token = q.get("oauth_token", [""])[0]
+    access_secret = q.get("oauth_token_secret", [""])[0]
+    if not access_token or not access_secret:
+        raise SystemExit(f"Unexpected access_token response: {body}")
+    print("      ✓ access token acquired")
+
+    # 4) list accounts (best-effort) to grab accountIdKey
+    account_keys = []
+    print("\n[4/4] Listing accounts to find your account key …")
+    try:
+        url = f"{base}/v1/accounts/list.json"
+        params = base_oauth_params(consumer_key, token=access_token)
+        body = oauth_get(url, params, consumer_secret, access_secret,
+                         accept="application/json")
+        data = json.loads(body)
+        accts = (((data or {}).get("AccountListResponse") or {})
+                 .get("Accounts") or {}).get("Account") or []
+        if isinstance(accts, dict):
+            accts = [accts]
+        for a in accts:
+            account_keys.append({
+                "key": a.get("accountIdKey", ""),
+                "id": a.get("accountId", ""),
+                "desc": a.get("accountDesc", ""),
+                "type": a.get("accountType", ""),
+            })
+        print(f"      ✓ found {len(account_keys)} account(s)")
+    except SystemExit as e:
+        print(f"      (couldn't list accounts automatically — not fatal)\n      {e}")
+    except Exception as e:
+        print(f"      (couldn't parse accounts — not fatal: {e})")
+
+    return access_token, access_secret, account_keys
+
+
+def print_result(env_name, access_token, access_secret, account_keys):
+    line = "=" * 68
+    print("\n" + line)
+    print("  SUCCESS — paste these into Render → your service → Environment")
+    print(line)
+    print(f'  ETRADE_ENV={env_name}')
+    print(f'  ETRADE_OAUTH_TOKEN={access_token}')
+    print(f'  ETRADE_OAUTH_TOKEN_SECRET={access_secret}')
+    if account_keys:
+        if len(account_keys) == 1:
+            print(f'  ETRADE_ACCOUNT_ID_KEY={account_keys[0]["key"]}')
+        else:
+            print("  # multiple accounts found — pick the one you want to trade:")
+            for a in account_keys:
+                print(f'  #   {a["key"]}   ({a["type"]} · {a["desc"] or a["id"]})')
+            print("  ETRADE_ACCOUNT_ID_KEY=<paste one accountIdKey from above>")
+    else:
+        print("  # ETRADE_ACCOUNT_ID_KEY — click \"List Accounts\" in the APEX")
+        print("  #   dashboard once connected, or re-run this helper.")
+    print(line)
+    print("  Keep these safety defaults set as well:")
+    print("  ETRADE_ENABLE_TRADING=false")
+    print("  ETRADE_REQUIRE_CONFIRMATION=true")
+    print(line)
+    print("  Also make sure ETRADE_CONSUMER_KEY / ETRADE_CONSUMER_SECRET are set")
+    print("  in Render (the same ones you used here). After saving, hit Refresh in")
+    print("  the dashboard — Broker Status should flip Configured → YES.")
+    if env_name == "sandbox":
+        print("\n  Reminder: sandbox tokens expire (idle ~2h, hard expiry at midnight ET).")
+        print("  When calls start failing, just re-run this helper.")
+    print(line + "\n")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="E*TRADE OAuth 1.0a handshake helper")
+    ap.add_argument("--key", help="ETRADE consumer key")
+    ap.add_argument("--secret", help="ETRADE consumer secret")
+    ap.add_argument("--env", choices=["sandbox", "production"], default="sandbox")
+    ap.add_argument("--selftest", action="store_true", help="verify signing and exit")
+    args = ap.parse_args()
+
+    if args.selftest:
+        sys.exit(0 if selftest() else 1)
+
+    if not selftest():
+        raise SystemExit("Signing self-test failed — aborting before contacting E*TRADE.")
+
+    key = args.key or os.getenv("ETRADE_CONSUMER_KEY") or input("E*TRADE consumer key: ").strip()
+    secret = args.secret or os.getenv("ETRADE_CONSUMER_SECRET") or input("E*TRADE consumer secret: ").strip()
+    if not key or not secret:
+        raise SystemExit("Consumer key and secret are required.")
+
+    base = SANDBOX_BASE if args.env == "sandbox" else PROD_BASE
+    print(f"\nEnvironment: {args.env}  ({base})")
+
+    access_token, access_secret, account_keys = run(key, secret, base)
+    print_result(args.env, access_token, access_secret, account_keys)
+
+
+if __name__ == "__main__":
+    main()
