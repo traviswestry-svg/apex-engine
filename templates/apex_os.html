@@ -317,15 +317,15 @@
         </section>
 
         <!-- Edge stats — pending outcome data (honest placeholder) -->
-        <section class="exec-card exec-pending">
-          <div class="exec-card-head"><span>EDGE STATISTICS</span><span class="exec-pending-tag">AWAITING OUTCOME DATA</span></div>
+        <section class="exec-card exec-pending" id="execEdgeCard">
+          <div class="exec-card-head"><span>EDGE STATISTICS</span><span class="exec-pending-tag" id="execEdgeTag">AWAITING OUTCOME DATA</span></div>
           <div class="exec-edge">
-            <div class="exec-edge-cell"><div class="exec-edge-num">—</div><div class="exec-edge-cap">Win rate</div></div>
-            <div class="exec-edge-cell"><div class="exec-edge-num">—</div><div class="exec-edge-cap">Avg hold</div></div>
-            <div class="exec-edge-cell"><div class="exec-edge-num">—</div><div class="exec-edge-cap">Max adverse excursion</div></div>
-            <div class="exec-edge-cell"><div class="exec-edge-num">—</div><div class="exec-edge-cap">Sample size</div></div>
+            <div class="exec-edge-cell"><div class="exec-edge-num" id="execWinRate">—</div><div class="exec-edge-cap">Win rate</div></div>
+            <div class="exec-edge-cell"><div class="exec-edge-num" id="execAvgHold">—</div><div class="exec-edge-cap">Avg hold</div></div>
+            <div class="exec-edge-cell"><div class="exec-edge-num" id="execAvgMae">—</div><div class="exec-edge-cap">Max adverse excursion</div></div>
+            <div class="exec-edge-cell"><div class="exec-edge-num" id="execSample">—</div><div class="exec-edge-cap">Sample size</div></div>
           </div>
-          <div class="exec-pending-note">These are measured from realized trades, not estimated. They begin populating once the signal-outcome logging spine is live — so a number here always means something.</div>
+          <div class="exec-pending-note" id="execEdgeNote">These are measured from realized trades, not estimated. They begin populating once the signal-outcome logging spine is live — so a number here always means something.</div>
         </section>
 
       </div>
