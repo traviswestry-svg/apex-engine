@@ -7081,6 +7081,37 @@ try:
     init_signal_spine()
 except Exception as e:
     print(f"APEX signal spine init error (non-fatal): {e}", flush=True)
+try:
+    # Trade Command Center + E*TRADE sandbox adapter (isolated module).
+    # Non-fatal: if anything here fails to import or register, the rest of APEX
+    # is completely unaffected — the trade routes simply won't be available.
+    from engine.execution.trade_routes import register_trade_routes
+
+    def _spx_spot_provider():
+        try:
+            with STATE_LOCK:
+                lr = STATE.get("last_result") or {}
+            return (lr.get("market_state") or {}).get("price")
+        except Exception:
+            return None
+
+    def _spx_expected_path_provider():
+        try:
+            with STATE_LOCK:
+                lr = STATE.get("last_result") or {}
+            r = lr.get("risk") or {}
+            return r.get("target1") or r.get("target2")
+        except Exception:
+            return None
+
+    register_trade_routes(
+        app,
+        spot_provider=_spx_spot_provider,
+        expected_path_provider=_spx_expected_path_provider,
+    )
+    print("APEX Trade Command Center routes registered (sandbox).", flush=True)
+except Exception as e:
+    print(f"Trade Command Center unavailable (non-fatal): {e}", flush=True)
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 
