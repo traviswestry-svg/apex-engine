@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APEX — SPX Trade Command Center (Sandbox)</title>
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root{--bg:#0a0e14;--surf:#111722;--surf2:#161d2b;--bdr:#232d3f;--text:#e6ebf2;
+        --muted:#8a94a3;--blue:#38bdf8;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;
+        --mono:'JetBrains Mono',ui-monospace,monospace;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;
+       height:100vh;display:flex;flex-direction:column;gap:8px;padding:10px;overflow:hidden}
+  .card{background:var(--surf);border:1px solid var(--bdr);border-radius:9px;padding:10px 12px}
+  .card h2{font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--muted);
+           text-transform:uppercase;margin-bottom:7px}
+
+  /* top bar */
+  .topbar{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;flex:0 0 auto}
+  .topbar h1{font-size:16px;font-weight:800;letter-spacing:-.01em}
+  .badge{font-family:var(--mono);font-size:9px;font-weight:800;letter-spacing:.1em;
+         padding:2px 8px;border-radius:999px;background:rgba(245,158,11,.12);
+         color:var(--amber);border:1px solid rgba(245,158,11,.3)}
+  .sub{color:var(--muted);font-size:11px}
+
+  /* plan bar */
+  .plan{flex:0 0 auto;padding:8px 12px}
+  .controls{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px}
+  .ctrl{display:flex;flex-direction:column}
+  label{font-family:var(--mono);font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-left:2px;margin-bottom:1px}
+  input,select{font-family:var(--mono);font-size:11px;background:var(--surf2);color:var(--text);
+                border:1px solid var(--bdr);border-radius:6px;padding:5px 8px;width:88px}
+  button{font-family:var(--mono);font-size:11px;font-weight:700;padding:6px 11px;border-radius:7px;
+         border:1px solid var(--bdr);background:var(--surf2);color:var(--text);cursor:pointer}
+  button:hover{border-color:var(--blue);color:var(--blue)}
+  button.primary{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:var(--blue)}
+  .plan-note{color:var(--muted);font-size:10px;margin-left:auto;max-width:46%;text-align:right}
+
+  /* main zone: charts + command center fill remaining height */
+  .main-zone{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 300px;gap:8px}
+  .charts{display:flex;flex-direction:column;min-height:0;padding:8px 10px}
+  .chart-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .chart-head h2{margin:0}
+  .chart-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:3px;margin-left:auto}
+  .tb-label{font-family:var(--mono);font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:0 1px}
+  .tb-sep{width:1px;height:14px;background:var(--bdr);margin:0 4px}
+  .tb-hint{font-family:var(--mono);font-size:8px;color:var(--muted);margin-left:6px}
+  button.tb{font-size:9px;font-weight:700;padding:3px 7px;border-radius:5px;
+            border:1px solid var(--bdr);background:var(--surf2);color:var(--muted);cursor:pointer}
+  button.tb:hover{border-color:var(--blue);color:var(--blue)}
+  button.tb.on{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:var(--blue)}
+  .pane-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.12em;
+              text-transform:uppercase;margin:3px 0 2px}
+  #tccSpxChart{flex:5 1 0;min-height:0;width:100%}
+  #tccPremChart{flex:3 1 0;min-height:0;width:100%}
+
+  /* command center */
+  .cc-panel{display:flex;flex-direction:column;min-height:0;overflow-y:auto}
+  .kv{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;
+      padding:3px 0;border-bottom:1px dotted var(--bdr)}
+  .kv .v{font-weight:700}
+  .ok{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--amber)}
+  .pos{color:var(--green)} .neg{color:var(--red)}
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;margin-top:6px}
+  th,td{text-align:right;padding:3px 5px;border-bottom:1px solid var(--bdr)}
+  th{color:var(--muted);font-weight:700;font-size:8px;letter-spacing:.05em;text-transform:uppercase}
+  td:first-child,th:first-child{text-align:left}
+  tr.rec{background:rgba(56,189,248,.06)}
+  tr.pick{cursor:pointer} tr.pick:hover{background:rgba(56,189,248,.1)}
+  .cc-big{display:flex;justify-content:space-between;align-items:baseline;margin:4px 0}
+  .cc-big .cc-val{font-family:var(--mono);font-size:17px;font-weight:800}
+  .cc-chip{font-family:var(--mono);font-size:9px;font-weight:800;padding:2px 7px;border-radius:999px;letter-spacing:.08em}
+  .chip-plan{background:rgba(245,158,11,.12);color:var(--amber);border:1px solid rgba(245,158,11,.3)}
+  .chip-active{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.3)}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+  /* bottom zone: broker | chain | log */
+  .bottom-zone{flex:0 0 168px;display:grid;grid-template-columns:230px 1fr 320px;gap:8px;min-height:0}
+  .bottom-zone .card{overflow:auto;min-height:0}
+  #tccLog{font-family:var(--mono);font-size:9px;color:var(--muted);white-space:pre-wrap}
+  .note{color:var(--muted);font-size:10px;line-height:1.4}
+  .mini-btn{font-size:10px;padding:4px 9px}
+  .chain-controls{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px}
+  .chain-controls select{width:130px}
+
+  /* modal */
+  #tccModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);align-items:center;justify-content:center;z-index:50}
+  .modal-card{background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:18px 20px;width:380px;max-width:92vw}
+  .modal-card h3{font-family:var(--mono);font-size:12px;letter-spacing:.08em;margin-bottom:12px}
+  .mrow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:4px 0;border-bottom:1px dotted var(--bdr)}
+  .mnote{font-family:var(--mono);font-size:11px;margin-top:10px}
+
+  @media(max-width:900px){
+    body{overflow:auto;height:auto}
+    .main-zone{grid-template-columns:1fr}
+    #tccSpxChart{height:280px;flex:none}#tccPremChart{height:170px;flex:none}
+    .bottom-zone{grid-template-columns:1fr;flex:none}
+    .plan-note{display:none}
+  }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>SPX Trade Command Center <span class="badge" id="modeBadge">SANDBOX</span></h1>
+    <span class="sub">SPX 0DTE calls · drag Entry / Stop / B/E / TP1–TP3 on either pane · preview-and-confirm only · live trading disabled by default</span>
+  </div>
+
+  <!-- PLAN -->
+  <div class="card plan">
+    <div class="controls">
+      <div class="ctrl"><label>SPX Spot</label><input id="tccSpot" type="number" step="0.25" placeholder="6300"></div>
+      <div class="ctrl"><label>Entry Premium</label><input id="tccPrem" type="number" step="0.05" placeholder="4.20"></div>
+      <div class="ctrl"><label>Delta</label><input id="tccDelta" type="number" step="0.01" placeholder="0.45"></div>
+      <div class="ctrl"><label>Qty</label><input id="tccQty" type="number" step="1" value="1"></div>
+      <button class="primary" id="tccArm">Arm Plan</button>
+      <button id="tccModeBtn">Planning / Active</button>
+      <button id="tccReload">Reload SPX</button>
+      <span class="plan-note">Click a chain row to auto-fill premium &amp; delta, or type them in, then Arm Plan. Premium pane is delta-modeled until a live feed is connected.</span>
+    </div>
+  </div>
+
+  <!-- MAIN: charts + command center -->
+  <div class="main-zone">
+    <div class="card charts">
+      <div class="chart-head">
+        <h2>SPX (I:SPX cash) + Modeled Premium</h2>
+        <div class="chart-toolbar">
+          <span class="tb-label">TF</span>
+          <button class="tb" data-tccTf="1">1m</button>
+          <button class="tb on" data-tccTf="5">5m</button>
+          <button class="tb" data-tccTf="15">15m</button>
+          <span class="tb-sep"></span>
+          <span class="tb-label">Days</span>
+          <button class="tb on" data-tccLb="1">1D</button>
+          <button class="tb" data-tccLb="3">3D</button>
+          <button class="tb" data-tccLb="5">5D</button>
+          <span class="tb-sep"></span>
+          <span class="tb-label">Zoom</span>
+          <button class="tb" id="tccZoomIn">＋</button>
+          <button class="tb" id="tccZoomOut">－</button>
+          <button class="tb" id="tccFit">Fit</button>
+          <span class="tb-hint">scroll to zoom · drag axis to pan</span>
+        </div>
+      </div>
+      <div class="pane-label">SPX price</div>
+      <div id="tccSpxChart"></div>
+      <div class="pane-label">Option premium (modeled, delta)</div>
+      <div id="tccPremChart"></div>
+    </div>
+
+    <div class="card cc-panel">
+      <h2>Command Center <span class="cc-chip chip-plan" id="ccMode" style="float:right">PLANNING</span></h2>
+      <div class="kv"><span>Contract</span><span class="v" id="ccContract">—</span></div>
+      <div class="kv"><span>SPX spot</span><span class="v" id="ccSpot">—</span></div>
+      <div class="kv"><span>Premium (now)</span><span class="v" id="ccPremium">—</span></div>
+      <div class="kv"><span>Delta</span><span class="v" id="ccDelta">—</span></div>
+      <div class="kv"><span>Qty</span><span class="v" id="ccQty">1</span></div>
+      <table><thead><tr><th>Line</th><th>SPX</th><th>Prem</th><th>$ vs Entry</th></tr></thead>
+        <tbody id="ccLevels"><tr><td colspan="4" style="color:var(--muted)">Arm a plan to place lines.</td></tr></tbody></table>
+      <div class="cc-big"><span class="pane-label">Max risk</span><span class="cc-val neg" id="ccRisk">—</span></div>
+      <div class="cc-big"><span class="pane-label">R:R (→TP1)</span><span class="cc-val" id="ccRR">—</span></div>
+      <div class="cc-big"><span class="pane-label">Open P/L</span><span class="cc-val" id="ccPL">—</span></div>
+    </div>
+  </div>
+
+  <!-- BOTTOM: broker | chain | log -->
+  <div class="bottom-zone">
+    <div class="card">
+      <h2>Broker Status</h2>
+      <div id="statusBox"><div class="kv"><span>Loading…</span><span class="v"></span></div></div>
+      <div style="margin-top:6px">
+        <button class="mini-btn" onclick="loadStatus()">Refresh</button>
+        <button class="mini-btn" onclick="loadAccounts()">List Accounts</button>
+      </div>
+      <div id="accountsBox" class="note" style="margin-top:5px">Click "List Accounts".</div>
+    </div>
+
+    <div class="card">
+      <h2>SPX Call Chain — click a row to load it</h2>
+      <div class="chain-controls">
+        <select id="expSelect"><option value="">— expirations —</option></select>
+        <button class="mini-btn" onclick="loadExpirations()">Expirations</button>
+        <button class="mini-btn" onclick="loadChain()">CALL Chain</button>
+        <button class="mini-btn" onclick="loadRecommended()">APEX Recommended</button>
+        <span class="note" id="chainMeta"></span>
+      </div>
+      <table id="chainTable">
+        <thead><tr><th>Strike</th><th>Bid</th><th>Ask</th><th>Mid</th><th>Spr%</th>
+        <th>Vol</th><th>OI</th><th>Δ</th><th>IV</th><th>Liq</th><th>APEX</th></tr></thead>
+        <tbody><tr><td colspan="11" style="color:var(--muted)">Load a chain (needs sandbox creds).</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Event Log</h2>
+      <div id="tccLog"></div>
+    </div>
+  </div>
+
+  <!-- CHANGE PREVIEW MODAL -->
+  <div id="tccModal"><div class="modal-card">
+    <h3 id="tccModalTitle">Preview Change (Sandbox)</h3>
+    <div id="tccModalBody"></div>
+    <div style="margin-top:14px;text-align:right">
+      <button id="tccModalClose">Close</button>
+      <button class="primary" id="tccModalConfirm" onclick="document.getElementById('tccModal').style.display='none'">Confirm Sandbox Change</button>
+    </div>
+  </div></div>
+
+<script>
+/* status / accounts / chain helpers (shared with Phase 1) */
+const $ = id => document.getElementById(id);
+async function api(path){ try{ const r=await fetch(path); return await r.json(); }catch(e){ tlog('ERR '+path+' '+e); return {ok:false,errors:[String(e)]}; } }
+function tlog(m){ const el=$('tccLog'); if(el) el.textContent='['+new Date().toLocaleTimeString()+'] '+m+'\n'+el.textContent; }
+function kv(k,v,cls){ return '<div class="kv"><span>'+k+'</span><span class="v '+(cls||'')+'">'+v+'</span></div>'; }
+const ff = v => (v==null||v==='')?'—':(typeof v==='number'?(Math.abs(v)<1?v.toFixed(3):v.toFixed(2)):v);
+
+async function loadStatus(){
+  const j = await api('/api/broker/etrade/status'); const d=j.data||{};
+  $('modeBadge').textContent=(d.env||'sandbox').toUpperCase();
+  $('statusBox').innerHTML =
+    kv('Broker',d.broker||'etrade')+kv('Environment',d.env||'—')+
+    kv('Configured',d.configured?'YES':'NO',d.configured?'ok':'bad')+
+    kv('Trading enabled',d.trading_enabled?'LIVE':'blocked',d.trading_enabled?'warn':'ok')+
+    kv('Account key set',d.account_id_key_set?'yes':'no',d.account_id_key_set?'ok':'warn');
+}
+async function loadAccounts(){
+  const j=await api('/api/broker/etrade/accounts');
+  if(!j.ok){ $('accountsBox').innerHTML='<span class="bad">'+(j.errors||['error']).join('; ')+'</span>'; return; }
+  const a=(j.data.accounts)||[];
+  $('accountsBox').innerHTML=a.length?a.map(x=>kv(x.description||x.account_id||'acct',x.type||'')).join(''):'<span class="warn">No accounts (check sandbox tokens).</span>';
+}
+async function loadExpirations(){
+  const j=await api('/api/trade/spx/expirations');
+  const sel=$('expSelect'); sel.innerHTML='<option value="">— expirations —</option>';
+  ((j.data&&j.data.expirations)||[]).forEach(d=>{const o=document.createElement('option');o.value=d;o.textContent=d;sel.appendChild(o);});
+  tlog('expirations: '+(((j.data||{}).expirations)||[]).length+(j.ok?'':' ('+(j.errors||[]).join(';')+')'));
+}
+function renderChain(rows,meta){
+  const tb=$('chainTable').querySelector('tbody');
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="11" style="color:var(--muted)">No contracts.</td></tr>'; return; }
+  tb.innerHTML=rows.map((c,i)=>`<tr class="pick ${c.apex_recommendation?'rec':''}" onclick='tccSelectContract(${JSON.stringify(c)})'>
+    <td>${c.strike}</td><td>${ff(c.bid)}</td><td>${ff(c.ask)}</td><td>${ff(c.mid)}</td>
+    <td>${ff(c.spread_pct)}</td><td>${c.volume??'—'}</td><td>${c.open_interest??'—'}</td>
+    <td>${ff(c.delta)}</td><td>${ff(c.iv)}</td><td>${ff(c.liquidity_score)}</td>
+    <td>${c.apex_recommendation||''}</td></tr>`).join('');
+  $('chainMeta').textContent=meta||'';
+}
+async function loadChain(){
+  const exp=$('expSelect').value; if(!exp){ tlog('pick an expiration'); return; }
+  const j=await api('/api/trade/spx/chain?expiration='+exp+'&side=CALL');
+  renderChain((j.data&&j.data.contracts)||[],'source: '+((j.data||{}).source||'none'));
+}
+async function loadRecommended(){
+  const exp=$('expSelect').value; if(!exp){ tlog('pick an expiration'); return; }
+  const j=await api('/api/trade/spx/recommended-contracts?expiration='+exp+'&side=CALL');
+  renderChain((j.data&&j.data.recommended)||[],'APEX recommended · spot '+((j.data||{}).spot||'—'));
+}
+loadStatus();
+</script>
+<script src="/static/js/trade_command_center.js"></script>
+</body>
+</html>
