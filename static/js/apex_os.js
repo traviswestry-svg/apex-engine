@@ -3145,6 +3145,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadMarketStatus();
   loadSavedReviews();
   loadSignalLog();
+  loadEdgeStats();
 
   setInterval(loadOS, AUTO_INTERVAL);
   setInterval(loadMissionControl, 5000);
@@ -3152,6 +3153,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(loadFlowTape, 45000);
   setInterval(loadMarketStatus, 60000);
   setInterval(loadSignalLog, 30000);
+  setInterval(loadEdgeStats, 60000);
 });
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -4408,3 +4410,44 @@ function renderExecutionIntel(d) {
 }
 
 function setTextX(id, v){ const el = document.getElementById(id); if (el) el.textContent = v; }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 8.0 — EDGE STATISTICS (Piece Two consumer)
+   Fills the Execution tab's Edge block from measured outcomes (/api/edge_stats).
+   Until enough trades have resolved (stats.ready === false) it shows the honest
+   pending state — never a fabricated number.
+   ════════════════════════════════════════════════════════════════════════════ */
+async function loadEdgeStats() {
+  const tag = $('execEdgeTag'), note = $('execEdgeNote'), card = $('execEdgeCard');
+  try {
+    const res = await fetch('/api/edge_stats');
+    const data = await res.json();
+    const s = (data && data.stats) || {};
+    const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+
+    if (!s.ready) {
+      // Not enough resolved trades yet — keep the pending state, but show progress.
+      const n = s.n_resolved || 0, need = s.min_sample_for_confidence || 20;
+      if (tag) tag.textContent = 'AWAITING OUTCOME DATA';
+      set('execWinRate', '—'); set('execAvgHold', '—'); set('execAvgMae', '—');
+      set('execSample', n > 0 ? n : '—');
+      if (note) note.textContent = n > 0
+        ? `${n} resolved so far. Statistics stay marked pending until ~${need} trades have accumulated, so early noise isn't mistaken for edge.`
+        : 'These are measured from realized trades, not estimated. They populate once signals resolve during live sessions — so a number here always means something.';
+      if (card) card.classList.add('exec-pending');
+      return;
+    }
+
+    // We have measured outcomes.
+    const enough = (s.n_resolved || 0) >= (s.min_sample_for_confidence || 20);
+    if (tag) tag.textContent = enough ? `MEASURED · n=${s.n_resolved}` : `EARLY · n=${s.n_resolved}`;
+    set('execWinRate', s.win_rate != null ? s.win_rate + '%' : '—');
+    set('execAvgHold', s.avg_hold_min != null ? s.avg_hold_min + 'm' : '—');
+    set('execAvgMae', s.avg_mae_r != null ? s.avg_mae_r.toFixed(2) + 'R' : '—');
+    set('execSample', s.n_resolved != null ? s.n_resolved : '—');
+    if (note) note.textContent = enough
+      ? `Measured from ${s.n_resolved} realized trades · avg outcome ${s.avg_outcome_r != null ? s.avg_outcome_r.toFixed(2) + 'R' : '—'} · ${s.wins}W / ${s.losses}L / ${s.expired} expired.`
+      : `Early sample (${s.n_resolved} trades) — directional, not yet statistically settled. Treat as provisional until ~${s.min_sample_for_confidence}.`;
+    if (card) card.classList.toggle('exec-pending', !enough);
+  } catch (e) { /* leave pending state on error */ }
+}
