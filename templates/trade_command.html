@@ -48,6 +48,14 @@
               text-transform:uppercase;margin:2px 0 4px}
   #tccSpxChart{height:300px;width:100%}
   #tccPremChart{height:180px;width:100%;margin-top:6px}
+  .chart-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+  .tb-label{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:0 2px}
+  .tb-sep{width:1px;height:16px;background:var(--bdr);margin:0 6px}
+  .tb-hint{font-family:var(--mono);font-size:9px;color:var(--muted);margin-left:auto}
+  button.tb{font-family:var(--mono);font-size:10px;font-weight:700;padding:4px 9px;border-radius:6px;
+            border:1px solid var(--bdr);background:var(--surf2);color:var(--muted);cursor:pointer;margin:0}
+  button.tb:hover{border-color:var(--blue);color:var(--blue)}
+  button.tb.on{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:var(--blue)}
   .cc-panel .kv{border-bottom:1px solid var(--bdr)}
   .cc-big{display:flex;justify-content:space-between;align-items:baseline;margin:6px 0}
   .cc-big .cc-val{font-family:var(--mono);font-size:20px;font-weight:800}
@@ -89,6 +97,23 @@
   <div class="cc-wrap">
     <div class="card">
       <h2>Charts — SPX (I:SPX cash) + Modeled Premium</h2>
+      <div class="chart-toolbar">
+        <span class="tb-label">TF</span>
+        <button class="tb" data-tccTf="1">1m</button>
+        <button class="tb on" data-tccTf="5">5m</button>
+        <button class="tb" data-tccTf="15">15m</button>
+        <span class="tb-sep"></span>
+        <span class="tb-label">Lookback</span>
+        <button class="tb on" data-tccLb="1">1D</button>
+        <button class="tb" data-tccLb="3">3D</button>
+        <button class="tb" data-tccLb="5">5D</button>
+        <span class="tb-sep"></span>
+        <span class="tb-label">Zoom</span>
+        <button class="tb" id="tccZoomIn">＋</button>
+        <button class="tb" id="tccZoomOut">－</button>
+        <button class="tb" id="tccFit">Fit</button>
+        <span class="tb-hint">scroll to zoom · drag axis to pan</span>
+      </div>
       <div class="pane-label">SPX price</div>
       <div id="tccSpxChart"></div>
       <div class="pane-label">Option premium (modeled, delta)</div>
