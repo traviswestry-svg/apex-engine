@@ -188,6 +188,17 @@ except Exception as _atd_err:
     ACTIVE_TRADE_DIRECTOR_AVAILABLE = False
     print(f"APEX Active Trade Director unavailable (non-fatal): {_atd_err}", flush=True)
 
+# APEX 7.2 — Range Intelligence Engine (probable SPX high/low zones)
+try:
+    from engine.range_routes import register_range_routes
+    from engine.range_intelligence import VERSION as RANGE_VERSION
+    RANGE_INTELLIGENCE_AVAILABLE = True
+except Exception as _ri_err:
+    register_range_routes = None  # type: ignore[assignment]
+    RANGE_VERSION = "unavailable"
+    RANGE_INTELLIGENCE_AVAILABLE = False
+    print(f"APEX Range Intelligence unavailable (non-fatal): {_ri_err}", flush=True)
+
 VERSION = "7.0.1_APEX_EIGHT_FOUNDATION"
 EASTERN = ZoneInfo("America/New_York")
 
@@ -7232,6 +7243,35 @@ try:
         print(f"APEX Active Trade Director routes registered ({DIRECTOR_VERSION}).", flush=True)
 except Exception as e:
     print(f"Active Trade Director unavailable (non-fatal): {e}", flush=True)
+
+# APEX 7.2 — Range Intelligence routes (isolated, non-fatal).
+# Consumes the already-composed Data Bus object (STATE["last_result"]); never
+# re-fetches or recomputes existing engine output.
+try:
+    if RANGE_INTELLIGENCE_AVAILABLE and register_range_routes is not None:
+
+        def _ri_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        def _ri_session():
+            try:
+                return market_session_context()
+            except Exception:
+                return {}
+
+        register_range_routes(
+            app,
+            last_result_provider=_ri_last_result,
+            session_provider=_ri_session,
+            default_ticker=ASSISTANT_TICKER,
+        )
+        print(f"APEX Range Intelligence routes registered ({RANGE_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Range Intelligence unavailable (non-fatal): {e}", flush=True)
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 
