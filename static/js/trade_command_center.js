@@ -30,7 +30,7 @@
     candles: [],
     spxPane: null, premPane: null,
     drag: null, syncing: false, armed: false,
-    days: 1, tf: 5,
+    days: 1, tf: 5, side: "CALL",
   };
 
   // ── mapper mirror (instant feedback; server reconciles on release) ──────────
@@ -400,7 +400,7 @@
       const r = await fetch("/api/trade/spx/preview-change", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ line: tag, new_price: lvl.prem, entry_premium: state.lines.ENTRY.prem,
-          current_premium: curPremium(), side: "CALL", position_qty: state.qty,
+          current_premium: curPremium(), side: state.side, position_qty: state.qty,
           levels: mapPrem(), breakeven_armed: false }),
       });
       const j = await r.json();
@@ -416,7 +416,8 @@
 
   // ── selecting a contract from the chain table autofills the plan ───────────────
   window.tccSelectContract = function (c) {
-    state.contractLabel = (c.display_symbol || ("SPX " + c.strike + " CALL"));
+    state.side = (c.side || "CALL").toUpperCase();
+    state.contractLabel = (c.display_symbol || ("SPX " + c.strike + " " + state.side));
     if (c.mid != null) $("tccPrem").value = c.mid;
     if (c.delta != null) $("tccDelta").value = c.delta;
     state.contractLabel && ($("ccContract").textContent = state.contractLabel);
