@@ -101,6 +101,141 @@
     </div>
   </div>
 
+  <!-- ══ RANGE INTELLIGENCE (APEX 7.2) ═══════════════════════════════════════
+       Self-contained band: inline styles + isolated poller. Consumes
+       /api/range_intelligence and never touches apex_os.js. Always visible near
+       the top so the day's probable SPX range framework is immediately readable. -->
+  <style>
+    .ri-band{background:linear-gradient(180deg,var(--surf),var(--surf2));border:1px solid var(--bdr);
+      border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;font-family:var(--sans)}
+    .ri-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+    .ri-title{font-size:12px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+    .ri-pill{font-size:11px;font-weight:800;letter-spacing:.04em;padding:3px 10px;border-radius:999px;
+      border:1px solid var(--bdr);color:var(--muted);white-space:nowrap}
+    .ri-pill.bull{color:var(--green);border-color:rgba(34,197,94,.45)}
+    .ri-pill.bear{color:var(--red);border-color:rgba(239,68,68,.45)}
+    .ri-pill.exh{color:var(--amber);border-color:rgba(245,158,11,.5)}
+    .ri-pill.base{color:var(--blue);border-color:rgba(56,189,248,.4)}
+    .ri-pill.wait{color:var(--purple);border-color:rgba(167,139,250,.4)}
+    .ri-upd{font-size:11px;color:var(--faint);margin-left:auto}
+    .ri-body{display:grid;grid-template-columns:1fr 1.1fr 1fr;gap:12px}
+    .ri-zone{background:var(--bg);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:10px 12px}
+    .ri-zone.hi{border-color:rgba(34,197,94,.35)}
+    .ri-zone.lo{border-color:rgba(239,68,68,.35)}
+    .ri-zlabel{font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--muted);text-transform:uppercase}
+    .ri-zrange{font-size:20px;font-weight:900;font-family:var(--mono);margin:4px 0 2px}
+    .ri-zone.hi .ri-zrange{color:var(--green)}
+    .ri-zone.lo .ri-zrange{color:var(--red)}
+    .ri-zmeta{font-size:11px;color:var(--faint)}
+    .ri-zreasons{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.45}
+    .ri-center{display:flex;flex-direction:column;gap:8px;justify-content:center}
+    .ri-usedbar{height:8px;border-radius:6px;background:var(--bg);border:1px solid var(--bdr);overflow:hidden}
+    .ri-usedbar>span{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--amber),var(--red))}
+    .ri-metrics{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+    .ri-metric{text-align:center;flex:1}
+    .ri-metric .v{font-size:16px;font-weight:800;font-family:var(--mono);color:var(--text)}
+    .ri-metric .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+    .ri-interp{font-size:12px;color:#c8d6ea;line-height:1.5;margin-top:10px;padding-top:10px;border-top:1px solid var(--bdr)}
+    .ri-flags{font-size:10px;color:var(--faint);margin-top:6px}
+    .ri-warm{color:var(--muted);font-size:13px;padding:8px 2px}
+    @media(max-width:820px){.ri-body{grid-template-columns:1fr}}
+  </style>
+  <div class="ri-band" id="riBand">
+    <div class="ri-head">
+      <span class="ri-title">Range Intelligence</span>
+      <span class="ri-pill base" id="riScenario">—</span>
+      <span class="ri-pill" id="riBias">—</span>
+      <span class="ri-upd" id="riUpd"></span>
+    </div>
+    <div id="riWarm" class="ri-warm">Warming up — waiting for the first scan…</div>
+    <div class="ri-body" id="riBodyGrid" style="display:none">
+      <div class="ri-zone lo">
+        <div class="ri-zlabel">Projected Low Zone</div>
+        <div class="ri-zrange" id="riLoRange">—</div>
+        <div class="ri-zmeta" id="riLoMeta"></div>
+        <div class="ri-zreasons" id="riLoReasons"></div>
+      </div>
+      <div class="ri-center">
+        <div class="ri-metrics">
+          <div class="ri-metric"><div class="v" id="riDown">—</div><div class="l">Downside</div></div>
+          <div class="ri-metric"><div class="v" id="riUsed">—</div><div class="l">Range Used</div></div>
+          <div class="ri-metric"><div class="v" id="riUp">—</div><div class="l">Upside</div></div>
+        </div>
+        <div class="ri-usedbar"><span id="riUsedBar" style="width:0%"></span></div>
+        <div class="ri-metrics">
+          <div class="ri-metric"><div class="v" id="riExh">—</div><div class="l">Exhaustion Risk</div></div>
+          <div class="ri-metric"><div class="v" id="riOpen">—</div><div class="l">Opening Context</div></div>
+        </div>
+      </div>
+      <div class="ri-zone hi">
+        <div class="ri-zlabel">Projected High Zone</div>
+        <div class="ri-zrange" id="riHiRange">—</div>
+        <div class="ri-zmeta" id="riHiMeta"></div>
+        <div class="ri-zreasons" id="riHiReasons"></div>
+      </div>
+    </div>
+    <div class="ri-interp" id="riInterp" style="display:none"></div>
+    <div class="ri-flags" id="riFlags"></div>
+  </div>
+  <script>
+  (function(){
+    function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+    function num(v){return (v==null||v==='')?'--':(Math.round(v*100)/100);}
+    function pts(v){if(v==null)return '--';var n=Math.round(v*10)/10;return (n>=0?'+':'')+n;}
+    function curTicker(){var b=document.querySelector('.ticker-btn.active');return (b&&b.dataset.ticker)||'SPX';}
+    function scenClass(s){s=(s||'').toUpperCase();
+      if(s.indexOf('BULL')>=0)return 'bull';if(s.indexOf('BEAR')>=0)return 'bear';
+      if(s.indexOf('EXHAUST')>=0)return 'exh';if(s.indexOf('WAITING')>=0||s.indexOf('INSUFF')>=0)return 'wait';return 'base';}
+    function biasClass(b){b=(b||'').toUpperCase();if(b.indexOf('BULL')>=0)return 'bull';if(b.indexOf('BEAR')>=0)return 'bear';return 'base';}
+    function exhClass(e){e=(e||'').toUpperCase();if(e==='HIGH')return 'var(--red)';if(e==='MODERATE')return 'var(--amber)';return 'var(--green)';}
+
+    function render(env){
+      var warm=document.getElementById('riWarm'),grid=document.getElementById('riBodyGrid'),interp=document.getElementById('riInterp');
+      var ri=(env&&env.range_intelligence)||{};
+      if(!env||!env.ok||!ri.available){
+        warm.style.display='';grid.style.display='none';interp.style.display='none';
+        warm.textContent=(ri.interpretation)||'Warming up — waiting for the first scan…';
+        document.getElementById('riScenario').textContent=(ri.active_scenario||'—').replace(/_/g,' ');
+        document.getElementById('riScenario').className='ri-pill '+scenClass(ri.active_scenario);
+        document.getElementById('riFlags').textContent=(ri.quality_flags||[]).join(' · ');
+        return;
+      }
+      warm.style.display='none';grid.style.display='';interp.style.display='';
+      var hz=ri.projected_high_zone||{},lz=ri.projected_low_zone||{};
+      var sc=document.getElementById('riScenario');
+      sc.textContent=(ri.active_scenario||'—').replace(/_/g,' ');sc.className='ri-pill '+scenClass(ri.active_scenario);
+      var bi=document.getElementById('riBias');
+      bi.textContent=(ri.bias||'').replace(/_/g,' ')||'—';bi.className='ri-pill '+biasClass(ri.bias);
+      document.getElementById('riUpd').textContent=(env.ticker||'')+' · '+(ri.range_used_method==='ESTIMATED_PRE_RTH'?'pre-RTH estimate':'live');
+
+      document.getElementById('riHiRange').textContent=num(hz.low)+' – '+num(hz.high);
+      document.getElementById('riHiMeta').textContent='mid '+num(hz.mid)+' · conf '+(hz.confidence||'--');
+      document.getElementById('riHiReasons').innerHTML=(hz.reasons||[]).map(function(r){return '• '+esc(r);}).join('<br>');
+      document.getElementById('riLoRange').textContent=num(lz.low)+' – '+num(lz.high);
+      document.getElementById('riLoMeta').textContent='mid '+num(lz.mid)+' · conf '+(lz.confidence||'--');
+      document.getElementById('riLoReasons').innerHTML=(lz.reasons||[]).map(function(r){return '• '+esc(r);}).join('<br>');
+
+      document.getElementById('riUp').textContent=pts(ri.upside_remaining_points);
+      document.getElementById('riDown').textContent=pts(ri.downside_remaining_points!=null?-Math.abs(ri.downside_remaining_points):null);
+      document.getElementById('riUsed').textContent=(ri.range_used_percent!=null?ri.range_used_percent+'%':'--');
+      document.getElementById('riUsedBar').style.width=Math.max(0,Math.min(100,ri.range_used_percent||0))+'%';
+      var exh=document.getElementById('riExh');exh.textContent=ri.range_exhaustion_risk||'--';exh.style.color=exhClass(ri.range_exhaustion_risk);
+      document.getElementById('riOpen').textContent=(ri.opening_context||'--').replace(/_/g,' ');
+      interp.textContent=ri.interpretation||'';
+      document.getElementById('riFlags').textContent=(ri.quality_flags||[]).join(' · ');
+    }
+
+    function load(){
+      fetch('/api/range_intelligence?ticker='+encodeURIComponent(curTicker()),{cache:'no-store'})
+        .then(function(r){return r.json();}).then(render)
+        .catch(function(){var w=document.getElementById('riWarm');if(w){w.style.display='';w.textContent='Range intelligence unavailable this cycle — retrying…';}});
+    }
+    document.querySelectorAll('.ticker-btn').forEach(function(b){b.addEventListener('click',function(){setTimeout(load,60);});});
+    load();
+    setInterval(load, 20000);
+  })();
+  </script>
+
   <!-- ════════════════════════════════════════════════════════════════════════
        TAB: MISSION CONTROL — APEX 8.0 default workspace
        Consumes /api/mission_control (pure composition, single lightweight poll).
