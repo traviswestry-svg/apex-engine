@@ -7112,13 +7112,22 @@ try:
     # ahead of the E*TRADE sandbox fallback).
     from engine.options import polygon_chain as _polygon_chain
     _POLY_UNDERLYING = os.getenv("POLYGON_OPTIONS_UNDERLYING", "I:SPX").strip() or "I:SPX"
+    try:
+        _POLY_STRIKE_WINDOW = float(os.getenv("POLYGON_STRIKE_WINDOW_PCT", "0.05"))
+    except Exception:
+        _POLY_STRIKE_WINDOW = 0.05
 
     def _poly_chain_fetcher(symbol, expiration, side):
         if not POLYGON_API_KEY:
             return None
+        try:
+            spot = _spx_spot_provider()
+        except Exception:
+            spot = None
         return _polygon_chain.fetch_chain(
             safe_get_json, expiration, side,
-            underlying=_POLY_UNDERLYING, next_page=_polygon_next_page)
+            underlying=_POLY_UNDERLYING, next_page=_polygon_next_page,
+            spot=spot, window_pct=_POLY_STRIKE_WINDOW)
 
     def _poly_expirations_provider():
         if not POLYGON_API_KEY:
