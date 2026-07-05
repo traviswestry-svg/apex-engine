@@ -10,61 +10,83 @@
         --muted:#8a94a3;--blue:#38bdf8;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;
         --mono:'JetBrains Mono',ui-monospace,monospace;}
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;padding:16px;line-height:1.5}
-  h1{font-size:19px;font-weight:800;letter-spacing:-.01em}
-  .sub{color:var(--muted);font-size:12px;margin-bottom:14px}
-  .badge{font-family:var(--mono);font-size:10px;font-weight:800;letter-spacing:.1em;
-         padding:3px 9px;border-radius:999px;background:rgba(245,158,11,.12);
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;
+       height:100vh;display:flex;flex-direction:column;gap:8px;padding:10px;overflow:hidden}
+  .card{background:var(--surf);border:1px solid var(--bdr);border-radius:9px;padding:10px 12px}
+  .card h2{font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--muted);
+           text-transform:uppercase;margin-bottom:7px}
+
+  /* top bar */
+  .topbar{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;flex:0 0 auto}
+  .topbar h1{font-size:16px;font-weight:800;letter-spacing:-.01em}
+  .badge{font-family:var(--mono);font-size:9px;font-weight:800;letter-spacing:.1em;
+         padding:2px 8px;border-radius:999px;background:rgba(245,158,11,.12);
          color:var(--amber);border:1px solid rgba(245,158,11,.3)}
-  .card{background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;margin-bottom:14px}
-  .card h2{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--muted);
-           text-transform:uppercase;margin-bottom:10px}
-  .kv{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;
-      padding:4px 0;border-bottom:1px dotted var(--bdr)}
+  .sub{color:var(--muted);font-size:11px}
+
+  /* plan bar */
+  .plan{flex:0 0 auto;padding:8px 12px}
+  .controls{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px}
+  .ctrl{display:flex;flex-direction:column}
+  label{font-family:var(--mono);font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-left:2px;margin-bottom:1px}
+  input,select{font-family:var(--mono);font-size:11px;background:var(--surf2);color:var(--text);
+                border:1px solid var(--bdr);border-radius:6px;padding:5px 8px;width:88px}
+  button{font-family:var(--mono);font-size:11px;font-weight:700;padding:6px 11px;border-radius:7px;
+         border:1px solid var(--bdr);background:var(--surf2);color:var(--text);cursor:pointer}
+  button:hover{border-color:var(--blue);color:var(--blue)}
+  button.primary{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:var(--blue)}
+  .plan-note{color:var(--muted);font-size:10px;margin-left:auto;max-width:46%;text-align:right}
+
+  /* main zone: charts + command center fill remaining height */
+  .main-zone{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 300px;gap:8px}
+  .charts{display:flex;flex-direction:column;min-height:0;padding:8px 10px}
+  .chart-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+  .chart-head h2{margin:0}
+  .chart-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:3px;margin-left:auto}
+  .tb-label{font-family:var(--mono);font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:0 1px}
+  .tb-sep{width:1px;height:14px;background:var(--bdr);margin:0 4px}
+  .tb-hint{font-family:var(--mono);font-size:8px;color:var(--muted);margin-left:6px}
+  button.tb{font-size:9px;font-weight:700;padding:3px 7px;border-radius:5px;
+            border:1px solid var(--bdr);background:var(--surf2);color:var(--muted);cursor:pointer}
+  button.tb:hover{border-color:var(--blue);color:var(--blue)}
+  button.tb.on{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:var(--blue)}
+  .pane-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:.12em;
+              text-transform:uppercase;margin:3px 0 2px}
+  #tccSpxChart{flex:5 1 0;min-height:0;width:100%}
+  #tccPremChart{flex:3 1 0;min-height:0;width:100%}
+
+  /* command center */
+  .cc-panel{display:flex;flex-direction:column;min-height:0;overflow-y:auto}
+  .kv{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;
+      padding:3px 0;border-bottom:1px dotted var(--bdr)}
   .kv .v{font-weight:700}
   .ok{color:var(--green)} .bad{color:var(--red)} .warn{color:var(--amber)}
   .pos{color:var(--green)} .neg{color:var(--red)}
-  button{font-family:var(--mono);font-size:11px;font-weight:700;padding:6px 12px;border-radius:7px;
-         border:1px solid var(--bdr);background:var(--surf2);color:var(--text);cursor:pointer;margin:2px 4px 2px 0}
-  button:hover{border-color:var(--blue);color:var(--blue)}
-  button.primary{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:var(--blue)}
-  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;margin-top:8px}
-  th,td{text-align:right;padding:4px 6px;border-bottom:1px solid var(--bdr)}
-  th{color:var(--muted);font-weight:700;font-size:9px;letter-spacing:.05em;text-transform:uppercase}
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10px;margin-top:6px}
+  th,td{text-align:right;padding:3px 5px;border-bottom:1px solid var(--bdr)}
+  th{color:var(--muted);font-weight:700;font-size:8px;letter-spacing:.05em;text-transform:uppercase}
   td:first-child,th:first-child{text-align:left}
   tr.rec{background:rgba(56,189,248,.06)}
   tr.pick{cursor:pointer} tr.pick:hover{background:rgba(56,189,248,.1)}
-  input,select{font-family:var(--mono);font-size:11px;background:var(--surf2);color:var(--text);
-                border:1px solid var(--bdr);border-radius:6px;padding:5px 8px;margin:2px 2px;width:92px}
-  label{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-left:2px}
-  #tccLog{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:pre-wrap;
-          max-height:150px;overflow:auto;margin-top:8px}
-  .note{color:var(--muted);font-size:11px;margin-top:8px;line-height:1.45}
-
-  /* command center layout */
-  .cc-wrap{display:grid;grid-template-columns:1fr 320px;gap:14px}
-  @media(max-width:920px){.cc-wrap{grid-template-columns:1fr}}
-  .pane-label{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.12em;
-              text-transform:uppercase;margin:2px 0 4px}
-  #tccSpxChart{height:300px;width:100%}
-  #tccPremChart{height:180px;width:100%;margin-top:6px}
-  .chart-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:4px;margin-bottom:8px}
-  .tb-label{font-family:var(--mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin:0 2px}
-  .tb-sep{width:1px;height:16px;background:var(--bdr);margin:0 6px}
-  .tb-hint{font-family:var(--mono);font-size:9px;color:var(--muted);margin-left:auto}
-  button.tb{font-family:var(--mono);font-size:10px;font-weight:700;padding:4px 9px;border-radius:6px;
-            border:1px solid var(--bdr);background:var(--surf2);color:var(--muted);cursor:pointer;margin:0}
-  button.tb:hover{border-color:var(--blue);color:var(--blue)}
-  button.tb.on{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:var(--blue)}
-  .cc-panel .kv{border-bottom:1px solid var(--bdr)}
-  .cc-big{display:flex;justify-content:space-between;align-items:baseline;margin:6px 0}
-  .cc-big .cc-val{font-family:var(--mono);font-size:20px;font-weight:800}
-  .cc-chip{font-family:var(--mono);font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;letter-spacing:.08em}
+  .cc-big{display:flex;justify-content:space-between;align-items:baseline;margin:4px 0}
+  .cc-big .cc-val{font-family:var(--mono);font-size:17px;font-weight:800}
+  .cc-chip{font-family:var(--mono);font-size:9px;font-weight:800;padding:2px 7px;border-radius:999px;letter-spacing:.08em}
   .chip-plan{background:rgba(245,158,11,.12);color:var(--amber);border:1px solid rgba(245,158,11,.3)}
   .chip-active{background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.3)}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;vertical-align:middle}
-  .controls{display:flex;flex-wrap:wrap;align-items:flex-end;gap:2px}
-  .ctrl{display:flex;flex-direction:column}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;vertical-align:middle}
+
+  /* bottom zone: broker | chain | log */
+  .bottom-zone{flex:0 0 168px;display:grid;grid-template-columns:230px 1fr 320px;gap:8px;min-height:0}
+  .bottom-zone .card{overflow:auto;min-height:0}
+  #tccLog{font-family:var(--mono);font-size:9px;color:var(--muted);white-space:pre-wrap}
+  .note{color:var(--muted);font-size:10px;line-height:1.4}
+  .mini-btn{font-size:10px;padding:4px 9px}
+  .chain-controls{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px}
+  .chain-controls select{width:130px}
+  .side-toggle{display:inline-flex;gap:2px}
+  button.side-btn{color:var(--muted)}
+  button.side-btn.on{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.4);color:var(--blue)}
 
   /* modal */
   #tccModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);align-items:center;justify-content:center;z-index:50}
@@ -72,47 +94,58 @@
   .modal-card h3{font-family:var(--mono);font-size:12px;letter-spacing:.08em;margin-bottom:12px}
   .mrow{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:4px 0;border-bottom:1px dotted var(--bdr)}
   .mnote{font-family:var(--mono);font-size:11px;margin-top:10px}
+
+  @media(max-width:900px){
+    body{overflow:auto;height:auto}
+    .main-zone{grid-template-columns:1fr}
+    #tccSpxChart{height:280px;flex:none}#tccPremChart{height:170px;flex:none}
+    .bottom-zone{grid-template-columns:1fr;flex:none}
+    .plan-note{display:none}
+  }
 </style>
 </head>
 <body>
-  <h1>SPX Trade Command Center <span class="badge" id="modeBadge">SANDBOX</span></h1>
-  <div class="sub">Power E*TRADE sandbox · SPX 0DTE calls · drag Entry / Stop / B/E / TP1–TP3 on either pane · preview-and-confirm only · live trading disabled by default</div>
+  <div class="topbar">
+    <h1>SPX Trade Command Center <span class="badge" id="modeBadge">SANDBOX</span></h1>
+    <span class="sub">SPX 0DTE calls &amp; puts · drag Entry / Stop / B/E / TP1–TP3 on either pane · preview-and-confirm only · live trading disabled by default</span>
+  </div>
 
-  <!-- CONTROLS -->
-  <div class="card">
-    <h2>Plan</h2>
+  <!-- PLAN -->
+  <div class="card plan">
     <div class="controls">
       <div class="ctrl"><label>SPX Spot</label><input id="tccSpot" type="number" step="0.25" placeholder="6300"></div>
       <div class="ctrl"><label>Entry Premium</label><input id="tccPrem" type="number" step="0.05" placeholder="4.20"></div>
-      <div class="ctrl"><label>Delta</label><input id="tccDelta" type="number" step="0.01" placeholder="0.42"></div>
+      <div class="ctrl"><label>Delta</label><input id="tccDelta" type="number" step="0.01" placeholder="0.45"></div>
       <div class="ctrl"><label>Qty</label><input id="tccQty" type="number" step="1" value="1"></div>
       <button class="primary" id="tccArm">Arm Plan</button>
       <button id="tccModeBtn">Planning / Active</button>
       <button id="tccReload">Reload SPX</button>
+      <span class="plan-note">Click a chain row to auto-fill premium &amp; delta, or type them in, then Arm Plan. Premium pane is delta-modeled until a live feed is connected.</span>
     </div>
-    <div class="note">Pick a contract from the chain below to auto-fill premium &amp; delta, set spot, then Arm Plan. The premium pane is a <b>delta-modeled</b> projection until a live option feed is connected — order prices always come from E*TRADE's preview.</div>
   </div>
 
-  <!-- CHART + COMMAND CENTER -->
-  <div class="cc-wrap">
-    <div class="card">
-      <h2>Charts — SPX (I:SPX cash) + Modeled Premium</h2>
-      <div class="chart-toolbar">
-        <span class="tb-label">TF</span>
-        <button class="tb" data-tccTf="1">1m</button>
-        <button class="tb on" data-tccTf="5">5m</button>
-        <button class="tb" data-tccTf="15">15m</button>
-        <span class="tb-sep"></span>
-        <span class="tb-label">Lookback</span>
-        <button class="tb on" data-tccLb="1">1D</button>
-        <button class="tb" data-tccLb="3">3D</button>
-        <button class="tb" data-tccLb="5">5D</button>
-        <span class="tb-sep"></span>
-        <span class="tb-label">Zoom</span>
-        <button class="tb" id="tccZoomIn">＋</button>
-        <button class="tb" id="tccZoomOut">－</button>
-        <button class="tb" id="tccFit">Fit</button>
-        <span class="tb-hint">scroll to zoom · drag axis to pan</span>
+  <!-- MAIN: charts + command center -->
+  <div class="main-zone">
+    <div class="card charts">
+      <div class="chart-head">
+        <h2>SPX (I:SPX cash) + Modeled Premium</h2>
+        <div class="chart-toolbar">
+          <span class="tb-label">TF</span>
+          <button class="tb" data-tccTf="1">1m</button>
+          <button class="tb on" data-tccTf="5">5m</button>
+          <button class="tb" data-tccTf="15">15m</button>
+          <span class="tb-sep"></span>
+          <span class="tb-label">Days</span>
+          <button class="tb on" data-tccLb="1">1D</button>
+          <button class="tb" data-tccLb="3">3D</button>
+          <button class="tb" data-tccLb="5">5D</button>
+          <span class="tb-sep"></span>
+          <span class="tb-label">Zoom</span>
+          <button class="tb" id="tccZoomIn">＋</button>
+          <button class="tb" id="tccZoomOut">－</button>
+          <button class="tb" id="tccFit">Fit</button>
+          <span class="tb-hint">scroll to zoom · drag axis to pan</span>
+        </div>
       </div>
       <div class="pane-label">SPX price</div>
       <div id="tccSpxChart"></div>
@@ -127,7 +160,7 @@
       <div class="kv"><span>Premium (now)</span><span class="v" id="ccPremium">—</span></div>
       <div class="kv"><span>Delta</span><span class="v" id="ccDelta">—</span></div>
       <div class="kv"><span>Qty</span><span class="v" id="ccQty">1</span></div>
-      <table><thead><tr><th>Line</th><th>SPX</th><th>Premium</th><th>$ vs Entry</th></tr></thead>
+      <table><thead><tr><th>Line</th><th>SPX</th><th>Prem</th><th>$ vs Entry</th></tr></thead>
         <tbody id="ccLevels"><tr><td colspan="4" style="color:var(--muted)">Arm a plan to place lines.</td></tr></tbody></table>
       <div class="cc-big"><span class="pane-label">Max risk</span><span class="cc-val neg" id="ccRisk">—</span></div>
       <div class="cc-big"><span class="pane-label">R:R (→TP1)</span><span class="cc-val" id="ccRR">—</span></div>
@@ -135,17 +168,31 @@
     </div>
   </div>
 
-  <!-- STATUS + ACCOUNTS + CONTRACT -->
-  <div class="cc-wrap">
+  <!-- BOTTOM: broker | chain | log -->
+  <div class="bottom-zone">
     <div class="card">
-      <h2>SPX Call Chain <span style="color:var(--muted);font-weight:400"> — click a row to load it</span></h2>
-      <div class="controls" style="margin-bottom:6px">
-        <select id="expSelect" style="width:150px"><option value="">— expirations —</option></select>
-        <button onclick="loadExpirations()">Expirations</button>
-        <button onclick="loadChain()">CALL Chain</button>
-        <button onclick="loadRecommended()">APEX Recommended</button>
+      <h2>Broker Status</h2>
+      <div id="statusBox"><div class="kv"><span>Loading…</span><span class="v"></span></div></div>
+      <div style="margin-top:6px">
+        <button class="mini-btn" onclick="loadStatus()">Refresh</button>
+        <button class="mini-btn" onclick="loadAccounts()">List Accounts</button>
       </div>
-      <div class="note" id="chainMeta"></div>
+      <div id="accountsBox" class="note" style="margin-top:5px">Click "List Accounts".</div>
+    </div>
+
+    <div class="card">
+      <h2>SPX <span id="chainSideLabel">Call</span> Chain — click a row to load it</h2>
+      <div class="chain-controls">
+        <select id="expSelect"><option value="">— expirations —</option></select>
+        <button class="mini-btn" onclick="loadExpirations()">Expirations</button>
+        <span class="side-toggle">
+          <button class="mini-btn side-btn on" data-side="CALL" onclick="setChainSide('CALL')">Calls</button>
+          <button class="mini-btn side-btn" data-side="PUT" onclick="setChainSide('PUT')">Puts</button>
+        </span>
+        <button class="mini-btn" onclick="loadChain()">Load Chain</button>
+        <button class="mini-btn" onclick="loadRecommended()">APEX Recommended</button>
+        <span class="note" id="chainMeta"></span>
+      </div>
       <table id="chainTable">
         <thead><tr><th>Strike</th><th>Bid</th><th>Ask</th><th>Mid</th><th>Spr%</th>
         <th>Vol</th><th>OI</th><th>Δ</th><th>IV</th><th>Liq</th><th>APEX</th></tr></thead>
@@ -154,18 +201,9 @@
     </div>
 
     <div class="card">
-      <h2>Broker Status</h2>
-      <div id="statusBox"><div class="kv"><span>Loading…</span><span class="v"></span></div></div>
-      <button onclick="loadStatus()">Refresh</button>
-      <button onclick="loadAccounts()">List Accounts</button>
-      <div id="accountsBox" class="note">Click "List Accounts".</div>
+      <h2>Event Log</h2>
+      <div id="tccLog"></div>
     </div>
-  </div>
-
-  <!-- EVENT LOG -->
-  <div class="card">
-    <h2>Event Log</h2>
-    <div id="tccLog"></div>
   </div>
 
   <!-- CHANGE PREVIEW MODAL -->
@@ -217,15 +255,21 @@ function renderChain(rows,meta){
     <td>${c.apex_recommendation||''}</td></tr>`).join('');
   $('chainMeta').textContent=meta||'';
 }
+let chainSide='CALL';
+function setChainSide(s){
+  chainSide=s;
+  document.querySelectorAll('.side-btn').forEach(b=>b.classList.toggle('on', b.getAttribute('data-side')===s));
+  const lbl=$('chainSideLabel'); if(lbl) lbl.textContent = (s==='PUT'?'Put':'Call');
+}
 async function loadChain(){
   const exp=$('expSelect').value; if(!exp){ tlog('pick an expiration'); return; }
-  const j=await api('/api/trade/spx/chain?expiration='+exp+'&side=CALL');
-  renderChain((j.data&&j.data.contracts)||[],'source: '+((j.data||{}).source||'none'));
+  const j=await api('/api/trade/spx/chain?expiration='+exp+'&side='+chainSide);
+  renderChain((j.data&&j.data.contracts)||[],chainSide+' · source: '+((j.data||{}).source||'none'));
 }
 async function loadRecommended(){
   const exp=$('expSelect').value; if(!exp){ tlog('pick an expiration'); return; }
-  const j=await api('/api/trade/spx/recommended-contracts?expiration='+exp+'&side=CALL');
-  renderChain((j.data&&j.data.recommended)||[],'APEX recommended · spot '+((j.data||{}).spot||'—'));
+  const j=await api('/api/trade/spx/recommended-contracts?expiration='+exp+'&side='+chainSide);
+  renderChain((j.data&&j.data.recommended)||[],'APEX '+chainSide+' · spot '+((j.data||{}).spot||'—'));
 }
 loadStatus();
 </script>
