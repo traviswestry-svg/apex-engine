@@ -192,6 +192,26 @@ def test_insufficient_data_no_price():
     assert ri["active_scenario"] == "INSUFFICIENT_DATA"
 
 
+def test_cash_closed_es_open_anchors_to_prior_close():
+    # No live SPX cash price, but ES is trading and prior close is known -> project
+    bus = _bus(market_state={"price": None, "session_state": "OVERNIGHT"},
+               structure={"current_price": None, "prev_close": 7483.23,
+                          "prev_day_high": 7521.81, "prev_day_low": 7449.63,
+                          "session_high": None, "session_low": None},
+               overnight_game_plan={"es_price": 7506.5, "overnight_high": 7530.0,
+                                    "overnight_low": 7474.0, "prior_close": 7483.23})
+    ri = _ri(build_range_intelligence(bus, market_open=False))
+    assert ri["available"] is True                       # no longer bails
+    assert "SPX_PRICE_ESTIMATED_FROM_PRIOR_CLOSE" in ri["quality_flags"]
+    b = ri["basis_diagnostics"]
+    assert b["es_available"] is True
+    assert b["basis_method"] == "ES_MINUS_PRIOR_CLOSE"
+    # basis = es_price - prior_close = 7506.5 - 7483.23 = 23.27
+    assert b["basis"] == round(7506.5 - 7483.23, 2)
+    # SPX-equiv overnight high = on_high - basis = prior_close + (on_high - es_price)
+    assert b["spx_equivalent_overnight_high"] == round(7530.0 - (7506.5 - 7483.23), 2)
+
+
 # ── range used + remaining + closed market ───────────────────────────────────
 
 def test_range_used_session_method():
