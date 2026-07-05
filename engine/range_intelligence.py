@@ -146,10 +146,22 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
     price = _f(ms.get("price")) or _f(st.get("current_price"))
     session_state = _u(ms.get("session_state") or lr.get("session", {}).get("session_state"))
 
+    # Cash-closed / ES-open fallback: with no live SPX quote, anchor to the prior
+    # SPX cash close and treat ES structure as offsets from current ES (the way an
+    # overnight game plan is built). Honest and flagged — no fabricated basis.
+    _on_es = _f((lr.get("overnight_game_plan") or {}).get("es_price"))
+    _prev_close = _f((lr.get("structure") or {}).get("prev_close")) or \
+        _f((lr.get("overnight_game_plan") or {}).get("prior_close"))
+    price_estimated = False
+    if price is None and _on_es is not None and _prev_close is not None:
+        price = _prev_close
+        price_estimated = True
+        flags.append("SPX_PRICE_ESTIMATED_FROM_PRIOR_CLOSE")
+
     if price is None:
         return _envelope(ticker, {
             "available": False, "active_scenario": "INSUFFICIENT_DATA",
-            "interpretation": "No SPX price available yet — cannot project a range.",
+            "interpretation": "No SPX price available yet — run a scan once ES/cash data is live to project a range.",
             "quality_flags": ["INSUFFICIENT_DATA"],
         })
 
@@ -163,6 +175,8 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
     basis_block: Dict[str, Any]
     spx_equiv_on_high = spx_equiv_on_low = None
     if es_price is not None and (es_on_high is not None or es_on_low is not None):
+        # When anchored to prior close (cash dark), basis is the ES-vs-prior-close
+        # spread (carry + weekend drift); ES levels map to cash-anchored offsets.
         basis = round(es_price - price, 2)
         if es_on_high is not None:
             spx_equiv_on_high = round(es_on_high - basis, 2)
@@ -170,6 +184,7 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
             spx_equiv_on_low = round(es_on_low - basis, 2)
         basis_block = {
             "es_available": True, "basis": basis,
+            "basis_method": "ES_MINUS_PRIOR_CLOSE" if price_estimated else "ES_MINUS_SPX",
             "es_overnight_high": es_on_high, "spx_equivalent_overnight_high": spx_equiv_on_high,
             "es_overnight_low": es_on_low, "spx_equivalent_overnight_low": spx_equiv_on_low,
         }
