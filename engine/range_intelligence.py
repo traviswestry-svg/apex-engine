@@ -151,6 +151,7 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
     # overnight game plan is built). Honest and flagged — no fabricated basis.
     _on_es = _f((lr.get("overnight_game_plan") or {}).get("es_price"))
     _prev_close = _f((lr.get("structure") or {}).get("prev_close")) or \
+        _f((lr.get("structure") or {}).get("prev_day_close")) or \
         _f((lr.get("overnight_game_plan") or {}).get("prior_close"))
     price_estimated = False
     if price is None and _on_es is not None and _prev_close is not None:
@@ -196,7 +197,7 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
     # ── previous-day + session levels ────────────────────────────────────────
     pdh = _f(st.get("prev_day_high"))
     pdl = _f(st.get("prev_day_low"))
-    prev_close = _f(st.get("prev_close")) or _f(on.get("prior_close"))
+    prev_close = _f(st.get("prev_close")) or _f(st.get("prev_day_close")) or _f(on.get("prior_close"))
     sess_high = _f(st.get("session_high"))
     sess_low = _f(st.get("session_low"))
     if pdh is None or pdl is None:
