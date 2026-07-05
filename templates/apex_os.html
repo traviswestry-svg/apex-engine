@@ -6,6 +6,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/apex_os.css') }}?v={{ asset_version or version }}">
+<style>
+  .apex-nav a.nav-trade{color:#38bdf8;font-weight:700}
+  .apex-nav a.nav-trade:hover{color:#7dd3fc}
+  .apex-nav a.nav-trade::before{content:"▸ ";opacity:.7}
+</style>
 </head>
 <body>
 
@@ -16,6 +21,7 @@
   <a href="/apex_os" class="active">Terminal</a>
   <a href="/assistant">Assistant</a>
   <a href="/flow">Flow / GEX</a>
+  <a href="/apex_os/trade_command" class="nav-trade">Trade Command</a>
   <div class="nav-sep"></div>
   <a href="/api/v45/status" target="_blank">Status</a>
   <a href="/health" target="_blank">Health</a>
