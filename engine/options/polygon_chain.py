@@ -106,8 +106,15 @@ def fetch_chain(
     underlying: str = "I:SPX",
     next_page: Optional[Callable[[str], Optional[dict]]] = None,
     max_pages: int = 4,
+    spot: Optional[float] = None,
+    window_pct: float = 0.05,
 ) -> List[Dict[str, Any]]:
-    """Raw contract dicts for one SPX expiration + side, ready for normalize_contract()."""
+    """Raw contract dicts for one SPX expiration + side, ready for normalize_contract().
+
+    When `spot` is provided, only strikes within +/- `window_pct` of spot are requested
+    (near-the-money), so the table shows tradeable strikes with populated greeks instead
+    of the entire deep-ITM/OTM ladder.
+    """
     if not expiration:
         return []
     params = {
@@ -117,6 +124,11 @@ def fetch_chain(
         "order": "asc",
         "sort": "strike_price",
     }
+    if spot and spot > 0 and window_pct > 0:
+        lo = spot * (1.0 - window_pct)
+        hi = spot * (1.0 + window_pct)
+        params["strike_price.gte"] = int(lo)
+        params["strike_price.lte"] = int(hi) + 1
     out: List[Dict[str, Any]] = []
     data = get_json(f"{_SNAP_URL}/{underlying}", params)
     pages = 0
