@@ -142,7 +142,9 @@ def register_director_routes(
         return jsonify({"ok": True, "message": f"Director memory reset for {ticker}."})
 
     # ── Outcome Evaluator (Stage 2): self-evaluation of past directives ──────────
-    @app.route("/api/active_trade_director/evaluate", methods=["POST"])
+    # GET + POST: idempotent backfill, so it's safe to trigger from a browser or
+    # a plain cron/curl as well as a POST.
+    @app.route("/api/active_trade_director/evaluate", methods=["GET", "POST"])
     def _director_evaluate():
         ticker = (request.args.get("ticker", default_ticker) or default_ticker).upper()
         try:
