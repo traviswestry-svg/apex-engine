@@ -387,6 +387,7 @@
   async function openChangeModal(tag) {
     const lvl = state.lines[tag];
     const m = $("tccModal");
+    $("tccModalConfirm").style.display = "";
     $("tccModalTitle").textContent = "Preview Change — " + tag + " (Sandbox)";
     $("tccModalBody").innerHTML =
       `<div class="mrow"><span>Contract</span><b>${state.contractLabel}</b></div>
@@ -414,9 +415,87 @@
   function mapPrem() { const o = {}; Object.keys(state.lines).forEach((t) => (o[t] = state.lines[t].prem)); return o; }
   function closeModal() { $("tccModal").style.display = "none"; }
 
+  // ── pre-flight order preview: run APEX risk guard (+ E*TRADE cost preview when live) ──
+  async function previewOrder() {
+    if (!state.armed) { log("arm a plan first"); return; }
+    const m = $("tccModal");
+    $("tccModalTitle").textContent = "Preview Entry Order — pre-flight";
+    $("tccModalConfirm").style.display = "none";     // placing is not wired in this build
+    if (!state.contract || !state.contract.osi_key) {
+      $("tccModalBody").innerHTML =
+        `<div class="mnote neg">No live contract selected.</div>
+         <div class="mnote">Pick a row from the SPX chain so the order has a real contract (osi key).
+         A typed spot/premium/delta plan can be charted, but only a real contract can be previewed with the broker.</div>`;
+      m.style.display = "flex";
+      return;
+    }
+    const L = state.lines;
+    const maxRisk = (L.ENTRY.prem - L.STOP.prem) * 100 * state.qty;
+    $("tccModalBody").innerHTML =
+      `<div class="mrow"><span>Contract</span><b>${state.contractLabel}</b></div>
+       <div class="mrow"><span>Side / Qty</span><b>${state.side} × ${state.qty}</b></div>
+       <div class="mrow"><span>Entry / Stop</span><b>$${fmt(L.ENTRY.prem)} / $${fmt(L.STOP.prem)}</b></div>
+       <div class="mrow"><span>Targets</span><b>$${fmt(L.TP1.prem)} · $${fmt(L.TP2.prem)} · $${fmt(L.TP3.prem)}</b></div>
+       <div class="mrow"><span>Max risk</span><b class="neg">${money(maxRisk)}</b></div>
+       <div class="mnote">Running APEX pre-flight risk check…</div>`;
+    m.style.display = "flex";
+    try {
+      const r = await fetch("/api/trade/spx/preview-entry", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract: state.contract, quantity: state.qty,
+          entry_premium: L.ENTRY.prem, stop_premium: L.STOP.prem,
+          tp_prices: [L.TP1.prem, L.TP2.prem, L.TP3.prem],
+          session_state: "MARKET_OPEN",
+        }),
+      });
+      const j = await r.json();
+      renderPreview(j);
+    } catch (e) {
+      const n = $("tccModalBody").querySelector(".mnote");
+      if (n) n.outerHTML = `<div class="mnote neg">preview failed: ${e}</div>`;
+    }
+  }
+
+  function renderPreview(j) {
+    const risk = (j.data && j.data.risk) || {};
+    const broker = (j.data && j.data.broker) || null;
+    let html = "";
+    // Risk verdict comes from the guard decision itself, not the overall ok
+    // (the broker step can fail while the risk check passed).
+    if (risk.allow) {
+      html += `<div class="mnote pos">✓ Risk pre-check passed.</div>`;
+    } else {
+      const reasons = (risk.reasons && risk.reasons.length ? risk.reasons
+                       : (j.errors && j.errors.length ? j.errors : ["blocked"])).join("; ");
+      html += `<div class="mnote neg">✗ Risk pre-check: ${reasons}</div>`;
+    }
+    if (risk.warnings && risk.warnings.length) {
+      html += `<div class="mnote warn">! ${risk.warnings.join("; ")}</div>`;
+    }
+    const cost = broker ? (broker.estimated_total_cost != null ? broker.estimated_total_cost
+                 : (broker.total_cost != null ? broker.total_cost : broker.total)) : null;
+    const hasBroker = !!(broker && (broker.preview_id || cost != null || broker.commission != null || broker.margin != null));
+    if (hasBroker) {
+      html += `<div class="mrow" style="margin-top:8px"><span>Broker preview</span><b>${broker.preview_id ? "id " + broker.preview_id : "received"}</b></div>`;
+      if (cost != null) html += `<div class="mrow"><span>Est. cost</span><b>${money(cost)}</b></div>`;
+      if (broker.commission != null) html += `<div class="mrow"><span>Commission</span><b>$${fmt(broker.commission)}</b></div>`;
+      if (broker.margin != null) html += `<div class="mrow"><span>Margin</span><b>${money(broker.margin)}</b></div>`;
+    } else {
+      const berr = (risk.allow && !j.ok && j.errors && j.errors.length) ? j.errors.join("; ") : null;
+      html += berr
+        ? `<div class="mnote">Broker cost preview unavailable: ${berr}</div>`
+        : `<div class="mnote">Broker cost preview appears here once E*TRADE is connected (Configured: YES) during market hours.</div>`;
+    }
+    html += `<div class="mnote" style="opacity:.65">Pre-flight uses regular-hours rules. Live placement re-checks the current session — and placing stays disabled until you explicitly enable it.</div>`;
+    const n = $("tccModalBody").querySelector(".mnote");
+    if (n) n.outerHTML = html;
+  }
+
   // ── selecting a contract from the chain table autofills the plan ───────────────
   window.tccSelectContract = function (c) {
     state.side = (c.side || "CALL").toUpperCase();
+    state.contract = c;
     state.contractLabel = (c.display_symbol || ("SPX " + c.strike + " " + state.side));
     if (c.mid != null) $("tccPrem").value = c.mid;
     if (c.delta != null) $("tccDelta").value = c.delta;
@@ -436,6 +515,7 @@
     $("tccArm").addEventListener("click", armPlan);
     $("tccModeBtn").addEventListener("click", toggleMode);
     $("tccModalClose").addEventListener("click", closeModal);
+    const pv = $("tccPreview"); if (pv) pv.addEventListener("click", previewOrder);
     $("tccReload").addEventListener("click", loadCandles);
     document.querySelectorAll("[data-tccTf]").forEach((b) =>
       b.addEventListener("click", () => setTf(parseInt(b.getAttribute("data-tccTf"), 10))));
