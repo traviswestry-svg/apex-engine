@@ -228,7 +228,13 @@
     function load(){
       fetch('/api/range_intelligence?ticker='+encodeURIComponent(curTicker()),{cache:'no-store'})
         .then(function(r){return r.json();}).then(render)
-        .catch(function(){var w=document.getElementById('riWarm');if(w){w.style.display='';w.textContent='Range intelligence unavailable this cycle — retrying…';}});
+        .catch(function(){
+          var w=document.getElementById('riWarm'), g=document.getElementById('riBodyGrid');
+          // Transient poll failure: if zones are already populated, keep the last
+          // good render rather than stamping an error banner over live data.
+          if(g && g.style.display!=='none') return;
+          if(w){w.style.display='';w.textContent='Range intelligence unavailable this cycle — retrying…';}
+        });
     }
     document.querySelectorAll('.ticker-btn').forEach(function(b){b.addEventListener('click',function(){setTimeout(load,60);});});
     load();
