@@ -4561,6 +4561,7 @@ def api_institutional_os():
                         auction_state = auction_intel.get("auction_state") or {},
                         market_state  = canonical_ms or {},
                         dte           = 0.0,
+                        vix           = _sf(canonical_ms.get("vix") or vix_price or 0.0),
                     )
                     result["dealer_positioning"] = dealer_pos
                 except Exception as _dp2:
@@ -4762,14 +4763,29 @@ def api_institutional_os():
                     print(f"Execution intelligence error (non-fatal): {_eie2}", flush=True)
             if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:
                 try:
-                    # Fetch ES overnight bars if not already in volume_bundle
-                    _es_bars = _futures_fetch_bars(_resolve_polygon_futures_ticker("ES"), days=1, multiplier=5)
-                    _es_price = _sf(canonical_ms.get("price") or 0.0)
+                    # Fetch ES bars via the futures-aware probe (ES -> MES -> SPX-cash fallback).
+                    _es_bars_all, _es_tkr, _es_name, _es_is_fut, _es_is_fallback = \
+                        _resolve_es_bars_with_probe(days=1, multiplier=5)
+                    # Keep only the current Globex/overnight session (since the most recent
+                    # 18:00 ET reopen) so overnight high/low reflect tonight — not the multi-day
+                    # fetch window (previously ~4000 bars => a two-week range mislabeled overnight).
+                    _now_et_on = now_et()
+                    _cut_on = _now_et_on.replace(hour=18, minute=0, second=0, microsecond=0)
+                    if _now_et_on.hour < 18:
+                        _cut_on = _cut_on - dt.timedelta(days=1)
+                    _cut_ms = int(_cut_on.timestamp() * 1000)
+                    _es_bars = [b for b in _es_bars_all if _sf(b.get("t")) >= _cut_ms] or _es_bars_all[-24:]
+                    # ES price = last real futures bar close; fall back to cash only if no futures bars.
+                    if _es_is_fut and _es_bars_all:
+                        _es_price = _sf(_es_bars_all[-1].get("c")) or _sf(canonical_ms.get("price") or 0.0)
+                    else:
+                        _es_price = _sf(canonical_ms.get("price") or 0.0)
                     _prior_poc  = _sf(vp_levels.get("poc"))
                     _prior_vah  = _sf(vp_levels.get("vah"))
                     _prior_val  = _sf(vp_levels.get("val"))
                     # Approximate prior close from structure
-                    _prior_close = _sf((result.get("structure") or {}).get("prev_close") or 0.0)
+                    _prior_close = _sf((result.get("structure") or {}).get("prev_close")
+                                       or (result.get("structure") or {}).get("prev_day_close") or 0.0)
                     _on_plan = build_overnight_game_plan(
                         es_price=_es_price,
                         es_bars=_es_bars,
