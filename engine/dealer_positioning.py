@@ -718,6 +718,7 @@ def build_dealer_positioning(
     auction_state:   Dict[str, Any],
     market_state:    Dict[str, Any],
     dte:             float = 0.0,
+    vix:             float = 0.0,
 ) -> Dict[str, Any]:
     """Orchestrate all 7 phases. Single call — consumes existing engine outputs."""
 
@@ -728,7 +729,7 @@ def build_dealer_positioning(
     sweep_count   = int(_sf(flow_snapshot.get("sweep_count")))
     flow_bias     = str(flow_snapshot.get("bias") or market_state.get("flow_bias") or "MIXED")
     call_ratio    = _sf(flow_snapshot.get("call_ratio_pct"), 50.0) or None
-    vix           = _sf(flow_snapshot.get("vix") or market_state.get("vix"))
+    vix           = _sf(vix or flow_snapshot.get("vix") or market_state.get("vix"))
     flow_momentum = str(flow_snapshot.get("flow_momentum") or "STABLE")
     poc_migration = str(market_state.get("poc_migration") or auction_state.get("poc_migration") or "STABLE")
     minutes_open  = int(_sf(market_state.get("minutes_open")))

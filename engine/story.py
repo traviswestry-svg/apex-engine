@@ -295,20 +295,31 @@ def _chapter_tape(ms: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None  # No tape data — skip chapter
 
     total_orders = tape_sweeps + tape_blocks
+    flow_bias = str(ms.get("flow_bias") or "MIXED").upper()
+
+    def _relation(tape_dir: str) -> str:
+        """Compare the tape direction to the flow-intelligence bias — confirm or diverge."""
+        if flow_bias == tape_dir:
+            return f"This confirms the {tape_dir.lower()} bias in flow intelligence."
+        if flow_bias in ("BULLISH", "BEARISH"):
+            return (f"This diverges from the {flow_bias.lower()} flow-intelligence read — "
+                    f"the tape and net premium disagree, so treat the signal as unconfirmed.")
+        return "Flow intelligence is mixed, so the tape is the cleaner near-term read."
+
     if tape_sweeps > 0 and tape_net > 1_000_000:
         text = (
             f"The sweep tape is showing {tape_sweeps} call sweep{'s' if tape_sweeps != 1 else ''} "
             f"with {_prem(tape_net)} net buy premium — institutions are paying the ask. "
-            f"This confirms the bullish bias in flow intelligence."
+            f"{_relation('BULLISH')}"
         )
-        color = "#0ca30c"
+        color = "#0ca30c" if flow_bias != "BEARISH" else "#fab219"
     elif tape_sweeps > 0 and tape_net < -1_000_000:
         text = (
             f"The sweep tape is showing {tape_sweeps} put sweep{'s' if tape_sweeps != 1 else ''} "
             f"with {_prem(abs(tape_net))} net sell premium — institutions are hitting the bid. "
-            f"This confirms the bearish bias in flow intelligence."
+            f"{_relation('BEARISH')}"
         )
-        color = "#e34948"
+        color = "#e34948" if flow_bias != "BULLISH" else "#fab219"
     elif tape_blocks > 0 and abs(tape_net) > 500_000:
         direction = "bullish" if tape_net > 0 else "bearish"
         text = (
