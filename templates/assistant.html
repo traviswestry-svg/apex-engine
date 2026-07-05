@@ -1,7 +1,7 @@
 
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>APEX Trade Assistant</title>
+<title>APEX Active Trade Director</title>
 <style>
 :root{--bg:#070a10;--panel:#101827;--panel2:#131f32;--text:#eef4ff;--muted:#91a4bd;--good:#22c55e;--bad:#ef4444;--warn:#f59e0b;--cyan:#6ee7f9;--border:#263244}*{box-sizing:border-box}body{margin:0;background:#070a10;color:var(--text);font-family:Arial,Helvetica,sans-serif}
 .apex-nav{display:flex;align-items:center;gap:6px;padding:10px 16px;background:#101827;border-bottom:1px solid #263244;flex-wrap:wrap}
@@ -10,27 +10,153 @@
 .apex-nav a:hover{background:#131f32;color:#eef4ff;border-color:#263244}
 .apex-nav a.active{background:rgba(110,231,249,.08);color:#6ee7f9;border-color:rgba(110,231,249,.3)}
 .apex-nav .nav-sep{width:1px;height:18px;background:#263244;margin:0 4px}
-.wrap{max-width:1180px;margin:0 auto;padding:18px}.sub-header{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0 18px}.brand{font-size:22px;font-weight:900}.sub{color:var(--muted);margin-top:5px;font-size:13px}.btn{background:#10243a;color:var(--cyan);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:4px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.banner{border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:12px;background:#09111d}.banner.GREEN{border-color:rgba(34,197,94,.5)}.banner.YELLOW{border-color:rgba(245,158,11,.55)}.banner.RED{border-color:rgba(239,68,68,.55)}.banner-title{font-weight:900;font-size:16px}.banner-msg{color:var(--muted);margin-top:4px;font-size:13px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:10px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.val{font-size:22px;font-weight:900;margin-top:6px}.action{font-size:20px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}.planner{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.bigplan{background:#07111f;border:1px solid #2b405d;border-radius:16px;padding:16px}.summary{font-size:22px;font-weight:900;line-height:1.25}.countdown{font-size:34px;font-weight:1000}.check{display:flex;align-items:center;gap:8px;margin:7px 0;color:#cbd8ea}.ok{color:var(--good)}.no{color:var(--bad)}.rules{margin-top:10px;color:#b7c7dd;line-height:1.5}.stale{border-color:rgba(245,158,11,.7)}@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}@media(max-width:820px){.planner{grid-template-columns:1fr}.state{font-size:34px}}
+.wrap{max-width:1180px;margin:0 auto;padding:18px}.sub-header{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0 18px}.brand{font-size:22px;font-weight:900}.sub{color:var(--muted);margin-top:5px;font-size:13px}.btn{background:#10243a;color:var(--cyan);border:1px solid #31506e;border-radius:10px;padding:9px 12px;cursor:pointer}.panel{margin-top:4px;background:linear-gradient(180deg,#101827,#131f32);border:1px solid var(--border);border-radius:18px;padding:18px}.banner{border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:12px;background:#09111d}.banner.GREEN{border-color:rgba(34,197,94,.5)}.banner.YELLOW{border-color:rgba(245,158,11,.55)}.banner.RED{border-color:rgba(239,68,68,.55)}.banner-title{font-weight:900;font-size:16px}.banner-msg{color:var(--muted);margin-top:4px;font-size:13px}.state{font-size:42px;font-weight:1000;line-height:1.05;margin:10px 0}.good{color:var(--good)}.bad{color:var(--bad)}.warn{color:var(--warn)}.info{color:var(--cyan)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}.box{background:#090f1a;border:1px solid #223047;border-radius:14px;padding:14px}.label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.val{font-size:22px;font-weight:900;margin-top:6px}.val.sm{font-size:17px}.action{font-size:20px;font-weight:900;margin:12px 0 4px}.notes{color:#b7c7dd;line-height:1.55}.flash{animation:pulse 1.2s infinite}.flash-red{animation:pulseRed 1s infinite}.planner{display:grid;grid-template-columns:1.25fr .75fr;gap:14px;margin-top:14px}.bigplan{background:#07111f;border:1px solid #2b405d;border-radius:16px;padding:16px}.summary{font-size:22px;font-weight:900;line-height:1.25}.countdown{font-size:34px;font-weight:1000}.check{display:flex;align-items:center;gap:8px;margin:7px 0;color:#cbd8ea}.ok{color:var(--good)}.no{color:var(--bad)}.rules{margin-top:10px;color:#b7c7dd;line-height:1.5}.stale{border-color:rgba(245,158,11,.7)}
+.pill{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.05em;padding:3px 9px;border-radius:999px;border:1px solid var(--border);margin-left:8px;vertical-align:middle}
+.pill.scalp{color:var(--warn);border-color:rgba(245,158,11,.5)}.pill.conviction{color:var(--good);border-color:rgba(34,197,94,.5)}.pill.none{color:var(--muted)}
+.reason{font-size:16px;color:#cfe0f5;margin:2px 0 12px;font-weight:600}
+.hl{display:flex;align-items:baseline;gap:10px}.hl .lvl{font-size:26px;font-weight:1000}.hl .dir{font-size:13px;color:var(--muted)}
+.thesis-strong{color:var(--good)}.thesis-intact{color:var(--cyan)}.thesis-weak{color:var(--warn)}.thesis-bad{color:var(--bad)}
+.tl{margin-top:6px;max-height:230px;overflow:auto}.tl .ev{display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #17222f;font-size:13px}.tl .ev .t{color:var(--muted);min-width:66px}.tl .ev .k{color:var(--cyan);min-width:74px;font-weight:700}
+.cond{color:#b7c7dd;line-height:1.6;font-size:13px}.cond b{color:#eaf2ff}
+.flowbar{height:8px;border-radius:6px;background:#0c1420;overflow:hidden;margin-top:8px}.flowbar>span{display:block;height:100%}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}
+@keyframes pulseRed{0%,100%{box-shadow:0 0 0 rgba(239,68,68,0)}50%{box-shadow:0 0 34px rgba(239,68,68,.55)}}
+@media(max-width:820px){.planner{grid-template-columns:1fr}.state{font-size:34px}}
 </style></head><body>
 <nav class="apex-nav">
   <a href="/" class="nav-logo">APEX</a>
-  <a href="/">Scanner</a>
   <a href="/apex_os">Institutional OS</a>
-  <a href="/assistant" class="active">Trade Assistant</a>
-  <a href="/flow">Flow / GEX</a>
-  <a href="/chart">Charts</a>
+  <a href="/assistant" class="active">Trade Director</a>
+  <a href="/apex_os/trade_command">Trade Command</a>
+  <a href="/flow">Flow</a>
   <div class="nav-sep"></div>
-  <a href="/api/v45/status" target="_blank">Status</a>
-  <a href="/health" target="_blank">Health</a>
+  <a href="/api/active_trade_director" target="_blank">API</a>
 </nav>
 <div class="wrap">
-<div class="sub-header"><div><div class="brand">APEX Trade Assistant</div><div class="sub">Session-aware Flow/GEX bias + Pine trigger + execution plan</div></div><div><button class="btn" onclick="loadAssistant()">Refresh</button></div></div>
-<div id="app" class="panel">Loading...</div></div>
+<div class="sub-header">
+  <div><div class="brand">APEX Active Trade Director</div>
+  <div class="sub">Continuous state-aware directive · flow acceleration · dynamic hold levels · thesis tracking</div></div>
+  <div><button class="btn" onclick="loadDirector()">Refresh</button></div>
+</div>
+<div id="app" class="panel">Loading Active Trade Director…</div>
+</div>
 <script>
-function cls(p){ if(p==='URGENT') return 'good flash'; if(p==='BLOCKED') return 'bad'; if(p==='WARNING') return 'warn'; if(p==='INFO') return 'info'; return 'warn';}
-function money(v){if(v==null)return'--';let n=Number(v),s=n<0?'-':'',a=Math.abs(n);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';return s+'$'+a.toFixed(0)}
-function mmss(s){s=Number(s||0);let m=Math.floor(s/60),r=s%60;return String(m).padStart(2,'0')+':'+String(r).padStart(2,'0')}
-function yes(v){return v?'✅':'❌'}
-async function loadAssistant(){const el=document.getElementById('app');try{const r=await fetch('/api/assistant?ticker=SPX',{cache:'no-store'});const d=await r.json();const f=d.flow||{}, a=d.assistant||{}, p=a.trade_plan||{};const checklist=(a.checklist||[]).map(x=>`<div class="check"><span class="${x.ok?'ok':'no'}">${yes(x.ok)}</span><span>${x.label}</span></div>`).join('');const rules=(p.exit_rules||[]).map(x=>'• '+x).join('<br>');const sc=a.session_context||p.session_context||{};const banner=`<div class="banner ${sc.banner_level||'YELLOW'}"><div class="banner-title">${sc.banner_title||'SESSION STATUS'}</div><div class="banner-msg">${sc.banner_message||''}</div></div>`;el.className='panel '+(p.signal_expired?'stale':'');el.innerHTML=banner+`<div class="label">${a.updated_at_et||''}</div><div class="state ${cls(a.priority)}">${a.state||'WAITING'}</div><div class="sub">${a.message||''}</div><div class="action">${a.action||''}</div><div class="grid"><div class="box"><div class="label">Approved Side</div><div class="val">${a.approved_side||'--'}</div></div><div class="box"><div class="label">Assistant Mode</div><div class="val">${sc.assistant_mode||'--'}</div></div><div class="box"><div class="label">Alignment</div><div class="val">${a.institutional_alignment||'--'}/100</div></div><div class="box"><div class="label">Net Premium</div><div class="val">${money(f.net_premium)}</div></div><div class="box"><div class="label">Flow / Order</div><div class="val">${f.flow_score||'--'} / ${f.order_flow_score||'--'}</div></div><div class="box"><div class="label">Signal Countdown</div><div class="val countdown">${(a.fresh_signal&&sc.is_tradeable_session)?mmss(p.signal_seconds_remaining):'--'}</div></div></div><div class="planner"><div class="bigplan"><div class="label">Execution Plan</div><div class="summary">${p.execution_summary||'Waiting for setup'}</div><div class="grid" style="margin-top:12px"><div class="box"><div class="label">Contract</div><div class="val">${p.recommended_contract||'--'}</div></div><div class="box"><div class="label">Entry Zone</div><div class="val">${p.entry_zone||'--'}</div></div><div class="box"><div class="label">Stop</div><div class="val">${p.stop_price||'--'}</div></div><div class="box"><div class="label">Targets</div><div class="val">${p.target_1||'--'} / ${p.target_2||'--'}</div></div></div><div class="rules">${rules}</div></div><div class="bigplan"><div class="label">Checklist</div>${checklist}<div class="notes" style="margin-top:12px">${(a.reasons||[]).map(x=>'• '+x).join('<br>')}</div></div></div>`}catch(e){el.innerHTML='Error: '+e.message}}
-loadAssistant(); setInterval(loadAssistant, 5000);
-</script></body></html>
+const TICKER = new URLSearchParams(location.search).get('ticker') || 'SPX';
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function yes(v){return v?'✅':'❌';}
+function num(v,d=2){return (v==null||v==='')?'--':Number(v).toFixed(d);}
+function pct(v){return (v==null)?'--':(Number(v)>=0?'+':'')+Number(v).toFixed(0)+'%';}
+function money(v){if(v==null)return'--';let n=Number(v),s=n<0?'-':'',a=Math.abs(n);if(a>=1e9)return s+'$'+(a/1e9).toFixed(2)+'B';if(a>=1e6)return s+'$'+(a/1e6).toFixed(2)+'M';return s+'$'+a.toFixed(0);}
+
+// directive -> colour class + flash
+function directiveClass(dir){
+  const d=(dir||'').toUpperCase();
+  if(d.startsWith('EXIT')) return 'bad flash-red';
+  if(d.startsWith('ENTER')) return 'good flash';
+  if(d.startsWith('HOLD')) return 'info';
+  if(d.startsWith('SCALE')||d==='PROTECT_PROFIT') return 'warn';
+  if(d.startsWith('SCALP_READY')||d.startsWith('WATCHING')) return 'info';
+  return 'warn';
+}
+function thesisClass(t){
+  t=(t||'').toUpperCase();
+  if(t.includes('STRENGTHEN')) return 'thesis-strong';
+  if(t.includes('INTACT')) return 'thesis-intact';
+  if(t.includes('WEAKEN')||t.includes('CONFLICT')) return 'thesis-weak';
+  if(t.includes('INVALID')) return 'thesis-bad';
+  return '';
+}
+function flowLabel(f){return (f||'FLOW_UNKNOWN').replace(/_/g,' ');}
+function flowColor(f){
+  f=(f||'').toUpperCase();
+  if(f.includes('BUYERS_ACCEL')||f==='BULLISH_FLOW_REVERSAL') return 'var(--good)';
+  if(f.includes('SELLERS_ACCEL')||f==='BEARISH_FLOW_REVERSAL') return 'var(--bad)';
+  if(f.includes('EXHAUST')||f.includes('CONFLICT')) return 'var(--warn)';
+  return 'var(--cyan)';
+}
+
+// Dynamic execution plan text (Part 15) driven by the live directive.
+function executionPlan(d){
+  const side=d.side||'', dir=(d.directive||'').toUpperCase();
+  const hold=d.hold_level!=null?`${num(d.hold_level)} (${esc(d.hold_level_source||'level')})`:'—';
+  const t1=num(d.target_1), t2=num(d.target_2);
+  if(dir.startsWith('ENTER_SCALP')) return `ENTER SCALP ${side} — short-term ${side==='CALL'?'buyer':'seller'} acceleration confirmed. Hold ${d.hold_level!=null?'above/below '+num(d.hold_level):'the level'}, first target ${t1}. Expected hold 1–5 min.`;
+  if(dir.startsWith('ENTER_')) return `ENTER ${side} — institutional bias favours ${side} with alignment. Hold ${hold}. Scale at ${t1}. Exit if the hold level fails and opposing flow accelerates.`;
+  if(dir.startsWith('HOLD')) return `HOLD ${side} — ${esc(d.reason||'thesis intact')}. Hold ${d.hold_level!=null?d.position.current_price!=null && d.hold_level<d.position.current_price?'above ':'':''}${hold}. Scale near ${t1}. Exit on opposing flow acceleration below the level.`;
+  if(dir==='PROTECT_PROFIT') return `PROTECT PROFIT — trade working but conditions weakening. ${esc(d.next_action||'').replace(/_/g,' ')}. Keep the runner only while ${hold} holds.`;
+  if(dir.startsWith('SCALE')) return `${dir.replace(/_/g,' ')} — ${esc(d.reason||'')}. Hold remainder while ${hold} is defended.`;
+  if(dir.startsWith('EXIT')) return `EXIT ${side} NOW — ${esc(d.reason||'exit condition met')}.`;
+  if(dir.startsWith('WATCHING')) return `WAIT FOR ENTRY — institutional bias favours ${side}. Enter only after flow acceleration + Pine confirmation and defence of ${hold}.`;
+  if(dir==='COOLDOWN') return `COOLDOWN — no new entry yet. Wait for a fresh clean setup.`;
+  if(dir==='STAND_DOWN') return `STAND DOWN — market not in a tradeable session.`;
+  return esc(d.reason||'Waiting for setup.');
+}
+
+async function loadDirector(){
+  const el=document.getElementById('app');
+  try{
+    const [dr, tlr] = await Promise.all([
+      fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
+      fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]}))
+    ]);
+    const d=dr||{}; const fa=d.flow_acceleration||{}; const pos=d.position||{}; const conf=d.conflict||{};
+    const timeline=(tlr&&tlr.timeline)||[];
+
+    // banner reflects market/data state
+    let bLevel='YELLOW', bTitle='SESSION', bMsg='';
+    if(!d.market_open){bLevel='RED';bTitle='MARKET CLOSED';bMsg='Directives are planning-only until the regular session opens.';}
+    else if((d.quality_flags||[]).includes('DATA_STALE')){bLevel='YELLOW';bTitle='DATA WARMING UP';bMsg=d.stale_reason||'Run a scan to populate institutional intelligence.';}
+    else {bLevel='GREEN';bTitle='LIVE';bMsg=`Position source: ${esc(pos.source||'NONE')} · ${esc(pos.order_stage||'FLAT')}`;}
+    const banner=`<div class="banner ${bLevel}"><div class="banner-title">${bTitle}</div><div class="banner-msg">${esc(bMsg)}</div></div>`;
+
+    const tradeType=(d.trade_type||'NONE').toLowerCase();
+    const typePill = tradeType!=='none' ? `<span class="pill ${tradeType}">${d.trade_type} ENTRY</span>` : '';
+
+    // cards (Part 14): POSITION STATE · FLOW CHANGE · DYNAMIC HOLD LEVEL · THESIS STATUS
+    const cards=`<div class="grid">
+      <div class="box"><div class="label">Position State</div><div class="val sm">${esc((d.position_state||'FLAT').replace(/_/g,' '))}</div><div class="label" style="margin-top:6px">${esc(pos.source||'NONE')} ${pos.side?('· '+esc(pos.side)):''}</div></div>
+      <div class="box"><div class="label">Flow Change</div><div class="val sm" style="color:${flowColor(d.flow_state)}">${esc(flowLabel(d.flow_state))}</div>
+        <div class="flowbar"><span style="width:${Math.min(100,Math.abs(Number(d.flow_change_pct||0)))}%;background:${flowColor(d.flow_state)}"></span></div>
+        <div class="label" style="margin-top:6px">net ${pct(d.flow_change_pct)} · ${fa.samples||0} samples</div></div>
+      <div class="box"><div class="label">Dynamic Hold Level</div><div class="hl"><span class="lvl">${d.hold_level!=null?num(d.hold_level):'--'}</span><span class="dir">${esc(d.hold_level_source||'')}</span></div><div class="label" style="margin-top:6px">invalidation ${d.invalidation_level!=null?num(d.invalidation_level):'--'}</div></div>
+      <div class="box"><div class="label">Thesis Status</div><div class="val sm ${thesisClass(d.thesis_status)}">${esc((d.thesis_status||'THESIS_NONE').replace('THESIS_','').replace(/_/g,' '))}</div><div class="label" style="margin-top:6px">confidence ${d.confidence||'--'} · risk ${esc(d.risk_status||'--')}</div></div>
+    </div>`;
+
+    // secondary metrics
+    const metrics=`<div class="grid" style="margin-top:12px">
+      <div class="box"><div class="label">Side · Type</div><div class="val sm">${esc(d.side||'--')} ${typePill}</div></div>
+      <div class="box"><div class="label">POC Migration</div><div class="val sm">${esc(d.poc_migration||'--')}</div></div>
+      <div class="box"><div class="label">Auction</div><div class="val sm">${esc((d.auction_state||'--').replace(/_/g,' '))}</div></div>
+      <div class="box"><div class="label">Alignment</div><div class="val sm">${esc(conf.alignment||'--')}</div><div class="label" style="margin-top:6px">${conf.bull_signals||0} bull · ${conf.bear_signals||0} bear</div></div>
+      <div class="box"><div class="label">Targets</div><div class="val sm">${num(d.target_1)} / ${num(d.target_2)}</div></div>
+      <div class="box"><div class="label">Next Action</div><div class="val sm">${esc((d.next_action||'--').replace(/_/g,' '))}</div><div class="label" style="margin-top:6px">${esc(d.next_action_trigger||'')}</div></div>
+    </div>`;
+
+    // execution plan + checklist (Parts 15/16)
+    const checklist=(d.checklist||[]).map(x=>`<div class="check"><span class="${x.ok?'ok':'no'}">${yes(x.ok)}</span><span>${esc(x.label)}</span></div>`).join('');
+    const cond=(d.conditional_guidance||[]).map(x=>'• '+esc(x)).join('<br>');
+    const reasons=(d.reasons||[]).map(x=>'• '+esc(x)).join('<br>');
+    const planner=`<div class="planner">
+      <div class="bigplan"><div class="label">Execution Plan</div><div class="summary">${esc(executionPlan(d))}</div>
+        <div class="label" style="margin-top:14px">Conditional Guidance</div><div class="cond" style="margin-top:6px">${cond||'—'}</div>
+        <div class="label" style="margin-top:14px">Why</div><div class="notes" style="margin-top:6px">${reasons||'—'}</div>
+      </div>
+      <div class="bigplan"><div class="label">Lifecycle Checklist</div>${checklist||'—'}
+        <div class="label" style="margin-top:14px">Trade Timeline</div>
+        <div class="tl">${timeline.slice().reverse().map(e=>`<div class="ev"><span class="t">${esc(e.ts||'')}</span><span class="k">${esc(e.kind||'')}</span><span>${esc(e.text||'')}</span></div>`).join('')||'<div class="notes">No events yet.</div>'}</div>
+      </div>
+    </div>`;
+
+    el.className='panel '+((d.quality_flags||[]).includes('DATA_STALE')?'stale':'');
+    el.innerHTML=banner+
+      `<div class="label">${esc(d.updated_at_et||'')} · ${TICKER}${d.persistence_note?(' · '+esc(d.persistence_note)):''}</div>`+
+      `<div class="state ${directiveClass(d.directive)}">${esc((d.directive||'OBSERVE').replace(/_/g,' '))} ${typePill}</div>`+
+      `<div class="reason">${esc(d.reason||'')}</div>`+
+      cards+metrics+planner;
+  }catch(e){el.innerHTML='<div class="banner RED"><div class="banner-title">ERROR</div><div class="banner-msg">'+esc(e.message)+'</div></div>';}
+}
+loadDirector();
+setInterval(loadDirector, 5000);
+</script>
+</body></html>
