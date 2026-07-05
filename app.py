@@ -177,6 +177,17 @@ except ImportError:
     APEX_ENGINES_AVAILABLE = False
     print("apex_engines.py not found — nine-engine pipeline disabled. Deploy apex_engines.py alongside app.py.", flush=True)
 
+# APEX 8.0 — Active Trade Director (continuous state-aware trade management)
+try:
+    from engine.director.routes import register_director_routes
+    from engine.director import DIRECTOR_VERSION
+    ACTIVE_TRADE_DIRECTOR_AVAILABLE = True
+except Exception as _atd_err:
+    register_director_routes = None  # type: ignore[assignment]
+    DIRECTOR_VERSION = "unavailable"
+    ACTIVE_TRADE_DIRECTOR_AVAILABLE = False
+    print(f"APEX Active Trade Director unavailable (non-fatal): {_atd_err}", flush=True)
+
 VERSION = "7.0.1_APEX_EIGHT_FOUNDATION"
 EASTERN = ZoneInfo("America/New_York")
 
@@ -7146,6 +7157,81 @@ try:
     print("APEX Trade Command Center routes registered (sandbox).", flush=True)
 except Exception as e:
     print(f"Trade Command Center unavailable (non-fatal): {e}", flush=True)
+
+# APEX 8.0 — Active Trade Director routes (isolated, non-fatal).
+# Registered independently of the Trade Command Center so a failure in either
+# leaves the other unaffected. All inputs are injected from existing globals —
+# the Director never fetches data itself and never bypasses execution controls.
+try:
+    if ACTIVE_TRADE_DIRECTOR_AVAILABLE and register_director_routes is not None:
+
+        def _atd_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        def _atd_flow_snapshot(ticker):
+            try:
+                return quantdata_flow_snapshot(ticker)
+            except Exception:
+                return {}
+
+        def _atd_session():
+            try:
+                return market_session_context()
+            except Exception:
+                return {}
+
+        def _atd_signal():
+            try:
+                with TRADE_ASSISTANT_LOCK:
+                    dec = TRADE_ASSISTANT_STATE.get("last_decision") or {}
+                    sig = TRADE_ASSISTANT_STATE.get("last_signal") or {}
+                return {"fresh_signal": bool(dec.get("fresh_signal")), **({} if not isinstance(sig, dict) else sig)}
+            except Exception:
+                return {}
+
+        def _atd_open_brackets():
+            try:
+                from engine.execution.bracket_manager import get_bracket_manager
+                return [b.to_dict() for b in get_bracket_manager().open_brackets()]
+            except Exception:
+                return []
+
+        def _atd_broker_positions():
+            try:
+                from engine.brokers.etrade_adapter import ETradeAdapter
+                adapter = ETradeAdapter()
+                if not getattr(adapter, "configured", False):
+                    return []
+                r = adapter.get_positions(adapter.account_id_key)
+                return (r.data or {}).get("positions", []) if getattr(r, "ok", False) else []
+            except Exception:
+                return []
+
+        def _atd_manual_position():
+            try:
+                with ACTIVE_POSITION_LOCK:
+                    return dict(ACTIVE_POSITION)
+            except Exception:
+                return {}
+
+        register_director_routes(
+            app,
+            last_result_provider=_atd_last_result,
+            flow_snapshot_provider=_atd_flow_snapshot,
+            session_provider=_atd_session,
+            signal_provider=_atd_signal,
+            broker_positions_provider=_atd_broker_positions,
+            open_brackets_provider=_atd_open_brackets,
+            manual_position_provider=_atd_manual_position,
+            default_ticker=ASSISTANT_TICKER,
+        )
+        print(f"APEX Active Trade Director routes registered ({DIRECTOR_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Active Trade Director unavailable (non-fatal): {e}", flush=True)
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 
