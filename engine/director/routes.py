@@ -140,3 +140,22 @@ def register_director_routes(
         get_persistence().reset(ticker)
         get_narrator().reset(ticker)
         return jsonify({"ok": True, "message": f"Director memory reset for {ticker}."})
+
+    # ── Outcome Evaluator (Stage 2): self-evaluation of past directives ──────────
+    @app.route("/api/active_trade_director/evaluate", methods=["POST"])
+    def _director_evaluate():
+        ticker = (request.args.get("ticker", default_ticker) or default_ticker).upper()
+        try:
+            from .evaluator import backfill_outcomes
+            return jsonify(backfill_outcomes(ticker))
+        except Exception as e:
+            return jsonify({"ok": False, "symbol": ticker, "scored": 0, "error": str(e)}), 200
+
+    @app.route("/api/active_trade_director/scorecard")
+    def _director_scorecard():
+        ticker = (request.args.get("ticker", default_ticker) or default_ticker).upper()
+        try:
+            from .evaluator import scorecard
+            return jsonify(scorecard(ticker))
+        except Exception as e:
+            return jsonify({"ok": False, "symbol": ticker, "error": str(e)}), 200

@@ -28,6 +28,7 @@ from .contracts import (  # noqa: E402
     ConflictReport,
 )
 from .director import build_active_trade_director, get_director  # noqa: E402
+from .evaluator import backfill_outcomes, scorecard, score_directive  # noqa: E402
 
 __all__ = [
     "DIRECTOR_VERSION",
@@ -39,4 +40,7 @@ __all__ = [
     "ConflictReport",
     "build_active_trade_director",
     "get_director",
+    "backfill_outcomes",
+    "scorecard",
+    "score_directive",
 ]
