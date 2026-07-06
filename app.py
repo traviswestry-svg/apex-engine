@@ -2981,6 +2981,20 @@ def scanner_loop() -> None:
                     print(f"Backtest tracking: resolved {resolved} trade(s) today.", flush=True)
             except Exception as e:
                 print(f"resolve_open_trades error (recovered): {e}", flush=True)
+        # Auto-score any Pine signals now old enough (SPX MFE/MAE over the eval window).
+        if globals().get("SIGEVAL_AVAILABLE"):
+            try:
+                def _sigeval_sync(recv_at, patch):
+                    with STATE_LOCK:
+                        for s in SCANNER_STATE.get("signal_log", []):
+                            if s.get("received_at") == recv_at:
+                                s.update(patch)
+                                break
+                _n = _sigeval.mark_due_signals(get_intraday_bars, on_marked=_sigeval_sync)
+                if _n:
+                    print(f"signal_evaluator: marked {_n} signal(s).", flush=True)
+            except Exception as e:
+                print(f"signal_evaluator mark error (recovered): {e}", flush=True)
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 
@@ -3799,6 +3813,13 @@ def tv_signal():
         log.insert(0, signal)
         SCANNER_STATE["signal_log"] = log[:50]
 
+    # Also persist to the durable signal-evaluator DB (survives restarts; auto-scored later).
+    if globals().get("SIGEVAL_AVAILABLE"):
+        try:
+            _sigeval.record_signal(signal)
+        except Exception:
+            pass
+
     flow_item = quantdata_flow_snapshot(ticker)
     assistant = build_trade_assistant_decision(flow_item, signal)
     with TRADE_ASSISTANT_LOCK:
@@ -3816,6 +3837,17 @@ def tv_signal():
         )
 
     return jsonify({"ok": True, "version": VERSION, "signal": signal, "flow": flow_item, "assistant": assistant})
+
+@app.route("/api/signal_scorecard")
+def api_signal_scorecard():
+    """GET /api/signal_scorecard[?system=PINE_APEX_OS_v1] — win/loss + ICI-split stats."""
+    if not globals().get("SIGEVAL_AVAILABLE"):
+        return jsonify({"ok": False, "error": "signal_evaluator unavailable"})
+    try:
+        return jsonify(_sigeval.scorecard(request.args.get("system")))
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
 
 @app.route("/api/signal_log")
 def api_signal_log():
@@ -7119,6 +7151,13 @@ try:
     init_signal_spine()
 except Exception as e:
     print(f"APEX signal spine init error (non-fatal): {e}", flush=True)
+try:
+    import signal_evaluator as _sigeval
+    _sigeval.init_signal_eval_db()
+    SIGEVAL_AVAILABLE = True
+except Exception as e:
+    SIGEVAL_AVAILABLE = False
+    print(f"APEX signal_evaluator init error (non-fatal): {e}", flush=True)
 try:
     # Trade Command Center + E*TRADE sandbox adapter (isolated module).
     # Non-fatal: if anything here fails to import or register, the rest of APEX
