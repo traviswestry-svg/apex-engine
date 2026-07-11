@@ -199,6 +199,17 @@ except Exception as _ri_err:
     RANGE_INTELLIGENCE_AVAILABLE = False
     print(f"APEX Range Intelligence unavailable (non-fatal): {_ri_err}", flush=True)
 
+# APEX 7.5.3 — Confluence Synthesizer (read-only long/short setup scorecard)
+try:
+    from engine.confluence_routes import register_confluence_routes
+    from engine.confluence import VERSION as CONFLUENCE_VERSION
+    CONFLUENCE_AVAILABLE = True
+except Exception as _cf_err:
+    register_confluence_routes = None  # type: ignore[assignment]
+    CONFLUENCE_VERSION = "unavailable"
+    CONFLUENCE_AVAILABLE = False
+    print(f"APEX Confluence unavailable (non-fatal): {_cf_err}", flush=True)
+
 VERSION = "7.0.1_APEX_EIGHT_FOUNDATION"
 EASTERN = ZoneInfo("America/New_York")
 
@@ -7327,6 +7338,22 @@ try:
         print(f"APEX Range Intelligence routes registered ({RANGE_VERSION}).", flush=True)
 except Exception as e:
     print(f"Range Intelligence unavailable (non-fatal): {e}", flush=True)
+
+# APEX 7.5.3 — Confluence route (isolated, non-fatal, read-only over the Data Bus).
+try:
+    if CONFLUENCE_AVAILABLE and register_confluence_routes is not None:
+
+        def _cf_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        register_confluence_routes(app, last_result_provider=_cf_last_result)
+        print(f"APEX Confluence route registered ({CONFLUENCE_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Confluence unavailable (non-fatal): {e}", flush=True)
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 
