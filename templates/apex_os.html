@@ -140,6 +140,103 @@
     .ri-warm{color:var(--muted);font-size:13px;padding:8px 2px}
     @media(max-width:820px){.ri-body{grid-template-columns:1fr}}
   </style>
+
+  <!-- APEX 7.5.7 Decision Intelligence — self-contained panel (isolated CSS/JS) -->
+  <style>
+    .di-band{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);
+      padding:14px 16px;margin:0 0 12px 0}
+    .di-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .di-headline{font-family:var(--mono);font-size:20px;font-weight:700;letter-spacing:.5px}
+    .di-verdict{font-family:var(--mono);font-size:12px;font-weight:700;padding:4px 12px;
+      border-radius:var(--radius-sm);text-transform:uppercase}
+    .di-TRADE{background:rgba(34,197,94,.16);color:var(--green);border:1px solid var(--green)}
+    .di-WATCH{background:rgba(245,158,11,.16);color:var(--amber);border:1px solid var(--amber)}
+    .di-AVOID{background:rgba(139,148,178,.14);color:var(--muted);border:1px solid var(--faint)}
+    .di-reason{color:var(--muted);font-size:13px;margin-top:6px;line-height:1.5}
+    .di-event{font-family:var(--mono);font-size:11px;color:var(--purple);margin-top:4px}
+    .di-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+    .di-q{background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:10px 12px}
+    .di-q-q{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px}
+    .di-q-a{font-size:13px;color:var(--text);line-height:1.5}
+    .di-q-a ul{margin:4px 0 0 0;padding-left:16px}
+    .di-q-a li{margin:2px 0}
+    .di-pyr{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+    .di-tier{display:flex;align-items:center;gap:6px;font-size:11px;font-family:var(--mono);
+      padding:3px 9px;border-radius:var(--radius-sm);border:1px solid var(--bdr);background:var(--surf2)}
+    .di-tier.ok{color:var(--green);border-color:rgba(34,197,94,.4)}
+    .di-tier.no{color:var(--faint)}
+    .di-warm{color:var(--muted);font-size:13px;padding:6px 2px}
+    @media(max-width:820px){.di-grid{grid-template-columns:1fr}}
+  </style>
+  <div class="di-band" id="diBand">
+    <div id="diWarm" class="di-warm">Decision intelligence warming up…</div>
+    <div id="diBody" style="display:none">
+      <div class="di-top">
+        <div>
+          <div class="di-headline" id="diHeadline">—</div>
+          <div class="di-reason" id="diReason"></div>
+          <div class="di-event" id="diEvent"></div>
+        </div>
+        <div class="di-verdict di-AVOID" id="diVerdict">—</div>
+      </div>
+      <div class="di-grid" id="diGrid"></div>
+      <div class="di-pyr" id="diPyr"></div>
+    </div>
+  </div>
+  <script>
+  (function(){
+    var TICK='SPX';
+    function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+    function render(res){
+      var warm=document.getElementById('diWarm'),body=document.getElementById('diBody');
+      var d=(res&&res.decision)||{};
+      if(!res||!res.ok||!d||d.available===false){
+        // don't overlay an error on already-populated data (transient poll failure)
+        if(body && body.style.display!=='none') return;
+        warm.style.display='';warm.textContent=(d&&d.note)||'Decision intelligence warming up…';
+        return;
+      }
+      warm.style.display='none';body.style.display='';
+      document.getElementById('diHeadline').textContent=d.headline||'—';
+      var v=(d.verdict||'AVOID').toUpperCase();
+      var vEl=document.getElementById('diVerdict');
+      vEl.textContent=v;vEl.className='di-verdict di-'+v;
+      document.getElementById('diReason').textContent=d.verdict_reason||'';
+      var evEl=document.getElementById('diEvent');
+      if(d.event_regime&&d.event_regime!=='CLEAR'){
+        evEl.textContent='◆ '+d.event_regime.replace(/_/g,' ')+(d.event_headline?(' — '+d.event_headline):'');
+      } else { evEl.textContent=''; }
+      // six questions
+      var g=document.getElementById('diGrid');g.innerHTML='';
+      (d.questions||[]).forEach(function(q){
+        var ans;
+        if(Array.isArray(q.answer)){
+          ans='<ul>'+q.answer.slice(0,4).map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>';
+        } else { ans=esc(q.answer); }
+        g.innerHTML+='<div class="di-q"><div class="di-q-q">'+esc(q.question)+'</div><div class="di-q-a">'+ans+'</div></div>';
+      });
+      // confidence pyramid
+      var p=document.getElementById('diPyr');p.innerHTML='';
+      (d.confidence_pyramid||[]).forEach(function(t){
+        p.innerHTML+='<span class="di-tier '+(t.ok?'ok':'no')+'">'+(t.ok?'✓':'○')+' '+esc(t.tier)+'</span>';
+      });
+    }
+    function poll(){
+      fetch('/api/decision?ticker='+encodeURIComponent(TICK))
+        .then(function(r){return r.json();}).then(render)
+        .catch(function(){
+          var b=document.getElementById('diBody');
+          if(b&&b.style.display!=='none')return;
+          var w=document.getElementById('diWarm');if(w){w.style.display='';w.textContent='Decision intelligence unavailable this cycle — retrying…';}
+        });
+    }
+    document.querySelectorAll('.ticker-btn,[data-ticker]').forEach(function(b){
+      b.addEventListener('click',function(){var t=b.getAttribute('data-ticker');if(t){TICK=t;poll();}});
+    });
+    poll();setInterval(poll,20000);
+  })();
+  </script>
+
   <div class="ri-band" id="riBand">
     <div class="ri-head">
       <span class="ri-title">Range Intelligence</span>
