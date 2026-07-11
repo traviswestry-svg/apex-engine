@@ -321,6 +321,14 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
                                      near_high, near_low, exhaustion)
     invalidation = _invalidation(scenario)
 
+    # ── expansion / mean-reversion / pin (additive; pin read from data bus) ───
+    _pin_prob = _f(inst.get("pin_probability"))
+    expansion_prob, mean_reversion_prob = _expansion_probabilities(
+        range_used=range_used, gamma_regime=gamma_regime, poc_mig=poc_mig,
+        near_high=near_high, near_low=near_low, exhaustion=exhaustion,
+        auction_state=_u(ms.get("auction_state")), pin_probability=_pin_prob,
+    )
+
     ri = {
         "available": True,
         "version": VERSION,
@@ -334,6 +342,9 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
         "range_used_percent": range_used,
         "range_used_method": range_used_method,
         "range_exhaustion_risk": exhaustion,
+        "expansion_probability": expansion_prob,
+        "mean_reversion_probability": mean_reversion_prob,
+        "pin_probability": round(_pin_prob, 1) if _pin_prob is not None else None,
         "upside_remaining_points": upside_remaining,
         "downside_remaining_points": downside_remaining,
         "opening_context": opening_context,
@@ -409,6 +420,69 @@ def _exhaustion_risk(range_used, near_high, near_low, gamma_regime, auction_stat
     if range_used >= 90:
         return "MODERATE"
     return "LOW"
+
+
+def _expansion_probabilities(range_used, gamma_regime, poc_mig, near_high, near_low,
+                             exhaustion, auction_state, pin_probability):
+    """Estimate range EXPANSION vs MEAN-REVERSION likelihood from signals the engine
+    already has. Returns (expansion_pct, mean_reversion_pct) summing to 100.
+
+    Reasoning (all evidence the range engine already computes elsewhere):
+      - Negative gamma -> dealers amplify -> expansion more likely.
+      - Positive gamma / high pin probability -> dealers dampen -> reversion more likely.
+      - Migrating POC (trend structure) favours expansion; flat POC favours reversion.
+      - Low range-used early favours expansion; high range-used at an edge favours
+        reversion (the move is largely spent).
+      - BALANCED/rotational auction favours reversion; trending auction favours expansion.
+    This is a transparent heuristic score, NOT a fitted model -- it is labelled as an
+    estimate in the payload and is meant to be calibrated against realised outcomes
+    via the existing projection scorecard, not trusted as ground truth.
+    """
+    score = 50.0  # neutral prior
+
+    g = _u(gamma_regime)
+    if "NEGATIVE" in g:
+        score += 18
+    elif "POSITIVE" in g:
+        score -= 15
+
+    pin = _f(pin_probability)
+    if pin is not None:
+        # High pin probability is a strong reversion/containment signal.
+        if pin >= 70:
+            score -= 18
+        elif pin >= 50:
+            score -= 10
+        elif pin <= 20:
+            score += 6
+
+    pm = _u(poc_mig)
+    if "RISING" in pm or "FALLING" in pm or "MIGRAT" in pm:
+        score += 12
+    elif "FLAT" in pm or "STABLE" in pm:
+        score -= 8
+
+    if range_used is not None:
+        if range_used <= 35:
+            score += 10          # lots of range left, early
+        elif range_used >= 85 and (near_high or near_low):
+            score -= 16          # move largely spent, sitting at an edge
+        elif range_used >= 70:
+            score -= 6
+
+    a = _u(auction_state)
+    if "TREND" in a:
+        score += 10
+    elif "BALANC" in a or "ROTAT" in a:
+        score -= 10
+
+    if exhaustion == "HIGH":
+        score -= 12
+    elif exhaustion == "MODERATE":
+        score -= 5
+
+    expansion = max(5.0, min(95.0, score))
+    return (round(expansion, 1), round(100.0 - expansion, 1))
 
 
 def _opening_context(price, prev_close, vah, val, on) -> str:
