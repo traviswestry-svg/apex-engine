@@ -210,6 +210,29 @@ except Exception as _cf_err:
     CONFLUENCE_AVAILABLE = False
     print(f"APEX Confluence unavailable (non-fatal): {_cf_err}", flush=True)
 
+# APEX 7.5.4 — Event Intelligence (recurring market-event calendar)
+try:
+    from engine.event_routes import register_event_routes
+    from engine.event_calendar import build_event_intelligence, VERSION as EVENT_VERSION
+    EVENT_INTEL_AVAILABLE = True
+except Exception as _ev_err:
+    register_event_routes = None  # type: ignore[assignment]
+    build_event_intelligence = None  # type: ignore[assignment]
+    EVENT_VERSION = "unavailable"
+    EVENT_INTEL_AVAILABLE = False
+    print(f"APEX Event Intelligence unavailable (non-fatal): {_ev_err}", flush=True)
+
+# APEX 7.5.7 — Decision Intelligence (six-question top panel, read-only)
+try:
+    from engine.decision_routes import register_decision_routes
+    from engine.decision_intelligence import VERSION as DECISION_VERSION
+    DECISION_INTEL_AVAILABLE = True
+except Exception as _dc_err:
+    register_decision_routes = None  # type: ignore[assignment]
+    DECISION_VERSION = "unavailable"
+    DECISION_INTEL_AVAILABLE = False
+    print(f"APEX Decision Intelligence unavailable (non-fatal): {_dc_err}", flush=True)
+
 VERSION = "7.0.1_APEX_EIGHT_FOUNDATION"
 EASTERN = ZoneInfo("America/New_York")
 
@@ -7354,6 +7377,30 @@ try:
         print(f"APEX Confluence route registered ({CONFLUENCE_VERSION}).", flush=True)
 except Exception as e:
     print(f"Confluence unavailable (non-fatal): {e}", flush=True)
+
+# APEX 7.5.4 — Event Intelligence route (isolated, non-fatal, self-contained).
+try:
+    if EVENT_INTEL_AVAILABLE and register_event_routes is not None:
+        register_event_routes(app)
+        print(f"APEX Event Intelligence route registered ({EVENT_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Event Intelligence unavailable (non-fatal): {e}", flush=True)
+
+# APEX 7.5.7 — Decision Intelligence route (isolated, non-fatal, read-only).
+try:
+    if DECISION_INTEL_AVAILABLE and register_decision_routes is not None:
+
+        def _dc_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        register_decision_routes(app, last_result_provider=_dc_last_result)
+        print(f"APEX Decision Intelligence route registered ({DECISION_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Decision Intelligence unavailable (non-fatal): {e}", flush=True)
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 
