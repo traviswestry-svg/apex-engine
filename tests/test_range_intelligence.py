@@ -291,3 +291,27 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"  ERROR {fn.__name__}: {type(e).__name__}: {e}")
     print(f"\n{passed}/{len(fns)} passed")
+
+
+# ── APEX 7.2.1: expansion / mean-reversion probability (additive) ────────────
+def test_expansion_probabilities_sum_and_bounds():
+    from engine.range_intelligence import _expansion_probabilities
+    e, mr = _expansion_probabilities(50, "NEUTRAL", "STABLE", False, False, "LOW", "", None)
+    assert abs((e + mr) - 100.0) < 0.01
+    assert 5.0 <= e <= 95.0 and 5.0 <= mr <= 95.0
+
+
+def test_expansion_trend_day_beats_pin_day():
+    from engine.range_intelligence import _expansion_probabilities
+    trend = _expansion_probabilities(30, "NEGATIVE_GAMMA", "RISING", False, False,
+                                     "LOW", "TREND_DAY_UP", 10)[0]
+    pin = _expansion_probabilities(55, "POSITIVE_GAMMA", "FLAT", False, False,
+                                   "LOW", "BALANCED", 85)[0]
+    assert trend > pin
+
+
+def test_spent_range_at_edge_favours_reversion():
+    from engine.range_intelligence import _expansion_probabilities
+    e, mr = _expansion_probabilities(88, "POSITIVE_GAMMA", "FLAT", True, False,
+                                     "MODERATE", "BALANCED", 60)
+    assert mr > e
