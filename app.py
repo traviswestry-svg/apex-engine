@@ -3054,7 +3054,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_")
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_css2"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
