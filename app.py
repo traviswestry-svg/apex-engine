@@ -4128,6 +4128,144 @@ def api_market_status():
     })
 
 
+def _resolve_health_state(session, scan_in_progress, updated_at, last_scan_duration,
+                          scanner_started, now=None):
+    """Disambiguate the runtime health of the scan pipeline into ONE explicit state.
+
+    Resolves the ambiguity the assessment flagged: 'is the system idle because the
+    market is closed, warming up, actively scanning, or serving stale data?' Those
+    are materially different and must be distinct.
+
+    Returns {state, detail, data_fresh}. States:
+      CLOSED    — market closed; idleness is expected, not a fault.
+      WARMING   — scanner started but no completed scan yet (cold start / first cycle).
+      HEALTHY   — a scan completed recently and data is fresh.
+      STALE     — last completed scan is older than the freshness window.
+      DEGRADED  — scanner not started, or an error condition.
+    """
+    import datetime as _dt
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    STALE_AFTER_S = float(os.getenv("HEALTH_STALE_AFTER_S", "180"))  # 3 min during live
+
+    live_session = session == "MARKET_OPEN"
+
+    def _age_seconds(ts):
+        if not ts:
+            return None
+        try:
+            d = _dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=_dt.timezone.utc)
+            return (now - d.astimezone(_dt.timezone.utc)).total_seconds()
+        except (TypeError, ValueError):
+            return None
+
+    age = _age_seconds(updated_at)
+
+    if not scanner_started:
+        return {"state": "DEGRADED", "detail": "Scanner not started.", "data_fresh": False}
+
+    # No completed scan yet (updated_at null / no duration) → warming, not stale.
+    if updated_at is None or last_scan_duration is None:
+        if not live_session:
+            return {"state": "CLOSED",
+                    "detail": "Market closed — awaiting next session; no live scan expected.",
+                    "data_fresh": False}
+        return {"state": "WARMING",
+                "detail": "Scanner started; first scan cycle not yet complete.",
+                "data_fresh": False}
+
+    # We have a completed scan. Fresh or stale?
+    fresh = age is not None and age <= STALE_AFTER_S
+    if not live_session:
+        # Closed market: last scan is a snapshot from the prior session — CLOSED,
+        # not STALE (staleness only matters when we expect live updates).
+        return {"state": "CLOSED",
+                "detail": "Market closed — showing last session's completed scan.",
+                "data_fresh": False}
+    if fresh:
+        return {"state": "HEALTHY",
+                "detail": f"Live scan fresh ({int(age)}s ago).",
+                "data_fresh": True}
+    if scan_in_progress:
+        return {"state": "WARMING",
+                "detail": "Live scan in progress; refreshing data.",
+                "data_fresh": False}
+    return {"state": "STALE",
+            "detail": f"Last scan {int(age)}s ago (> {int(STALE_AFTER_S)}s) — data may be stale.",
+            "data_fresh": False}
+
+
+@app.route("/api/overnight_briefing")
+def api_overnight_briefing():
+    """Assemble market-closed 'planning mode' intelligence into one payload.
+
+    Tier 1, item 5 backend: gives the dashboard something meaningful to show while
+    the market is closed instead of a perpetual 'LOADING'. Read-only; assembles
+    already-computed pieces (health state, session + next RTH, overnight game plan,
+    upcoming events, range projection). Never 500s.
+    """
+    try:
+        with STATE_LOCK:
+            s_session = session_status()
+            s_updated = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
+            s_dur     = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
+            s_inprog  = SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress")
+            last_result = dict(STATE.get("last_result") or {})
+        hstate = _resolve_health_state(
+            session=s_session, scan_in_progress=bool(s_inprog),
+            updated_at=s_updated, last_scan_duration=s_dur, scanner_started=SCANNER_STARTED,
+        )
+
+        briefing = {
+            "ok": True,
+            "session": s_session,
+            "is_tradeable": s_session == "MARKET_OPEN",
+            "health_state": hstate["state"],
+            "health_detail": hstate["detail"],
+            "next_rth_open": _next_rth_open(),
+            "as_of": s_updated,
+        }
+
+        # Overnight game plan (ES structure vs prior close) — already on the bus.
+        ogp = last_result.get("overnight_game_plan")
+        if ogp:
+            briefing["overnight_game_plan"] = ogp
+
+        # Upcoming events (self-contained; works regardless of market state).
+        if EVENT_INTEL_AVAILABLE and build_event_intelligence is not None:
+            try:
+                briefing["events"] = build_event_intelligence()
+            except Exception:
+                pass
+
+        # Range projection (pre-RTH estimate) if present on the bus.
+        ri = last_result.get("range_intelligence")
+        if ri:
+            briefing["range_intelligence"] = ri
+
+        # A single plain-English headline for the planning-mode hero.
+        briefing["headline"] = _briefing_headline(s_session, hstate, briefing.get("events"))
+        return jsonify(briefing)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"overnight_briefing recovered: {e}",
+                        "session": "UNKNOWN", "health_state": "DEGRADED"})
+
+
+def _briefing_headline(session, hstate, events) -> str:
+    if session == "MARKET_OPEN":
+        return "Market open — live intelligence active."
+    nxt = _next_rth_open()
+    base = ("Overnight session — monitoring ES structure vs Friday's levels."
+            if session == "OVERNIGHT" else
+            "Markets closed — planning mode.")
+    ev = (events or {}).get("headline_event") if events else None
+    if ev:
+        base += f" Next catalyst: {ev.get('label')} ({ev.get('date')})."
+    base += f" Next RTH open: {nxt}."
+    return base
+
+
 @app.route("/health")
 def health():
     with STATE_LOCK:
@@ -4135,7 +4273,13 @@ def health():
         s_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
         s_sources  = SCANNER_STATE.get("data_sources") or STATE.get("data_sources")
         s_session  = session_status()
+        s_inprog   = SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress")
         _mode = system_mode(s_session)
+        _hstate = _resolve_health_state(
+            session=s_session, scan_in_progress=bool(s_inprog),
+            updated_at=s_updated, last_scan_duration=s_duration,
+            scanner_started=SCANNER_STARTED,
+        )
         return jsonify({
             "ok":                         True,
             "version":                    VERSION,
@@ -4143,9 +4287,12 @@ def health():
             "system_mode":                _mode["mode"],
             "system_mode_detail":         _mode,
             "session":                    s_session,
+            "health_state":               _hstate["state"],       # HEALTHY|WARMING|STALE|DEGRADED|CLOSED
+            "health_detail":              _hstate["detail"],
+            "data_fresh":                 _hstate["data_fresh"],
             "updated_at":                 s_updated,
             "scanner_started":            SCANNER_STARTED,
-            "scan_in_progress":           SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"),
+            "scan_in_progress":           s_inprog,
             "last_scan_duration_seconds": s_duration,
             "sources":                    s_sources,
             "is_tradeable":               s_session == "MARKET_OPEN",
