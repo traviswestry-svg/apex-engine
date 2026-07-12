@@ -444,6 +444,35 @@ body {
 .fm-val   { font-family: var(--mono); font-size: 17px; font-weight: 800; margin-top: 3px; }
 .fm-sub   { font-size: 10px; color: var(--muted); margin-top: 2px; }
 
+/* ── Flow-meter panel (renderFlowMeter) — these were referenced by the JS but
+      never had CSS, causing the column to collapse into an unstyled vertical
+      stack with overlapping labels. Additive fix, matches op-flow/op-prem. ── */
+.fm-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-bottom: 10px; font-family: var(--mono); }
+.fm-bias    { font-size: 13px; font-weight: 800; letter-spacing: .04em; }
+.fm-urgency { font-size: 10px; font-weight: 700; letter-spacing: .04em; }
+.fm-intent  { font-size: 10px; color: var(--muted); margin-left: auto; }
+.fm-meter { margin-bottom: 9px; }
+.fm-meter-header { display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 3px; }
+.fm-meter-label { font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--muted); font-weight: 700; }
+.fm-meter-score { font-family: var(--mono); font-size: 13px; font-weight: 800; }
+.fm-meter-track { height: 5px; background: var(--surf); border-radius: 3px; overflow: hidden; }
+.fm-meter-fill  { height: 100%; border-radius: 3px; transition: width .3s ease; }
+.fm-meter-hint  { font-size: 9px; color: var(--faint); margin-top: 2px; }
+.fm-prems { border-top: 1px solid var(--bdr); padding-top: 8px; margin-top: 10px; }
+.fm-prem-row   { display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 11px; padding: 3px 0; }
+.fm-prem-label { color: var(--faint); }
+.fm-prem-val   { font-family: var(--mono); font-weight: 700; }
+.fm-narrative  { font-size: 10px; color: var(--muted); line-height: 1.5; margin-top: 9px;
+  font-style: italic; }
+.fm-contra { font-size: 10px; color: var(--amber); margin-top: 7px; padding: 4px 8px;
+  background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.2); border-radius: 5px; }
+.fm-dp { font-size: 10px; color: var(--muted); margin-top: 6px; }
+.fm-dealer-read { font-size: 10px; color: var(--muted); line-height: 1.5; margin-top: 6px; }
+
 .divergence-alert { padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 10px; border-left: 3px solid; }
 .div-aplus-bear { background: rgba(239,68,68,.07); border-color: var(--red);   }
 .div-aplus-bull { background: rgba(34,197,94,.07);  border-color: var(--green); }
