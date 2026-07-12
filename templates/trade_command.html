@@ -9,8 +9,8 @@
   :root{--bg:#0a0e14;--surf:#111722;--surf2:#161d2b;--bdr:#232d3f;--text:#e6ebf2;
         --muted:#8a94a3;--blue:#38bdf8;--green:#22c55e;--red:#ef4444;--amber:#f59e0b;
         --mono:'JetBrains Mono',ui-monospace,monospace;}
-  *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%}
+  *{box-sizing:border-box;margin:0;padding:0;min-width:0}
+  html,body{height:100%;overflow-x:hidden;max-width:100vw}
   body{background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;
        height:100vh;display:flex;flex-direction:column;gap:8px;padding:10px;overflow:hidden}
   .card{background:var(--surf);border:1px solid var(--bdr);border-radius:9px;padding:10px 12px}
