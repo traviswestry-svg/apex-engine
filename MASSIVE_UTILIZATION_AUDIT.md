@@ -152,6 +152,68 @@ and fill the **[YOU FILL IN]** cells:
 
 ---
 
+## 7b. What the Massive docs actually confirm (fetched from the four quickstarts)
+
+These replace several `[YOU FILL IN]` guesses with documented facts. What still
+needs your dashboard is only the *cost/quota consumption* numbers.
+
+### WebSocket — feeds available, and TWO constraints that change the plan
+Documented WebSocket feeds by asset class:
+- **Stocks** 7 feeds · **Options** 5 feeds · **Futures** 4 feeds · **Indices** 3
+  feeds · Forex 4 · Crypto 5. Event types include per-minute aggregates (`AM`),
+  trades, quotes.
+
+**Constraint #1 — real-time vs 15-min delayed.** Massive exposes both a
+15-minute-delayed and a real-time WebSocket. Which one your plans include is the
+deciding factor. **[YOU FILL IN: do your Options/Indices/Futures plans include
+REAL-TIME, or only 15-min delayed?]** — this is now the single most important
+number to get, because a 15-min-delayed WebSocket is *useless for 0DTE* and would
+not beat your current REST.
+
+**Constraint #2 — one connection per asset class.** "By default, one concurrent
+WebSocket connection per asset class is allowed." APEX touches Stocks + Options +
+Indices + Futures = up to 4 asset classes = 4 connections, which fits the default.
+But it means the WebSocket client must be architected as **one persistent
+connection per asset class, multiplexing all symbols in that class** — not one
+connection per feed. That's a real design constraint for the eventual build.
+
+**Verdict update on recommendation #3:** WebSocket is confirmed available and is
+the right long-term move — *but only if your plan tier includes real-time (not
+delayed) streams.* Confirm that before investing effort. If it's delayed-only, the
+optimization evaporates and REST stays the honest choice until you upgrade.
+
+### Flat Files — the cheap way to feed the Learning Engine (genuinely new finding)
+Massive offers **Flat Files**: bulk historical CSV over an S3-compatible endpoint
+(`https://files.massive.com`, bucket `flatfiles`), "without making thousands of
+REST calls." Options/Stocks/Indices/Futures datasets (trades, quotes, minute/day
+aggregates). Data for each day available ~11 AM ET next day.
+
+**Why this matters for APEX specifically:** your Learning Engine / calibration
+work (Tier 2) is gated on *historical outcome data*. Flat Files is the correct,
+cheap tool to bulk-backfill historical SPX/ES/options aggregates for backtesting
+and calibration — instead of hammering REST. **Requires Flat Files access on your
+subscription [YOU FILL IN: is Flat Files included in your plans?]**. This is a
+better Tier-2 enabler than any REST optimization.
+
+### MCP Server — directly relevant to how you build APEX with me
+Massive runs a **remote MCP server** at `https://mcp.massive.com/` (OAuth, nothing
+to install). Critically: **"Access through the MCP server mirrors your Massive
+entitlements"** — it can only query what your plans include. Two concrete uses:
+- You (or an AI assistant) can query your *actual* entitlements/data through MCP,
+  which is the cleanest way to answer the remaining `[YOU FILL IN]` cells.
+- The **self-hosted MCP** adds local DataFrame storage, SQL, and built-in
+  financial functions (Greeks, returns, indicators) — potentially useful for the
+  analytics work without adding provider calls.
+
+### llms.txt — free, and useful now
+Every doc page is available as Markdown (append `.md`), plus `llms.txt` /
+`llms-full.txt` indexes at any tree level (e.g. `/docs/rest/options/llms-full.txt`).
+This is the authoritative, current endpoint reference — better than me inferring
+endpoint shapes. If you want the *complete* "endpoints available but unused" list,
+that's derivable from these files against your plan tier.
+
+---
+
 ## 8. Honest bottom line on sequencing
 
 Your Phase-0 instinct is right that this establishes a baseline, and the WebSocket
@@ -169,3 +231,25 @@ finding is a real, high-value discovery. **But** two caveats:
 
 Do #1 and #2 now (cheap, safe, immediate). Schedule #3 against a real
 latency/cost trigger, not speculatively.
+
+**Revised priority order given the docs:**
+1. **Find the one number that gates everything:** does your plan tier include
+   **real-time** WebSocket (vs 15-min delayed)? Check dashboard → Account/Plans,
+   or query the MCP server. This decides whether the biggest optimization is even
+   viable. Everything else is secondary to this.
+2. **Consolidate options to one snapshot/cycle** (#1 in §6) — cheap, immediate,
+   already entitled.
+3. **If real-time WS is included:** build the per-asset-class WebSocket client
+   (one connection per class, multiplexed), starting with flow tape. If it's
+   delayed-only: skip WS entirely, stay on REST, revisit only on upgrade.
+4. **Flat Files for historical backfill** — the right cheap enabler for the
+   Tier-2 Learning Engine, *if* your subscription includes it. This may matter
+   more than any live-feed optimization, because it directly feeds the calibration
+   work that's currently data-starved.
+5. Kill redundancy (#2), verify VIX source (#5).
+
+The single highest-leverage action right now is not code — it's confirming the
+**real-time-vs-delayed WebSocket entitlement** and **Flat Files access**. Those
+two facts determine whether the two biggest opportunities (live streaming, cheap
+historical backfill) are free, an upgrade, or unavailable. Get those from the
+dashboard or the MCP server and the roadmap resolves itself.
