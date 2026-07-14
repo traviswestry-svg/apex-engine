@@ -235,11 +235,17 @@ except Exception as _dc_err:
 
 # APEX 7.6.0 — Institutional Premium Strategy Engine (structure selection, read-only)
 try:
-    from engine.premium_strategy_routes import register_premium_strategy_routes
+    from engine.premium_strategy_routes import (
+        register_premium_strategy_routes,
+        dispatch_and_log as premium_dispatch_and_log,
+        grade_due_recommendations as premium_grade_due,
+    )
     from engine.premium_strategy import VERSION as PREMIUM_STRATEGY_VERSION
     PREMIUM_STRATEGY_AVAILABLE = True
 except Exception as _ps_err:
     register_premium_strategy_routes = None  # type: ignore[assignment]
+    premium_dispatch_and_log = None  # type: ignore[assignment]
+    premium_grade_due = None  # type: ignore[assignment]
     PREMIUM_STRATEGY_VERSION = "unavailable"
     PREMIUM_STRATEGY_AVAILABLE = False
     print(f"APEX Premium Strategy unavailable (non-fatal): {_ps_err}", flush=True)
@@ -285,6 +291,14 @@ MASSIVE_BASE_URL = os.getenv("MASSIVE_BASE_URL", "https://api.polygon.io").rstri
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
 SEND_TELEGRAM = os.getenv("SEND_TELEGRAM", "true").lower() == "true"
 RUN_SCANNER_ON_IMPORT = os.getenv("RUN_SCANNER_ON_IMPORT", "false").lower() == "true"
+# APEX 7.6.0 — keep the institutional bus (STATE["last_result"]) warm from the
+# scanner thread so premium/directional alerts fire even with no dashboard open.
+# Gated to actionable sessions to avoid burning API calls overnight.
+COMPOSE_IOS_IN_SCANNER = os.getenv("COMPOSE_IOS_IN_SCANNER", "true").lower() == "true"
+IOS_COMPOSE_SESSIONS = {
+    s.strip().upper() for s in
+    os.getenv("IOS_COMPOSE_SESSIONS", "MARKET_OPEN,PREMARKET").split(",") if s.strip()
+}
 SCAN_WORKERS = int(os.getenv("SCAN_WORKERS", "8"))
 BREAKER_MAX_FAILURES = int(os.getenv("BREAKER_MAX_FAILURES", "3"))
 DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")  # set to /data/apex_tracking.db on Render with a mounted disk
@@ -3017,6 +3031,17 @@ def scanner_loop() -> None:
                 STATE["last_scan_status"] = "Scanner hit an unexpected error; will retry next cycle."
                 STATE["scan_in_progress"] = False
             print(f"Scanner loop exception (recovered, thread continues): {e}", flush=True)
+        # APEX 7.6.0: refresh the institutional bus headlessly so premium and
+        # directional alerts fire even when no dashboard is polling. Reuses the
+        # exact /api/institutional_os composition (no duplicate pipeline); the
+        # route's in-progress guard prevents double-compute if a dashboard is
+        # also open. Gated to actionable sessions to conserve API calls.
+        if COMPOSE_IOS_IN_SCANNER:
+            try:
+                if session_status() in IOS_COMPOSE_SESSIONS:
+                    compose_institutional_os_headless(ASSISTANT_TICKER)
+            except Exception as e:
+                print(f"Headless IOS compose error (recovered): {e}", flush=True)
         today = now_et().date()
         if TRACKING_ENABLED and today != last_resolution_date:
             try:
@@ -3040,6 +3065,15 @@ def scanner_loop() -> None:
                     print(f"signal_evaluator: marked {_n} signal(s).", flush=True)
             except Exception as e:
                 print(f"signal_evaluator mark error (recovered): {e}", flush=True)
+        # APEX 7.6.0: settle any premium structures whose 0DTE session has closed,
+        # reusing the same SPX bar-sampling spine as the directional grader.
+        if PREMIUM_STRATEGY_AVAILABLE and premium_grade_due is not None:
+            try:
+                _pg = premium_grade_due(get_intraday_bars, now_et)
+                if _pg:
+                    print(f"premium_strategy: graded {_pg} recommendation(s).", flush=True)
+            except Exception as e:
+                print(f"premium grade error (recovered): {e}", flush=True)
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 
@@ -5031,21 +5065,44 @@ def api_institutional_os():
                     print(f"Overnight game plan error (non-fatal): {_on_err}", flush=True)
             recommendation = result.get("recommendation", "")
             if "ENTER" in recommendation and "NOW" in recommendation:
-                story = result.get("story", {})
-                summary = story.get("executive_summary", "")
-                consensus_label = result.get("consensus_label", "")
-                send_telegram(
-                    f"🚨 APEX {VERSION} {recommendation}\n"
-                    f"Ticker: {ticker}\n"
-                    f"Consensus: {consensus_label}\n"
-                    f"Summary: {summary}\n"
-                    f"Contract: {result.get('risk', {}).get('contract_hint', '--')}\n"
-                    f"Entry: {result.get('risk', {}).get('entry_zone', '--')}\n"
-                    f"Stop: {result.get('risk', {}).get('stop', '--')}\n"
-                    f"Targets: {result.get('risk', {}).get('target1', '--')} / {result.get('risk', {}).get('target2', '--')}"
-                )
+                # De-dupe: fire once per distinct recommendation per session, so the
+                # headless scanner cycle (and rapid dashboard polling) can't spam the
+                # same call. Mirrors maybe_alert()'s SENT_ALERTS pattern.
+                _enter_key = f"IOS-ENTER-{now_et().date()}-{ticker}-{recommendation}"
+                _should_alert = False
+                with SENT_ALERTS_LOCK:
+                    if _enter_key not in SENT_ALERTS:
+                        SENT_ALERTS.add(_enter_key)
+                        _should_alert = True
+                if _should_alert:
+                    story = result.get("story", {})
+                    summary = story.get("executive_summary", "")
+                    consensus_label = result.get("consensus_label", "")
+                    if not send_telegram(
+                        f"🚨 APEX {VERSION} {recommendation}\n"
+                        f"Ticker: {ticker}\n"
+                        f"Consensus: {consensus_label}\n"
+                        f"Summary: {summary}\n"
+                        f"Contract: {result.get('risk', {}).get('contract_hint', '--')}\n"
+                        f"Entry: {result.get('risk', {}).get('entry_zone', '--')}\n"
+                        f"Stop: {result.get('risk', {}).get('stop', '--')}\n"
+                        f"Targets: {result.get('risk', {}).get('target1', '--')} / {result.get('risk', {}).get('target2', '--')}"
+                    ):
+                        # Send failed — allow a retry on a later cycle.
+                        with SENT_ALERTS_LOCK:
+                            SENT_ALERTS.discard(_enter_key)
 
             _record_confidence_timeline_point(ticker, result)
+            # APEX 7.6.0 Premium Strategy — dispatch on the composition cycle
+            # (not the polled GET). Logs the structure and fires Telegram only
+            # when it changes vs. the last dispatched structure this session.
+            if PREMIUM_STRATEGY_AVAILABLE and premium_dispatch_and_log is not None:
+                try:
+                    premium_dispatch_and_log(
+                        result, ticker, send_telegram, now_et_provider=now_et,
+                    )
+                except Exception as _ps_disp_err:
+                    print(f"premium dispatch error (non-fatal): {_ps_disp_err}", flush=True)
             # APEX signal-outcome spine (Piece Two): log actionable signals and
             # sample price to resolve open ones. Non-fatal by construction.
             try:
@@ -5087,6 +5144,25 @@ def api_institutional_os():
         return jsonify({"ok": True, **data})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "version": VERSION_45}), 500
+
+
+def compose_institutional_os_headless(ticker: str = ASSISTANT_TICKER) -> bool:
+    """Drive the /api/institutional_os composition with no HTTP client so the bus
+    (STATE["last_result"]) refreshes — and the premium/directional alert dispatch
+    inside that route fires — even when no dashboard is polling.
+
+    This reuses the exact route logic via a test request context rather than a
+    second composition path, so there is nothing to drift out of sync. The route's
+    own in-progress guard means that if a dashboard IS polling concurrently, one
+    call sees the other and returns stale instead of double-composing. Non-fatal.
+    """
+    try:
+        with app.test_request_context(f"/api/institutional_os?ticker={ticker}"):
+            api_institutional_os()
+        return True
+    except Exception as e:
+        print(f"Headless IOS compose failed (non-fatal): {e}", flush=True)
+        return False
 
 
 @app.route("/api/story")
