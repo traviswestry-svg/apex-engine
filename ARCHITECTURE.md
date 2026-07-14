@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "7.0.1_APEX_EIGHT_FOUNDATION"` (in `app.py`).
-Full test suite: **171 tests** (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "7.6.0_PREMIUM_STRATEGY"` (in `app.py`).
+Full test suite: **188 tests** (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -62,6 +62,10 @@ gamma / flow / auction / pin, stop — read it from `institutional_intelligence`
 `/api/confluence` · `/api/events` · `/api/decision` · `/api/overnight_briefing` ·
 `/api/signal_log` · `/api/signal_outcome` · `/api/signal_scorecard`
 
+### 7.6 additions — Premium Strategy Engine
+`/api/premium_strategy` (structure selection: debit/credit spread · iron condor ·
+no-trade — read-only over the bus) · `/api/premium_strategy/scorecard`
+
 ### Active Trade Director (v8.0 director package)
 `/api/active_trade_director` (+ `/evaluate`, `/log`, `/reset`, `/scorecard`,
 `/timeline`)
@@ -99,6 +103,12 @@ Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 `confluence_routes`, `event_calendar` + `event_routes`, `decision_intelligence` +
 `decision_routes`.
 
+7.6 — Premium Strategy Engine: `premium_strategy` (structure-selection assembler)
++ `premium_strategy_routes`. Read-only consumer of the bus + `confluence` +
+`event_calendar`; recomputes nothing. Strikes/POP/credit are modeled from
+`range_intelligence.expected_move` + market_state gamma walls (stamped
+`pricing_basis: modeled_from_expected_move`).
+
 Root: `apex_engines.py` (large shared engine library — imported by many
 `engine/*.py` shims like `trend.py`, `risk.py`, `structure.py`).
 
@@ -132,6 +142,7 @@ override**), `contracts` (state/directive constant sets), `states`, `lifecycle`,
 | `tracked_ideas` | backtest tracking | idea → outcome |
 | `trade_reviews` | review | post-trade reviews |
 | `pine_signals` | signal_evaluator | Pine signals + MFE/MAE outcomes (created at runtime) |
+| `premium_recommendations` | premium_strategy_routes | structure recs by regime; `outcome` graded later (created at runtime) |
 
 All read `DB_PATH`. On Render, persist via a mounted disk (`/data`).
 

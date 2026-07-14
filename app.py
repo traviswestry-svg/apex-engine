@@ -233,7 +233,18 @@ except Exception as _dc_err:
     DECISION_INTEL_AVAILABLE = False
     print(f"APEX Decision Intelligence unavailable (non-fatal): {_dc_err}", flush=True)
 
-VERSION = "7.0.1_APEX_EIGHT_FOUNDATION"
+# APEX 7.6.0 — Institutional Premium Strategy Engine (structure selection, read-only)
+try:
+    from engine.premium_strategy_routes import register_premium_strategy_routes
+    from engine.premium_strategy import VERSION as PREMIUM_STRATEGY_VERSION
+    PREMIUM_STRATEGY_AVAILABLE = True
+except Exception as _ps_err:
+    register_premium_strategy_routes = None  # type: ignore[assignment]
+    PREMIUM_STRATEGY_VERSION = "unavailable"
+    PREMIUM_STRATEGY_AVAILABLE = False
+    print(f"APEX Premium Strategy unavailable (non-fatal): {_ps_err}", flush=True)
+
+VERSION = "7.6.0_PREMIUM_STRATEGY"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -7548,6 +7559,29 @@ try:
         print(f"APEX Decision Intelligence route registered ({DECISION_VERSION}).", flush=True)
 except Exception as e:
     print(f"Decision Intelligence unavailable (non-fatal): {e}", flush=True)
+
+# APEX 7.6.0 — Premium Strategy route (isolated, non-fatal, read-only over the Data Bus).
+# Consumes the already-composed bus + confluence + events; recommends the options
+# STRUCTURE (debit/credit spread, iron condor, or no trade). Never re-fetches.
+try:
+    if PREMIUM_STRATEGY_AVAILABLE and register_premium_strategy_routes is not None:
+
+        def _ps_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        register_premium_strategy_routes(
+            app,
+            last_result_provider=_ps_last_result,
+            default_ticker=ASSISTANT_TICKER,
+        )
+        print(f"APEX Premium Strategy routes registered ({PREMIUM_STRATEGY_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Premium Strategy unavailable (non-fatal): {e}", flush=True)
+
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
 
