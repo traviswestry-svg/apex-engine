@@ -82,26 +82,48 @@ def _key_for(dataset: str, datatype: str, date: dt.date) -> str:
 
 
 # ── parse + validate ─────────────────────────────────────────────────────────
-def _parse_csv_gz(raw: bytes, ticker_filter: Optional[str]):
+def _parse_stream(body, ticker_filter: Optional[str]):
+    """Stream a gzipped CSV S3 body through pandas in chunks, keeping only rows for
+    the target ticker. Peak memory = one chunk, NOT the whole file. This is what
+    makes it safe to run on a small instance against 6M+ row day-files.
+
+    `body` is a botocore StreamingBody (file-like). gzip.GzipFile wraps it so we
+    decompress on the fly without materialising the full compressed blob.
+    """
     import pandas as pd
-    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
+    gz = gzip.GzipFile(fileobj=body)
+
+    if not ticker_filter:
+        # Whole-file load — only safe for small datasets; caller's responsibility.
         df = pd.read_csv(gz)
+        missing = [c for c in EXPECTED_COLS if c not in df.columns]
+        if missing:
+            raise ValueError(f"Schema mismatch — missing {missing}. Got: {list(df.columns)}")
+    else:
+        keep = []
+        header_checked = False
+        for chunk in pd.read_csv(gz, chunksize=200_000):
+            if not header_checked:
+                missing = [c for c in EXPECTED_COLS if c not in chunk.columns]
+                if missing:
+                    raise ValueError(f"Schema mismatch — missing {missing}. "
+                                     f"Got: {list(chunk.columns)}")
+                header_checked = True
+            hit = chunk[chunk["ticker"] == ticker_filter]
+            if len(hit):
+                keep.append(hit)
+        df = pd.concat(keep, ignore_index=True) if keep else pd.DataFrame(columns=EXPECTED_COLS)
 
-    # Contract check: columns must match what we expect, or we stop — a schema
-    # drift silently mis-parsing is exactly the failure we refuse to allow.
-    missing = [c for c in EXPECTED_COLS if c not in df.columns]
-    if missing:
-        raise ValueError(f"Schema mismatch — missing columns {missing}. "
-                         f"Got: {list(df.columns)}")
-
-    if ticker_filter:
-        df = df[df["ticker"] == ticker_filter].copy()
-
-    # window_start is NANOSECOND epoch. Convert explicitly and label the tz as UTC,
-    # then also provide an ET column (market-local) since sessions are ET.
+    if df.empty:
+        return df.reset_index(drop=True)
     df["ts_utc"] = pd.to_datetime(df["window_start"], unit="ns", utc=True)
     df["ts_et"] = df["ts_utc"].dt.tz_convert("America/New_York")
     return df.reset_index(drop=True)
+
+
+def _parse_csv_gz(raw: bytes, ticker_filter: Optional[str]):
+    """Bytes-in variant (kept for tests). Wraps _parse_stream over an in-memory buffer."""
+    return _parse_stream(io.BytesIO(raw), ticker_filter)
 
 
 def _validate(df, date: dt.date, ticker_filter: Optional[str]) -> list:
@@ -161,11 +183,13 @@ def _pull_one(s3, a, date: dt.date):
     key = _key_for(a.dataset, a.datatype, date)
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=key)
-        raw = obj["Body"].read()
+        # Stream the gzip body directly — do NOT buffer the whole (up to ~150MB)
+        # compressed file in memory. gzip + chunked pandas read keeps peak RAM low.
+        body = obj["Body"]  # botocore StreamingBody (file-like)
+        df = _parse_stream(body, a.ticker)
     except Exception as e:
-        print(f"  {date}: FETCH FAILED ({key}): {e}")
+        print(f"  {date}: FETCH/PARSE FAILED ({key}): {e}")
         return None
-    df = _parse_csv_gz(raw, a.ticker)
     findings = _validate(df, date, a.ticker)
     print(f"  {date}:")
     for f in findings:
