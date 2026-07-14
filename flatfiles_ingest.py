@@ -56,8 +56,10 @@ ENDPOINT = "https://files.massive.com"
 BUCKET = "flatfiles"
 OUT_ROOT = os.environ.get("FLATFILES_OUT", "./flatfiles_data")
 
-EXPECTED_COLS = ["ticker", "volume", "open", "close", "high", "low",
-                 "window_start", "transactions"]
+EXPECTED_COLS = ["ticker", "open", "close", "high", "low", "window_start"]
+# volume + transactions exist in stocks/options datasets but NOT indices (an index
+# has no volume — it's a calculated value). Treated as optional below.
+OPTIONAL_COLS = ["volume", "transactions"]
 
 
 # ── S3 ───────────────────────────────────────────────────────────────────────
