@@ -237,6 +237,127 @@
   })();
   </script>
 
+  <!-- APEX 7.6.0 Institutional Premium Strategy — self-contained panel (isolated CSS/JS) -->
+  <style>
+    .ps-band{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);
+      padding:14px 16px;margin:0 0 12px 0}
+    .ps-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .ps-titles{display:flex;flex-direction:column;gap:2px}
+    .ps-label{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px}
+    .ps-headline{font-family:var(--mono);font-size:20px;font-weight:700;letter-spacing:.5px}
+    .ps-badge{font-family:var(--mono);font-size:12px;font-weight:700;padding:4px 12px;
+      border-radius:var(--radius-sm);text-transform:uppercase;white-space:nowrap}
+    .ps-DEBIT{background:rgba(59,130,246,.16);color:var(--blue);border:1px solid var(--blue)}
+    .ps-CREDIT{background:rgba(34,197,94,.16);color:var(--green);border:1px solid var(--green)}
+    .ps-NONE{background:rgba(139,148,178,.14);color:var(--muted);border:1px solid var(--faint)}
+    .ps-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}
+    .ps-cell{background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:9px 11px}
+    .ps-k{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.4px}
+    .ps-v{font-family:var(--mono);font-size:15px;color:var(--text);margin-top:3px}
+    .ps-strikes{font-family:var(--mono);font-size:16px;color:var(--text);margin-top:12px;
+      padding:10px 12px;background:var(--surf2);border:1px solid var(--bdr);border-radius:var(--radius-sm)}
+    .ps-why{margin-top:12px}
+    .ps-why h4{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;margin:0 0 5px 0}
+    .ps-why ul{margin:0;padding-left:16px}
+    .ps-why li{font-size:13px;color:var(--text);line-height:1.5;margin:2px 0}
+    .ps-exit{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+    .ps-exit .ps-cell .ps-v{font-size:12px;line-height:1.45}
+    .ps-warm{color:var(--muted);font-size:13px;padding:6px 2px}
+    .ps-basis{font-size:10px;color:var(--faint);margin-top:8px;font-style:italic}
+    @media(max-width:820px){.ps-grid{grid-template-columns:1fr 1fr}.ps-exit{grid-template-columns:1fr}}
+  </style>
+  <div class="ps-band" id="psBand">
+    <div id="psWarm" class="ps-warm">Premium strategy warming up…</div>
+    <div id="psBody" style="display:none">
+      <div class="ps-top">
+        <div class="ps-titles">
+          <span class="ps-label">Institutional Premium Strategy</span>
+          <span class="ps-headline" id="psHeadline">—</span>
+        </div>
+        <div class="ps-badge ps-NONE" id="psBadge">—</div>
+      </div>
+      <div class="ps-grid" id="psGrid"></div>
+      <div class="ps-strikes" id="psStrikes" style="display:none"></div>
+      <div class="ps-exit" id="psExit"></div>
+      <div class="ps-why" id="psWhy"></div>
+      <div class="ps-basis" id="psBasis"></div>
+    </div>
+  </div>
+  <script>
+  (function(){
+    var TICK='SPX';
+    function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+    function cell(k,v){return '<div class="ps-cell"><div class="ps-k">'+esc(k)+'</div><div class="ps-v">'+esc(v)+'</div></div>';}
+    function pct(x){return (x==null)?'—':Math.round(x*100)+'%';}
+    function render(res){
+      var warm=document.getElementById('psWarm'),body=document.getElementById('psBody');
+      var p=(res&&res.premium_strategy)||{};
+      if(!res||!res.ok||!p||p.available===false){
+        if(body&&body.style.display!=='none')return;   // keep last good data on a transient miss
+        warm.style.display='';warm.textContent=(p&&p.note)||'Premium strategy warming up…';
+        return;
+      }
+      warm.style.display='none';body.style.display='';
+      document.getElementById('psHeadline').textContent=p.headline||'—';
+      var kind=(p.premium_kind||'NONE').toUpperCase();
+      var badge=document.getElementById('psBadge');
+      badge.textContent=(p.strategy_label||'—');badge.className='ps-badge ps-'+kind;
+      // metrics
+      var legs=p.legs||{};
+      var g=document.getElementById('psGrid');g.innerHTML='';
+      g.innerHTML+=cell('Confidence',(p.confidence!=null?p.confidence:'—'));
+      g.innerHTML+=cell('VIX / Regime',(p.vix!=null?p.vix:'—')+' · '+(p.vix_regime||'—'));
+      g.innerHTML+=cell('Expected Move',(p.expected_move!=null?('±'+p.expected_move):'—'));
+      var probOrRR = (legs.pop!=null)?('POP '+pct(legs.pop)):'—';
+      g.innerHTML+=cell('Probability',probOrRR);
+      if(legs.max_profit!=null){
+        g.innerHTML+=cell('Max Profit','$'+legs.max_profit);
+        g.innerHTML+=cell('Max Loss','$'+legs.max_loss);
+        g.innerHTML+=cell('Risk / Reward',(legs.risk_reward!=null?legs.risk_reward:'—'));
+        g.innerHTML+=cell(kind==='CREDIT'?'Entry Credit':'Entry Debit',
+          (legs.entry_credit!=null?legs.entry_credit:(legs.entry_debit!=null?legs.entry_debit:'—')));
+      }
+      // strikes
+      var st=document.getElementById('psStrikes');
+      if(p.strategy==='IRON_CONDOR'&&legs.put_short!=null){
+        st.style.display='';
+        st.textContent='Puts: '+legs.put_long+' / '+legs.put_short+'    ·    Calls: '+legs.call_short+' / '+legs.call_long;
+      } else if(legs.sell_leg!=null||legs.buy_leg!=null){
+        st.style.display='';
+        if(kind==='CREDIT'){st.textContent='Sell '+legs.sell_leg+'  ·  Buy '+legs.buy_leg+'  ('+(legs.short_delta!=null?('short Δ '+legs.short_delta):'')+')';}
+        else{st.textContent='Buy '+legs.buy_leg+'  ·  Sell '+legs.sell_leg+'  ('+(legs.long_delta!=null?('long Δ '+legs.long_delta):'')+')';}
+      } else { st.style.display='none'; }
+      // exit plan
+      var ex=document.getElementById('psExit');ex.innerHTML='';
+      var xp=p.exit_plan||{};
+      if(xp.target){ex.innerHTML+=cell('Ideal Exit',xp.target);}
+      if(xp.stop){ex.innerHTML+=cell('Stop',xp.stop);}
+      // why / story
+      var why=document.getElementById('psWhy');
+      var lines=(p.story&&p.story.length)?p.story:(p.reason||[]);
+      if(lines&&lines.length){
+        why.innerHTML='<h4>Why</h4><ul>'+lines.slice(0,6).map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>';
+      } else { why.innerHTML=''; }
+      // pricing basis note
+      var basis=document.getElementById('psBasis');
+      basis.textContent=(legs.pricing_basis==='modeled_from_expected_move')
+        ? 'Strikes & pricing modeled from expected move + dealer walls; live-chain quotes supersede at execution.' : '';
+    }
+    function poll(){
+      fetch('/api/premium_strategy?ticker='+encodeURIComponent(TICK),{cache:'no-store'})
+        .then(function(r){return r.json();}).then(render)
+        .catch(function(){
+          var b=document.getElementById('psBody');if(b&&b.style.display!=='none')return;
+          var w=document.getElementById('psWarm');if(w){w.style.display='';w.textContent='Premium strategy unavailable this cycle — retrying…';}
+        });
+    }
+    document.querySelectorAll('.ticker-btn,[data-ticker]').forEach(function(b){
+      b.addEventListener('click',function(){var t=b.getAttribute('data-ticker');if(t){TICK=t;poll();}});
+    });
+    poll();setInterval(poll,20000);
+  })();
+  </script>
+
   <div class="ri-band" id="riBand">
     <div class="ri-head">
       <span class="ri-title">Range Intelligence</span>

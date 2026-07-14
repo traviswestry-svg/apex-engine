@@ -110,6 +110,82 @@
     <span class="sub">SPX 0DTE calls &amp; puts · drag Entry / Stop / B/E / TP1–TP3 on either pane · preview-and-confirm only · live trading disabled by default</span>
   </div>
 
+  <!-- APEX 7.6.0 BEST TRADE TODAY — Institutional Premium Strategy (self-contained) -->
+  <style>
+    .btt-card{background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:14px 16px;margin:0 0 12px 0}
+    .btt-hidden{display:none}
+    .btt-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+    .btt-flag{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:1px;
+      padding:5px 12px;border-radius:6px;background:var(--amber);color:#1a1205;text-transform:uppercase}
+    .btt-strat{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--text)}
+    .btt-conf{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--muted)}
+    .btt-conf b{color:var(--green);font-size:18px}
+    .btt-metrics{display:flex;gap:22px;flex-wrap:wrap;margin-top:12px;font-family:var(--mono);font-size:13px}
+    .btt-metrics div span{color:var(--muted);font-size:11px;display:block;text-transform:uppercase;letter-spacing:.4px}
+    .btt-metrics div b{color:var(--text);font-size:15px}
+    .btt-lines{margin:12px 0 0 0;padding-left:18px}
+    .btt-lines li{font-size:13px;color:var(--text);line-height:1.5;margin:2px 0}
+    .btt-plan{display:flex;gap:22px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted);line-height:1.5}
+    .btt-plan b{color:var(--text)}
+    .btt-notrade .btt-flag{background:var(--muted);color:#0b0e17}
+    .btt-notrade .btt-strat{color:var(--muted)}
+  </style>
+  <div class="btt-card btt-hidden" id="bttCard">
+    <div class="btt-top">
+      <span class="btt-flag" id="bttFlag">Best Trade Today</span>
+      <span class="btt-strat" id="bttStrat">—</span>
+      <span class="btt-conf">Confidence <b id="bttConf">—</b></span>
+    </div>
+    <div class="btt-metrics" id="bttMetrics"></div>
+    <ul class="btt-lines" id="bttWhy"></ul>
+    <div class="btt-plan" id="bttPlan"></div>
+  </div>
+  <script>
+  (function(){
+    function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+    function metric(k,v){return '<div><span>'+esc(k)+'</span><b>'+esc(v)+'</b></div>';}
+    function pct(x){return (x==null)?'—':Math.round(x*100)+'%';}
+    function render(res){
+      var card=document.getElementById('bttCard');
+      var p=(res&&res.premium_strategy)||{};
+      if(!res||!res.ok||!p||p.available===false){ if(!card.classList.contains('btt-hidden'))return; return; }
+      card.classList.remove('btt-hidden');
+      var noTrade=(p.strategy==='NO_TRADE');
+      card.classList.toggle('btt-notrade',noTrade);
+      document.getElementById('bttFlag').textContent=noTrade?'Stand Aside':'Best Trade Today';
+      document.getElementById('bttStrat').textContent=p.strategy_label||'—';
+      document.getElementById('bttConf').textContent=(p.confidence!=null?p.confidence:'—');
+      var legs=p.legs||{},m=document.getElementById('bttMetrics');m.innerHTML='';
+      if(!noTrade&&legs){
+        if(p.strategy==='IRON_CONDOR'&&legs.put_short!=null){
+          m.innerHTML+=metric('Structure',legs.put_long+'/'+legs.put_short+' — '+legs.call_short+'/'+legs.call_long);
+        } else if(legs.sell_leg!=null){
+          m.innerHTML+=metric('Spread',(p.premium_kind==='CREDIT'?('Sell '+legs.sell_leg+' / Buy '+legs.buy_leg):('Buy '+legs.buy_leg+' / Sell '+legs.sell_leg)));
+        }
+        if(legs.entry_credit!=null)m.innerHTML+=metric('Entry Credit',legs.entry_credit);
+        if(legs.entry_debit!=null)m.innerHTML+=metric('Entry Debit',legs.entry_debit);
+        if(legs.pop!=null)m.innerHTML+=metric('Probability',pct(legs.pop));
+        if(legs.max_profit!=null)m.innerHTML+=metric('Max Profit','$'+legs.max_profit);
+        if(legs.max_loss!=null)m.innerHTML+=metric('Max Loss','$'+legs.max_loss);
+        if(p.expected_move!=null)m.innerHTML+=metric('Expected Move','±'+p.expected_move);
+      } else {
+        if(p.vix!=null)m.innerHTML+=metric('VIX / Regime',p.vix+' · '+(p.vix_regime||''));
+      }
+      var why=document.getElementById('bttWhy');
+      var lines=(p.reason&&p.reason.length)?p.reason:(p.story||[]);
+      why.innerHTML=(lines||[]).slice(0,4).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
+      var plan=document.getElementById('bttPlan'),xp=p.exit_plan||{};plan.innerHTML='';
+      if(xp.target)plan.innerHTML+='<div><b>Exit:</b> '+esc(xp.target)+'</div>';
+      if(xp.stop)plan.innerHTML+='<div><b>Stop:</b> '+esc(xp.stop)+'</div>';
+    }
+    function poll(){
+      fetch('/api/premium_strategy?ticker=SPX',{cache:'no-store'})
+        .then(function(r){return r.json();}).then(render).catch(function(){});
+    }
+    poll();setInterval(poll,20000);
+  })();
+  </script>
+
   <!-- PLAN -->
   <div class="card plan">
     <div class="controls">
