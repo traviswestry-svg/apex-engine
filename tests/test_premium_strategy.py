@@ -229,3 +229,188 @@ def test_opening_range_bear_call_confirmation():
     orm = r["opening_range_model"]
     assert orm["active"] is True
     assert orm["side"] == BEAR_CALL
+
+
+# ── 7.6.0 spine hooks: settlement grading + dispatch ────────────────────────
+import datetime as _dt
+from zoneinfo import ZoneInfo as _ZI
+
+import engine.premium_strategy_routes as _psr
+
+_EASTERN = _ZI("America/New_York")
+
+
+def _settle(strategy, legs, close_px):
+    return _psr._settle_structure(strategy, legs, close_px)
+
+
+def test_settle_bull_put_win_and_loss():
+    legs = {"sell_leg": 6270, "buy_leg": 6260, "width": 10, "entry_credit": 1.94}
+    pnl, _ = _settle("BULL_PUT_CREDIT_SPREAD", legs, 6300)   # OTM → keep credit
+    assert round(pnl, 2) == 1.94
+    pnl, _ = _settle("BULL_PUT_CREDIT_SPREAD", legs, 6255)   # through long → max loss
+    assert round(pnl, 2) == -8.06
+
+
+def test_settle_bear_call_win_and_loss():
+    legs = {"sell_leg": 6330, "buy_leg": 6340, "width": 10, "entry_credit": 1.49}
+    assert round(_settle("BEAR_CALL_CREDIT_SPREAD", legs, 6300)[0], 2) == 1.49
+    assert round(_settle("BEAR_CALL_CREDIT_SPREAD", legs, 6345)[0], 2) == -8.51
+
+
+def test_settle_debit_call_win_and_loss():
+    legs = {"buy_leg": 6295, "sell_leg": 6305, "width": 10, "entry_debit": 5.71}
+    assert round(_settle("DEBIT_CALL_SPREAD", legs, 6320)[0], 2) == 4.29   # full width
+    assert round(_settle("DEBIT_CALL_SPREAD", legs, 6296)[0], 2) == -4.71  # barely ITM
+
+
+def test_settle_debit_put_win_and_loss():
+    legs = {"buy_leg": 6300, "sell_leg": 6290, "width": 10, "entry_debit": 4.0}
+    assert round(_settle("DEBIT_PUT_SPREAD", legs, 6280)[0], 2) == 6.0
+    assert round(_settle("DEBIT_PUT_SPREAD", legs, 6299)[0], 2) == -3.0
+
+
+def test_settle_condor_win_and_loss():
+    legs = {"put_short": 6270, "put_long": 6260, "call_short": 6330, "call_long": 6340,
+            "width": 10, "entry_credit": 2.72}
+    assert round(_settle("IRON_CONDOR", legs, 6300)[0], 2) == 2.72   # inside both
+    assert round(_settle("IRON_CONDOR", legs, 6345)[0], 2) == -7.28  # call side breached
+
+
+def test_settle_missing_legs_returns_none():
+    pnl, reason = _settle("BULL_PUT_CREDIT_SPREAD", {}, 6300)
+    assert pnl is None and "missing" in reason
+
+
+def _fresh_db(tmp_path):
+    """Point the routes module at a throwaway DB and initialise it."""
+    _psr._DB_PATH = str(tmp_path / "premium_test.db")
+    _psr._DB_READY = False
+    _psr._LAST_DISPATCH.clear()
+    _psr._init_db()
+    assert _psr._DB_READY
+
+
+def test_grade_settles_logged_recommendation(tmp_path):
+    _fresh_db(tmp_path)
+    # A bull put logged earlier today, session not yet marked graded.
+    now_et = _dt.datetime(2026, 7, 14, 16, 30, tzinfo=_EASTERN)   # past cash close
+    sess = now_et.date().isoformat()
+    rec_utc = _dt.datetime(2026, 7, 14, 17, 0, tzinfo=_dt.timezone.utc)  # 13:00 ET
+    panel = {"strategy": "BULL_PUT_CREDIT_SPREAD", "premium_kind": "CREDIT",
+             "confidence": 88, "vix": 24, "vix_regime": "HIGH", "case": "CASE_2",
+             "legs": {"sell_leg": 6270, "buy_leg": 6260, "width": 10,
+                      "entry_credit": 1.94, "pop": 0.84}}
+    # Insert with a controlled ts by patching the log to our rec time.
+    import engine.premium_strategy_routes as m
+    orig_now = m._dt.datetime
+    with m._conn() as c:
+        c.execute("INSERT INTO premium_recommendations "
+                  "(ts, session_date, ticker, strategy, premium_kind, confidence, vix, "
+                  "vix_regime, case_label, pop, spot, legs_json, outcome) "
+                  "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
+                  (rec_utc.isoformat(), sess, "SPX", "BULL_PUT_CREDIT_SPREAD", "CREDIT",
+                   88, 24, "HIGH", "CASE_2", 0.84, 6300,
+                   '{"sell_leg":6270,"buy_leg":6260,"width":10,"entry_credit":1.94}'))
+        c.commit()
+
+    # Bars that close at 6300 (short put OTM → win).
+    def fake_bars(ticker, mult=5, days=5):
+        out = []
+        t = _dt.datetime(2026, 7, 14, 17, 0, tzinfo=_dt.timezone.utc)
+        px = 6300
+        for _ in range(30):
+            ms = int(t.timestamp() * 1000)
+            out.append({"t": ms, "o": px, "h": px + 2, "l": px - 2, "c": px})
+            t += _dt.timedelta(minutes=5)
+        return out
+
+    n = _psr.grade_due_recommendations(fake_bars, lambda: now_et)
+    assert n == 1
+    with _psr._conn() as c:
+        row = c.execute("SELECT outcome, outcome_pnl FROM premium_recommendations").fetchone()
+    assert row["outcome"] == "WIN"
+    assert round(row["outcome_pnl"], 0) == 194   # 1.94 * 100
+
+
+def test_grade_before_close_leaves_open(tmp_path):
+    _fresh_db(tmp_path)
+    # 11:00 ET on the session date → before cash close, nothing is ready.
+    early_et = _dt.datetime(2026, 7, 14, 11, 0, tzinfo=_EASTERN)
+    with _psr._conn() as c:
+        c.execute("INSERT INTO premium_recommendations "
+                  "(ts, session_date, ticker, strategy, premium_kind, confidence, "
+                  "vix_regime, pop, legs_json, outcome) VALUES (?,?,?,?,?,?,?,?,?,NULL)",
+                  (_dt.datetime(2026,7,14,15,0,tzinfo=_dt.timezone.utc).isoformat(),
+                   "2026-07-14", "SPX", "BULL_PUT_CREDIT_SPREAD", "CREDIT", 80, "HIGH", 0.8,
+                   '{"sell_leg":6270,"buy_leg":6260,"width":10,"entry_credit":1.9}'))
+        c.commit()
+    graded = _psr.grade_due_recommendations(lambda *a, **k: [], lambda: early_et)
+    assert graded == 0
+    with _psr._conn() as c:
+        assert c.execute("SELECT outcome FROM premium_recommendations").fetchone()["outcome"] is None
+
+
+def test_grade_scratches_no_trade_and_holds_missing_bars(tmp_path):
+    _fresh_db(tmp_path)
+    post_close = _dt.datetime(2026, 7, 14, 16, 30, tzinfo=_EASTERN)  # ready
+    with _psr._conn() as c:
+        # NO_TRADE — no position → SCRATCH even without bars.
+        c.execute("INSERT INTO premium_recommendations "
+                  "(ts, session_date, ticker, strategy, premium_kind, confidence, "
+                  "vix_regime, outcome) VALUES (?,?,?,?,?,?,?,NULL)",
+                  (_dt.datetime(2026,7,14,14,0,tzinfo=_dt.timezone.utc).isoformat(),
+                   "2026-07-14", "SPX", "NO_TRADE", "NONE", 40, "MID"))
+        # A real structure but no bars available yet, fresh → left open to retry.
+        c.execute("INSERT INTO premium_recommendations "
+                  "(ts, session_date, ticker, strategy, premium_kind, confidence, "
+                  "vix_regime, pop, legs_json, outcome) VALUES (?,?,?,?,?,?,?,?,?,NULL)",
+                  (_dt.datetime(2026,7,14,15,0,tzinfo=_dt.timezone.utc).isoformat(),
+                   "2026-07-14", "SPX", "BULL_PUT_CREDIT_SPREAD", "CREDIT", 80, "HIGH", 0.8,
+                   '{"sell_leg":6270,"buy_leg":6260,"width":10,"entry_credit":1.9}'))
+        c.commit()
+    graded = _psr.grade_due_recommendations(lambda *a, **k: [], lambda: post_close)
+    with _psr._conn() as c:
+        rows = {r["strategy"]: r["outcome"] for r in
+                c.execute("SELECT strategy, outcome FROM premium_recommendations")}
+    assert rows["NO_TRADE"] == "SCRATCH"           # no position, closed out
+    assert rows["BULL_PUT_CREDIT_SPREAD"] is None  # no bars → retry later
+    assert graded == 1
+
+
+def test_dispatch_fires_once_per_change(tmp_path):
+    _fresh_db(tmp_path)
+    sent = []
+    now_et = _dt.datetime(2026, 7, 14, 12, 0, tzinfo=_EASTERN)
+
+    # Strong bearish, high-VIX bus → an actionable credit structure.
+    ii = _ii(institutional_bias="BEARISH", flow_bias="BEARISH", flow_conviction=75,
+             auction_state="TREND_DAY_DOWN", auction_bias="BEARISH", direction="BEARISH",
+             momentum_probability=60, ici_score=72, gamma_regime="NEGATIVE_GAMMA",
+             dealer_bias="BEARISH", market_driver_bias="BEARISH", acceptance="ACCEPTING")
+    bus = _bus(ii=ii, ms=dict(_MS, vwap=6312, flow_bias="BEARISH"),
+               vol={"vix": 24, "iv_rank_estimate": 65}, rng=dict(_RNG))
+
+    r1 = _psr.dispatch_and_log(bus, "SPX", sent.append, events={}, now_et_provider=lambda: now_et)
+    r2 = _psr.dispatch_and_log(bus, "SPX", sent.append, events={}, now_et_provider=lambda: now_et)
+    assert r1["changed"] is True and r1["dispatched"] is True
+    assert r2["changed"] is False          # same structure → no duplicate alert
+    assert len(sent) == 1
+    # It logged exactly one row for grading.
+    with _psr._conn() as c:
+        n = c.execute("SELECT COUNT(*) n FROM premium_recommendations").fetchone()["n"]
+    assert n == 1
+
+
+def test_dispatch_no_trade_is_silent_but_logged(tmp_path):
+    _fresh_db(tmp_path)
+    sent = []
+    now_et = _dt.datetime(2026, 7, 14, 12, 0, tzinfo=_EASTERN)
+    # Flow contradiction with weak conviction → CASE_4 NO_TRADE.
+    ii = _ii(flow_contradictions=["flow disagrees with auction"], flow_conviction=30,
+             direction="NEUTRAL")
+    bus = _bus(ii=ii, ms=dict(_MS), vol={"vix": 18}, rng=dict(_RNG))
+    r = _psr.dispatch_and_log(bus, "SPX", sent.append, events={}, now_et_provider=lambda: now_et)
+    assert r["strategy"] == NO_TRADE
+    assert r["dispatched"] is False        # stand-aside is silent
+    assert sent == []
