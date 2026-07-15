@@ -250,7 +250,7 @@ except Exception as _ps_err:
     PREMIUM_STRATEGY_AVAILABLE = False
     print(f"APEX Premium Strategy unavailable (non-fatal): {_ps_err}", flush=True)
 
-VERSION = "7.6.0_PREMIUM_STRATEGY"
+VERSION = "7.6.1_PREMIUM_STRATEGY"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -7423,6 +7423,18 @@ try:
     import signal_evaluator as _sigeval
     _sigeval.init_signal_eval_db()
     SIGEVAL_AVAILABLE = True
+    # APEX 7.6.1 — rehydrate the in-memory Pine signal log from the durable table.
+    # /api/signal_log serves SCANNER_STATE["signal_log"], which starts empty on every
+    # boot, so before this the dashboard's Pine Signal Log looked empty after each
+    # restart/deploy even though /tv_signal had persisted every signal to SQLite.
+    try:
+        _restored = _sigeval.recent_signals(50)
+        if _restored:
+            with STATE_LOCK:
+                SCANNER_STATE["signal_log"] = _restored
+            print(f"signal_evaluator: rehydrated {len(_restored)} signal(s) from disk.", flush=True)
+    except Exception as _hyd_err:
+        print(f"signal log rehydrate skipped (non-fatal): {_hyd_err}", flush=True)
 except Exception as e:
     SIGEVAL_AVAILABLE = False
     print(f"APEX signal_evaluator init error (non-fatal): {e}", flush=True)

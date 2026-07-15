@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "7.6.0_PREMIUM_STRATEGY"` (in `app.py`).
-Full test suite: **188 tests** (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "7.6.1_PREMIUM_STRATEGY"` (in `app.py`).
+Full test suite: **204 tests** (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -107,7 +107,17 @@ Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 + `premium_strategy_routes`. Read-only consumer of the bus + `confluence` +
 `event_calendar`; recomputes nothing. Strikes/POP/credit are modeled from
 `range_intelligence.expected_move` + market_state gamma walls (stamped
-`pricing_basis: modeled_from_expected_move`).
+`pricing_basis: modeled_from_expected_move`). Alerts dispatch from the
+`/api/institutional_os` cycle via `dispatch_and_log` (change-deduped per
+session, reuses `send_telegram`); outcomes are graded in `scanner_loop` via
+`grade_due_recommendations`, which settles each 0DTE structure at cash close
+using the same injected `get_intraday_bars` spine as `signal_evaluator`. The
+`scanner_loop` also calls `compose_institutional_os_headless(ASSISTANT_TICKER)`
+each cycle during actionable sessions (`COMPOSE_IOS_IN_SCANNER` /
+`IOS_COMPOSE_SESSIONS`), driving the real `/api/institutional_os` route via a
+test request context so the bus stays warm and alerts fire with no dashboard
+open — one composition path, guarded against double-compute by the route's
+in-progress lock.
 
 Root: `apex_engines.py` (large shared engine library — imported by many
 `engine/*.py` shims like `trend.py`, `risk.py`, `structure.py`).
@@ -142,7 +152,7 @@ override**), `contracts` (state/directive constant sets), `states`, `lifecycle`,
 | `tracked_ideas` | backtest tracking | idea → outcome |
 | `trade_reviews` | review | post-trade reviews |
 | `pine_signals` | signal_evaluator | Pine signals + MFE/MAE outcomes (created at runtime) |
-| `premium_recommendations` | premium_strategy_routes | structure recs by regime; `outcome` graded later (created at runtime) |
+| `premium_recommendations` | premium_strategy_routes | structure recs (+ spot, session_date, legs JSON); `outcome`/`outcome_pnl` settled at cash close by scanner_loop (created at runtime) |
 
 All read `DB_PATH`. On Render, persist via a mounted disk (`/data`).
 
