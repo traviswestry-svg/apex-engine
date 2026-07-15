@@ -149,27 +149,116 @@ def _log_recommendation(ticker: str, panel: Dict[str, Any], session_date: str,
         print(f"Premium recommendation log error (non-fatal): {e}", flush=True)
 
 
+def _fmt_strike(x: Any) -> str:
+    """6270.0 -> '6270'; keeps a half-strike as '6272.5'."""
+    v = _safe_float(x)
+    if v is None:
+        return "--"
+    return str(int(v)) if float(v).is_integer() else f"{v:g}"
+
+
+def _leg(action: str, strike: Any, right: str) -> str:
+    """'S', 6270.0, 'P' -> 'S 6270P' — action + strike + right, no ambiguity."""
+    return f"{action} {_fmt_strike(strike)}{right}"
+
+
 def _alert_text(ticker: str, panel: Dict[str, Any], legs: Dict[str, Any]) -> str:
+    """Telegram alert — a placeable order ticket, not a summary.
+
+    Every leg is spelled out as B/S + strike + P/C so the structure can be entered
+    without inferring which side is bought or sold. Kept scannable on a phone.
+    """
+    strategy = panel.get("strategy")
+    conf = panel.get("confidence")
     lines: List[str] = [
         "APEX ALERT — Premium Strategy",
-        f"{ticker}: {panel.get('strategy_label')}",
-        f"Confidence {panel.get('confidence')}",
+        f"{ticker}: {panel.get('strategy_label')} · Confidence {conf}",
+        "",
     ]
-    if panel.get("strategy") in _CREDIT:
-        lines.append(f"Spread {legs.get('sell_leg')}/{legs.get('buy_leg')}  "
-                     f"credit {legs.get('entry_credit')}  POP {round((legs.get('pop') or 0)*100)}%")
-    elif panel.get("strategy") in _DEBIT:
-        lines.append(f"Spread {legs.get('buy_leg')}/{legs.get('sell_leg')}  "
-                     f"debit {legs.get('entry_debit')}")
-    elif panel.get("strategy") == _CONDOR:
-        lines.append(f"Condor {legs.get('put_long')}/{legs.get('put_short')} — "
-                     f"{legs.get('call_short')}/{legs.get('call_long')}  "
-                     f"credit {legs.get('entry_credit')}")
+
+    width = _safe_float(legs.get("width"))
+    w_txt = f" ({_fmt_strike(width)} wide)" if width else ""
+
+    if strategy == "BULL_PUT_CREDIT_SPREAD":
+        # Sell the higher put, buy the lower put.
+        lines.append(f"{_leg('S', legs.get('sell_leg'), 'P')} / "
+                     f"{_leg('B', legs.get('buy_leg'), 'P')}{w_txt}")
+    elif strategy == "BEAR_CALL_CREDIT_SPREAD":
+        # Sell the lower call, buy the higher call.
+        lines.append(f"{_leg('S', legs.get('sell_leg'), 'C')} / "
+                     f"{_leg('B', legs.get('buy_leg'), 'C')}{w_txt}")
+    elif strategy == "DEBIT_CALL_SPREAD":
+        lines.append(f"{_leg('B', legs.get('buy_leg'), 'C')} / "
+                     f"{_leg('S', legs.get('sell_leg'), 'C')}{w_txt}")
+    elif strategy == "DEBIT_PUT_SPREAD":
+        lines.append(f"{_leg('B', legs.get('buy_leg'), 'P')} / "
+                     f"{_leg('S', legs.get('sell_leg'), 'P')}{w_txt}")
+    elif strategy == _CONDOR:
+        # Four legs — label each wing so the tested side is obvious.
+        lines.append(f"PUTS   {_leg('S', legs.get('put_short'), 'P')} / "
+                     f"{_leg('B', legs.get('put_long'), 'P')}")
+        lines.append(f"CALLS  {_leg('S', legs.get('call_short'), 'C')} / "
+                     f"{_leg('B', legs.get('call_long'), 'C')}")
+        if width:
+            lines.append(f"({_fmt_strike(width)} wide each side)")
+
+    # Economics line.
+    econ: List[str] = []
+    cr = _safe_float(legs.get("entry_credit"))
+    db = _safe_float(legs.get("entry_debit"))
+    if cr is not None:
+        econ.append(f"Net credit {cr:.2f}")
+    elif db is not None:
+        econ.append(f"Net debit {db:.2f}")
+    pop = _safe_float(legs.get("pop"))
+    if pop is not None:
+        econ.append(f"POP {round(pop * 100)}%")
+    rr = _safe_float(legs.get("risk_reward"))
+    if rr is not None:
+        econ.append(f"RR {rr:.2f}")
+    if econ:
+        lines.append(" · ".join(econ))
+
+    mp = _safe_float(legs.get("max_profit"))
+    ml = _safe_float(legs.get("max_loss"))
+    if mp is not None and ml is not None:
+        risk_line = f"Max profit ${mp:,.0f} · Max loss ${ml:,.0f} (per contract)"
+        lines.append(risk_line)
+
+    be = _safe_float(legs.get("breakeven"))
+    if be is not None:
+        lines.append(f"Breakeven {_fmt_strike(be)}")
+
+    # Context line.
+    ctx: List[str] = []
+    spot = _safe_float(panel.get("price"))
+    if spot is not None:
+        ctx.append(f"Spot {_fmt_strike(spot)}")
+    em = _safe_float(panel.get("expected_move"))
+    if em is not None:
+        ctx.append(f"EM ±{em:g}")
+    vix = _safe_float(panel.get("vix"))
+    if vix is not None:
+        ctx.append(f"VIX {vix:g} {panel.get('vix_regime') or ''}".strip())
+    sd = _safe_float(legs.get("short_delta"))
+    if sd is not None:
+        ctx.append(f"short Δ ~{round(abs(sd) * 100)}")
+    if ctx:
+        lines.append(" · ".join(ctx))
+
     xp = panel.get("exit_plan") or {}
+    if xp.get("target") or xp.get("stop"):
+        lines.append("")
     if xp.get("target"):
         lines.append(f"Exit: {xp['target']}")
     if xp.get("stop"):
         lines.append(f"Stop: {xp['stop']}")
+    if xp.get("time_stop"):
+        lines.append(f"Time: {xp['time_stop']}")
+
+    if legs.get("pricing_basis") == "modeled_from_expected_move":
+        lines.append("")
+        lines.append("Strikes/pricing modeled from expected move — verify on the live chain.")
     return "\n".join(lines)
 
 
