@@ -66,40 +66,110 @@ confidence up.
   confidence, legs, exit plan, story, opening-range model, and a `changed`/
   `alert` block when the structure flips).
 - **`GET /api/premium_strategy/scorecard`** — recommendations aggregated by
-  strategy and by VIX regime. Counts + avg-confidence are live now; win-rate
-  surfaces populate as `outcome` grades accumulate (consistent with
-  `ARCHITECTURE.md §7` — outcome data is young).
+  strategy and by VIX regime, with **realized win-rate and net P&L** per bucket.
+  Counts are live immediately; win-rate and P&L populate as the scanner grades
+  outcomes at each session's close. Surfaced on the dashboard as the **Premium
+  Strategy Scorecard** card at the top of the **Signal Log** tab (`/apex_os`),
+  next to the existing Pine signal log — the natural home for realized
+  performance. It shows two tables (By Structure / By VIX Regime) answering the
+  question the engine exists to settle: *do my credit spreads actually pay in
+  high vol, and do my debit spreads pay in low vol?*
+
+  Three deliberate UI choices: `NO_TRADE` rows are excluded from the structure
+  table (there is no position to settle) and reported separately as a
+  stand-aside count; ungraded buckets render as `—` rather than a misleading
+  `0%`; and while fewer than 20 outcomes are graded, the card shows an explicit
+  **small-sample warning** — a 100% win rate off one trade is noise, and the
+  panel says so instead of flattering the engine.
 - **Dashboard** (`templates/apex_os.html`) — a self-contained "Institutional
   Premium Strategy" band (isolated `<style>` + IIFE), so it cannot break the
   main `apex_os.js` poller.
 - **Trade Command** (`templates/trade_command.html`) — a "BEST TRADE TODAY"
   card driven by the same endpoint.
 
-## Alerts
-The master prompt asks for alerts **only when the recommendation changes**. The
-route tracks the last emitted strategy per ticker and stamps each response with
-`changed` + a formatted `alert.text`. It deliberately does **not** dispatch
-Telegram itself — a read-only GET polled every 20s must not fire notifications.
-The scanner cycle is the correct dispatch point; `alert.text` is the ready-made
-payload for it to send.
+## Alerts — wired to the composition cycle
+The master prompt asks for alerts **only when the recommendation changes**, and a
+read-only GET polled every 20s must not fire notifications. So dispatch runs on
+the **server-side `/api/institutional_os` cycle** — the same place the existing
+ENTER-NOW alert fires — via `dispatch_and_log(...)`. On each recomposition it
+rebuilds the structure and, only when it differs from the last dispatched
+structure for that session, **logs the recommendation and sends Telegram**
+through the app's existing `send_telegram`. De-dupe is scoped to
+`(session_date, ticker)` and re-arms each session, so one alert per genuine flip
+per day, independent of dashboard polling. A flip **to** stand-aside is silent
+(logged, not alerted). Logging happens on every change regardless of whether
+Telegram is enabled, so the scorecard fills even with alerts off. The GET still
+returns a `changed`/`alert` block, but purely as a UI hint — it no longer
+writes to the log.
 
-## Persistence
-New runtime-created table `premium_recommendations` (under `DB_PATH`): logs each
-distinct recommendation with strategy, kind, confidence, VIX/regime, case, and
-POP. The `outcome` column (WIN/LOSS/SCRATCH) is reserved for the grading hook —
-intraday option-outcome grading reuses the same price-sampling spine the
-directional signal log already uses.
+## Persistence + outcome grading (wired)
+Runtime-created table `premium_recommendations` (under `DB_PATH`) logs each
+distinct recommendation with strategy, kind, confidence, VIX/regime, case, POP,
+the entry **spot**, the **session date**, and the full **legs** (JSON) needed to
+settle it later. Older tables are migrated in place (`ALTER TABLE ADD COLUMN`).
+
+`grade_due_recommendations(get_intraday_bars, now_et)` runs in `scanner_loop`
+right beside `signal_evaluator.mark_due_signals`, reusing the **same injected
+SPX bar-sampling spine**. Once a structure's 0DTE session has closed, it settles
+each leg's intrinsic value at the cash-close print, nets it against the entry
+credit/debit, and writes `outcome` (WIN/LOSS/SCRATCH) + realized `outcome_pnl`
+($/contract) + an `outcome_notes` audit string. `NO_TRADE` rows settle as
+SCRATCH (no position). A session with no bars yet is left for a later pass unless
+it is >2 days stale — mirroring the directional grader's data-gap handling.
 
 ## Tests
 `tests/test_premium_strategy.py` — 17 tests covering each decision-tree case,
 the VIX filter (incl. elite-trend override), the credit-quality filter, the
 debit-vs-credit POP handling, the exit plan, the opening-range proxy, and the
-never-raise safety envelope. Full suite: **188 tests** (run `pytest`, not
-`pytest tests/`).
+never-raise safety envelope — plus **11 spine tests**: per-structure settlement
+math, the readiness gate, NO_TRADE→SCRATCH, missing-bar retry, and dispatch
+de-dupe/silence. Full suite: **199 tests** (run `pytest`, not `pytest tests/`).
 
-## No regressions
-The four pre-existing failures in the shipped tree (`director` manual-position
-test, the `contracts.py`/`persistence.py` architecture-duplicate guard, and two
-`decision_intelligence` verdict tests) are untouched by this change and fail
-identically with these files removed. 7.6.0 adds 17 passing tests and zero new
+## Headless bus composition — alerts without a dashboard
+Previously `STATE["last_result"]` only recomposed when the dashboard polled
+`/api/institutional_os`, so with no browser open, nothing refreshed and no alert
+could fire. The scanner now keeps the bus warm itself: each `scanner_loop` cycle,
+during actionable sessions, it calls `compose_institutional_os_headless(...)`,
+which drives the **exact same route** via a Flask test request context — no second
+composition path to drift out of sync. The route's in-progress guard means that
+if a dashboard *is* open concurrently, one caller sees the other and returns stale
+instead of double-composing, and the premium alert de-dupe (`_LAST_DISPATCH`,
+shared) guarantees a single alert per structure change regardless of who composed.
+
+Gating and cadence are configurable:
+`COMPOSE_IOS_IN_SCANNER` (default on), `IOS_COMPOSE_SESSIONS` (default
+`MARKET_OPEN,PREMARKET` — off overnight/closed to conserve API calls), and the
+cadence follows `SCAN_INTERVAL_SECONDS` (default 300s). Requires the background
+scanner to be running (`RUN_SCANNER_ON_IMPORT=true`, as the Render service
+already sets).
+
+**ENTER-NOW de-dupe (necessary companion).** The existing directional ENTER-NOW
+Telegram alert had no de-dupe, so it fired on every composition — harmless-ish at
+dashboard cadence, but headless composition would repeat it every cycle. It now
+fires once per distinct recommendation per session via the same `SENT_ALERTS`
+pattern `maybe_alert()` uses, with a send-failure retry. This also removes the
+pre-existing rapid-repeat behavior when a dashboard polled during a sustained
+ENTER-NOW.
+
+## No regressions — and a pre-existing test-suite finding
+Pre-existing failures in the shipped tree are untouched by this change and fail
+identically with these files removed. 7.6.0 adds 28 passing tests and zero new
 failures.
+
+**Two of those failures are date-dependent, not permanent.** While building this
+release the suite went from `4 failed / 195 passed` to `2 failed / 197 passed`
+with no relevant code change. Cause: `tests/test_decision_intelligence.py` calls
+the **live** `build_event_intelligence()`, so on a high-impact event day the
+decision engine's event gate correctly suppresses the trade verdict and
+`test_complete_setup_trades` / `test_chop_avoids` fail. On 2026-07-14 (CPI) they
+failed; on 2026-07-15 (calendar CLEAR) they pass. The engine is behaving
+correctly — the *tests* are non-deterministic because they read a live feed
+instead of injecting a fixture.
+
+Genuinely permanent failures: the `director` manual-position test and the
+`contracts.py`/`persistence.py` architecture-duplicate guard.
+
+Recommended follow-up (not done here, out of scope): pass an explicit
+`events={...}` fixture in those two tests, exactly as
+`tests/test_premium_strategy.py` does, so the suite stops depending on what day
+it is run.
