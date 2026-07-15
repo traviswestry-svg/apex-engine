@@ -1,6 +1,6 @@
 # APEX 7.6.0 — Manifest
 
-Version constant (`app.py`): `VERSION = "7.6.1_PREMIUM_STRATEGY"`
+Version constant (`app.py`): `VERSION = "7.6.2_PREMIUM_STRATEGY"`
 (→ `STATIC_ASSET_VERSION = "7_6_0_PREMIUM_STRATEGY_css2"`, cache-busts the panels).
 
 ## New files
@@ -12,6 +12,7 @@ Version constant (`app.py`): `VERSION = "7.6.1_PREMIUM_STRATEGY"`
 | `APEX_7_6_0_CHANGELOG.md` | This release's changelog. |
 | `APEX_7_6_0_MANIFEST.md` | This file. |
 | `APEX_7_6_1_CHANGELOG.md` | 7.6.1 — empty-tab investigation + signal-log rehydrate fix. |
+| `APEX_7_6_2_CHANGELOG.md` | 7.6.2 — alerts rewritten as B/S + strike + P/C order tickets. |
 | `tests/test_signal_log_rehydrate.py` | 5 tests — durable signal-log read shape, ordering, outcomes, safety. |
 
 ## Modified files

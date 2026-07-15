@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "7.6.1_PREMIUM_STRATEGY"` (in `app.py`).
-Full test suite: **204 tests** (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "7.6.2_PREMIUM_STRATEGY"` (in `app.py`).
+Full test suite: **212 tests** (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).

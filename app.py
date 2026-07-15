@@ -250,7 +250,7 @@ except Exception as _ps_err:
     PREMIUM_STRATEGY_AVAILABLE = False
     print(f"APEX Premium Strategy unavailable (non-fatal): {_ps_err}", flush=True)
 
-VERSION = "7.6.1_PREMIUM_STRATEGY"
+VERSION = "7.6.2_PREMIUM_STRATEGY"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
