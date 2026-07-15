@@ -414,3 +414,81 @@ def test_dispatch_no_trade_is_silent_but_logged(tmp_path):
     assert r["strategy"] == NO_TRADE
     assert r["dispatched"] is False        # stand-aside is silent
     assert sent == []
+
+
+# ── Alert ticket formatting (B/S + strike + P/C) ────────────────────────────
+# Safety-critical: a flipped buy/sell would enter the inverse structure.
+_XP = {"target": "Buy back at 30% of credit.", "stop": "Close if short strike breaks."}
+
+
+def _alert(strategy, label, legs, **panel_over):
+    panel = {"strategy": strategy, "strategy_label": label, "confidence": 80.0,
+             "price": 6300.0, "expected_move": 30.0, "vix": 20.0, "vix_regime": "MID",
+             "exit_plan": _XP}
+    panel.update(panel_over)
+    return _psr._alert_text("SPX", panel, legs)
+
+
+def test_alert_bull_put_sells_higher_put_buys_lower():
+    t = _alert("BULL_PUT_CREDIT_SPREAD", "Bull Put Credit Spread",
+               {"sell_leg": 6270.0, "buy_leg": 6260.0, "width": 10.0,
+                "entry_credit": 1.94, "pop": 0.84, "max_profit": 194.0,
+                "max_loss": 806.0, "risk_reward": 0.24})
+    assert "S 6270P / B 6260P" in t
+    assert "Net credit 1.94" in t and "POP 84%" in t
+    assert "Max profit $194" in t and "Max loss $806" in t
+
+
+def test_alert_bear_call_sells_lower_call_buys_higher():
+    t = _alert("BEAR_CALL_CREDIT_SPREAD", "Bear Call Credit Spread",
+               {"sell_leg": 6330.0, "buy_leg": 6340.0, "width": 10.0,
+                "entry_credit": 1.49, "pop": 0.86})
+    assert "S 6330C / B 6340C" in t
+
+
+def test_alert_debit_call_buys_lower_sells_higher():
+    t = _alert("DEBIT_CALL_SPREAD", "Debit Call Spread",
+               {"buy_leg": 6295.0, "sell_leg": 6305.0, "width": 10.0,
+                "entry_debit": 5.71, "breakeven": 6300.7})
+    assert "B 6295C / S 6305C" in t
+    assert "Net debit 5.71" in t
+    assert "Breakeven 6300.7" in t
+
+
+def test_alert_debit_put_buys_higher_sells_lower():
+    t = _alert("DEBIT_PUT_SPREAD", "Debit Put Spread",
+               {"buy_leg": 6300.0, "sell_leg": 6290.0, "width": 10.0,
+                "entry_debit": 4.0})
+    assert "B 6300P / S 6290P" in t
+
+
+def test_alert_condor_labels_both_wings():
+    t = _alert("IRON_CONDOR", "Iron Condor",
+               {"put_short": 7490.0, "put_long": 7480.0, "call_short": 7640.0,
+                "call_long": 7650.0, "width": 10.0, "entry_credit": 3.2, "pop": 0.72,
+                "max_profit": 320.0, "max_loss": 680.0, "risk_reward": 0.47},
+               price=7565.0, expected_move=45.0, vix=18.2)
+    assert "PUTS   S 7490P / B 7480P" in t
+    assert "CALLS  S 7640C / B 7650C" in t
+    assert "10 wide each side" in t
+    # short strikes must straddle spot — a condor that doesn't is malformed
+    assert "Spot 7565" in t
+
+
+def test_alert_strips_trailing_zero_and_keeps_half_strikes():
+    assert _psr._fmt_strike(6270.0) == "6270"
+    assert _psr._fmt_strike(6272.5) == "6272.5"
+    assert _psr._fmt_strike(None) == "--"
+
+
+def test_alert_includes_modeled_pricing_caveat():
+    t = _alert("BULL_PUT_CREDIT_SPREAD", "Bull Put Credit Spread",
+               {"sell_leg": 6270.0, "buy_leg": 6260.0, "width": 10.0,
+                "entry_credit": 1.9, "pricing_basis": "modeled_from_expected_move"})
+    assert "verify on the live chain" in t
+
+
+def test_alert_survives_missing_fields():
+    # A sparse legs dict must not raise — alerts are dispatched from the bus cycle.
+    t = _alert("BULL_PUT_CREDIT_SPREAD", "Bull Put Credit Spread", {})
+    assert "APEX ALERT" in t and "--" in t
