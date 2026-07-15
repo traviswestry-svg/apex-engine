@@ -1053,6 +1053,117 @@
 
   <!-- ── TAB: SIGNAL LOG ───────────────────────────────────────────── -->
   <div id="tab-review" class="tab-pane">
+
+    <!-- APEX 7.6.0 Premium Strategy Scorecard — self-contained (isolated CSS/JS) -->
+    <style>
+      .psc-sub{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+      .psc-tot{font-family:var(--mono);font-size:12px;color:var(--muted)}
+      .psc-tot b{color:var(--text);font-size:14px}
+      .psc-pnl-pos{color:var(--green)} .psc-pnl-neg{color:var(--red)}
+      .psc-warn{font-size:11px;color:var(--amber);border:1px solid var(--amber);
+        background:rgba(245,158,11,.10);border-radius:var(--radius-sm);padding:5px 9px}
+      .psc-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+      .psc-h{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.5px;
+        margin:0 0 6px 0}
+      .psc-tbl{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+      .psc-tbl th{font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.4px;
+        text-align:right;padding:5px 7px;border-bottom:1px solid var(--bdr);font-weight:600}
+      .psc-tbl th:first-child{text-align:left}
+      .psc-tbl td{padding:6px 7px;border-bottom:1px solid var(--bdr);text-align:right;color:var(--text)}
+      .psc-tbl td:first-child{text-align:left;color:var(--muted)}
+      .psc-tbl tr:last-child td{border-bottom:none}
+      .psc-thin{color:var(--faint)!important}
+      .psc-empty{font-size:12px;color:var(--muted);padding:8px 2px}
+      @media(max-width:820px){.psc-grid{grid-template-columns:1fr}}
+    </style>
+    <div class="card sec-mb">
+      <div class="card-label">Premium Strategy Scorecard <span class="live-dot-badge">SETTLED</span></div>
+      <div class="workflow-sub" style="margin-bottom:10px">
+        Every structure recommendation, settled at cash close from SPX bars. Shows which
+        structures actually pay in which volatility regime.
+      </div>
+      <div id="pscPanel"><div class="sk-waiting">⌛ Loading scorecard...</div></div>
+    </div>
+    <script>
+    (function(){
+      function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+      function money(v){
+        if(v==null)return '<span class="psc-thin">—</span>';
+        var c=v>0?'psc-pnl-pos':(v<0?'psc-pnl-neg':'');
+        return '<span class="'+c+'">'+(v>0?'+':'')+Math.round(v).toLocaleString()+'</span>';
+      }
+      function wr(v,graded){
+        if(v==null||!graded)return '<span class="psc-thin">—</span>';
+        return v.toFixed(0)+'%';
+      }
+      function label(s){return String(s||'').replace(/_/g,' ');}
+      function table(rows,keyName,headLabel){
+        if(!rows.length)return '<div class="psc-empty">Nothing graded yet.</div>';
+        var h='<table class="psc-tbl"><thead><tr><th>'+esc(headLabel)+'</th><th>Recs</th>'+
+              '<th>Graded</th><th>W–L</th><th>Win %</th><th>Net P&amp;L</th></tr></thead><tbody>';
+        rows.forEach(function(r){
+          h+='<tr><td>'+esc(label(r[keyName]))+'</td>'+
+             '<td>'+r.count+'</td>'+
+             '<td>'+(r.graded||0)+'</td>'+
+             '<td>'+(r.graded?(r.wins+'–'+r.losses):'<span class="psc-thin">—</span>')+'</td>'+
+             '<td>'+wr(r.win_rate_pct,r.graded)+'</td>'+
+             '<td>'+money(r.graded?r.net_pnl:null)+'</td></tr>';
+        });
+        return h+'</tbody></table>';
+      }
+      function render(res){
+        var el=document.getElementById('pscPanel');
+        var sc=(res&&res.scorecard)||{};
+        if(!res||!res.ok||sc.available===false){
+          el.innerHTML='<div class="psc-empty">'+esc(sc.note||'Scorecard unavailable.')+'</div>';
+          return;
+        }
+        if(!sc.total){
+          el.innerHTML='<div class="psc-empty">No recommendations logged yet. '+
+            'Rows appear as the engine changes structure during a session, and grade at the close.</div>';
+          return;
+        }
+        // NO_TRADE has no position to settle — report it separately, not as a strategy row.
+        var strat=(sc.by_strategy||[]).filter(function(r){return r.strategy!=='NO_TRADE';});
+        var stand=(sc.by_strategy||[]).filter(function(r){return r.strategy==='NO_TRADE';})
+                    .reduce(function(a,r){return a+r.count;},0);
+        var h='<div class="psc-sub">'+
+          '<span class="psc-tot">Logged <b>'+sc.total+'</b></span>'+
+          '<span class="psc-tot">Graded <b>'+(sc.graded||0)+'</b></span>'+
+          '<span class="psc-tot">Stand-aside <b>'+stand+'</b></span>'+
+          '<span class="psc-tot">Net P&amp;L <b>'+money(sc.net_pnl)+'</b></span>';
+        if((sc.graded||0)>0 && (sc.graded||0)<20){
+          h+='<span class="psc-warn">Small sample ('+sc.graded+' graded) — win rates are not yet meaningful</span>';
+        }
+        h+='</div><div class="psc-grid">'+
+           '<div><h4 class="psc-h">By Structure</h4>'+table(strat,'strategy','Structure')+'</div>'+
+           '<div><h4 class="psc-h">By VIX Regime</h4>'+table(sc.by_regime||[],'vix_regime','Regime')+'</div>'+
+           '</div>';
+        el.innerHTML=h;
+      }
+      var loaded=false;
+      function load(){
+        fetch('/api/premium_strategy/scorecard',{cache:'no-store'})
+          .then(function(r){return r.json();}).then(function(j){loaded=true;render(j);})
+          .catch(function(){
+            if(loaded)return;   // keep last good data on a transient miss
+            document.getElementById('pscPanel').innerHTML=
+              '<div class="psc-empty">Scorecard unavailable this cycle — retrying…</div>';
+          });
+      }
+      function isActive(){
+        var p=document.getElementById('tab-review');
+        return p && p.classList.contains('active');
+      }
+      // Lazy: load when the Signal Log tab is opened, then refresh slowly while visible.
+      document.querySelectorAll('.tab-btn[data-tab="review"]').forEach(function(b){
+        b.addEventListener('click',function(){setTimeout(load,60);});
+      });
+      setInterval(function(){ if(isActive()) load(); }, 60000);
+      if(isActive()) load();
+    })();
+    </script>
+
     <div class="grid2 sec-mb">
       <div class="card">
         <div class="card-label">Log Trade Review</div>
