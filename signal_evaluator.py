@@ -391,3 +391,70 @@ def scorecard(system: Optional[str] = None) -> Dict[str, Any]:
         "mean_ici_losers": round(sum(loss_ici) / len(loss_ici), 1) if loss_ici else None,
         "system": system or "ALL",
     }
+
+
+def recent_signals(limit: int = 50) -> List[Dict[str, Any]]:
+    """Return the most recent signals from the durable table, newest first.
+
+    Shaped to match the in-memory SCANNER_STATE["signal_log"] entries so the
+    dashboard's Pine Signal Log renders identically after a restart. `received_at`
+    is preserved verbatim because it is the join key the auto-marker patches on.
+
+    Note: the durable table stores the scoring-relevant subset of each signal, so
+    display-only fields the webhook carried but the table does not persist
+    (apex_acceptance, apex_poc_migration, bar_time, intern_score, signal_num,
+    vwap) come back as None. That is a deliberate trade-off — a partially
+    hydrated log beats an empty tab, and the outcome data (the part that matters
+    for review) is complete.
+    """
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT * FROM pine_signals ORDER BY received_at DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"signal_evaluator: recent_signals failed: {e}", flush=True)
+        return []
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        k = r.keys()
+        out.append({
+            "ticker":         r["ticker"],
+            "signal":         r["signal"],
+            "direction":      r["direction"],
+            "price":          r["entry_price"],
+            "close":          r["entry_price"],
+            "score":          r["score"],
+            "system":         r["system"],
+            "apex_decision":  r["apex_decision"],
+            "apex_auction":   r["apex_auction"],
+            "apex_ici":       r["apex_ici"],
+            "poc":            r["poc"],
+            "vah":            r["vah"],
+            "val":            r["val"],
+            # Not persisted by the scoring table — display-only fields.
+            "apex_poc_migration": None,
+            "apex_acceptance":    None,
+            "timeframe":      None,
+            "ema8":           None,
+            "ema21":          None,
+            "vwap":           None,
+            "vix":            None,
+            "orb_high":       None,
+            "orb_low":        None,
+            "intern_score":   None,
+            "signal_num":     None,
+            "bar_time":       None,
+            # Outcome (graded by mark_due_signals).
+            "outcome":        r["outcome"],
+            "outcome_pnl":    r["outcome_pnl"] if "outcome_pnl" in k else None,
+            "outcome_notes":  r["outcome_notes"] if "outcome_notes" in k else None,
+            "mfe_pts":        r["mfe_pts"] if "mfe_pts" in k else None,
+            "mae_pts":        r["mae_pts"] if "mae_pts" in k else None,
+            "received_at":    r["received_at"],
+            "received_at_et": r["received_at_et"],
+            "hydrated":       True,   # marks a row restored from disk, not this process
+        })
+    return out
