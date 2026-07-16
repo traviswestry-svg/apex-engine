@@ -152,6 +152,7 @@ def run_flow_pl(
         cache = ChainCache(chain_fetcher)
         session = session_date()
         recorded = 0
+        sources: List[Dict[str, Any]] = []
 
         def _price(cl: Dict[str, Any]) -> Dict[str, Any]:
             nonlocal recorded
@@ -196,7 +197,26 @@ def run_flow_pl(
                     if e:
                         m.update({k: v for k, v in e.items()
                                   if k not in ("first_seen", "last_seen")})
-            return compute_cluster_pl(cl, members)
+            priced = compute_cluster_pl(cl, members)
+            # Cluster-level excursion: the label surface for Step 5 samples.
+            # Recorded on the cluster's own aggregate P/L — summed member MFEs
+            # would report a peak the cluster never reached.
+            if track and flow_pl_store.is_ready() and priced.get("estimated_pl_dollars") is not None:
+                flow_pl_store.record_cluster_observation(
+                    cluster_key=ckey_s, session_date=session,
+                    ticker=priced.get("ticker"),
+                    pl_dollars=priced.get("estimated_pl_dollars"),
+                    cost_basis=priced.get("cost_basis_dollars"))
+            priced["cluster_key_string"] = ckey_s
+            # The Step 3 cluster view, kept alongside the P/L view. The feature
+            # writer needs the CLUSTER (end_time, aggression, print counts);
+            # compute_cluster_pl deliberately returns only a P/L view and drops
+            # those. Keeping them separate avoids implying the cluster's
+            # descriptive stats are P/L outputs.
+            src = dict(cl)
+            src["cluster_key_string"] = ckey_s
+            sources.append(src)
+            return priced
 
         out_clusters = [_price(cl) for cl in clustered.get("clusters", [])]
         # Spec: P/L for qualifying individual events AND clusters. Singletons are
@@ -210,6 +230,7 @@ def run_flow_pl(
             "available": True,
             "count": len(out_clusters),
             "clusters": out_clusters,
+            "source_clusters": sources,
             "single_events": out_singles,
             "single_event_count": len(out_singles),
             "mark_method": method,

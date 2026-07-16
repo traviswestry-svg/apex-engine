@@ -528,7 +528,12 @@ def grade_due_recommendations(
 
         if not fwd:
             # No bars yet — retry later, unless the session is > 2 days stale.
-            if rec_utc < _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=2):
+            # Uses the INJECTED clock (now_et, resolved above from now_et_provider),
+            # not datetime.now(): this function already takes a clock so it can be
+            # tested and replayed deterministically, and reading the wall clock here
+            # made the staleness rule fire on real elapsed time regardless of the
+            # clock the caller supplied.
+            if rec_utc < now_et.astimezone(_dt.timezone.utc) - _dt.timedelta(days=2):
                 _persist_outcome(r["id"], "SCRATCH", None,
                                  "No settlement bars available (stale).", on_marked)
                 graded += 1

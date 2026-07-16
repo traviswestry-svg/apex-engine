@@ -93,6 +93,30 @@ def init_db() -> bool:
                       "ON flow_pl_tracking(cluster_key)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_fpl_session "
                       "ON flow_pl_tracking(session_date)")
+            # Cluster-level excursions. Per-event MFE/MAE cannot be summed into a
+            # cluster figure: members do not peak simultaneously, so a sum is an
+            # upper bound, not the cluster's excursion. Step 5 samples ARE
+            # clusters, so their labels must be measured on the cluster's own
+            # aggregate P/L — tracked here in its own envelope.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_pl_cluster_tracking (
+                       cluster_key     TEXT NOT NULL,
+                       session_date    TEXT NOT NULL,
+                       ticker          TEXT,
+                       first_seen      TEXT,
+                       last_seen       TEXT,
+                       cost_basis      REAL,
+                       last_pl         REAL,
+                       mfe_dollars     REAL,
+                       mfe_at          TEXT,
+                       mae_dollars     REAL,
+                       mae_at          TEXT,
+                       samples         INTEGER DEFAULT 0,
+                       PRIMARY KEY (cluster_key, session_date)
+                   )"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_fplc_session "
+                      "ON flow_pl_cluster_tracking(session_date)")
             c.commit()
         _DB_READY = True
     except Exception as e:  # pragma: no cover
@@ -229,3 +253,87 @@ def health() -> Dict[str, Any]:
         except Exception as e:  # pragma: no cover
             info["error"] = str(e)
     return info
+
+
+# ── Cluster-level excursions (the label surface for Step 5 samples) ────────
+def record_cluster_observation(*, cluster_key: str, session_date: str,
+                               ticker: Optional[str], pl_dollars: Optional[float],
+                               cost_basis: Optional[float]) -> Optional[Dict[str, Any]]:
+    """Record one cluster-aggregate P/L sample and widen its MFE/MAE envelope.
+
+    Measured on the cluster's own aggregate P/L rather than summed member
+    excursions: members peak at different moments, so a sum would report a peak
+    the cluster never actually reached.
+    """
+    if not _DB_READY or not cluster_key or pl_dollars is None:
+        return None
+    try:
+        now = _now_iso()
+        with _LOCK, _conn() as c:
+            row = c.execute(
+                "SELECT * FROM flow_pl_cluster_tracking WHERE cluster_key=? AND session_date=?",
+                (cluster_key, session_date)).fetchone()
+            if row is None:
+                c.execute(
+                    """INSERT INTO flow_pl_cluster_tracking
+                       (cluster_key, session_date, ticker, first_seen, last_seen, cost_basis,
+                        last_pl, mfe_dollars, mfe_at, mae_dollars, mae_at, samples)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (cluster_key, session_date, ticker, now, now, cost_basis, pl_dollars,
+                     pl_dollars, now, pl_dollars, now, 1))
+                c.commit()
+                return {"cluster_key": cluster_key, "samples": 1, "first_sample": True}
+
+            mfe = row["mfe_dollars"] if row["mfe_dollars"] is not None else pl_dollars
+            mae = row["mae_dollars"] if row["mae_dollars"] is not None else pl_dollars
+            mfe_at, mae_at = row["mfe_at"], row["mae_at"]
+            if pl_dollars > mfe:
+                mfe, mfe_at = pl_dollars, now
+            if pl_dollars < mae:
+                mae, mae_at = pl_dollars, now
+            c.execute(
+                """UPDATE flow_pl_cluster_tracking
+                   SET last_seen=?, last_pl=?, mfe_dollars=?, mfe_at=?, mae_dollars=?,
+                       mae_at=?, samples=samples+1,
+                       cost_basis=COALESCE(?, cost_basis)
+                   WHERE cluster_key=? AND session_date=?""",
+                (now, pl_dollars, mfe, mfe_at, mae, mae_at, cost_basis,
+                 cluster_key, session_date))
+            c.commit()
+            return {"cluster_key": cluster_key, "samples": (row["samples"] or 0) + 1,
+                    "first_sample": False}
+    except Exception as e:  # pragma: no cover
+        print(f"flow_pl_store.record_cluster_observation failed (non-fatal): {e}", flush=True)
+        return None
+
+
+def get_cluster_excursions(cluster_keys: List[str], session_date: str
+                           ) -> Dict[str, Dict[str, Any]]:
+    """Cluster MFE/MAE + time-to-excursion for one session."""
+    if not _DB_READY or not cluster_keys:
+        return {}
+    try:
+        out: Dict[str, Dict[str, Any]] = {}
+        with _conn() as c:
+            for i in range(0, len(cluster_keys), 400):
+                chunk = cluster_keys[i:i + 400]
+                q = ",".join("?" * len(chunk))
+                for r in c.execute(
+                        f"""SELECT * FROM flow_pl_cluster_tracking
+                            WHERE session_date=? AND cluster_key IN ({q})""",
+                        [session_date] + list(chunk)):
+                    out[r["cluster_key"]] = {
+                        "mfe_dollars": r["mfe_dollars"],
+                        "mae_dollars": r["mae_dollars"],
+                        "cost_basis": r["cost_basis"],
+                        "last_pl": r["last_pl"],
+                        "time_to_mfe_seconds": _secs_between(r["first_seen"], r["mfe_at"]),
+                        "time_to_mae_seconds": _secs_between(r["first_seen"], r["mae_at"]),
+                        "samples": r["samples"],
+                        "first_seen": r["first_seen"],
+                        "last_seen": r["last_seen"],
+                    }
+        return out
+    except Exception as e:  # pragma: no cover
+        print(f"flow_pl_store.get_cluster_excursions failed (non-fatal): {e}", flush=True)
+        return {}
