@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "9.4.0_FLOW_PL"` (in `app.py`).
-Full test suite: **374 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "9.4.1_FLOW_PL_SAMPLER"` (in `app.py`).
+Full test suite: **388 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -115,8 +115,15 @@ Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 `confluence_routes`, `event_calendar` + `event_routes`, `decision_intelligence` +
 `decision_routes`.
 
+APEX 9 Step 4.1 — Scanner-side P/L sampling: `flow_pl_pipeline` holds the ONE
+pipeline (tape->classify->cluster->chain->price->record); `/api/flow_pl` and the
+scanner sampler are both thin wrappers over it, so recorded MFE/MAE history can
+never drift from what the endpoint shows. Scanner hook is session-gated
+(MARKET_OPEN) and non-fatal. Without it, excursions would describe the polling
+pattern rather than the session.
+
 APEX 9 Step 4 — Theoretical Flow P/L: `flow_pl` + `flow_pl_store` +
-`flow_pl_routes`. Read-only; chain access INJECTED (reuses the Trade Command
+`flow_pl_pipeline` + `flow_pl_routes`. Read-only; chain access INJECTED (reuses the Trade Command
 Center's _poly_chain_fetcher) and normalized via options_data_bus.normalize_chain
 — no duplicate quote math. entry_mark is the observed print price; current_mark
 is conservative-executable by default because midpoint flatters wide markets.

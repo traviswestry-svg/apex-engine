@@ -287,7 +287,27 @@ except Exception as _fpl_err:
     FLOW_PL_AVAILABLE = False
     print(f"APEX Flow P/L unavailable (non-fatal): {_fpl_err}", flush=True)
 
-VERSION = "9.4.0_FLOW_PL"
+# APEX 9 Step 4.1 — scanner-side P/L sampling. Without this, MFE/MAE only exist
+# for the moments someone happens to have the dashboard open, so excursions would
+# describe the polling pattern rather than the session — and Step 5 would train
+# on that artefact.
+try:
+    from engine.flow_pl_pipeline import sample_flow_pl as _flow_pl_sample
+    FLOW_PL_SAMPLER_AVAILABLE = True
+except Exception as _fpls_err:
+    _flow_pl_sample = None  # type: ignore[assignment]
+    FLOW_PL_SAMPLER_AVAILABLE = False
+    print(f"APEX Flow P/L sampler unavailable (non-fatal): {_fpls_err}", flush=True)
+
+SAMPLE_FLOW_PL_IN_SCANNER = os.getenv("SAMPLE_FLOW_PL_IN_SCANNER", "true").lower() == "true"
+# Gated to actionable sessions: sampling outside RTH burns chain calls to mark
+# contracts whose quotes are not moving.
+FLOW_PL_SAMPLE_SESSIONS = {
+    s.strip().upper() for s in
+    os.getenv("FLOW_PL_SAMPLE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
+}
+
+VERSION = "9.4.1_FLOW_PL_SAMPLER"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -3111,6 +3131,20 @@ def scanner_loop() -> None:
                     print(f"premium_strategy: graded {_pg} recommendation(s).", flush=True)
             except Exception as e:
                 print(f"premium grade error (recovered): {e}", flush=True)
+        # APEX 9 Step 4.1: sample theoretical flow P/L so MFE/MAE describe the
+        # session rather than whenever a dashboard happened to be open. Uses the
+        # SAME pipeline as /api/flow_pl (engine/flow_pl_pipeline) — one
+        # implementation, so recorded history always matches what the endpoint
+        # shows. Session-gated to conserve chain calls.
+        if (SAMPLE_FLOW_PL_IN_SCANNER and FLOW_PL_SAMPLER_AVAILABLE
+                and _flow_pl_sample is not None and globals().get("_FLOW_PL_SAMPLE_ARGS")):
+            try:
+                if session_status() in FLOW_PL_SAMPLE_SESSIONS:
+                    _fs = _flow_pl_sample(**globals()["_FLOW_PL_SAMPLE_ARGS"])
+                    if _fs:
+                        print(f"flow_pl: sampled {_fs} print(s).", flush=True)
+            except Exception as e:
+                print(f"flow P/L sample error (recovered): {e}", flush=True)
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 
@@ -7815,6 +7849,19 @@ try:
             default_ticker=ASSISTANT_TICKER,
         )
         print(f"APEX Flow P/L routes registered ({_FLOW_PL_VERSION}).", flush=True)
+
+        # Publish the sampler's data paths for scanner_loop. Set here (not at
+        # import) because these closures depend on the chain fetcher wired above.
+        _FLOW_PL_SAMPLE_ARGS = dict(
+            tickers=[ASSISTANT_TICKER],
+            flow_tape_provider=_fpl_flow_tape,
+            chain_fetcher=_fpl_chain,
+            last_result_provider=_fpl_last_result,
+            default_ticker=ASSISTANT_TICKER,
+        )
+        if SAMPLE_FLOW_PL_IN_SCANNER and FLOW_PL_SAMPLER_AVAILABLE:
+            print(f"APEX Flow P/L scanner sampling ENABLED "
+                  f"(sessions: {','.join(sorted(FLOW_PL_SAMPLE_SESSIONS))}).", flush=True)
 except Exception as e:
     print(f"Flow P/L registration unavailable (non-fatal): {e}", flush=True)
 
