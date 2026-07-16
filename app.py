@@ -250,7 +250,20 @@ except Exception as _ps_err:
     PREMIUM_STRATEGY_AVAILABLE = False
     print(f"APEX Premium Strategy unavailable (non-fatal): {_ps_err}", flush=True)
 
-VERSION = "7.6.2_PREMIUM_STRATEGY"
+# APEX 9 Step 2 — Institutional Flow Classifier (read-only consumer of the
+# normalized flow tape; adds certainty-layered classification, never fabricates
+# intent). Non-fatal: if it fails to import, the tape is completely unaffected.
+try:
+    from engine.flow_classifier_routes import register_flow_classifier_routes
+    from engine.flow_classifier import CLASSIFIER_VERSION as FLOW_CLASSIFIER_VERSION
+    FLOW_CLASSIFIER_AVAILABLE = True
+except Exception as _fc_err:
+    register_flow_classifier_routes = None  # type: ignore[assignment]
+    FLOW_CLASSIFIER_VERSION = "unavailable"
+    FLOW_CLASSIFIER_AVAILABLE = False
+    print(f"APEX Flow Classifier unavailable (non-fatal): {_fc_err}", flush=True)
+
+VERSION = "9.2.0_FLOW_CLASSIFIER"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -7669,6 +7682,42 @@ try:
         print(f"APEX Premium Strategy routes registered ({PREMIUM_STRATEGY_VERSION}).", flush=True)
 except Exception as e:
     print(f"Premium Strategy unavailable (non-fatal): {e}", flush=True)
+
+# APEX 9 Step 2 — Flow Classifier routes. Read-only: the flow source is injected
+# as a closure over the app's EXISTING tape path (_fetch_flow_tape_rows +
+# build_flow_tape), so the classifier never talks to a provider itself and
+# /api/flow_tape keeps its current shape.
+try:
+    if FLOW_CLASSIFIER_AVAILABLE and register_flow_classifier_routes is not None:
+
+        def _fc_flow_tape(tickers, min_premium):
+            """Reuse the existing tape path; return its payload unchanged."""
+            if not FLOW_TAPE_AVAILABLE or build_flow_tape is None:
+                return {"status": "UNAVAILABLE", "rows": [],
+                        "message": "Flow tape engine not available."}
+            if not QUANTDATA_API_KEY or not ORDER_FLOW_ENABLED:
+                return {"status": "NOT_CONFIGURED", "rows": [],
+                        "message": "Set QUANTDATA_API_KEY and ORDER_FLOW_ENABLED=true "
+                                   "to enable flow classification."}
+            raw = _fetch_flow_tape_rows(list(tickers), size_per_ticker=100)
+            return build_flow_tape(raw, list(tickers), min_premium=min_premium or 0.0)
+
+        def _fc_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        register_flow_classifier_routes(
+            app,
+            flow_tape_provider=_fc_flow_tape,
+            last_result_provider=_fc_last_result,
+            default_ticker=ASSISTANT_TICKER,
+        )
+        print(f"APEX Flow Classifier routes registered ({FLOW_CLASSIFIER_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Flow Classifier registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()

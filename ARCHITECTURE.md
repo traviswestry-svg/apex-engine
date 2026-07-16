@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "7.6.2_PREMIUM_STRATEGY"` (in `app.py`).
-Full test suite: **221 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "9.2.0_FLOW_CLASSIFIER"` (in `app.py`).
+Full test suite: **271 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -62,6 +62,10 @@ gamma / flow / auction / pin, stop — read it from `institutional_intelligence`
 `/api/confluence` · `/api/events` · `/api/decision` · `/api/overnight_briefing` ·
 `/api/signal_log` · `/api/signal_outcome` · `/api/signal_scorecard`
 
+### APEX 9 Step 2 — Flow Classifier
+`/api/flow_classifier` (certainty-layered classification of normalized tape
+prints; read-only, never fabricates intent) · `/api/flow_classifier/health`
+
 ### 7.6 additions — Premium Strategy Engine
 `/api/premium_strategy` (structure selection: debit/credit spread · iron condor ·
 no-trade — read-only over the bus) · `/api/premium_strategy/scorecard`
@@ -102,6 +106,14 @@ Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 7.2–7.5 (this session): `range_intelligence` + `range_routes`, `confluence` +
 `confluence_routes`, `event_calendar` + `event_routes`, `decision_intelligence` +
 `decision_routes`.
+
+APEX 9 Step 2 — Flow Classifier: `flow_classifier` + `flow_classifier_routes`.
+Read-only consumer of `flow_tape`'s normalized rows; separates observable facts /
+derived classifications / intent hypotheses into distinct fields and never
+claims confirmed institutional intent. Opening/closing intent is permanently
+excluded (no open interest on the print). Does NOT consume `aggressor_side`,
+which `flow_tape._classify_row` fabricates from contract_type when
+`trade_side_code` is missing.
 
 7.6 — Premium Strategy Engine: `premium_strategy` (structure-selection assembler)
 + `premium_strategy_routes`. Read-only consumer of the bus + `confluence` +
