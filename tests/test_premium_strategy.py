@@ -492,3 +492,34 @@ def test_alert_survives_missing_fields():
     # A sparse legs dict must not raise — alerts are dispatched from the bus cycle.
     t = _alert("BULL_PUT_CREDIT_SPREAD", "Bull Put Credit Spread", {})
     assert "APEX ALERT" in t and "--" in t
+
+
+def test_staleness_check_uses_the_injected_clock_not_wall_time(tmp_path):
+    """Regression: the staleness rule read datetime.now() while the function was
+    handed a clock, so it fired on real elapsed time regardless of the caller's
+    clock. The test below passed when authored and began failing two days later,
+    mid-session, with no code change."""
+    _fresh_db(tmp_path)
+    rec_ts = _dt.datetime(2026, 7, 14, 15, 0, tzinfo=_dt.timezone.utc)
+    with _psr._conn() as c:
+        c.execute("INSERT INTO premium_recommendations "
+                  "(ts, session_date, ticker, strategy, premium_kind, confidence, "
+                  "vix_regime, pop, legs_json, outcome) VALUES (?,?,?,?,?,?,?,?,?,NULL)",
+                  (rec_ts.isoformat(), "2026-07-14", "SPX", "BULL_PUT_CREDIT_SPREAD",
+                   "CREDIT", 80, "HIGH", 0.8,
+                   '{"sell_leg":6270,"buy_leg":6260,"width":10,"entry_credit":1.9}'))
+        c.commit()
+
+    def _outcome():
+        with _psr._conn() as c:
+            return c.execute("SELECT outcome FROM premium_recommendations").fetchone()[0]
+
+    # Clock says 30 minutes after the close -> fresh -> hold open for retry.
+    fresh = _dt.datetime(2026, 7, 14, 16, 30, tzinfo=_EASTERN)
+    _psr.grade_due_recommendations(lambda *a, **k: [], lambda: fresh)
+    assert _outcome() is None, "a fresh record must be retried, whatever the wall clock says"
+
+    # Clock advanced past the 2-day window -> stale -> scratched.
+    stale = _dt.datetime(2026, 7, 17, 10, 0, tzinfo=_EASTERN)
+    _psr.grade_due_recommendations(lambda *a, **k: [], lambda: stale)
+    assert _outcome() == "SCRATCH"

@@ -646,3 +646,53 @@ def test_chain_cache_counts_fetches_in_payload(store):
 def test_samples_recorded_is_reported(store):
     res = run_flow_pl(**_args(ROWS))
     assert res["samples_recorded"] == 2
+
+
+# ── source_clusters (regression: the writer needs the Step 3 view) ─────────
+def test_pipeline_exposes_source_clusters_with_step3_fields(store):
+    """compute_cluster_pl returns a P/L view and drops end_time / aggression /
+    print counts. The feature-store writer needs those, and silently wrote ZERO
+    samples until the pipeline exposed the cluster view alongside the P/L view."""
+    res = run_flow_pl(**_args(ROWS))
+    src = res["source_clusters"][0]
+    assert src["end_time"] is not None
+    assert src["number_of_prints"] == 2
+    assert src["aggression_score"] == 100.0
+    assert "intent_uncertainty" in src
+
+
+def test_priced_view_and_source_view_are_aligned(store):
+    res = run_flow_pl(**_args(ROWS))
+    assert len(res["clusters"]) == len(res["source_clusters"])
+    assert res["clusters"][0]["cluster_key_string"] == \
+           res["source_clusters"][0]["cluster_key_string"]
+
+
+def test_pl_view_deliberately_stays_a_pl_view(store):
+    """Descriptive cluster stats are not P/L outputs; they live on the source view."""
+    res = run_flow_pl(**_args(ROWS))
+    priced = res["clusters"][0]
+    assert "estimated_pl_dollars" in priced and "weighted_entry_mark" in priced
+    assert "aggression_score" not in priced
+
+
+def test_source_clusters_do_not_mutate_the_clusterer_output(store):
+    res = run_flow_pl(**_args(ROWS))
+    # cluster_key_string is added to the copy, not the original structure
+    assert res["source_clusters"][0]["cluster_key_string"]
+
+
+def test_cluster_level_excursions_are_recorded_by_the_pipeline(store):
+    """Cluster labels must come from cluster-aggregate P/L, not summed members."""
+    from engine import flow_pl_store as S
+    run_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=6.00)))
+    run_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=9.00)))
+    run_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=2.00)))
+    key = "SPX|CALL|2026-07-17|BULLISH"
+    from engine.flow_pl_pipeline import session_date
+    exc = S.get_cluster_excursions([key], session_date())
+    assert key in exc
+    e = exc[key]
+    assert e["mfe_dollars"] > e["mae_dollars"]
+    assert e["samples"] == 3
+    assert e["cost_basis"] is not None
