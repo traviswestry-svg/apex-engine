@@ -496,3 +496,153 @@ def test_forbidden_language_never_appears():
     blob = repr(pl).lower()
     for t in banned:
         assert t not in blob
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Step 4.1 — scanner-side sampling (shared pipeline)
+# ══════════════════════════════════════════════════════════════════════════
+from engine.flow_pl_pipeline import ChainCache, run_flow_pl, sample_flow_pl
+
+
+def _raw(t, ct, k, px, sz, side, cons="SWEEP", exp="20260717"):
+    return {"ticker": "SPX", "contractType": ct, "strike": k, "expiration": exp,
+            "price": px, "size": sz, "premium": px * sz * 100, "tradeSideCode": side,
+            "tradeConsolidationType": cons, "tradeTime": f"2026-07-16T{t}"}
+
+
+def _tape_provider(rows):
+    from engine.flow_tape import build_flow_tape
+    return lambda tickers, mp: build_flow_tape(rows, list(tickers), min_premium=mp or 0.0)
+
+
+def _chain_fetcher(bid=6.00, ask=6.20, counter=None):
+    def f(symbol, expiration, side):
+        if counter is not None:
+            counter.append((symbol, expiration, side))
+        if side == "CALL":
+            return [{"strike": k, "optionType": "CALL", "bid": bid, "ask": ask,
+                     "volume": 5000, "openInterest": 12000,
+                     "greeks": {"iv": 0.18, "delta": 0.52},
+                     "expiration": expiration, "quote_age_seconds": 2}
+                    for k in (6300.0, 6310.0)]
+        return [{"strike": 6100.0, "optionType": "PUT", "bid": 2.80, "ask": 2.95,
+                 "volume": 4000, "openInterest": 9000,
+                 "greeks": {"iv": 0.22, "delta": -0.31},
+                 "expiration": expiration, "quote_age_seconds": 3}]
+    return f
+
+
+def _args(rows, **over):
+    a = dict(tickers=["SPX"], flow_tape_provider=_tape_provider(rows),
+             chain_fetcher=_chain_fetcher(), last_result_provider=lambda: {
+                 "market_state": {"price": 6300}}, default_ticker="SPX")
+    a.update(over)
+    return a
+
+
+ROWS = [_raw("10:31:02", "CALL", 6300, 5.00, 1000, "ABOVE_ASK"),
+        _raw("10:31:06", "CALL", 6300, 5.10, 800, "ABOVE_ASK")]
+
+
+def test_sampler_records_history_with_nobody_watching(store):
+    """The entire point: MFE/MAE must accrue without the endpoint being polled."""
+    assert store.health()["tracked_events"] == 0
+    n = sample_flow_pl(**_args(ROWS))
+    assert n == 2
+    assert store.health()["tracked_events"] == 2
+
+
+def test_repeated_sampling_widens_the_excursion_envelope(store):
+    sample_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=6.00)))
+    sample_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=9.00)))   # up
+    sample_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=2.00)))   # down
+    h = store.health()
+    assert h["tracked_events"] == 2
+    assert h["total_samples"] == 6          # 2 prints x 3 cycles
+    ids = [e["event_id"] for e in classify_flow_events(
+        [dict(r) for r in _tape_provider(ROWS)(["SPX"], 0)["rows"]])["events"]]
+    exc = store.get_excursions(ids)
+    for e in exc.values():
+        assert e["mfe_dollars"] > e["mae_dollars"]
+        assert e["samples"] == 3
+
+
+def test_sampler_and_endpoint_share_one_pipeline(store):
+    """Route and sampler must not drift: same inputs -> same marks."""
+    sampled = run_flow_pl(**_args(ROWS), track=True, attach_excursions=False)
+    served = run_flow_pl(**_args(ROWS), track=True, attach_excursions=True)
+    a = sampled["clusters"][0]
+    b = served["clusters"][0]
+    assert a["estimated_pl_dollars"] == b["estimated_pl_dollars"]
+    assert a["weighted_entry_mark"] == b["weighted_entry_mark"]
+    assert a["cluster_id"] == b["cluster_id"]
+
+
+def test_sampler_skips_excursion_readback_endpoint_does_not(store):
+    sample_flow_pl(**_args(ROWS))
+    lean = run_flow_pl(**_args(ROWS), attach_excursions=False)
+    rich = run_flow_pl(**_args(ROWS), attach_excursions=True)
+    assert "mfe_dollars" not in lean["clusters"][0]["members"][0]
+    assert "mfe_dollars" in rich["clusters"][0]["members"][0]
+
+
+def test_sampler_returns_zero_when_nothing_markable(store):
+    mid_only = [_raw("10:31:02", "CALL", 6300, 5.00, 1000, "MID"),
+                _raw("10:31:06", "CALL", 6300, 5.10, 800, "MID")]
+    assert sample_flow_pl(**_args(mid_only)) == 0
+    assert store.health()["tracked_events"] == 0
+
+
+def test_sampler_returns_zero_on_empty_tape(store):
+    assert sample_flow_pl(**_args([])) == 0
+
+
+def test_sampler_never_raises_on_a_broken_tape_provider(store):
+    def boom(tickers, mp):
+        raise RuntimeError("provider exploded")
+    assert sample_flow_pl(**_args(ROWS, flow_tape_provider=boom)) == 0
+
+
+def test_sampler_never_raises_on_a_broken_chain_fetcher(store):
+    def boom(symbol, expiration, side):
+        raise RuntimeError("chain exploded")
+    n = sample_flow_pl(**_args(ROWS, chain_fetcher=boom))
+    assert n == 0                       # nothing markable, but no exception
+
+
+def test_pipeline_reports_chain_warning_when_fetch_fails(store):
+    def boom(symbol, expiration, side):
+        raise RuntimeError("chain exploded")
+    res = run_flow_pl(**_args(ROWS, chain_fetcher=boom))
+    assert res["chain_warnings"]
+    assert "chain exploded" in res["chain_warnings"][0]
+
+
+def test_sampler_works_with_no_chain_fetcher_at_all(store):
+    res = run_flow_pl(**_args(ROWS, chain_fetcher=None))
+    assert res["available"] is True
+    assert res["clusters"][0]["estimated_pl_dollars"] is None   # unmarkable, not zero
+
+
+def test_tracking_off_records_nothing(store):
+    run_flow_pl(**_args(ROWS), track=False)
+    assert store.health()["tracked_events"] == 0
+
+
+def test_chain_cache_fetches_once_per_expiration_and_side(store):
+    calls = []
+    rows = ROWS + [_raw("10:32:00", "PUT", 6100, 3.40, 2600, "ABOVE_ASK", cons="BLOCK")]
+    run_flow_pl(**_args(rows, chain_fetcher=_chain_fetcher(counter=calls)))
+    # 2 CALL prints + 1 PUT print across one expiration -> 2 fetches, not 3
+    assert len(calls) == 2
+    assert sorted(c[2] for c in calls) == ["CALL", "PUT"]
+
+
+def test_chain_cache_counts_fetches_in_payload(store):
+    res = run_flow_pl(**_args(ROWS))
+    assert res["chain_fetches"] == 1
+
+
+def test_samples_recorded_is_reported(store):
+    res = run_flow_pl(**_args(ROWS))
+    assert res["samples_recorded"] == 2
