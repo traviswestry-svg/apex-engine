@@ -292,10 +292,10 @@ except Exception as _fpl_err:
 # describe the polling pattern rather than the session — and Step 5 would train
 # on that artefact.
 try:
-    from engine.flow_pl_pipeline import sample_flow_pl as _flow_pl_sample
+    from engine.flow_pl_pipeline import run_flow_pl as _flow_pl_run
     FLOW_PL_SAMPLER_AVAILABLE = True
 except Exception as _fpls_err:
-    _flow_pl_sample = None  # type: ignore[assignment]
+    _flow_pl_run = None  # type: ignore[assignment]
     FLOW_PL_SAMPLER_AVAILABLE = False
     print(f"APEX Flow P/L sampler unavailable (non-fatal): {_fpls_err}", flush=True)
 
@@ -321,7 +321,23 @@ except Exception as _fs_err:
     FEATURE_STORE_AVAILABLE = False
     print(f"APEX Feature Store unavailable (non-fatal): {_fs_err}", flush=True)
 
-VERSION = "9.5.0_FEATURE_STORE"
+# APEX 9 Step 5a.1 — the writer. This is what starts the clock: until it runs,
+# flow_features stays at zero rows forever.
+try:
+    from engine import feature_store_writer as _fs_writer
+    FEATURE_WRITER_AVAILABLE = True
+except Exception as _fsw_err:
+    _fs_writer = None  # type: ignore[assignment]
+    FEATURE_WRITER_AVAILABLE = False
+    print(f"APEX Feature Store writer unavailable (non-fatal): {_fsw_err}", flush=True)
+
+WRITE_FEATURES_IN_SCANNER = os.getenv("WRITE_FEATURES_IN_SCANNER", "true").lower() == "true"
+FEATURE_WRITE_SESSIONS = {
+    s.strip().upper() for s in
+    os.getenv("FEATURE_WRITE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
+}
+
+VERSION = "9.5.1_FEATURE_STORE_WRITER"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -3145,20 +3161,62 @@ def scanner_loop() -> None:
                     print(f"premium_strategy: graded {_pg} recommendation(s).", flush=True)
             except Exception as e:
                 print(f"premium grade error (recovered): {e}", flush=True)
-        # APEX 9 Step 4.1: sample theoretical flow P/L so MFE/MAE describe the
-        # session rather than whenever a dashboard happened to be open. Uses the
-        # SAME pipeline as /api/flow_pl (engine/flow_pl_pipeline) — one
-        # implementation, so recorded history always matches what the endpoint
-        # shows. Session-gated to conserve chain calls.
+        # APEX 9 Step 4.1 / 5a.1: sample theoretical flow P/L so MFE/MAE describe the
+        # session rather than whenever a dashboard happened to be open, and write
+        # feature-store samples for any cluster that has SEALED. Both use ONE
+        # pipeline run — running it twice would double the chain calls.
         if (SAMPLE_FLOW_PL_IN_SCANNER and FLOW_PL_SAMPLER_AVAILABLE
-                and _flow_pl_sample is not None and globals().get("_FLOW_PL_SAMPLE_ARGS")):
+                and _flow_pl_run is not None and globals().get("_FLOW_PL_SAMPLE_ARGS")):
             try:
                 if session_status() in FLOW_PL_SAMPLE_SESSIONS:
-                    _fs = _flow_pl_sample(**globals()["_FLOW_PL_SAMPLE_ARGS"])
+                    _res = _flow_pl_run(**globals()["_FLOW_PL_SAMPLE_ARGS"],
+                                        attach_excursions=False) or {}
+                    _fs = int(_res.get("samples_recorded") or 0)
                     if _fs:
                         print(f"flow_pl: sampled {_fs} print(s).", flush=True)
+
+                    # Feature store: write sealed clusters, reusing these priced
+                    # clusters. decision_time is the cluster's end_time, so waiting
+                    # for the seal never leaks hindsight into the vector.
+                    if (WRITE_FEATURES_IN_SCANNER and FEATURE_WRITER_AVAILABLE
+                            and _fs_writer is not None
+                            and session_status() in FEATURE_WRITE_SESSIONS
+                            and _res.get("source_clusters")):
+                        _n = now_et()
+                        _sess = _n.strftime("%Y-%m-%d")
+                        with REPLAY_STORE_LOCK:
+                            _frames = [f for f in REPLAY_STORE.get(_sess, [])
+                                       if str(f.get("ticker", "")).upper() == ASSISTANT_TICKER]
+                        _rep = _fs_writer.write_samples(
+                            priced_clusters=_res["source_clusters"], replay_rows=_frames,
+                            session_date=_sess,
+                            now_et_seconds=_n.hour * 3600 + _n.minute * 60 + _n.second,
+                            ticker=ASSISTANT_TICKER)
+                        if _rep.get("written"):
+                            print(f"feature_store: wrote {_rep['written']} sample(s).",
+                                  flush=True)
+                        for _r in (_rep.get("reasons") or [])[:2]:
+                            print(f"feature_store: {_r}", flush=True)
             except Exception as e:
                 print(f"flow P/L sample error (recovered): {e}", flush=True)
+
+        # APEX 9 Step 5a.1: settle labels once the cash session has closed. Labels
+        # are measured to session close, so this runs after it — never before.
+        if (WRITE_FEATURES_IN_SCANNER and FEATURE_WRITER_AVAILABLE
+                and _fs_writer is not None):
+            try:
+                _n = now_et()
+                _sess = _n.strftime("%Y-%m-%d")
+                if session_status() in ("AFTER_HOURS", "OVERNIGHT") \
+                        and _sess != globals().get("_LAST_LABEL_SETTLE_DATE"):
+                    _lr = _fs_writer.settle_labels(session_date=_sess,
+                                                   ticker=ASSISTANT_TICKER)
+                    globals()["_LAST_LABEL_SETTLE_DATE"] = _sess
+                    if _lr.get("labelled"):
+                        print(f"feature_store: labelled {_lr['labelled']} sample(s) "
+                              f"for {_sess}.", flush=True)
+            except Exception as e:
+                print(f"feature label settle error (recovered): {e}", flush=True)
         time.sleep(SCAN_INTERVAL_SECONDS)
 
 

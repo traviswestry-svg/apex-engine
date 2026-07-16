@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "9.5.0_FEATURE_STORE"` (in `app.py`).
-Full test suite: **476 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "9.5.1_FEATURE_STORE_WRITER"` (in `app.py`).
+Full test suite: **512 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -119,6 +119,19 @@ Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 `confluence_routes`, `event_calendar` + `event_routes`, `decision_intelligence` +
 `decision_routes`.
 
+APEX 9 Step 5a.1 — Feature store writer: `feature_store_writer`. THIS STARTS THE
+CLOCK — before it, flow_features stayed at 0 rows forever. decision_time = the
+cluster's end_time; the sample is written only once SEALED (now >= end_time +
+FLOW_CLUSTER_GAP_S), so waiting for completeness never leaks hindsight because
+features are resolved at-or-before end_time. First-write-wins is correct: the
+tape is a sliding window, so a cluster only SHRINKS on later views. Labels are
+measured to session close from `flow_pl_cluster_tracking` (cluster-aggregate
+P/L — member MFEs cannot be summed, they do not peak together). target/stop use
+APEX-defined thresholds on cost basis, not the participant's unknown targets, and
+final_outcome compares time_to_mae vs time_to_mfe so a cluster that stopped out
+before hitting target is not recorded as a win. Scanner makes ONE run_flow_pl
+call feeding both P/L sampling and feature writing.
+
 APEX 9 Step 5a — Point-in-time feature store: `feature_store` +
 `feature_store_db` + `feature_store_routes`. Makes look-ahead bias STRUCTURAL,
 not tested-for: every guard raises LeakageError and refuses the write; there is
@@ -217,7 +230,8 @@ override**), `contracts` (state/directive constant sets), `states`, `lifecycle`,
 | `trade_reviews` | review | post-trade reviews |
 | `flow_features` | engine/feature_store_db.py (pre-decision vectors, immutable) |
 | `flow_labels` | engine/feature_store_db.py (post-outcome labels, separate by design) |
-| `flow_pl_tracking` | engine/flow_pl_store.py |
+| `flow_pl_tracking` | engine/flow_pl_store.py (per-event excursions) |
+| `flow_pl_cluster_tracking` | engine/flow_pl_store.py (cluster-aggregate excursions — the Step 5 label surface) |
 | `pine_signals` | signal_evaluator | Pine signals + MFE/MAE outcomes (created at runtime) |
 | `premium_recommendations` | premium_strategy_routes | structure recs (+ spot, session_date, legs JSON); `outcome`/`outcome_pnl` settled at cash close by scanner_loop (created at runtime) |
 
