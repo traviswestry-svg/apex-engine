@@ -263,7 +263,19 @@ except Exception as _fc_err:
     FLOW_CLASSIFIER_AVAILABLE = False
     print(f"APEX Flow Classifier unavailable (non-fatal): {_fc_err}", flush=True)
 
-VERSION = "9.2.0_FLOW_CLASSIFIER"
+# APEX 9 Step 3 — Flow Clustering (read-only consumer of CLASSIFIED events, never
+# raw provider rows). Non-fatal: failure here leaves the tape and classifier intact.
+try:
+    from engine.flow_clusters_routes import register_flow_clusters_routes
+    from engine.flow_clusters import CLUSTER_VERSION as FLOW_CLUSTER_VERSION
+    FLOW_CLUSTERS_AVAILABLE = True
+except Exception as _fcl_err:
+    register_flow_clusters_routes = None  # type: ignore[assignment]
+    FLOW_CLUSTER_VERSION = "unavailable"
+    FLOW_CLUSTERS_AVAILABLE = False
+    print(f"APEX Flow Clusters unavailable (non-fatal): {_fcl_err}", flush=True)
+
+VERSION = "9.3.0_FLOW_CLUSTERS"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -7718,6 +7730,39 @@ try:
         print(f"APEX Flow Classifier routes registered ({FLOW_CLASSIFIER_VERSION}).", flush=True)
 except Exception as e:
     print(f"Flow Classifier registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 9 Step 3 — Flow Clusters routes. Same injected, read-only tape closure as
+# the classifier; the route pipes tape -> classifier -> clusterer in-process.
+try:
+    if FLOW_CLUSTERS_AVAILABLE and register_flow_clusters_routes is not None:
+
+        def _fcl_flow_tape(tickers, min_premium):
+            if not FLOW_TAPE_AVAILABLE or build_flow_tape is None:
+                return {"status": "UNAVAILABLE", "rows": [],
+                        "message": "Flow tape engine not available."}
+            if not QUANTDATA_API_KEY or not ORDER_FLOW_ENABLED:
+                return {"status": "NOT_CONFIGURED", "rows": [],
+                        "message": "Set QUANTDATA_API_KEY and ORDER_FLOW_ENABLED=true "
+                                   "to enable flow clustering."}
+            raw = _fetch_flow_tape_rows(list(tickers), size_per_ticker=100)
+            return build_flow_tape(raw, list(tickers), min_premium=min_premium or 0.0)
+
+        def _fcl_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        register_flow_clusters_routes(
+            app,
+            flow_tape_provider=_fcl_flow_tape,
+            last_result_provider=_fcl_last_result,
+            default_ticker=ASSISTANT_TICKER,
+        )
+        print(f"APEX Flow Clusters routes registered ({FLOW_CLUSTER_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Flow Clusters registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()

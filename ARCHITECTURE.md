@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "9.2.0_FLOW_CLASSIFIER"` (in `app.py`).
-Full test suite: **271 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "9.3.0_FLOW_CLUSTERS"` (in `app.py`).
+Full test suite: **319 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -66,6 +66,10 @@ gamma / flow / auction / pin, stop — read it from `institutional_intelligence`
 `/api/flow_classifier` (certainty-layered classification of normalized tape
 prints; read-only, never fabricates intent) · `/api/flow_classifier/health`
 
+### APEX 9 Step 3 — Flow Clustering
+`/api/flow_clusters` (auditable clusters of CLASSIFIED prints; order-independent
+and deterministic) · `/api/flow_clusters/health`
+
 ### 7.6 additions — Premium Strategy Engine
 `/api/premium_strategy` (structure selection: debit/credit spread · iron condor ·
 no-trade — read-only over the bus) · `/api/premium_strategy/scorecard`
@@ -106,6 +110,16 @@ Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 7.2–7.5 (this session): `range_intelligence` + `range_routes`, `confluence` +
 `confluence_routes`, `event_calendar` + `event_routes`, `decision_intelligence` +
 `decision_routes`.
+
+APEX 9 Step 3 — Flow Clustering: `flow_clusters` + `flow_clusters_routes`.
+Consumes CLASSIFIED events only (imports just hashlib/os — it depends on the
+classifier's output contract, not its code). Time proximity alone never
+clusters: ticker, option type, expiration, direction and strike band must all
+agree. Strike banding runs BEFORE time-chaining so an interleaved unrelated
+strike cannot tear a campaign apart. Deterministic: de-duped by event_id and
+sorted by (time, event_id), so late/out-of-order prints give identical clusters.
+weighted_delta / weighted_iv / number_of_exchanges are NOT derivable and are
+emitted as None with reasons.
 
 APEX 9 Step 2 — Flow Classifier: `flow_classifier` + `flow_classifier_routes`.
 Read-only consumer of `flow_tape`'s normalized rows; separates observable facts /
