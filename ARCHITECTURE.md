@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "9.3.0_FLOW_CLUSTERS"` (in `app.py`).
-Full test suite: **319 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "9.4.0_FLOW_PL"` (in `app.py`).
+Full test suite: **374 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -70,6 +70,10 @@ prints; read-only, never fabricates intent) · `/api/flow_classifier/health`
 `/api/flow_clusters` (auditable clusters of CLASSIFIED prints; order-independent
 and deterministic) · `/api/flow_clusters/health`
 
+### APEX 9 Step 4 — Theoretical Flow P/L
+`/api/flow_pl` (marks enriched from the options chain; conservative executable
+mark by default; never marks what it cannot see) · `/api/flow_pl/health`
+
 ### 7.6 additions — Premium Strategy Engine
 `/api/premium_strategy` (structure selection: debit/credit spread · iron condor ·
 no-trade — read-only over the bus) · `/api/premium_strategy/scorecard`
@@ -110,6 +114,16 @@ Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 7.2–7.5 (this session): `range_intelligence` + `range_routes`, `confluence` +
 `confluence_routes`, `event_calendar` + `event_routes`, `decision_intelligence` +
 `decision_routes`.
+
+APEX 9 Step 4 — Theoretical Flow P/L: `flow_pl` + `flow_pl_store` +
+`flow_pl_routes`. Read-only; chain access INJECTED (reuses the Trade Command
+Center's _poly_chain_fetcher) and normalized via options_data_bus.normalize_chain
+— no duplicate quote math. entry_mark is the observed print price; current_mark
+is conservative-executable by default because midpoint flatters wide markets.
+Mid-fill prints get NO P/L (no observable side). Multiplier is INFERRED from
+premium arithmetic, never assumed. Strikes outside the chain's +/-5% window are
+unmarkable, not estimated. First stateful step: table `flow_pl_tracking` holds
+MFE/MAE.
 
 APEX 9 Step 3 — Flow Clustering: `flow_clusters` + `flow_clusters_routes`.
 Consumes CLASSIFIED events only (imports just hashlib/os — it depends on the
@@ -177,6 +191,7 @@ override**), `contracts` (state/directive constant sets), `states`, `lifecycle`,
 | `replay_snapshots` | replay | minute snapshots |
 | `tracked_ideas` | backtest tracking | idea → outcome |
 | `trade_reviews` | review | post-trade reviews |
+| `flow_pl_tracking` | engine/flow_pl_store.py |
 | `pine_signals` | signal_evaluator | Pine signals + MFE/MAE outcomes (created at runtime) |
 | `premium_recommendations` | premium_strategy_routes | structure recs (+ spot, session_date, legs JSON); `outcome`/`outcome_pnl` settled at cash close by scanner_loop (created at runtime) |
 

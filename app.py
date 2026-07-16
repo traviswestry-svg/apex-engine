@@ -275,7 +275,19 @@ except Exception as _fcl_err:
     FLOW_CLUSTERS_AVAILABLE = False
     print(f"APEX Flow Clusters unavailable (non-fatal): {_fcl_err}", flush=True)
 
-VERSION = "9.3.0_FLOW_CLUSTERS"
+# APEX 9 Step 4 — Theoretical Flow P/L (read-only; marks enriched from the options
+# chain). Non-fatal: failure leaves tape/classifier/clusters intact.
+try:
+    from engine.flow_pl_routes import register_flow_pl_routes
+    from engine.flow_pl import FLOW_PL_VERSION as _FLOW_PL_VERSION
+    FLOW_PL_AVAILABLE = True
+except Exception as _fpl_err:
+    register_flow_pl_routes = None  # type: ignore[assignment]
+    _FLOW_PL_VERSION = "unavailable"
+    FLOW_PL_AVAILABLE = False
+    print(f"APEX Flow P/L unavailable (non-fatal): {_fpl_err}", flush=True)
+
+VERSION = "9.4.0_FLOW_PL"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -7763,6 +7775,48 @@ try:
         print(f"APEX Flow Clusters routes registered ({FLOW_CLUSTER_VERSION}).", flush=True)
 except Exception as e:
     print(f"Flow Clusters registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 9 Step 4 — Flow P/L routes. Reuses the SAME Polygon chain fetcher already
+# wired for the Trade Command Center (one chain per expiration+side, cached per
+# request) rather than opening a second path to the provider.
+try:
+    if FLOW_PL_AVAILABLE and register_flow_pl_routes is not None:
+
+        def _fpl_flow_tape(tickers, min_premium):
+            if not FLOW_TAPE_AVAILABLE or build_flow_tape is None:
+                return {"status": "UNAVAILABLE", "rows": [],
+                        "message": "Flow tape engine not available."}
+            if not QUANTDATA_API_KEY or not ORDER_FLOW_ENABLED:
+                return {"status": "NOT_CONFIGURED", "rows": [],
+                        "message": "Set QUANTDATA_API_KEY and ORDER_FLOW_ENABLED=true "
+                                   "to enable flow P/L."}
+            raw = _fetch_flow_tape_rows(list(tickers), size_per_ticker=100)
+            return build_flow_tape(raw, list(tickers), min_premium=min_premium or 0.0)
+
+        def _fpl_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        # The chain fetcher lives inside the Trade Command Center block; if that
+        # failed to wire, P/L degrades to unmarkable rather than raising.
+        _fpl_chain = globals().get("_poly_chain_fetcher")
+        if _fpl_chain is None:
+            print("APEX Flow P/L: no chain fetcher wired — marks will be unavailable.",
+                  flush=True)
+
+        register_flow_pl_routes(
+            app,
+            flow_tape_provider=_fpl_flow_tape,
+            chain_fetcher=_fpl_chain,
+            last_result_provider=_fpl_last_result,
+            default_ticker=ASSISTANT_TICKER,
+        )
+        print(f"APEX Flow P/L routes registered ({_FLOW_PL_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Flow P/L registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
