@@ -15,8 +15,8 @@
 > (`tests/test_architecture_canonical_imports.py`) guards the canonical import
 > paths; this doc is the human-readable companion.
 
-Version constant: `VERSION = "9.4.1_FLOW_PL_SAMPLER"` (in `app.py`).
-Full test suite: **388 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
+Version constant: `VERSION = "9.5.0_FEATURE_STORE"` (in `app.py`).
+Full test suite: **476 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -74,6 +74,10 @@ and deterministic) · `/api/flow_clusters/health`
 `/api/flow_pl` (marks enriched from the options chain; conservative executable
 mark by default; never marks what it cannot see) · `/api/flow_pl/health`
 
+### APEX 9 Step 5a — Feature store
+`/api/feature_store/health` (row counts, session coverage, forbidden-field list;
+health only — there is deliberately NO endpoint serving features joined to labels)
+
 ### 7.6 additions — Premium Strategy Engine
 `/api/premium_strategy` (structure selection: debit/credit spread · iron condor ·
 no-trade — read-only over the bus) · `/api/premium_strategy/scorecard`
@@ -114,6 +118,19 @@ Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 7.2–7.5 (this session): `range_intelligence` + `range_routes`, `confluence` +
 `confluence_routes`, `event_calendar` + `event_routes`, `decision_intelligence` +
 `decision_routes`.
+
+APEX 9 Step 5a — Point-in-time feature store: `feature_store` +
+`feature_store_db` + `feature_store_routes`. Makes look-ahead bias STRUCTURAL,
+not tested-for: every guard raises LeakageError and refuses the write; there is
+no force= or strict=False. Features and labels live in SEPARATE tables
+(flow_features / flow_labels) with no view and no flat reader; the only join
+returning label values is load_training_pairs(), which enforces a disjoint AND
+chronological session split first. Every Feature carries available_at and is
+admissible only if available_at <= decision_time (strictly).
+resolve_frame_at_or_before() never picks the nearest frame — nearest may be the
+future. Features are immutable once written (clusters mutate as late prints
+arrive; history must not be rewritten). sample_quality() grades the MATCHED
+NEIGHBOURHOOD count, not the store total.
 
 APEX 9 Step 4.1 — Scanner-side P/L sampling: `flow_pl_pipeline` holds the ONE
 pipeline (tape->classify->cluster->chain->price->record); `/api/flow_pl` and the
@@ -198,6 +215,8 @@ override**), `contracts` (state/directive constant sets), `states`, `lifecycle`,
 | `replay_snapshots` | replay | minute snapshots |
 | `tracked_ideas` | backtest tracking | idea → outcome |
 | `trade_reviews` | review | post-trade reviews |
+| `flow_features` | engine/feature_store_db.py (pre-decision vectors, immutable) |
+| `flow_labels` | engine/feature_store_db.py (post-outcome labels, separate by design) |
 | `flow_pl_tracking` | engine/flow_pl_store.py |
 | `pine_signals` | signal_evaluator | Pine signals + MFE/MAE outcomes (created at runtime) |
 | `premium_recommendations` | premium_strategy_routes | structure recs (+ spot, session_date, legs JSON); `outcome`/`outcome_pnl` settled at cash close by scanner_loop (created at runtime) |

@@ -307,7 +307,21 @@ FLOW_PL_SAMPLE_SESSIONS = {
     os.getenv("FLOW_PL_SAMPLE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
 }
 
-VERSION = "9.4.1_FLOW_PL_SAMPLER"
+# APEX 9 Step 5a — point-in-time feature store + leakage guards. No similarity
+# engine yet: the store and its refusals are built and proven first, because a
+# leaky feature store does not crash — it produces a confident, well-tested,
+# fictional edge.
+try:
+    from engine.feature_store_routes import register_feature_store_routes
+    from engine.feature_store import FEATURE_SCHEMA_VERSION as _FS_VERSION
+    FEATURE_STORE_AVAILABLE = True
+except Exception as _fs_err:
+    register_feature_store_routes = None  # type: ignore[assignment]
+    _FS_VERSION = "unavailable"
+    FEATURE_STORE_AVAILABLE = False
+    print(f"APEX Feature Store unavailable (non-fatal): {_fs_err}", flush=True)
+
+VERSION = "9.5.0_FEATURE_STORE"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -7864,6 +7878,15 @@ try:
                   f"(sessions: {','.join(sorted(FLOW_PL_SAMPLE_SESSIONS))}).", flush=True)
 except Exception as e:
     print(f"Flow P/L registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 9 Step 5a — feature store diagnostics. Health only; there is deliberately
+# no endpoint serving features joined to labels.
+try:
+    if FEATURE_STORE_AVAILABLE and register_feature_store_routes is not None:
+        register_feature_store_routes(app)
+        print(f"APEX Feature Store routes registered ({_FS_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Feature Store registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
