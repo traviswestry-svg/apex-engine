@@ -80,3 +80,93 @@ def test_no_duplicate_test_files_across_trees():
     known = {"engine/director/test_active_trade_director.py duplicates tests/test_active_trade_director.py"}
     new = set(stray) - known
     assert not new, "New duplicate test files (can hide failures):\n" + "\n".join(new)
+
+
+# ── Director core-type ownership guard (APEX 9 Step 1) ──────────────────────
+# WHY: the filename guard above only catches a fork that reuses the FILENAME.
+# engine/contracts.py + engine/persistence.py were exactly that — an orphaned
+# fork of the director's core types, imported by nothing, which silently held an
+# unmerged fix ("position truth overrides debounce") while the live director kept
+# emitting ENTER_CALL over a live position. A re-fork under any OTHER filename
+# would slip past the name check, so ownership is asserted on the TYPES.
+DIRECTOR_CORE_TYPES = [
+    "Directive",
+    "DirectorContext",
+    "HoldLevel",
+    "PositionView",
+    "ConflictReport",
+    "FlowAcceleration",
+    "DirectivePersistence",
+]
+
+# Files permitted to define the director's core types (the canonical subpackage).
+_DIRECTOR_TYPE_OWNERS = {
+    "engine/director/contracts.py": {
+        "Directive", "DirectorContext", "HoldLevel", "PositionView",
+        "ConflictReport", "FlowAcceleration",
+    },
+    "engine/director/persistence.py": {"DirectivePersistence"},
+}
+
+
+def _definitions_of(type_name: str):
+    """Every .py file in the repo that defines `class <type_name>`."""
+    import re
+    hits = []
+    pattern = re.compile(rf"^class {re.escape(type_name)}\b", re.M)
+    for path in REPO.rglob("*.py"):
+        if "__pycache__" in path.parts or ".venv" in path.parts:
+            continue
+        try:
+            if pattern.search(path.read_text(encoding="utf-8", errors="ignore")):
+                hits.append(str(path.relative_to(REPO)))
+        except OSError:
+            continue
+    return hits
+
+
+@pytest.mark.parametrize("type_name", DIRECTOR_CORE_TYPES)
+def test_director_core_type_defined_once_in_canonical_location(type_name):
+    """Each director core type must be defined exactly once, inside engine/director/.
+
+    Fails if a fork reintroduces a competing definition anywhere else — under any
+    filename. This is the guard that engine/contracts.py would have tripped.
+    """
+    definitions = _definitions_of(type_name)
+    allowed = [f for f, types in _DIRECTOR_TYPE_OWNERS.items() if type_name in types]
+    assert definitions, f"{type_name} is not defined anywhere — expected in {allowed}"
+    assert len(definitions) == 1, (
+        f"{type_name} is defined in {len(definitions)} places: {definitions}\n"
+        f"The director's core types must live only in {allowed}. A second "
+        f"definition is a fork — edits and tests can target one copy while "
+        f"production imports the other."
+    )
+    assert definitions[0] in allowed, (
+        f"{type_name} is defined in {definitions[0]}, expected {allowed}"
+    )
+
+
+def test_orphaned_director_fork_stays_deleted():
+    """engine/contracts.py and engine/persistence.py must not come back.
+
+    They were an orphaned fork of engine/director/{contracts,persistence}.py with
+    zero importers. Their one unique contribution — ENTRY_DIRECTIVES and the
+    position-truth debounce bypass — is merged into the canonical modules.
+    """
+    for gone in ("engine/contracts.py", "engine/persistence.py"):
+        assert not (REPO / gone).exists(), (
+            f"{gone} is back. It duplicates engine/director/ core types. "
+            f"Extend the director subpackage instead of forking it."
+        )
+
+
+def test_entry_directives_live_in_canonical_contracts():
+    """The merged fix must stay wired: ENTRY_DIRECTIVES owned by director/contracts."""
+    from engine.director.contracts import ENTRY_DIRECTIVES
+    assert "ENTER_CALL" in ENTRY_DIRECTIVES and "ENTER_PUT" in ENTRY_DIRECTIVES
+    # persistence must consume it — this is what stops ENTER over a live position
+    src = (REPO / "engine/director/persistence.py").read_text()
+    assert "ENTRY_DIRECTIVES" in src, (
+        "director/persistence.py no longer imports ENTRY_DIRECTIVES — the "
+        "position-truth-overrides-debounce fix has been unwired."
+    )
