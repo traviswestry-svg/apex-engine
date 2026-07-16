@@ -50,6 +50,16 @@ IN_POSITION_STATES: frozenset = frozenset({
 })
 
 # States that mean "exit the current position now".
+# Entry / flat directives — "get into a position" verbs. If one of these is the
+# last-emitted directive while a position is actually live, the anti-churn
+# debounce must NOT keep emitting it (position truth overrides hysteresis).
+ENTRY_DIRECTIVES: frozenset = frozenset({
+    "OBSERVE", "WATCHING_CALLS", "WATCHING_PUTS",
+    "SCALP_READY_CALL", "SCALP_READY_PUT",
+    "ENTER_SCALP_CALL", "ENTER_SCALP_PUT",
+    "ENTER_CALL", "ENTER_PUT",
+})
+
 EXIT_STATES: frozenset = frozenset({
     "EXIT_FLOW_REVERSAL", "EXIT_LEVEL_FAILURE",
     "EXIT_TARGET_REACHED", "EXIT_IMMEDIATELY",

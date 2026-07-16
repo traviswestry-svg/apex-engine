@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from .contracts import EXIT_STATES, IN_POSITION_STATES
+from .contracts import EXIT_STATES, IN_POSITION_STATES, ENTRY_DIRECTIVES as _ENTRY_DIRECTIVES
 
 
 _MIN_DIRECTIVE_S      = float(os.getenv("DIRECTOR_MIN_DIRECTIVE_S", "8"))
@@ -179,7 +179,19 @@ class DirectivePersistence:
             # ── minimum directive duration (anti-churn) ────────────────────────
             same = proposed_directive == m.emitted_directive
             age = now - m.emitted_at
-            if not same and age < _MIN_DIRECTIVE_S and not emergency and not (is_exit and not leaving_hold_for_exit):
+            # POSITION TRUTH OVERRIDES DEBOUNCE: if a position is live but the
+            # previously-emitted directive is a flat/entry directive, we must NOT
+            # debounce — anti-churn cannot be allowed to keep emitting ENTER while
+            # the trader is already holding. Force the transition into management
+            # immediately. (Assessment fix: position truth > entry-state hysteresis.)
+            stale_entry_while_holding = (
+                holding
+                and m.emitted_directive in _ENTRY_DIRECTIVES
+                and proposed_directive not in _ENTRY_DIRECTIVES
+            )
+            if (not same and age < _MIN_DIRECTIVE_S and not emergency
+                    and not (is_exit and not leaving_hold_for_exit)
+                    and not stale_entry_while_holding):
                 # Batch identical proposals; only switch once a new directive
                 # persists across the minimum window.
                 if proposed_directive == m.pending_directive:
@@ -189,6 +201,9 @@ class DirectivePersistence:
                     m.pending_count = 1
                 return self._hold_prev(m, now,
                     note=f"Debouncing → {proposed_directive} ({round(_MIN_DIRECTIVE_S - age,1)}s left).")
+
+            if stale_entry_while_holding:
+                note_bits.append("Position active — bypassing debounce to leave stale entry directive.")
 
             note = " ".join(note_bits) if note_bits else ("Directive changed." if not same else "Directive stable.")
             emitted = self._emit(m, proposed_directive, proposed_state, now, note=note)
