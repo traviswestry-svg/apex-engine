@@ -4555,3 +4555,47 @@ async function loadEvidenceDashboard(data) {
     console.warn('[APEX] evidence dashboard unavailable:', err.message);
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 10 Sprint 7 — Unified Institutional View
+   ════════════════════════════════════════════════════════════════════════════ */
+function renderInstitutionalState(p) {
+  if (!p) return;
+  const headline = $('institutionalHeadline');
+  const hash = $('institutionalHash');
+  const badges = $('institutionalStateBadges');
+  const storyEl = $('institutionalStory');
+  const graphEl = $('institutionalGraph');
+  const traceEl = $('institutionalTrace');
+  if (!headline || !badges || !storyEl || !graphEl || !traceEl) return;
+  const ms = p.market_state || {};
+  const story = p.market_story || {};
+  const graph = p.evidence_graph || {};
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const trace = Array.isArray(p.decision_trace) ? p.decision_trace : [];
+  headline.textContent = story.headline || 'Unified Market State';
+  if (hash) hash.textContent = p.state_hash ? `state ${String(p.state_hash).slice(0, 10)}` : 'live state';
+  badges.innerHTML = [
+    _evidenceBadge(`BIAS ${String(ms.bias || 'NEUTRAL').replace(/_/g,' ')}`, ms.bias === 'BULLISH' ? 'good' : ms.bias === 'BEARISH' ? 'bad' : ''),
+    _evidenceBadge(`DECISION ${String(ms.decision_state || 'NO TRADE').replace(/_/g,' ')}`, String(ms.decision_state || '').startsWith('ENTER') ? 'good' : 'warn'),
+    _evidenceBadge(`QUALITY ${String(ms.quality || 'UNKNOWN')}`, ms.quality === 'ALLOW' ? 'good' : ms.quality === 'CAP' ? 'warn' : ms.quality === 'SUPPRESS' ? 'bad' : ''),
+    _evidenceBadge(`EVENT ${String(ms.event || 'NORMAL_SESSION').replace(/_/g,' ')}`, String(ms.event || '').includes('IMPULSE') ? 'bad' : ''),
+  ].join('');
+  storyEl.innerHTML = `<div class="institutional-story-head">${esc(story.decision_recommendation || 'NO TRADE')}</div>
+    <div class="institutional-story-copy">${esc(story.narrative || 'No deterministic narrative available.')}</div>
+    ${story.highest_probability_scenario ? `<div class="institutional-story-risk"><b>Expected:</b> ${esc(story.highest_probability_scenario)}</div>` : ''}
+    ${story.primary_risk ? `<div class="institutional-story-risk"><b>Risk:</b> ${esc(story.primary_risk)}</div>` : ''}`;
+  graphEl.innerHTML = nodes.length ? nodes.map(n => `<div class="institutional-node"><div class="institutional-node-main"><div class="institutional-node-label">${esc(n.label || n.id)}</div><div class="institutional-node-state">${esc(String(n.state || 'UNKNOWN').replace(/_/g,' '))}${n.confidence == null ? '' : ' · '+Number(n.confidence).toFixed(1)}</div></div><div class="institutional-dir ${esc(n.direction || 'NEUTRAL')}">${esc(n.direction || 'NEUTRAL')}</div></div>`).join('') : '<div class="evidence-empty">No evidence domains available.</div>';
+  traceEl.innerHTML = trace.length ? trace.map(t => `<div class="institutional-trace-step"><div class="institutional-trace-main"><div class="institutional-trace-name">${t.step}. ${esc(t.name || '')}</div><div class="institutional-trace-detail">${esc(t.detail || '')}</div></div><div class="institutional-dir NEUTRAL">${esc(String(t.status || ''))}</div></div>`).join('') : '<div class="evidence-empty">No trace available.</div>';
+}
+
+async function loadInstitutionalState() {
+  try {
+    const r = await fetch('/api/institutional_state?ticker=' + encodeURIComponent(activeTicker), {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const body = await r.json();
+    if (body.ok && body.institutional_state) renderInstitutionalState(body.institutional_state);
+  } catch (err) {
+    console.warn('[APEX] institutional state unavailable:', err.message);
+  }
+}
