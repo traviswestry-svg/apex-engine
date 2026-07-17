@@ -367,6 +367,17 @@ except Exception as _de_err:
     DASHBOARD_EVIDENCE_AVAILABLE = False
     print(f"APEX Dashboard Evidence unavailable (non-fatal): {_de_err}", flush=True)
 
+# APEX 10 Sprint 8 — production readiness, bounded metrics, and integration health.
+try:
+    from engine.production_routes import register_production_routes
+    from engine.production_observability import VERSION as _PRODUCTION_VERSION
+    PRODUCTION_READINESS_AVAILABLE = True
+except Exception as _pr_err:
+    register_production_routes = None  # type: ignore[assignment]
+    _PRODUCTION_VERSION = "unavailable"
+    PRODUCTION_READINESS_AVAILABLE = False
+    print(f"APEX Production Readiness unavailable (non-fatal): {_pr_err}", flush=True)
+
 # APEX 10 Sprint 7 — unified institutional state, evidence graph, and trace.
 try:
     from engine.institutional_state_routes import register_institutional_state_routes
@@ -8048,6 +8059,20 @@ try:
         print(f"APEX Institutional State routes registered ({_INST_STATE_VERSION}).", flush=True)
 except Exception as e:
     print(f"Institutional State registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 10 Sprint 8 — production readiness endpoints.
+try:
+    if PRODUCTION_READINESS_AVAILABLE and register_production_routes is not None:
+        register_production_routes(app, capability_provider=lambda: {
+            "institutional_state": bool(INSTITUTIONAL_STATE_AVAILABLE),
+            "dashboard_evidence": bool(DASHBOARD_EVIDENCE_AVAILABLE),
+            "provenance": bool(PROVENANCE_AVAILABLE),
+            "learning": bool(LEARNING_AVAILABLE),
+            "feature_store": bool(FEATURE_STORE_AVAILABLE),
+        })
+        print(f"APEX Production Readiness routes registered ({_PRODUCTION_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Production Readiness registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
