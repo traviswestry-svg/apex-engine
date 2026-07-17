@@ -3186,3 +3186,12 @@ html { overflow-x: hidden; }
 .institutional-dir.BEARISH { color:#ff7c87; }
 .institutional-dir.NEUTRAL { color:#aab4c7; }
 @media (max-width: 1050px) { .institutional-grid { grid-template-columns:1fr; } }
+
+/* APEX 10.0.1 — explicit market-status and after-hours presentation */
+.market-status-strip{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px;margin:12px 0 14px}
+.market-status-item{padding:9px 10px;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.025);min-width:0}
+.market-status-label{font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.market-status-value{font-size:10.5px;font-weight:750;margin-top:4px;color:#aab4c7;line-height:1.25}
+.market-status-value.good{color:#5de39a}.market-status-value.warn{color:#f6c85f}
+@media(max-width:1200px){.market-status-strip{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:720px){.market-status-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
