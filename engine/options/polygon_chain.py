@@ -87,6 +87,10 @@ def _map_snapshot(r: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "symbol": d.get("ticker"),                     # O:SPXW...
         "bid": lq.get("bid"),
         "ask": lq.get("ask"),
+        # Polygon option snapshots expose quote timestamps in nanoseconds.
+        # Preserve the raw value so the normalizer can compute age relative
+        # to the chain fetch time instead of treating freshness as unknown.
+        "last_updated": lq.get("last_updated") or lq.get("sip_timestamp"),
         "last": lt.get("price"),
         "volume": day.get("volume"),
         "open_interest": r.get("open_interest"),

@@ -11,6 +11,7 @@ import datetime as dt
 from typing import Any, Callable, Dict, List, Optional
 
 from engine.execution.broker_interface import OptionContract
+from engine.chain_quality import evaluate_chain_quality
 
 
 def _f(v: Any) -> Optional[float]:
@@ -26,6 +27,38 @@ def _i(v: Any) -> Optional[int]:
     f = _f(v)
     return int(f) if f is not None else None
 
+
+
+def _age_seconds(value: Any, *, now: Optional[dt.datetime] = None) -> Optional[float]:
+    """Convert epoch/ISO quote timestamps to non-negative age in seconds.
+
+    Polygon commonly supplies nanoseconds; other providers may use microseconds,
+    milliseconds, seconds, or an ISO-8601 string.  Age is measured against the
+    chain fetch time supplied by the caller so every contract shares one clock.
+    """
+    if value in (None, ""):
+        return None
+    ref = (now or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
+    try:
+        if isinstance(value, str) and not value.strip().replace(".", "", 1).isdigit():
+            parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt.timezone.utc)
+            ts = parsed.astimezone(dt.timezone.utc).timestamp()
+        else:
+            raw = float(value)
+            magnitude = abs(raw)
+            if magnitude >= 1e17:      # nanoseconds
+                ts = raw / 1e9
+            elif magnitude >= 1e14:    # microseconds
+                ts = raw / 1e6
+            elif magnitude >= 1e11:    # milliseconds
+                ts = raw / 1e3
+            else:                      # seconds
+                ts = raw
+        return max(0.0, (ref - dt.datetime.fromtimestamp(ts, dt.timezone.utc)).total_seconds())
+    except Exception:
+        return None
 
 def compute_quote_metrics(bid: Optional[float], ask: Optional[float],
                           volume: Optional[int], open_interest: Optional[int],
@@ -83,14 +116,11 @@ def normalize_contract(raw: Dict[str, Any], *, symbol: str = "SPX",
 
     q_age = pick("quote_age_seconds", "quoteAge")
     if q_age is None:
-        ts = raw.get("quote_time") or raw.get("timeStamp") or raw.get("quoteTime")
-        if ts:
-            try:
-                qt = dt.datetime.fromtimestamp(float(ts) / (1000.0 if float(ts) > 1e12 else 1.0), dt.timezone.utc)
-                q_age = (now or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
-                q_age = (q_age - qt).total_seconds()
-            except Exception:
-                q_age = None
+        lq = raw.get("last_quote") or {}
+        ts = (raw.get("last_updated") or raw.get("sip_timestamp")
+              or lq.get("last_updated") or lq.get("sip_timestamp")
+              or raw.get("quote_time") or raw.get("timeStamp") or raw.get("quoteTime"))
+        q_age = _age_seconds(ts, now=now)
 
     metrics = compute_quote_metrics(bid, ask, volume, oi, q_age)
     exp = str(raw.get("expiration") or raw.get("expiryDate") or raw.get("expiration_date") or "")
@@ -115,10 +145,12 @@ def normalize_contract(raw: Dict[str, Any], *, symbol: str = "SPX",
 
 
 def normalize_chain(rows: List[Dict[str, Any]], *, symbol: str = "SPX",
-                    source: str = "unknown") -> List[OptionContract]:
+                    source: str = "unknown",
+                    now: Optional[dt.datetime] = None) -> List[OptionContract]:
     out: List[OptionContract] = []
+    fetch_time = now or dt.datetime.now(dt.timezone.utc)
     for r in rows or []:
-        c = normalize_contract(r, symbol=symbol, source=source)
+        c = normalize_contract(r, symbol=symbol, source=source, now=fetch_time)
         if c is not None:
             out.append(c)
     return out
@@ -161,10 +193,15 @@ class OptionsDataBus:
             contracts = [c for c in contracts if c.side == side.upper()]
             if contracts:
                 contracts.sort(key=lambda c: c.strike)
-                return {"contracts": [c.to_dict() for c in contracts], "source": name,
-                        "tried": tried, "warnings": warnings}
+                payload_contracts = [c.to_dict() for c in contracts]
+                quality = evaluate_chain_quality(payload_contracts)
+                if not quality.get("gate_passed"):
+                    warnings.append("option chain quality gate did not pass")
+                return {"contracts": payload_contracts, "source": name,
+                        "tried": tried, "warnings": warnings, "chain_quality": quality}
         return {"contracts": [], "source": None, "tried": tried,
-                "warnings": warnings or ["no source returned a usable chain"]}
+                "warnings": warnings or ["no source returned a usable chain"],
+                "chain_quality": evaluate_chain_quality([])}
 
     def recommend_contracts(self, contracts: List[Dict[str, Any]], *, spot: float,
                             expected_path: Optional[float] = None, side: str = "CALL",
