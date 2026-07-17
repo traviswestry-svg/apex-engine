@@ -49,7 +49,10 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
-VERSION = "7.6.0_PREMIUM_STRATEGY"
+from .premium_chain_pricing import (LIVE_BASIS, MODELED_BASIS, UNPRICEABLE,
+                                    price_structure)
+
+VERSION = "7.7.0_PREMIUM_CHAIN_PRICED"
 
 # ── Strategy constants ───────────────────────────────────────────────────────
 DEBIT_CALL = "DEBIT_CALL_SPREAD"
@@ -104,6 +107,38 @@ def _u(v: Any) -> str:
     return str(v or "").strip().upper()
 
 
+_SESSION_MINUTES = 390.0          # 09:30–16:00 ET
+
+
+def session_minutes_left(now_et) -> float:
+    """Minutes remaining to the cash close, clamped to [0, 390].
+
+    The expected move on the bus is a FULL-DAY move (VIX / sqrt(252)). Using it
+    un-scaled at 1:19 PM tells the model a whole session of vol remains, which
+    inflates every short-strike ITM probability and therefore every modelled
+    credit. The error grows as the day goes on — worst exactly when a 0DTE condor
+    is most likely to be considered.
+    """
+    if now_et is None:
+        return _SESSION_MINUTES
+    try:
+        mins = (16 - now_et.hour) * 60 - now_et.minute - (now_et.second / 60.0)
+    except Exception:
+        return _SESSION_MINUTES
+    return max(0.0, min(_SESSION_MINUTES, float(mins)))
+
+
+def scale_sigma_to_session(em: float, now_et) -> float:
+    """Scale a full-day expected move to the volatility still to come.
+
+    sigma_remaining = em * sqrt(minutes_left / 390) — diffusion scales with the
+    square root of time.
+    """
+    if em <= 0:
+        return 0.0
+    return em * math.sqrt(session_minutes_left(now_et) / _SESSION_MINUTES)
+
+
 def _phi(x: float) -> float:
     """Standard normal CDF via erf (dependency-free)."""
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
@@ -113,6 +148,20 @@ def _round_strike(x: float, step: float = _STRIKE_STEP) -> float:
     if step <= 0:
         return round(x, 2)
     return round(x / step) * step
+
+
+def _round_short_away(x: float, spot: float, step: float = _STRIKE_STEP) -> float:
+    """Round a SHORT strike away from spot, never toward it.
+
+    Nearest-rounding can move a short strike closer to the money than the model
+    intended — silently raising assignment risk and cutting POP. It is the
+    difference between a 6273 target landing on 6275 (0.93 sigma, POP 0.647) and
+    6270 (1.07 sigma, POP 0.716). Away-rounding is the conservative direction and
+    the only one that cannot make the position riskier than specified.
+    """
+    if step <= 0:
+        return round(x, 2)
+    return (math.floor(x / step) * step) if x < spot else (math.ceil(x / step) * step)
 
 
 def _first_num(*vals) -> float:
@@ -232,12 +281,11 @@ def _select_strategy(
     pin = b["pin_probability"]
     auction = b["auction_state"]
     contra = b["flow_contradictions"]
-    intraday_event = ev.get("intraday_event_regime") or {}
-    event_regime = _u(intraday_event.get("state") or ev.get("event_regime"))
+    event_regime = _u(ev.get("event_regime"))
     headline = (ev.get("headline_event") or {}).get("label") if ev.get("headline_event") else None
 
-    # ── Event gate — pre-release, impulse, and discovery are separate regimes. ─
-    if event_regime in ("EVENT_PRE_RELEASE", "EVENT_IMPULSE", "EVENT_DISCOVERY", "EVENT_DAY"):
+    # ── Event gate — a high-impact print pre/at open is a trap for structure. ─
+    if event_regime == "EVENT_DAY":
         return (NO_TRADE, 40.0,
                 [f"High-impact event today{(' (' + headline + ')') if headline else ''} — "
                  "stand aside until the print and post-event expansion resolve."],
@@ -344,14 +392,18 @@ def _wall_inside(low: float, high: float, walls: List[float]) -> Optional[float]
     return None
 
 
-def _build_legs(strategy: str, b: Dict[str, Any], width: float) -> Dict[str, Any]:
+def _build_legs(strategy: str, b: Dict[str, Any], width: float,
+                now_et=None) -> Dict[str, Any]:
     """Place strikes off expected move + dealer walls; model credit/POP/risk.
 
     Everything here is stamped modeled — expected_move is treated as 1σ.
     """
     price = b["price"]
     em = b["expected_move"]
-    sigma = em if em > 0 else max(price * 0.004, 1.0)
+    # The bus supplies a FULL-DAY expected move. Scale it to the vol still to
+    # come, or every strike looks nearer than it is and the credit is inflated.
+    em_remaining = scale_sigma_to_session(em, now_et) if em > 0 else 0.0
+    sigma = em_remaining if em_remaining > 0 else max(price * 0.004, 1.0)
     iv_rank = b["iv_rank"]
     walls = [b["call_wall"], b["put_wall"], b["zero_gamma"]]
     quality: List[str] = []
@@ -381,7 +433,7 @@ def _build_legs(strategy: str, b: Dict[str, Any], width: float) -> Dict[str, Any
             base = min(base, wall - _STRIKE_STEP)
         base = min(base, price - _NEAR * sigma)   # at least 0.8σ OTM
         base = max(base, price - _FAR * sigma)    # at most 1.2σ OTM
-        return _round_strike(base)
+        return _round_short_away(base, price)
 
     def _call_short() -> float:
         base = price + sigma
@@ -390,7 +442,7 @@ def _build_legs(strategy: str, b: Dict[str, Any], width: float) -> Dict[str, Any
             base = max(base, wall + _STRIKE_STEP)
         base = max(base, price + _NEAR * sigma)
         base = min(base, price + _FAR * sigma)
-        return _round_strike(base)
+        return _round_short_away(base, price)
 
     if strategy in (BULL_PUT, BEAR_CALL):
         if strategy == BULL_PUT:
@@ -475,7 +527,7 @@ def _build_legs(strategy: str, b: Dict[str, Any], width: float) -> Dict[str, Any
         legs.update({
             "put_short": put_short, "put_long": put_long,
             "call_short": call_short, "call_long": call_long,
-            "entry_credit": credit, "pop": pop,
+            "entry_credit": credit, "entry_credit_modeled": credit, "pop": pop,
             "max_profit": max_profit, "max_loss": max_loss,
             "target_exit": target_exit, "risk_reward": rr,
             "short_distance_pts": round(min(d_put, d_call), 1),
@@ -499,7 +551,7 @@ def _credit_quality_check(strategy: str, legs: Dict[str, Any], b: Dict[str, Any]
         # plays). Debit spreads are directional bets — POP is naturally ~40-55%
         # with a favourable payoff skew, so the floor would wrongly reject them.
         if pop and pop < _MIN_POP:
-            fails.append(f"Modeled POP {pop*100:.0f}% below the {_MIN_POP*100:.0f}% floor.")
+            fails.append(f"Modeled POP {pop*100:.1f}% below the {_MIN_POP*100:.0f}% floor.")
         credit = _sf(legs.get("entry_credit"))
         if width > 0 and credit < _MIN_CREDIT_RATIO * width:
             fails.append(f"Credit {credit:.2f} is thin vs the {width:.0f}-pt width.")
@@ -513,10 +565,8 @@ def _credit_quality_check(strategy: str, legs: Dict[str, Any], b: Dict[str, Any]
     if legs.get("quality_flags"):
         fails.extend(legs["quality_flags"])
 
-    intraday_event = ev.get("intraday_event_regime") or {}
-    event_state = _u(intraday_event.get("state") or ev.get("event_regime"))
-    if event_state in ("EVENT_PRE_RELEASE", "EVENT_IMPULSE", "EVENT_DISCOVERY", "EVENT_DAY", "PRE_EVENT_COMPRESSION") and kind == "DEBIT":
-        fails.append("Scheduled catalyst regime active — debit premium and slippage require event-specific calibration.")
+    if _u(ev.get("event_regime")) in ("EVENT_DAY", "PRE_EVENT_COMPRESSION") and kind == "DEBIT":
+        fails.append("Scheduled catalyst imminent — debit premium at risk of IV crush.")
 
     return (len(fails) == 0, fails)
 
@@ -631,13 +681,68 @@ def _build_story(strategy: str, b: Dict[str, Any], reasons: List[str],
 
 
 # ── main entrypoint ──────────────────────────────────────────────────────────
+def _apply_chain_pricing(strategy: str, legs: Dict[str, Any], pricing: Dict[str, Any],
+                         b: Dict[str, Any], width: float) -> Dict[str, Any]:
+    """Overwrite modelled economics with executable ones, or strip them entirely.
+
+    When the chain prices the structure, the model's credit/max-profit/max-loss are
+    REPLACED — not averaged, not reconciled. The model chose the strikes; it does
+    not get a vote on what they are worth.
+
+    When the chain cannot, the economics are REMOVED rather than left showing a
+    modelled number. `Net credit 3.30 · Max profit $330` reads as fact regardless
+    of any basis stamp beneath it.
+    """
+    legs = dict(legs or {})
+    legs["pricing_basis"] = pricing.get("pricing_basis", UNPRICEABLE)
+    legs["chain_legs"] = pricing.get("legs_priced") or []
+    if pricing.get("warnings"):
+        legs["pricing_warnings"] = pricing["warnings"]
+
+    if not pricing.get("available"):
+        # Strip every modelled economic field. Keep the strikes.
+        for k in ("entry_credit", "entry_debit", "pop", "max_profit", "max_loss",
+                  "target_exit", "risk_reward", "breakeven"):
+            legs.pop(k, None)
+        legs["economics_available"] = False
+        legs["economics_note"] = (
+            "Strikes are model-selected; pricing requires the live chain and it was "
+            "not available. No credit, POP or risk/reward is claimed.")
+        return legs
+
+    credit = _sf(pricing.get("entry_credit"))
+    legs["economics_available"] = True
+    legs["entry_credit"] = credit
+    legs["max_profit"] = pricing.get("max_profit")
+    legs["max_loss"] = pricing.get("max_loss")
+    legs["risk_reward"] = pricing.get("risk_reward")
+    legs["is_credit"] = pricing.get("is_credit")
+    if credit > 0:
+        legs["target_exit"] = round(credit * 0.30, 2)
+    else:
+        legs.pop("target_exit", None)
+    legs["modeled_credit_for_reference"] = legs.pop("entry_credit_modeled", None)
+    return legs
+
+
 def build_premium_strategy(
     last_result: Dict[str, Any],
     confluence: Optional[Dict[str, Any]] = None,
     events: Optional[Dict[str, Any]] = None,
     width: float = _DEFAULT_WIDTH,
+    chain_fetcher=None,
+    now_et=None,
+    symbol: str = "SPX",
+    expiration: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Assemble the premium-structure recommendation from already-composed output."""
+    """Assemble the premium-structure recommendation from already-composed output.
+
+    `chain_fetcher` is injected (symbol, expiration, side) -> raw chain rows. When
+    supplied, the structure is priced from the LIVE CHAIN at executable levels and
+    the model is used only to CHOOSE strikes, never to price them. Without it the
+    structure is reported as UNPRICEABLE and cannot become a credit recommendation
+    — an alert carrying a fabricated credit is worse than no alert.
+    """
     try:
         if not isinstance(last_result, dict) or not last_result:
             return _empty("No composed result on the bus yet.")
@@ -655,16 +760,38 @@ def build_premium_strategy(
 
         legs: Dict[str, Any] = {}
         exit_plan: Dict[str, Any] = {}
+        pricing: Dict[str, Any] = {}
         if strategy != NO_TRADE and b["price"] > 0:
-            legs = _build_legs(strategy, b, width)
-            ok, fails = _credit_quality_check(strategy, legs, b, ev)
-            if not ok:
-                # Quality gate failed → downgrade to No Trade with the reasons.
-                reasons = reasons + ["Credit-quality filter rejected the structure:"] + fails
-                strategy, confidence, legs = NO_TRADE, min(confidence, 50.0), {}
-                case_label += "->QUALITY_REJECT"
+            legs = _build_legs(strategy, b, width, now_et=now_et)
+
+            # Strike selection is modelled; PRICING must come from the chain.
+            pricing = price_structure(
+                strategy=strategy, legs=legs, symbol=symbol,
+                expiration=expiration or _u(b.get("expiration")) or "",
+                chain_fetcher=chain_fetcher, width=width)
+            legs = _apply_chain_pricing(strategy, legs, pricing, b, width)
+
+            if not pricing.get("available"):
+                # Selection is a legitimate model conclusion — "balanced auction
+                # favours a condor" needs no chain. PRICING is not. So the strategy
+                # and strikes stand as a candidate, the economics are stripped, and
+                # `tradeable` goes false so no alert can carry a modelled credit.
+                reasons = reasons + [
+                    "Structure could not be priced from the live chain, so its credit, "
+                    "POP and risk/reward are not verifiable. Showing the structure as a "
+                    "candidate without economics rather than a modelled number that "
+                    "reads as fact."
+                ] + [w for w in (pricing.get("warnings") or [])[:2]]
+                confidence = min(confidence, 60.0)
+                case_label += "->UNPRICEABLE"
             else:
-                exit_plan = _build_exit_plan(strategy, legs, b)
+                ok, fails = _credit_quality_check(strategy, legs, b, ev)
+                if not ok:
+                    reasons = reasons + ["Credit-quality filter rejected the structure:"] + fails
+                    strategy, confidence, legs = NO_TRADE, min(confidence, 50.0), {}
+                    case_label += "->QUALITY_REJECT"
+                else:
+                    exit_plan = _build_exit_plan(strategy, legs, b)
 
         or_model = _opening_range_model(b, conf)
         # If the OR proxy fires and agrees with the chosen credit direction, note it.
@@ -688,6 +815,11 @@ def build_premium_strategy(
             "price": round(b["price"], 2) if b["price"] else None,
             "reason": reasons,
             "legs": legs,
+            "pricing": pricing,
+            # A structure is TRADEABLE only when its economics are executable.
+            # Selection alone is a candidate, not a recommendation.
+            "tradeable": bool(strategy != NO_TRADE and (legs or {}).get("economics_available")),
+            "economics_available": bool((legs or {}).get("economics_available")),
             "exit_plan": exit_plan,
             "opening_range_model": or_model,
             "story": story,

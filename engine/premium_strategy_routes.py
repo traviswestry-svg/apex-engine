@@ -44,6 +44,26 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from flask import jsonify, request
 
 from .premium_strategy import build_premium_strategy
+
+try:
+    from zoneinfo import ZoneInfo as _ZI
+    _EASTERN = _ZI("America/New_York")
+except Exception:  # pragma: no cover
+    _EASTERN = _dt.timezone.utc
+
+
+def _expiration_for(last_result: Dict[str, Any], now_et: _dt.datetime) -> str:
+    """The expiration these structures actually trade.
+
+    APEX's premium structures are 0DTE (the exit plan says so: "flatten by 3:30 PM
+    — 0DTE theta/gamma cliff"), so the expiration is today's session unless the bus
+    states otherwise. Returned ISO; the chain fetcher expects that shape.
+    """
+    for key in ("expiration", "expiry", "target_expiration"):
+        v = (last_result or {}).get(key) or ((last_result or {}).get("options") or {}).get(key)
+        if v:
+            return str(v)[:10]
+    return now_et.strftime("%Y-%m-%d")
 from .confluence import build_confluence
 
 try:
@@ -286,6 +306,7 @@ def dispatch_and_log(
     events: Optional[Dict[str, Any]] = None,
     spot: Optional[float] = None,
     now_et_provider: Optional[Callable[[], _dt.datetime]] = None,
+    chain_fetcher: Optional[Callable[[str, str, str], Any]] = None,
 ) -> Dict[str, Any]:
     """Build the structure from the freshly composed bus; on a genuine change,
     log it and fire the dispatcher. Called from the /api/institutional_os cycle.
@@ -301,11 +322,25 @@ def dispatch_and_log(
         conf = confluence if confluence is not None else build_confluence(lr)
         ev = events if events is not None else (
             build_event_intelligence() if build_event_intelligence else {})
-        panel = build_premium_strategy(lr, confluence=conf, events=ev)
+        # Resolve the clock FIRST: the structure's sigma must be scaled to the
+        # session time remaining, and its price must come from the chain. A
+        # modelled credit reads as fact in a Telegram alert.
+        _now_et = (now_et_provider() if now_et_provider else
+                   _dt.datetime.now(_EASTERN))
+        panel = build_premium_strategy(
+            lr, confluence=conf, events=ev, chain_fetcher=chain_fetcher,
+            now_et=_now_et, symbol=ticker,
+            expiration=_expiration_for(lr, _now_et))
         if not panel.get("available"):
             return out
         strategy = panel.get("strategy") or _NO_TRADE
         out["strategy"] = strategy
+
+        # An alert carrying a modelled credit reads as fact in Telegram. If the
+        # chain could not price the structure, there is nothing to alert on.
+        if strategy != _NO_TRADE and not panel.get("tradeable"):
+            out["unpriceable"] = True
+            return out
 
         now_et = (now_et_provider() if now_et_provider else
                   _dt.datetime.now(_dt.timezone.utc))
@@ -576,6 +611,7 @@ def register_premium_strategy_routes(
     last_result_provider: Optional[Callable[[], Dict[str, Any]]] = None,
     default_ticker: str = "SPX",
     log_recommendations: bool = True,
+    chain_fetcher: Optional[Callable[[str, str, str], Any]] = None,
 ) -> None:
     if log_recommendations:
         _init_db()
@@ -587,7 +623,11 @@ def register_premium_strategy_routes(
             lr = (last_result_provider() if last_result_provider else {}) or {}
             conf = build_confluence(lr)
             ev = build_event_intelligence() if build_event_intelligence else {}
-            panel = build_premium_strategy(lr, confluence=conf, events=ev)
+            _now = _dt.datetime.now(_EASTERN)
+            panel = build_premium_strategy(
+                lr, confluence=conf, events=ev, chain_fetcher=chain_fetcher,
+                now_et=_now, symbol=default_ticker,
+                expiration=_expiration_for(lr, _now))
 
             alert = None
             if panel.get("available"):
