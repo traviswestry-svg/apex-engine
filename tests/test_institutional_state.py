@@ -78,3 +78,29 @@ def test_empty_result_is_honest():
     assert out["available"] is False
     assert out["market_state"]["decision_state"] == "NO_TRADE"
     assert out["market_story"]["decision_recommendation"] == "NO TRADE"
+
+
+def test_after_hours_states_are_explicit_and_do_not_disguise_gate_action():
+    result = sample_result()
+    result["institutional_intelligence"]["session_state"] = "AFTER_HOURS"
+    result["institutional_intelligence"]["institutional_bias"] = "BEARISH"
+    result["institutional_intelligence"]["auction_bias"] = "ACCEPTANCE_LOWER"
+    result["institutional_intelligence"]["flow_bias"] = "BULLISH"
+    result["institutional_intelligence"]["delta_bias"] = "SELLING"
+    result["market_state"].pop("chain_quality", None)
+    result["market_state"]["chain_quality_gate"] = {"action": "SUPPRESS", "multiplier": 0.0}
+    result.pop("chain_quality", None)
+    result["chain_quality_gate"] = {"action": "SUPPRESS", "multiplier": 0.0}
+    result["execution_intelligence"] = {}
+
+    out = build_institutional_state(current_result=result, ticker="SPX")
+    nodes = {node["id"]: node for node in out["evidence_graph"]["nodes"]}
+
+    assert out["market_state"]["quality"] == "NO_LIVE_CHAIN"
+    assert nodes["quality"]["evidence"]["gate_action"] == "SUPPRESS"
+    assert out["market_state"]["liquidity"] == "NOT_MEASURABLE_AFTER_HOURS"
+    assert out["market_state"]["evidence_alignment"] == "MIXED"
+    assert out["market_story"]["headline"] == "Bearish bias · mixed evidence"
+    assert out["market_status"]["cash_market"] == "CLOSED"
+    assert out["market_status"]["options_chain"] == "UNAVAILABLE_AFTER_HOURS"
+    assert out["market_status"]["trade_engine"] == "DISABLED_MARKET_CLOSED"
