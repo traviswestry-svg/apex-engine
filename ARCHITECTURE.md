@@ -16,7 +16,7 @@
 > paths; this doc is the human-readable companion.
 
 Version constant: `VERSION = "9.5.1_FEATURE_STORE_WRITER"` (in `app.py`).
-Full test suite: **512 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
+Full test suite: **537 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
@@ -75,8 +75,14 @@ and deterministic) · `/api/flow_clusters/health`
 mark by default; never marks what it cannot see) · `/api/flow_pl/health`
 
 ### APEX 9 Step 5a — Feature store
-`/api/feature_store/health` (row counts, session coverage, forbidden-field list;
-health only — there is deliberately NO endpoint serving features joined to labels)
+`/api/feature_store/health` (counts, session coverage, forbidden-field list, writer
+settings) · `/api/feature_store/samples` (pre-decision vectors ONLY — labels are
+not read by this route) · `/api/feature_store/sample/<id>` (one record;
+pre_decision and post_outcome as SEPARATE named objects) ·
+`/api/feature_store/coverage` (MATCHED-NEIGHBOURHOOD counts — the number that
+gates 5b; rates withheld below threshold and reported as Wilson intervals above
+it). There is deliberately NO flat feature+label export endpoint: it would make
+load_training_pairs()'s split enforcement bypassable with a URL.
 
 ### 7.6 additions — Premium Strategy Engine
 `/api/premium_strategy` (structure selection: debit/credit spread · iron condor ·
