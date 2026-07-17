@@ -143,6 +143,7 @@ def build_decision_intelligence(
             "verdict_reason": verdict_reason,
             "questions": [q1, q2, q3, q4, q5, q6],
             "confidence_pyramid": pyramid,
+            "confidence_attribution": lr.get("confidence_attribution") or {},
             "invalidation": q6["answer"],
             "event_regime": event_regime,
             "event_headline": event_headline,
@@ -237,7 +238,7 @@ def _empty(note: str) -> Dict[str, Any]:
     return {
         "available": False, "version": VERSION,
         "verdict": "AVOID", "verdict_reason": note,
-        "questions": [], "confidence_pyramid": [], "invalidation": [],
+        "questions": [], "confidence_pyramid": [], "confidence_attribution": {}, "invalidation": [],
         "event_regime": "CLEAR", "event_headline": None,
         "headline": "STAND ASIDE", "note": note,
     }
