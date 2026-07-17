@@ -4567,12 +4567,15 @@ function renderInstitutionalState(p) {
   const storyEl = $('institutionalStory');
   const graphEl = $('institutionalGraph');
   const traceEl = $('institutionalTrace');
+  const marketStatusEl = $('institutionalMarketStatus');
   if (!headline || !badges || !storyEl || !graphEl || !traceEl) return;
   const ms = p.market_state || {};
   const story = p.market_story || {};
   const graph = p.evidence_graph || {};
   const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
   const trace = Array.isArray(p.decision_trace) ? p.decision_trace : [];
+  const marketStatus = p.market_status || {};
+  const alignment = p.evidence_alignment || {};
   headline.textContent = story.headline || 'Unified Market State';
   if (hash) hash.textContent = p.state_hash ? `state ${String(p.state_hash).slice(0, 10)}` : 'live state';
   badges.innerHTML = [
@@ -4580,7 +4583,16 @@ function renderInstitutionalState(p) {
     _evidenceBadge(`DECISION ${String(ms.decision_state || 'NO TRADE').replace(/_/g,' ')}`, String(ms.decision_state || '').startsWith('ENTER') ? 'good' : 'warn'),
     _evidenceBadge(`QUALITY ${String(ms.quality || 'UNKNOWN')}`, ms.quality === 'ALLOW' ? 'good' : ms.quality === 'CAP' ? 'warn' : ms.quality === 'SUPPRESS' ? 'bad' : ''),
     _evidenceBadge(`EVENT ${String(ms.event || 'NORMAL_SESSION').replace(/_/g,' ')}`, String(ms.event || '').includes('IMPULSE') ? 'bad' : ''),
+    _evidenceBadge(`EVIDENCE ${String(ms.evidence_alignment || alignment.state || 'UNKNOWN').replace(/_/g,' ')}`, String(ms.evidence_alignment || alignment.state || '') === 'MIXED' ? 'warn' : ''),
   ].join('');
+  if (marketStatusEl) {
+    const labels = {cash_market:'Cash Market', es_futures:'ES Futures', options_chain:'Options Chain', flow:'Flow', replay:'Replay', institutional_state:'Institutional State', trade_engine:'Trade Engine'};
+    marketStatusEl.innerHTML = Object.entries(labels).map(([key,label]) => {
+      const value = String(marketStatus[key] || 'UNKNOWN');
+      const cls = /AVAILABLE|CURRENT|TRADING$|LIVE|OPEN/.test(value) && !/UNAVAILABLE|LAST_KNOWN/.test(value) ? 'good' : /DISABLED|UNAVAILABLE|PAUSED|CLOSED/.test(value) ? 'warn' : '';
+      return `<div class="market-status-item"><div class="market-status-label">${esc(label)}</div><div class="market-status-value ${cls}">${esc(value.replace(/_/g,' '))}</div></div>`;
+    }).join('');
+  }
   storyEl.innerHTML = `<div class="institutional-story-head">${esc(story.decision_recommendation || 'NO TRADE')}</div>
     <div class="institutional-story-copy">${esc(story.narrative || 'No deterministic narrative available.')}</div>
     ${story.highest_probability_scenario ? `<div class="institutional-story-risk"><b>Expected:</b> ${esc(story.highest_probability_scenario)}</div>` : ''}
