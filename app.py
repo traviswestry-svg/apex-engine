@@ -382,13 +382,23 @@ except Exception as _prod_err:
     PRODUCTION_ROUTES_AVAILABLE = False
     print(f"APEX 10 production routes unavailable (non-fatal): {_prod_err}", flush=True)
 
+try:
+    from engine.release_routes import register_release_routes
+    from engine.release_manager import APP_VERSION as RELEASE_APP_VERSION
+    RELEASE_ROUTES_AVAILABLE = True
+except Exception as _release_err:
+    register_release_routes = None  # type: ignore[assignment]
+    RELEASE_APP_VERSION = "10.0.2_RELEASE_MANAGER"
+    RELEASE_ROUTES_AVAILABLE = False
+    print(f"APEX release manager routes unavailable (non-fatal): {_release_err}", flush=True)
+
 WRITE_FEATURES_IN_SCANNER = os.getenv("WRITE_FEATURES_IN_SCANNER", "true").lower() == "true"
 FEATURE_WRITE_SESSIONS = {
     s.strip().upper() for s in
     os.getenv("FEATURE_WRITE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
 }
 
-VERSION = "10.0.0_PRODUCTION_HARDENED"
+VERSION = RELEASE_APP_VERSION
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -8065,6 +8075,10 @@ def _apex10_capabilities():
 try:
     if PRODUCTION_ROUTES_AVAILABLE and register_production_routes is not None:
         register_production_routes(app, capability_provider=_apex10_capabilities)
+
+    if RELEASE_ROUTES_AVAILABLE and register_release_routes is not None:
+        register_release_routes(app)
+        print(f"APEX Release Manager routes registered ({VERSION}).", flush=True)
         print("APEX 10 production readiness routes registered.", flush=True)
 except Exception as e:
     PRODUCTION_ROUTES_AVAILABLE = False
