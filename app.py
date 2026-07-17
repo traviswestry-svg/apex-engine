@@ -321,74 +321,6 @@ except Exception as _fs_err:
     FEATURE_STORE_AVAILABLE = False
     print(f"APEX Feature Store unavailable (non-fatal): {_fs_err}", flush=True)
 
-# APEX 10 Sprint 4 — leakage-safe historical similarity evidence.
-try:
-    from engine.similarity_routes import register_similarity_routes
-    from engine.historical_similarity import SIMILARITY_VERSION as _SIM_VERSION
-    SIMILARITY_AVAILABLE = True
-except Exception as _sim_err:
-    register_similarity_routes = None  # type: ignore[assignment]
-    _SIM_VERSION = "unavailable"
-    SIMILARITY_AVAILABLE = False
-    print(f"APEX Historical Similarity unavailable (non-fatal): {_sim_err}", flush=True)
-
-
-# APEX 10 Sprint 5 — leakage-safe learning and calibration proposals.
-try:
-    from engine.learning_routes import register_learning_routes
-    from engine.learning_calibration import LEARNING_VERSION as _LEARN_VERSION
-    LEARNING_AVAILABLE = True
-except Exception as _learn_err:
-    register_learning_routes = None  # type: ignore[assignment]
-    _LEARN_VERSION = "unavailable"
-    LEARNING_AVAILABLE = False
-    print(f"APEX Learning Calibration unavailable (non-fatal): {_learn_err}", flush=True)
-
-# APEX 10 Sprint 1 — immutable decision provenance / replay integrity.
-try:
-    from engine.provenance_routes import register_provenance_routes
-    from engine.decision_provenance import STORE_VERSION as _DP_VERSION
-    PROVENANCE_AVAILABLE = True
-except Exception as _dp_err:
-    register_provenance_routes = None  # type: ignore[assignment]
-    _DP_VERSION = "unavailable"
-    PROVENANCE_AVAILABLE = False
-    print(f"APEX Decision Provenance unavailable (non-fatal): {_dp_err}", flush=True)
-
-
-# APEX 10 Sprint 6 — read-only dashboard evidence composition.
-try:
-    from engine.dashboard_evidence_routes import register_dashboard_evidence_routes
-    from engine.dashboard_evidence import VERSION as _DASH_EVIDENCE_VERSION
-    DASHBOARD_EVIDENCE_AVAILABLE = True
-except Exception as _de_err:
-    register_dashboard_evidence_routes = None  # type: ignore[assignment]
-    _DASH_EVIDENCE_VERSION = "unavailable"
-    DASHBOARD_EVIDENCE_AVAILABLE = False
-    print(f"APEX Dashboard Evidence unavailable (non-fatal): {_de_err}", flush=True)
-
-# APEX 10 Sprint 8 — production readiness, bounded metrics, and integration health.
-try:
-    from engine.production_routes import register_production_routes
-    from engine.production_observability import VERSION as _PRODUCTION_VERSION
-    PRODUCTION_READINESS_AVAILABLE = True
-except Exception as _pr_err:
-    register_production_routes = None  # type: ignore[assignment]
-    _PRODUCTION_VERSION = "unavailable"
-    PRODUCTION_READINESS_AVAILABLE = False
-    print(f"APEX Production Readiness unavailable (non-fatal): {_pr_err}", flush=True)
-
-# APEX 10 Sprint 7 — unified institutional state, evidence graph, and trace.
-try:
-    from engine.institutional_state_routes import register_institutional_state_routes
-    from engine.institutional_state import VERSION as _INST_STATE_VERSION
-    INSTITUTIONAL_STATE_AVAILABLE = True
-except Exception as _is_err:
-    register_institutional_state_routes = None  # type: ignore[assignment]
-    _INST_STATE_VERSION = "unavailable"
-    INSTITUTIONAL_STATE_AVAILABLE = False
-    print(f"APEX Institutional State unavailable (non-fatal): {_is_err}", flush=True)
-
 # APEX 9 Step 5a.1 — the writer. This is what starts the clock: until it runs,
 # flow_features stays at zero rows forever.
 try:
@@ -5311,6 +5243,7 @@ def api_institutional_os():
                 try:
                     premium_dispatch_and_log(
                         result, ticker, send_telegram, now_et_provider=now_et,
+                        chain_fetcher=globals().get("_poly_chain_fetcher"),
                     )
                 except Exception as _ps_disp_err:
                     print(f"premium dispatch error (non-fatal): {_ps_disp_err}", flush=True)
@@ -7876,6 +7809,11 @@ try:
             app,
             last_result_provider=_ps_last_result,
             default_ticker=ASSISTANT_TICKER,
+            # Reuse the SAME Polygon chain fetcher flow_pl already prices with.
+            # Without it the premium engine cannot price a structure, and will
+            # publish the strikes as a candidate with no economics rather than a
+            # modelled credit that reads as fact.
+            chain_fetcher=globals().get("_poly_chain_fetcher"),
         )
         print(f"APEX Premium Strategy routes registered ({PREMIUM_STRATEGY_VERSION}).", flush=True)
 except Exception as e:
@@ -8013,66 +7951,6 @@ try:
         print(f"APEX Feature Store routes registered ({_FS_VERSION}).", flush=True)
 except Exception as e:
     print(f"Feature Store registration unavailable (non-fatal): {e}", flush=True)
-
-# APEX 10 Sprint 4 — read-only historical similarity evidence.
-try:
-    if SIMILARITY_AVAILABLE and register_similarity_routes is not None:
-        register_similarity_routes(app)
-        print(f"APEX Historical Similarity routes registered ({_SIM_VERSION}).", flush=True)
-except Exception as e:
-    print(f"Historical Similarity registration unavailable (non-fatal): {e}", flush=True)
-
-
-# APEX 10 Sprint 5 — calibration reports and explicit policy proposals.
-try:
-    if LEARNING_AVAILABLE and register_learning_routes is not None:
-        register_learning_routes(app)
-        print(f"APEX Learning Calibration routes registered ({_LEARN_VERSION}).", flush=True)
-except Exception as e:
-    print(f"Learning Calibration registration unavailable (non-fatal): {e}", flush=True)
-
-# APEX 10 Sprint 1 — read-only immutable provenance snapshots.
-try:
-    if PROVENANCE_AVAILABLE and register_provenance_routes is not None:
-        register_provenance_routes(app)
-        print(f"APEX Decision Provenance routes registered ({_DP_VERSION}).", flush=True)
-except Exception as e:
-    print(f"Decision Provenance registration unavailable (non-fatal): {e}", flush=True)
-
-
-# APEX 10 Sprint 6 — dashboard evidence and trust payload.
-try:
-    if DASHBOARD_EVIDENCE_AVAILABLE and register_dashboard_evidence_routes is not None:
-        register_dashboard_evidence_routes(
-            app, last_result_provider=lambda: STATE.get("last_result") or {}
-        )
-        print(f"APEX Dashboard Evidence route registered ({_DASH_EVIDENCE_VERSION}).", flush=True)
-except Exception as e:
-    print(f"Dashboard Evidence registration unavailable (non-fatal): {e}", flush=True)
-
-# APEX 10 Sprint 7 — unified institutional state and replay-aware decision trace.
-try:
-    if INSTITUTIONAL_STATE_AVAILABLE and register_institutional_state_routes is not None:
-        register_institutional_state_routes(
-            app, last_result_provider=lambda: STATE.get("last_result") or {}
-        )
-        print(f"APEX Institutional State routes registered ({_INST_STATE_VERSION}).", flush=True)
-except Exception as e:
-    print(f"Institutional State registration unavailable (non-fatal): {e}", flush=True)
-
-# APEX 10 Sprint 8 — production readiness endpoints.
-try:
-    if PRODUCTION_READINESS_AVAILABLE and register_production_routes is not None:
-        register_production_routes(app, capability_provider=lambda: {
-            "institutional_state": bool(INSTITUTIONAL_STATE_AVAILABLE),
-            "dashboard_evidence": bool(DASHBOARD_EVIDENCE_AVAILABLE),
-            "provenance": bool(PROVENANCE_AVAILABLE),
-            "learning": bool(LEARNING_AVAILABLE),
-            "feature_store": bool(FEATURE_STORE_AVAILABLE),
-        })
-        print(f"APEX Production Readiness routes registered ({_PRODUCTION_VERSION}).", flush=True)
-except Exception as e:
-    print(f"Production Readiness registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()

@@ -16,7 +16,7 @@
 > paths; this doc is the human-readable companion.
 
 Version constant: `VERSION = "9.5.1_FEATURE_STORE_WRITER"` (in `app.py`).
-Full test suite: **537 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
+Full test suite: **571 tests** (all green) (run with `pytest`, NOT `pytest tests/` — see note
 at bottom). Deploy: GitHub file upload → Render. Persistence: SQLite at `DB_PATH`
 (mount a Render disk at `/data` and set `DB_PATH=/data/apex_tracking.db` to persist
 across deploys).
