@@ -48,6 +48,8 @@ import hashlib
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from engine.flow_authenticity import assess_cluster_authenticity
+
 CLUSTER_VERSION = "9.3.0_FLOW_CLUSTERS"
 
 FLOW_CLUSTERING_ENABLED = os.getenv("FLOW_CLUSTERING_ENABLED", "true").lower() == "true"
@@ -370,6 +372,15 @@ def _build_cluster(key: Tuple[Any, ...], members: List[Dict[str, Any]]) -> Dict[
         "classifier_versions": sorted({m.get("classifier_version") for m in members
                                        if m.get("classifier_version")}),
     }
+    cluster["flow_authenticity"] = assess_cluster_authenticity(cluster)
+    cluster["directional_confidence_adjusted"] = round(
+        cluster["confidence"] * cluster["flow_authenticity"]["directional_confidence_multiplier"], 3
+    )
+    if cluster["flow_authenticity"]["scheduled_candidate"]:
+        cluster["warnings"].append(
+            "Clock-synchronised complex activity is labelled SCHEDULED/AUTOMATED FLOW "
+            "until persistence, price, ES, and liquidity response confirm direction."
+        )
     return cluster
 
 

@@ -107,6 +107,17 @@ def _cluster_features(cl: Dict[str, Any], at: str) -> List[Feature]:
     if "score" in iu:
         out.append(Feature(name="cluster_intent_uncertainty", value=iu.get("score"),
                            available_at=at, source="flow_cluster"))
+    auth = cl.get("flow_authenticity") or {}
+    for k in ("state", "scheduled_candidate", "near_hour_or_half_hour",
+              "boundary_distance_seconds", "complex_print_ratio",
+              "directional_confidence_multiplier"):
+        if k in auth:
+            out.append(Feature(name=f"cluster_flow_authenticity_{k}", value=auth.get(k),
+                               available_at=at, source="flow_authenticity"))
+    if "directional_confidence_adjusted" in cl:
+        out.append(Feature(name="cluster_directional_confidence_adjusted",
+                           value=cl.get("directional_confidence_adjusted"),
+                           available_at=at, source="flow_authenticity"))
     sr = cl.get("strike_range")
     if isinstance(sr, (list, tuple)) and len(sr) == 2:
         out.append(Feature(name="cluster_strike_low", value=sr[0],
