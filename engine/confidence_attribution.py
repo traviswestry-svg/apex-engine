@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional
 
 from .quality_gating import gate_decision
+from .learning_calibration import apply_active_calibration
 
 VERSION = "1.0.0"
 
@@ -183,6 +184,8 @@ def build_confidence_attribution(
     dominant = str((consensus or {}).get("consensus_direction") or "NEUTRAL").upper()
     total_penalty = round(effective_score - base_points, 2)
 
+    learned_calibration = apply_active_calibration(_clamp(effective_score))
+
     return {
         "available": bool(component_rows),
         "version": VERSION,
@@ -190,6 +193,8 @@ def build_confidence_attribution(
         "reconstructed_base_score": round(base_points, 1),
         "component_adjusted_score": round(_clamp(component_adjusted_score), 1),
         "effective_confidence": round(_clamp(effective_score), 1),
+        "learned_calibration": learned_calibration,
+        "calibrated_confidence": learned_calibration.get("calibrated_confidence"),
         "total_adjustment_points": total_penalty,
         "dominant_direction": dominant,
         "components": component_rows,
@@ -201,5 +206,6 @@ def build_confidence_attribution(
             "flow_authenticity_scope": "flow_momentum_only",
             "event_scope": "overall_confidence",
             "missing_values": "reported_as_unmeasurable",
+            "learning_policy_is_automatic": False,
         },
     }
