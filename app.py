@@ -355,6 +355,18 @@ except Exception as _dp_err:
     PROVENANCE_AVAILABLE = False
     print(f"APEX Decision Provenance unavailable (non-fatal): {_dp_err}", flush=True)
 
+
+# APEX 10 Sprint 6 — read-only dashboard evidence composition.
+try:
+    from engine.dashboard_evidence_routes import register_dashboard_evidence_routes
+    from engine.dashboard_evidence import VERSION as _DASH_EVIDENCE_VERSION
+    DASHBOARD_EVIDENCE_AVAILABLE = True
+except Exception as _de_err:
+    register_dashboard_evidence_routes = None  # type: ignore[assignment]
+    _DASH_EVIDENCE_VERSION = "unavailable"
+    DASHBOARD_EVIDENCE_AVAILABLE = False
+    print(f"APEX Dashboard Evidence unavailable (non-fatal): {_de_err}", flush=True)
+
 # APEX 9 Step 5a.1 — the writer. This is what starts the clock: until it runs,
 # flow_features stays at zero rows forever.
 try:
@@ -8004,6 +8016,17 @@ try:
         print(f"APEX Decision Provenance routes registered ({_DP_VERSION}).", flush=True)
 except Exception as e:
     print(f"Decision Provenance registration unavailable (non-fatal): {e}", flush=True)
+
+
+# APEX 10 Sprint 6 — dashboard evidence and trust payload.
+try:
+    if DASHBOARD_EVIDENCE_AVAILABLE and register_dashboard_evidence_routes is not None:
+        register_dashboard_evidence_routes(
+            app, last_result_provider=lambda: STATE.get("last_result") or {}
+        )
+        print(f"APEX Dashboard Evidence route registered ({_DASH_EVIDENCE_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Dashboard Evidence registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
