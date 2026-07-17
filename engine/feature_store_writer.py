@@ -60,7 +60,7 @@ from .feature_store import (
     make_sample_id,
     resolve_frame_at_or_before,
 )
-from . import feature_store_db, flow_pl_store
+from . import feature_store_db, flow_pl_store, decision_provenance
 
 WRITER_VERSION = "9.5.1_FEATURE_STORE_WRITER"
 
@@ -144,6 +144,8 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
         report["reasons"].append("feature store not ready")
         return report
     try:
+        if not decision_provenance.is_ready():
+            decision_provenance.init_db()
         frames = frames_from_replay(replay_rows)
         for cl in priced_clusters or []:
             end_t = _secs(cl.get("end_time"))
@@ -186,6 +188,23 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 continue
             if feature_store_db.write_features(vec):
                 report["written"] += 1
+                frame_quality = frame.get("chain_quality") or frame.get("chain_quality_gate") or {}
+                snap = decision_provenance.build_snapshot(
+                    sample_id=sid,
+                    decision_time=decision_time,
+                    ticker=cl.get("ticker") or ticker,
+                    raw_inputs={"cluster": cl},
+                    normalized_inputs={"replay_frame": frame},
+                    quality_assessments={"chain": frame_quality,
+                                         "flow_authenticity": cl.get("flow_authenticity") or {}},
+                    feature_vector=vec,
+                    decision_output={"directional_interpretation": cl.get("directional_interpretation"),
+                                     "directional_confidence_adjusted": cl.get("directional_confidence_adjusted")},
+                    model_versions={"writer": WRITER_VERSION,
+                                    "feature_schema": vec.get("schema_version")},
+                )
+                if not decision_provenance.write_snapshot(snap):
+                    report["reasons"].append(f"{sid}: provenance snapshot not written")
             else:
                 report["already_present"] += 1
         return report

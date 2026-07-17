@@ -25,6 +25,8 @@ Usage in app.py:
 """
 from __future__ import annotations
 
+from .quality_gating import gate_decision
+
 import math
 from typing import Any, Dict, Optional
 
@@ -158,6 +160,9 @@ def build_canonical_market_state(
     """
     # ── Extract sub-objects ──────────────────────────────────────────────
     gamma     = result.get("gamma_regime")    or {}
+    chain_quality = (result.get("chain_quality") or gamma.get("chain_quality")
+                     or flow_snapshot.get("chain_quality"))
+    chain_gate = gate_decision(chain_quality)
     structure = result.get("structure")       or {}
     execution = result.get("execution")       or {}
     consensus = result.get("consensus")       or {}
@@ -204,6 +209,13 @@ def build_canonical_market_state(
     gex_score   = _sf(flow_snapshot.get("gex_score") or gamma.get("gex_score"), 50.0)
     gamma_reg   = _gamma_regime_label(gamma)
     flip_risk   = bool(gamma.get("flip_risk"))
+    if chain_quality is not None and chain_gate["action"] == "SUPPRESS":
+        call_wall = put_wall = zero_gamma = None
+        gex_score = 0.0
+        gamma_reg = "UNAVAILABLE"
+        flip_risk = False
+    elif chain_quality is not None and chain_gate["action"] == "CAP":
+        gex_score = gex_score * chain_gate["multiplier"]
     flip_proximity: Optional[float] = None
     if zero_gamma and price > 0:
         flip_proximity = round(abs(_sf(zero_gamma) - price), 2)
@@ -277,6 +289,9 @@ def build_canonical_market_state(
         "gamma_regime":      gamma_reg,       # POSITIVE / NEGATIVE / MIXED
         "flip_risk":         flip_risk,
         "flip_proximity":    flip_proximity,
+        "chain_quality":      chain_quality,
+        "chain_quality_gate": chain_gate,
+        "chain_dependent_reliable": chain_gate["action"] == "ALLOW" if chain_quality is not None else None,
 
         # ── Flow ──
         "flow_bias":         flow_bias,
