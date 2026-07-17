@@ -39,9 +39,51 @@ _RNG = {"expected_move": 28, "invalidation": ["Loss of VWAP 6288"],
         "session_high": 6305, "session_low": 6270, "mid": 6300}
 
 
-def _run(ii, ms=None, vol=None, rng=None):
+import datetime as __dt_hoist
+import math as __math_hoist
+try:
+    from zoneinfo import ZoneInfo as __ZI_hoist
+    __ET_hoist = __ZI_hoist("America/New_York")
+except Exception:
+    __ET_hoist = __dt_hoist.timezone.utc
+
+
+def _synthetic_chain(symbol, expiration, side, spot=6300.0, minutes_left=360.0,
+                     vol=0.18):
+    """A realistic 0DTE book: Black-Scholes, correct time convention.
+
+    Calls fall in value as strike rises; puts rise. A 10-wide vertical near 1 sigma
+    collects roughly 1.5-2.5, as SPX actually does. Economics now come from the
+    chain, so a test asserting a credit must supply a book that HAS one.
+    """
+    T = (minutes_left / 390.0) / 252.0          # trading years, matching the vol basis
+    def _bs(K):
+        if T <= 0 or vol <= 0:
+            return max(0.0, (spot - K) if side == "CALL" else (K - spot))
+        d1 = (__math_hoist.log(spot / K) + 0.5 * vol * vol * T) / (vol * __math_hoist.sqrt(T))
+        d2 = d1 - vol * __math_hoist.sqrt(T)
+        N = lambda x: 0.5 * (1 + __math_hoist.erf(x / __math_hoist.sqrt(2)))
+        return (spot * N(d1) - K * N(d2)) if side == "CALL" else (K * N(-d2) - spot * N(-d1))
+    rows = []
+    for k in range(5000, 8001, 5):
+        mid = max(0.05, _bs(float(k)))
+        half = max(0.025, mid * 0.03)
+        bid = max(0.0, round((mid - half) * 20) / 20)
+        ask = round((mid + half) * 20) / 20
+        if ask <= bid:
+            ask = bid + 0.05
+        rows.append({"strike": float(k), "optionType": side, "bid": round(bid, 2),
+                     "ask": round(ask, 2), "volume": 800, "openInterest": 4000,
+                     "greeks": {"delta": 0.3, "iv": vol}, "expiration": expiration})
+    return rows
+
+
+def _run(ii, ms=None, vol=None, rng=None, chain=_synthetic_chain, now_et=None):
     b = _bus(ii, ms or dict(_MS), vol or {"vix": 18, "iv_rank_estimate": 40}, rng or dict(_RNG))
-    return build_premium_strategy(b, confluence=build_confluence(b))
+    return build_premium_strategy(b, confluence=build_confluence(b), chain_fetcher=chain,
+                                  now_et=now_et or __dt_hoist.datetime(2026, 7, 17, 10, 0,
+                                                                       tzinfo=__ET_hoist),
+                                  symbol="SPX", expiration="2026-07-17")
 
 
 # ── envelope / safety ────────────────────────────────────────────────────────
@@ -391,8 +433,14 @@ def test_dispatch_fires_once_per_change(tmp_path):
     bus = _bus(ii=ii, ms=dict(_MS, vwap=6312, flow_bias="BEARISH"),
                vol={"vix": 24, "iv_rank_estimate": 65}, rng=dict(_RNG))
 
-    r1 = _psr.dispatch_and_log(bus, "SPX", sent.append, events={}, now_et_provider=lambda: now_et)
-    r2 = _psr.dispatch_and_log(bus, "SPX", sent.append, events={}, now_et_provider=lambda: now_et)
+    # A chain is required: economics come from it, and an alert without them
+    # would carry a modelled credit — the bug this whole path exists to prevent.
+    r1 = _psr.dispatch_and_log(bus, "SPX", sent.append, events={},
+                               now_et_provider=lambda: now_et,
+                               chain_fetcher=_synthetic_chain)
+    r2 = _psr.dispatch_and_log(bus, "SPX", sent.append, events={},
+                               now_et_provider=lambda: now_et,
+                               chain_fetcher=_synthetic_chain)
     assert r1["changed"] is True and r1["dispatched"] is True
     assert r2["changed"] is False          # same structure → no duplicate alert
     assert len(sent) == 1
@@ -523,3 +571,53 @@ def test_staleness_check_uses_the_injected_clock_not_wall_time(tmp_path):
     stale = _dt.datetime(2026, 7, 17, 10, 0, tzinfo=_EASTERN)
     _psr.grade_due_recommendations(lambda *a, **k: [], lambda: stale)
     assert _outcome() == "SCRATCH"
+
+
+def test_dispatch_refuses_to_alert_without_a_chain_price(tmp_path):
+    """THE regression. APEX alerted "Net credit 3.30 · Max profit $330" on an SPX
+    condor whose real ticket was a 0.10 DEBIT — max profit $0, max loss $1,010.
+    Every economic field was modelled and never checked against the chain. With no
+    chain there is nothing to alert on."""
+    _fresh_db(tmp_path)
+    sent = []
+    now_et = _dt.datetime(2026, 7, 14, 12, 0, tzinfo=_EASTERN)
+    ii = _ii(institutional_bias="BEARISH", flow_bias="BEARISH", flow_conviction=75,
+             auction_state="TREND_DAY_DOWN", auction_bias="BEARISH", direction="BEARISH",
+             momentum_probability=60, ici_score=72, gamma_regime="NEGATIVE_GAMMA",
+             dealer_bias="BEARISH", market_driver_bias="BEARISH", acceptance="ACCEPTING")
+    bus = _bus(ii=ii, ms=dict(_MS, vwap=6312, flow_bias="BEARISH"),
+               vol={"vix": 24, "iv_rank_estimate": 65}, rng=dict(_RNG))
+
+    r = _psr.dispatch_and_log(bus, "SPX", sent.append, events={},
+                              now_et_provider=lambda: now_et, chain_fetcher=None)
+    assert r["dispatched"] is False
+    assert r.get("unpriceable") is True
+    assert sent == [], "no alert may carry a modelled credit"
+
+
+def test_dispatch_refuses_when_the_chain_is_down(tmp_path):
+    _fresh_db(tmp_path)
+    sent = []
+    now_et = _dt.datetime(2026, 7, 14, 12, 0, tzinfo=_EASTERN)
+    ii = _ii(institutional_bias="BEARISH", flow_bias="BEARISH", flow_conviction=75,
+             auction_state="TREND_DAY_DOWN", auction_bias="BEARISH", direction="BEARISH",
+             momentum_probability=60, ici_score=72, gamma_regime="NEGATIVE_GAMMA",
+             dealer_bias="BEARISH", market_driver_bias="BEARISH", acceptance="ACCEPTING")
+    bus = _bus(ii=ii, ms=dict(_MS, vwap=6312, flow_bias="BEARISH"),
+               vol={"vix": 24, "iv_rank_estimate": 65}, rng=dict(_RNG))
+
+    def _down(symbol, expiration, side):
+        raise RuntimeError("polygon unreachable")
+
+    r = _psr.dispatch_and_log(bus, "SPX", sent.append, events={},
+                              now_et_provider=lambda: now_et, chain_fetcher=_down)
+    assert r["dispatched"] is False and sent == []
+
+
+def test_short_strikes_round_away_from_spot_never_toward_it():
+    """Nearest-rounding can move a short closer to the money than specified,
+    raising assignment risk and cutting POP below its own floor."""
+    from engine.premium_strategy import _round_short_away
+    assert _round_short_away(6273.1, 6300.0) == 6270.0     # put short: down, not 6275
+    assert _round_short_away(6326.9, 6300.0) == 6330.0     # call short: up, not 6325
+    assert _round_short_away(6270.0, 6300.0) == 6270.0     # already on the grid
