@@ -3170,3 +3170,19 @@ html { overflow-x: hidden; }
 .evidence-empty{font-size:10px;color:var(--faint);line-height:1.45;padding:10px 0}
 .evidence-guardrail{font-size:9.5px;color:var(--faint);font-style:italic;border-top:1px solid var(--bdr);padding-top:9px}
 @media(max-width:1050px){.evidence-grid{grid-template-columns:1fr}.evidence-panel{min-height:0}}
+
+/* APEX 10 Sprint 7 — Institutional View */
+.institutional-grid { grid-template-columns: 1.15fr 1fr 1fr; }
+.institutional-story-head { font-size: 18px; font-weight: 750; margin-bottom: 8px; }
+.institutional-story-copy { line-height: 1.55; opacity: .92; }
+.institutional-story-risk { margin-top: 10px; font-size: 12px; opacity: .75; }
+.institutional-node, .institutional-trace-step { display:flex; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px solid rgba(255,255,255,.07); }
+.institutional-node:last-child, .institutional-trace-step:last-child { border-bottom:0; }
+.institutional-node-main, .institutional-trace-main { min-width:0; }
+.institutional-node-label, .institutional-trace-name { font-size:12px; font-weight:700; }
+.institutional-node-state, .institutional-trace-detail { font-size:11px; opacity:.7; margin-top:2px; }
+.institutional-dir { font-size:11px; font-weight:750; white-space:nowrap; }
+.institutional-dir.BULLISH { color:#5de39a; }
+.institutional-dir.BEARISH { color:#ff7c87; }
+.institutional-dir.NEUTRAL { color:#aab4c7; }
+@media (max-width: 1050px) { .institutional-grid { grid-template-columns:1fr; } }
