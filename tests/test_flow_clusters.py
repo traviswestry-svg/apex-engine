@@ -447,3 +447,28 @@ def test_interleaving_result_is_order_independent():
     b = build_flow_clusters(_classify(list(reversed(rows))), min_prints=1)
     assert sorted(c["cluster_id"] for c in a["clusters"]) == \
            sorted(c["cluster_id"] for c in b["clusters"])
+
+# ── research brief: scheduled/automated flow controls ──────────────────────
+def test_clock_synchronised_complex_cluster_is_pending_not_directional_conviction():
+    rows = [
+        _row(time_et="10:30:03", strike=6300.0, consolidation_type="SPREAD"),
+        _row(time_et="10:30:05", strike=6310.0, trade_price=4.1, consolidation_type="SPREAD"),
+    ]
+    c = _cluster(rows)["clusters"][0]
+    auth = c["flow_authenticity"]
+    assert auth["near_hour_or_half_hour"] is True
+    assert auth["scheduled_candidate"] is True
+    assert auth["state"] == "SCHEDULED_AUTOMATED_FLOW_PENDING_CONFIRMATION"
+    assert auth["directional_confidence_multiplier"] < 1.0
+    assert c["directional_confidence_adjusted"] < c["confidence"]
+
+
+def test_non_boundary_cluster_is_not_penalised_by_clock_rule():
+    rows = [
+        _row(time_et="10:31:03", consolidation_type="SPREAD"),
+        _row(time_et="10:31:08", strike=6310.0, trade_price=4.1, consolidation_type="SPREAD"),
+    ]
+    c = _cluster(rows)["clusters"][0]
+    auth = c["flow_authenticity"]
+    assert auth["scheduled_candidate"] is False
+    assert auth["directional_confidence_multiplier"] == 1.0
