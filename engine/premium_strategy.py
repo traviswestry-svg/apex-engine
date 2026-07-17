@@ -232,11 +232,12 @@ def _select_strategy(
     pin = b["pin_probability"]
     auction = b["auction_state"]
     contra = b["flow_contradictions"]
-    event_regime = _u(ev.get("event_regime"))
+    intraday_event = ev.get("intraday_event_regime") or {}
+    event_regime = _u(intraday_event.get("state") or ev.get("event_regime"))
     headline = (ev.get("headline_event") or {}).get("label") if ev.get("headline_event") else None
 
-    # ── Event gate — a high-impact print pre/at open is a trap for structure. ─
-    if event_regime == "EVENT_DAY":
+    # ── Event gate — pre-release, impulse, and discovery are separate regimes. ─
+    if event_regime in ("EVENT_PRE_RELEASE", "EVENT_IMPULSE", "EVENT_DISCOVERY", "EVENT_DAY"):
         return (NO_TRADE, 40.0,
                 [f"High-impact event today{(' (' + headline + ')') if headline else ''} — "
                  "stand aside until the print and post-event expansion resolve."],
@@ -512,8 +513,10 @@ def _credit_quality_check(strategy: str, legs: Dict[str, Any], b: Dict[str, Any]
     if legs.get("quality_flags"):
         fails.extend(legs["quality_flags"])
 
-    if _u(ev.get("event_regime")) in ("EVENT_DAY", "PRE_EVENT_COMPRESSION") and kind == "DEBIT":
-        fails.append("Scheduled catalyst imminent — debit premium at risk of IV crush.")
+    intraday_event = ev.get("intraday_event_regime") or {}
+    event_state = _u(intraday_event.get("state") or ev.get("event_regime"))
+    if event_state in ("EVENT_PRE_RELEASE", "EVENT_IMPULSE", "EVENT_DISCOVERY", "EVENT_DAY", "PRE_EVENT_COMPRESSION") and kind == "DEBIT":
+        fails.append("Scheduled catalyst regime active — debit premium and slippage require event-specific calibration.")
 
     return (len(fails) == 0, fails)
 

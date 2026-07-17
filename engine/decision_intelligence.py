@@ -132,7 +132,8 @@ def build_decision_intelligence(
         pyramid = _confidence_pyramid(lr, inst, conf, ev)
 
         # Event overlay (from 7.5.4)
-        event_regime = _u(ev.get("event_regime")) or "CLEAR"
+        intraday_event = ev.get("intraday_event_regime") or {}
+        event_regime = _u(intraday_event.get("state") or ev.get("event_regime")) or "CLEAR"
         event_headline = (ev.get("headline_event") or {}).get("label") if ev.get("headline_event") else None
 
         return {
@@ -178,12 +179,15 @@ def _verdict(inst: Dict[str, Any], conf: Dict[str, Any], ev: Dict[str, Any]):
     conviction = _u(conf.get("conviction"))
     dom = _u(conf.get("dominant_side"))
     decision_state = _u(inst.get("decision_state"))
-    event_regime = _u(ev.get("event_regime"))
+    intraday_event = ev.get("intraday_event_regime") or {}
+    event_regime = _u(intraday_event.get("state") or ev.get("event_regime"))
 
-    # Event override: on a high-impact event day pre-open, bias toward caution.
-    if event_regime == "EVENT_DAY":
-        return ("WATCH", "High-impact event today — wait for the print and post-event expansion "
-                         "before committing; pre-event moves are traps.")
+    # Event phases are calibrated separately; impulse/pre-release never inherit
+    # ordinary-session conviction. Discovery remains a WATCH until confirmed.
+    if event_regime in ("EVENT_PRE_RELEASE", "EVENT_IMPULSE"):
+        return ("WATCH", f"{event_regime.replace('_', ' ').title()} — scheduled-event confidence is capped; wait for measurable post-release confirmation.")
+    if event_regime == "EVENT_DISCOVERY":
+        return ("WATCH", "Event price discovery is active — require price, flow, and liquidity confirmation before commitment.")
 
     # AVOID only when there is genuinely no setup: no dominant side at all.
     if dom == "NEITHER" or conviction == "NONE":
@@ -222,8 +226,8 @@ def _headline(verdict, conf, event_regime, event_headline) -> str:
         "WATCH": f"WATCH {side}".strip(),
         "AVOID": "STAND ASIDE",
     }.get(verdict, verdict)
-    if event_regime in ("EVENT_DAY", "OPEX_DAY") and event_headline:
-        base += f"  ·  {event_headline} today"
+    if event_regime in ("EVENT_PRE_RELEASE", "EVENT_IMPULSE", "EVENT_DISCOVERY", "POST_EVENT_NORMALIZATION", "EVENT_DAY", "OPEX_DAY") and event_headline:
+        base += f"  ·  {event_headline} · {event_regime.replace('_', ' ').title()}"
     elif event_regime == "PRE_EVENT_COMPRESSION" and event_headline:
         base += f"  ·  {event_headline} tomorrow"
     return base

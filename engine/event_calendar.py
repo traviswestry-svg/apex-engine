@@ -34,7 +34,7 @@ import datetime as dt
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
-VERSION = "7.5.4_EVENT_INTELLIGENCE"
+VERSION = "10.0.0_EVENT_INTELLIGENCE"
 EASTERN = ZoneInfo("America/New_York")
 
 # ── Curated fixed-date releases (REFRESH PERIODICALLY from official sources) ──
@@ -178,9 +178,11 @@ def build_event_intelligence(now: Optional[dt.datetime] = None) -> Dict[str, Any
                 continue
             delta = (d - today).days
             if 0 <= delta <= horizon:
+                release_time = "14:00" if key == "FOMC" else ("08:30" if key in ("CPI", "NFP", "PPI") else None)
                 upcoming.append({
                     "key": key, "label": label, "date": iso,
                     "days_away": delta, "impact": tier,
+                    "release_time_et": release_time,
                     "note": _proximity_note(key, label, delta, tier),
                 })
 
@@ -237,12 +239,18 @@ def build_event_intelligence(now: Optional[dt.datetime] = None) -> Dict[str, Any
             event_regime = "PRE_EVENT_COMPRESSION"
 
         summary = _overall_summary(event_regime, headline, today_events)
+        try:
+            from .event_regime import build_event_regime
+            intraday_regime = build_event_regime(now=now, event_intelligence={"today_events": today_events})
+        except Exception as exc:
+            intraday_regime = {"available": False, "state": "NORMAL_SESSION", "reason": str(exc)}
 
         return {
             "available": True,
             "version": VERSION,
             "as_of": today.isoformat(),
-            "event_regime": event_regime,          # CLEAR | PRE_EVENT_COMPRESSION | EVENT_DAY
+            "event_regime": event_regime,          # backward-compatible day-level regime
+            "intraday_event_regime": intraday_regime,
             "headline_event": headline,
             "today_events": today_events,
             "upcoming": upcoming,
