@@ -367,6 +367,17 @@ except Exception as _de_err:
     DASHBOARD_EVIDENCE_AVAILABLE = False
     print(f"APEX Dashboard Evidence unavailable (non-fatal): {_de_err}", flush=True)
 
+# APEX 10 Sprint 7 — unified institutional state, evidence graph, and trace.
+try:
+    from engine.institutional_state_routes import register_institutional_state_routes
+    from engine.institutional_state import VERSION as _INST_STATE_VERSION
+    INSTITUTIONAL_STATE_AVAILABLE = True
+except Exception as _is_err:
+    register_institutional_state_routes = None  # type: ignore[assignment]
+    _INST_STATE_VERSION = "unavailable"
+    INSTITUTIONAL_STATE_AVAILABLE = False
+    print(f"APEX Institutional State unavailable (non-fatal): {_is_err}", flush=True)
+
 # APEX 9 Step 5a.1 — the writer. This is what starts the clock: until it runs,
 # flow_features stays at zero rows forever.
 try:
@@ -8027,6 +8038,16 @@ try:
         print(f"APEX Dashboard Evidence route registered ({_DASH_EVIDENCE_VERSION}).", flush=True)
 except Exception as e:
     print(f"Dashboard Evidence registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 10 Sprint 7 — unified institutional state and replay-aware decision trace.
+try:
+    if INSTITUTIONAL_STATE_AVAILABLE and register_institutional_state_routes is not None:
+        register_institutional_state_routes(
+            app, last_result_provider=lambda: STATE.get("last_result") or {}
+        )
+        print(f"APEX Institutional State routes registered ({_INST_STATE_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Institutional State registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
