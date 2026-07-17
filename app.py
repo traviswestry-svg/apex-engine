@@ -321,6 +321,17 @@ except Exception as _fs_err:
     FEATURE_STORE_AVAILABLE = False
     print(f"APEX Feature Store unavailable (non-fatal): {_fs_err}", flush=True)
 
+# APEX 10 Sprint 1 — immutable decision provenance / replay integrity.
+try:
+    from engine.provenance_routes import register_provenance_routes
+    from engine.decision_provenance import STORE_VERSION as _DP_VERSION
+    PROVENANCE_AVAILABLE = True
+except Exception as _dp_err:
+    register_provenance_routes = None  # type: ignore[assignment]
+    _DP_VERSION = "unavailable"
+    PROVENANCE_AVAILABLE = False
+    print(f"APEX Decision Provenance unavailable (non-fatal): {_dp_err}", flush=True)
+
 # APEX 9 Step 5a.1 — the writer. This is what starts the clock: until it runs,
 # flow_features stays at zero rows forever.
 try:
@@ -7945,6 +7956,14 @@ try:
         print(f"APEX Feature Store routes registered ({_FS_VERSION}).", flush=True)
 except Exception as e:
     print(f"Feature Store registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 10 Sprint 1 — read-only immutable provenance snapshots.
+try:
+    if PROVENANCE_AVAILABLE and register_provenance_routes is not None:
+        register_provenance_routes(app)
+        print(f"APEX Decision Provenance routes registered ({_DP_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Decision Provenance registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
