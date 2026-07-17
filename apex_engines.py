@@ -36,6 +36,8 @@ import statistics
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+from engine.confidence_attribution import build_confidence_attribution
+
 EASTERN = ZoneInfo("America/New_York")
 
 # ---------------------------------------------------------------------------
@@ -2640,6 +2642,8 @@ def build_institutional_decision(
     strike_step_etf: int = 1,
     signal_ttl_seconds: int = 360,
     session_is_tradeable: bool = True,
+    event_regime: Optional[Dict[str, Any]] = None,
+    flow_authenticity: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Master pipeline: runs all nine engines and returns the full
@@ -2801,6 +2805,14 @@ def build_institutional_decision(
         consensus=consensus,
         ici=ici,
     )
+    confidence_attribution = build_confidence_attribution(
+        ici=ici,
+        engine_contributions=engine_contributions,
+        consensus=consensus,
+        chain_quality=flow_snapshot.get("chain_quality"),
+        event_regime=event_regime,
+        flow_authenticity=flow_authenticity or flow_snapshot.get("flow_authenticity"),
+    )
     ribbon = build_status_ribbon(
         ticker=ticker,
         flow_snapshot=flow_snapshot,
@@ -2854,6 +2866,7 @@ def build_institutional_decision(
             "action": consensus.get("action"),
         },
         "engine_contributions": engine_contributions,
+        "confidence_attribution": confidence_attribution,
         "ribbon": ribbon,
         "trade_coach": trade_coach,
         "story_timeline": story_timeline,
