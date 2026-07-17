@@ -478,3 +478,43 @@ def neighbourhood_coverage(*, dims: Sequence[str] = _NEIGHBOURHOOD_DEFAULT,
         }
     except Exception as e:  # pragma: no cover
         return {"cells": [], "dims": list(dims), "total_samples": 0, "error": str(e)}
+
+
+def load_similarity_candidates(*, decision_time: str, ticker: str = "SPX",
+                               prior_sessions_only: bool = True,
+                               exclude_sample_id: Optional[str] = None,
+                               limit: int = 5000) -> List[Dict[str, Any]]:
+    """Load leakage-safe candidates for similarity.
+
+    This narrowly scoped join is not a training export. It guarantees that every
+    candidate decision predates the query and every included label was settled by
+    the query time. Feature and label objects remain separate.
+    """
+    if not _DB_READY or not decision_time:
+        return []
+    query_session = str(decision_time)[:10]
+    clauses = ["f.decision_time < ?", "f.ticker = ?", "l.settled_at <= ?"]
+    args: List[Any] = [decision_time, ticker, decision_time]
+    if prior_sessions_only:
+        clauses.append("f.session_date < ?")
+        args.append(query_session)
+    if exclude_sample_id:
+        clauses.append("f.sample_id != ?")
+        args.append(exclude_sample_id)
+    args.append(max(1, min(int(limit or 5000), 20000)))
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                f"""SELECT f.sample_id, f.session_date, f.ticker, f.decision_time,
+                           f.features_json, l.labels_json, l.settled_at
+                    FROM flow_features f
+                    JOIN flow_labels l ON l.sample_id=f.sample_id
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY f.decision_time DESC LIMIT ?""", args).fetchall()
+        return [{"sample_id": r["sample_id"], "session_date": r["session_date"],
+                 "ticker": r["ticker"], "decision_time": r["decision_time"],
+                 "features": json.loads(r["features_json"]),
+                 "labels": json.loads(r["labels_json"]),
+                 "settled_at": r["settled_at"]} for r in rows]
+    except Exception:  # pragma: no cover
+        return []
