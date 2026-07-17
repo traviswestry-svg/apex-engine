@@ -288,3 +288,193 @@ def health() -> Dict[str, Any]:
     info["note"] = ("Features and labels are stored in separate tables and can only be read "
                     "together via load_training_pairs(), which enforces the session split.")
     return info
+
+
+# ── Inspection reads ──────────────────────────────────────────────────────
+# A human reading one record is not the leak; a bulk FLAT export fed to a trainer
+# is. So these return features and labels in named sub-objects, never merged, and
+# there is still no endpoint or function handing back a flat row with both.
+
+def list_features(*, session_date: Optional[str] = None, limit: int = 50,
+                  offset: int = 0) -> List[Dict[str, Any]]:
+    """Feature vectors only — labels are not read here at all."""
+    if not _DB_READY:
+        return []
+    limit = max(1, min(int(limit or 50), 500))
+    try:
+        with _conn() as c:
+            if session_date:
+                rows = c.execute(
+                    """SELECT sample_id, session_date, ticker, decision_time,
+                              features_json, availability_json, max_feature_lag_seconds,
+                              feature_count, schema_version
+                       FROM flow_features WHERE session_date=?
+                       ORDER BY decision_time DESC LIMIT ? OFFSET ?""",
+                    (session_date, limit, int(offset or 0))).fetchall()
+            else:
+                rows = c.execute(
+                    """SELECT sample_id, session_date, ticker, decision_time,
+                              features_json, availability_json, max_feature_lag_seconds,
+                              feature_count, schema_version
+                       FROM flow_features
+                       ORDER BY session_date DESC, decision_time DESC
+                       LIMIT ? OFFSET ?""", (limit, int(offset or 0))).fetchall()
+        return [{"sample_id": r["sample_id"], "session_date": r["session_date"],
+                 "ticker": r["ticker"], "decision_time": r["decision_time"],
+                 "features": json.loads(r["features_json"]),
+                 "feature_availability": json.loads(r["availability_json"]),
+                 "max_feature_lag_seconds": r["max_feature_lag_seconds"],
+                 "feature_count": r["feature_count"],
+                 "schema_version": r["schema_version"]} for r in rows]
+    except Exception:  # pragma: no cover
+        return []
+
+
+def get_label(sample_id: str) -> Optional[Dict[str, Any]]:
+    if not _DB_READY:
+        return None
+    try:
+        with _conn() as c:
+            r = c.execute("SELECT * FROM flow_labels WHERE sample_id=?",
+                          (sample_id,)).fetchone()
+        if not r:
+            return None
+        return {"sample_id": r["sample_id"], "settled_at": r["settled_at"],
+                "labels": json.loads(r["labels_json"]),
+                "label_basis": r["label_basis"], "schema_version": r["schema_version"]}
+    except Exception:  # pragma: no cover
+        return None
+
+
+def get_sample(sample_id: str) -> Optional[Dict[str, Any]]:
+    """One record for inspection: features and labels stay in named sub-objects.
+
+    Single-row inspection, not a training path. `labels` is None until settled,
+    which is the normal state during a live session.
+    """
+    f = get_features(sample_id)
+    if not f:
+        return None
+    lab = get_label(sample_id)
+    return {
+        "sample_id": sample_id,
+        "session_date": f["session_date"],
+        "ticker": f["ticker"],
+        "decision_time": f["decision_time"],
+        "pre_decision": {
+            "features": f["features"],
+            "feature_availability": f["feature_availability"],
+            "max_feature_lag_seconds": f["max_feature_lag_seconds"],
+        },
+        "post_outcome": lab,
+        "note": ("pre_decision and post_outcome are stored in separate tables and shown "
+                 "separately here. Only pre_decision was knowable at decision_time."),
+    }
+
+
+# ── Neighbourhood coverage (aggregates only — no flat row escapes) ─────────
+_NEIGHBOURHOOD_DEFAULT = ("gamma_regime", "auction_state",
+                          "cluster_directional_interpretation", "premium_band")
+
+
+def _premium_band(features: Dict[str, Any]) -> str:
+    """Bucket by the CLASSIFIER's own premium thresholds, not new ones."""
+    try:
+        from .flow_classifier import _INSTITUTIONAL_PREMIUM, _RETAIL_PREMIUM
+        p = float(features.get("cluster_total_premium") or 0)
+    except Exception:  # pragma: no cover
+        return "UNKNOWN"
+    if p >= _INSTITUTIONAL_PREMIUM:
+        return "INSTITUTIONAL_SIZE"
+    if p <= _RETAIL_PREMIUM:
+        return "RETAIL_SIZE"
+    return "MID_SIZE"
+
+
+_DERIVED_DIMS = {"premium_band": _premium_band}
+
+
+def neighbourhood_coverage(*, dims: Sequence[str] = _NEIGHBOURHOOD_DEFAULT,
+                           sessions: Optional[Sequence[str]] = None
+                           ) -> Dict[str, Any]:
+    """Per-cell sample counts and outcome distribution. Returns AGGREGATES ONLY.
+
+    This is the number that actually gates 5b: not how many rows exist, but how
+    many exist in cells that resemble each other. Aggregation happens here so no
+    caller ever holds a flat feature+label row.
+
+    Outcome RATES are reported only for cells where `edge_claim_permitted` is
+    true. Below that the counts are shown and the rate is withheld — a 3-sample
+    cell has a win rate, and printing it is how a fictional edge gets believed.
+    """
+    from .feature_store import sample_quality, wilson_interval
+    if not _DB_READY:
+        return {"cells": [], "dims": list(dims), "total_samples": 0}
+    try:
+        with _conn() as c:
+            if sessions:
+                q = ",".join("?" * len(sessions))
+                rows = c.execute(
+                    f"""SELECT f.features_json, l.labels_json
+                        FROM flow_features f
+                        LEFT JOIN flow_labels l ON l.sample_id=f.sample_id
+                        WHERE f.session_date IN ({q})""", list(sessions)).fetchall()
+            else:
+                rows = c.execute(
+                    """SELECT f.features_json, l.labels_json
+                       FROM flow_features f
+                       LEFT JOIN flow_labels l ON l.sample_id=f.sample_id""").fetchall()
+
+        cells: Dict[tuple, Dict[str, Any]] = {}
+        for r in rows:
+            feats = json.loads(r["features_json"])
+            key = []
+            for d in dims:
+                if d in _DERIVED_DIMS:
+                    key.append(str(_DERIVED_DIMS[d](feats)))
+                else:
+                    key.append(str(feats.get(d, "UNKNOWN")))
+            k = tuple(key)
+            cell = cells.setdefault(k, {"n": 0, "labelled": 0, "outcomes": {}})
+            cell["n"] += 1
+            if r["labels_json"]:
+                lab = json.loads(r["labels_json"])
+                oc = lab.get("final_outcome")
+                if oc:
+                    cell["labelled"] += 1
+                    cell["outcomes"][oc] = cell["outcomes"].get(oc, 0) + 1
+
+        out = []
+        for k, v in sorted(cells.items(), key=lambda kv: -kv[1]["n"]):
+            q = sample_quality(v["n"])
+            entry = {
+                "cell": dict(zip(dims, k)),
+                "matched_sample_count": v["n"],
+                "labelled_count": v["labelled"],
+                "tier": q["tier"],
+                "edge_claim_permitted": q["edge_claim_permitted"],
+                "note": q["note"],
+                "outcome_counts": v["outcomes"],
+            }
+            if q["edge_claim_permitted"] and v["labelled"]:
+                hits = v["outcomes"].get("TARGET_FIRST", 0) + v["outcomes"].get("TARGET_ONLY", 0)
+                entry["target_first_rate"] = wilson_interval(hits, v["labelled"])
+            else:
+                entry["target_first_rate"] = None
+                entry["rate_withheld_because"] = (
+                    f"{v['n']} matched sample(s) — below the threshold at which a rate "
+                    f"means anything. Counts are shown; the rate is not.")
+            out.append(entry)
+
+        return {
+            "dims": list(dims),
+            "cells": out,
+            "cell_count": len(out),
+            "total_samples": sum(c["n"] for c in cells.values()),
+            "cells_permitting_edge_claims": sum(1 for c in out if c["edge_claim_permitted"]),
+            "basis": ("Counts are per MATCHED NEIGHBOURHOOD. A large store total spread thinly "
+                      "across cells supports no claim in any of them. Correlated sessions are "
+                      "also not independent observations, so even a full cell may overstate."),
+        }
+    except Exception as e:  # pragma: no cover
+        return {"cells": [], "dims": list(dims), "total_samples": 0, "error": str(e)}
