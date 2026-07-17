@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, List, Optional
 from flask import jsonify, request
 
 from .flow_classifier import classify_flow_events
+from .flow_confirmation import TRACKER, market_snapshot
 from .flow_clusters import (
     CLUSTER_CONFIG_VERSION,
     CLUSTER_VERSION,
@@ -97,6 +98,13 @@ def register_flow_clusters_routes(
 
             classified = classify_flow_events(rows, spot=spot, as_of_secs=_now_et_secs())
             result = build_flow_clusters(classified["events"], min_prints=min_prints)
+            # Polling this endpoint supplies later observations.  Confirmation is
+            # stored separately and never backdated into the decision-time vector.
+            lr = last_result_provider() if last_result_provider else {}
+            events_by_id = {e.get("event_id"): e for e in classified.get("events", [])}
+            snap = market_snapshot(lr or {})
+            result["clusters"] = TRACKER.observe(result.get("clusters", []), events_by_id, snap)
+            result["singletons"] = TRACKER.observe(result.get("singletons", []), events_by_id, snap)
             result["upstream_status"] = tape.get("status")
             result["classifier_version"] = classified.get("classifier_version")
             result["events_classified"] = classified.get("count")

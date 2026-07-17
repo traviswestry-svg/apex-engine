@@ -201,7 +201,9 @@ def _observable_facts(row: Dict[str, Any]) -> Dict[str, Any]:
         # Explicitly recorded as absent so downstream never assumes silence = zero.
         "open_interest": None,
         "exchange_count": None,
-        "quote_at_trade": None,
+        "quote_at_trade": ({"bid": row.get("bid"), "ask": row.get("ask")}
+                           if row.get("bid") is not None or row.get("ask") is not None else None),
+        "delta": row.get("delta") if row.get("delta") is not None else None,
         "implied_volatility": None,
     }
 

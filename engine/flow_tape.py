@@ -193,6 +193,11 @@ def _normalize_row(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "aggressor_side":    aggressor,
         "tape_label":        tape_label,
         "importance_score":  importance,
+        # Preserve optional provider Greeks/quote context for later confirmation.
+        # Missing values stay None; they are never inferred.
+        "delta": _safe_float(raw.get("delta") or (raw.get("greeks") or {}).get("delta"), None),
+        "bid": _safe_float(raw.get("bid") or raw.get("bidPrice"), None),
+        "ask": _safe_float(raw.get("ask") or raw.get("askPrice"), None),
     }
 
 
