@@ -1669,6 +1669,9 @@ async function _renderAll(data) {
     // Sprint 9 — Professional Workspace
     _r(renderWorkspace, data);
 
+    // APEX 10 Sprint 6 — read-only Evidence & Trust dashboard
+    await _ra(() => loadEvidenceDashboard(data));
+
     if (data.market_status) _r(renderMarketStatusBanner, data.market_status);
 
     _r(captureReplaySnap, data);
@@ -4450,4 +4453,105 @@ async function loadEdgeStats() {
       : `Early sample (${s.n_resolved} trades) — directional, not yet statistically settled. Treat as provisional until ~${s.min_sample_for_confidence}.`;
     if (card) card.classList.toggle('exec-pending', !enough);
   } catch (e) { /* leave pending state on error */ }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   APEX 10 Sprint 6 — Evidence & Trust dashboard
+   Read-only composition. It never changes direction, confidence, or policy.
+   ════════════════════════════════════════════════════════════════════════════ */
+function _evidencePct(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : null;
+}
+function _evidenceBadge(text, state) {
+  return `<span class="evidence-badge ${state || ''}">${esc(text)}</span>`;
+}
+function _evidenceQuality(e) {
+  const q = e.quality || {};
+  const gate = e.quality_gate || {};
+  const action = String(gate.action || q.gate_action || (q.gate_passed === true ? 'ALLOW' : q.gate_passed === false ? 'SUPPRESS' : 'UNKNOWN')).toUpperCase();
+  const score = _evidencePct(q.quality_score ?? q.score);
+  const state = action === 'ALLOW' ? 'good' : action === 'CAP' ? 'warn' : action === 'SUPPRESS' ? 'bad' : '';
+  return _evidenceBadge(`CHAIN ${action}${score != null ? ' · '+Math.round(score) : ''}`, state);
+}
+function _evidenceEvent(e) {
+  const ev = e.event_regime || {};
+  const state = String(ev.state || ev.regime || 'NORMAL_SESSION').replace(/_/g, ' ');
+  const cls = state.includes('IMPULSE') || state.includes('PRE RELEASE') ? 'bad' : state.includes('DISCOVERY') || state.includes('NORMALIZATION') ? 'warn' : 'good';
+  return _evidenceBadge(state, cls);
+}
+function renderEvidencePayload(e) {
+  if (!e) return;
+  const badges = $('evidenceBadges');
+  const confEl = $('evidenceConfidence');
+  const simEl = $('evidenceSimilarity');
+  const learnEl = $('evidenceLearning');
+  const updated = $('evidenceUpdated');
+  if (!badges || !confEl || !simEl || !learnEl) return;
+
+  const attr = e.confidence_attribution || {};
+  const learned = attr.learned_calibration || {};
+  const policyApplied = !!learned.policy_applied;
+  badges.innerHTML = [
+    _evidenceQuality(e),
+    _evidenceEvent(e),
+    _evidenceBadge(`SIMILARITY ${e.similarity?.available ? 'READY' : 'WAITING'}`, e.similarity?.available ? 'good' : 'warn'),
+    _evidenceBadge(`LEARNING ${policyApplied ? 'ACTIVE' : 'OBSERVE'}`, policyApplied ? 'good' : ''),
+  ].join('');
+
+  const effective = _evidencePct(attr.effective_confidence);
+  const calibrated = _evidencePct(attr.calibrated_confidence);
+  const components = Array.isArray(attr.components) ? attr.components : [];
+  confEl.innerHTML = attr.available ? `
+    <div class="evidence-score-row"><div class="evidence-score">${effective == null ? '--' : effective.toFixed(1)}</div><div class="evidence-score-label">effective${calibrated != null ? ' · calibrated '+calibrated.toFixed(1) : ''}</div></div>
+    ${components.map(c => {
+      const val = _evidencePct(c.adjusted_points == null ? 0 : c.adjusted_points * 2);
+      return `<div class="evidence-row"><div><div class="evidence-row-label" title="${esc(c.adjustment_reason || '')}">${esc(c.label || c.key || 'Component')}</div><div class="evidence-bar"><div class="evidence-bar-fill" style="width:${val || 0}%"></div></div></div><div class="evidence-row-val">${c.adjusted_points == null ? '—' : Number(c.adjusted_points).toFixed(1)}</div></div>`;
+    }).join('')}
+  ` : '<div class="evidence-empty">Confidence attribution will appear after the institutional pipeline produces a scored decision.</div>';
+
+  const sim = e.similarity || {};
+  const matches = Array.isArray(sim.matches) ? sim.matches.slice(0, 3) : [];
+  const oe = sim.outcome_evidence || {};
+  simEl.innerHTML = sim.available && matches.length ? `
+    ${matches.map(m => `<div class="evidence-match"><div><div class="evidence-match-main">${esc(m.session_date || 'Prior session')}</div><div class="evidence-match-sub">${esc((m.labels || {}).final_outcome || 'settled outcome unavailable')}</div></div><div class="evidence-match-score">${Number(m.similarity_score || 0).toFixed(1)}%</div></div>`).join('')}
+    <div class="evidence-match-sub" style="margin-top:8px">${esc(oe.note || oe.rate_withheld_because || `${sim.matched_count || matches.length} matched samples`)}</div>
+  ` : `<div class="evidence-empty">${esc(sim.reason || 'No leakage-safe prior-session match is available yet.')}</div>`;
+
+  const cal = e.calibration || {};
+  const ev = cal.evaluation || {};
+  const policy = cal.active_policy || {};
+  learnEl.innerHTML = cal.available ? `
+    <div class="evidence-stat-grid">
+      <div class="evidence-stat"><div class="evidence-stat-num">${ev.sample_count ?? 0}</div><div class="evidence-stat-cap">Evaluation samples</div></div>
+      <div class="evidence-stat"><div class="evidence-stat-num">${ev.brier_score == null ? '—' : Number(ev.brier_score).toFixed(3)}</div><div class="evidence-stat-cap">Brier score</div></div>
+      <div class="evidence-stat"><div class="evidence-stat-num">${ev.expected_calibration_error == null ? '—' : Number(ev.expected_calibration_error).toFixed(3)}</div><div class="evidence-stat-cap">Calibration error</div></div>
+      <div class="evidence-stat"><div class="evidence-stat-num">${policy.policy_id ? 'ACTIVE' : 'NONE'}</div><div class="evidence-stat-cap">Promoted policy</div></div>
+    </div>
+  ` : `<div class="evidence-empty">${esc(cal.reason || 'Calibration requires additional settled sessions.')}</div>`;
+
+  if (updated) {
+    const sample = e.latest_sample || {};
+    updated.textContent = sample.decision_time ? `sample ${sample.decision_time}` : 'live decision payload';
+  }
+}
+
+async function loadEvidenceDashboard(data) {
+  // Render current decision fields immediately, then enrich with frozen history.
+  renderEvidencePayload({
+    quality: data?.chain_quality || data?.market_state?.chain_quality || {},
+    quality_gate: data?.chain_quality_gate || data?.market_state?.chain_quality_gate || {},
+    event_regime: data?.intraday_event_regime || data?.event_intelligence?.intraday_event_regime || {},
+    confidence_attribution: data?.confidence_attribution || {},
+    similarity: {available:false, reason:'Loading frozen historical evidence…'},
+    calibration: {available:false, reason:'Loading calibration evidence…'}
+  });
+  try {
+    const r = await fetch('/api/apex10/evidence?ticker=' + encodeURIComponent(activeTicker), {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const payload = await r.json();
+    if (payload.ok && payload.evidence) renderEvidencePayload(payload.evidence);
+  } catch (err) {
+    console.warn('[APEX] evidence dashboard unavailable:', err.message);
+  }
 }
