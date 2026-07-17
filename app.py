@@ -321,6 +321,17 @@ except Exception as _fs_err:
     FEATURE_STORE_AVAILABLE = False
     print(f"APEX Feature Store unavailable (non-fatal): {_fs_err}", flush=True)
 
+# APEX 10 Sprint 4 — leakage-safe historical similarity evidence.
+try:
+    from engine.similarity_routes import register_similarity_routes
+    from engine.historical_similarity import SIMILARITY_VERSION as _SIM_VERSION
+    SIMILARITY_AVAILABLE = True
+except Exception as _sim_err:
+    register_similarity_routes = None  # type: ignore[assignment]
+    _SIM_VERSION = "unavailable"
+    SIMILARITY_AVAILABLE = False
+    print(f"APEX Historical Similarity unavailable (non-fatal): {_sim_err}", flush=True)
+
 # APEX 10 Sprint 1 — immutable decision provenance / replay integrity.
 try:
     from engine.provenance_routes import register_provenance_routes
@@ -7956,6 +7967,14 @@ try:
         print(f"APEX Feature Store routes registered ({_FS_VERSION}).", flush=True)
 except Exception as e:
     print(f"Feature Store registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 10 Sprint 4 — read-only historical similarity evidence.
+try:
+    if SIMILARITY_AVAILABLE and register_similarity_routes is not None:
+        register_similarity_routes(app)
+        print(f"APEX Historical Similarity routes registered ({_SIM_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Historical Similarity registration unavailable (non-fatal): {e}", flush=True)
 
 # APEX 10 Sprint 1 — read-only immutable provenance snapshots.
 try:
