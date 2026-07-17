@@ -206,11 +206,19 @@ class OptionsDataBus:
     def recommend_contracts(self, contracts: List[Dict[str, Any]], *, spot: float,
                             expected_path: Optional[float] = None, side: str = "CALL",
                             max_spread_pct: float = 12.0, min_volume: int = 25,
-                            n: int = 3) -> List[Dict[str, Any]]:
+                            n: int = 3, chain_quality: Optional[Dict[str, Any]] = None
+                            ) -> List[Dict[str, Any]]:
         """Pick near-the-money / slightly-OTM calls that pass liquidity screens.
         expected_path (a projected SPX level) nudges strike selection toward the move."""
         if not contracts or not spot:
             return []
+        if chain_quality is not None:
+            from engine.quality_gating import gate_decision
+            qd = gate_decision(chain_quality)
+            # Contract recommendations are execution-facing, so a failed or
+            # unmeasurable gate is a hard stop rather than a cosmetic warning.
+            if qd["action"] != "ALLOW":
+                return []
         target = spot
         if expected_path and side == "CALL":
             target = max(spot, (spot + expected_path) / 2.0)
