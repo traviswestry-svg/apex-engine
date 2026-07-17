@@ -331,13 +331,64 @@ except Exception as _fsw_err:
     FEATURE_WRITER_AVAILABLE = False
     print(f"APEX Feature Store writer unavailable (non-fatal): {_fsw_err}", flush=True)
 
+# APEX 10 Sprints 1-8 — provenance, similarity, learning, dashboard evidence,
+# institutional state, and production-readiness APIs. These modules are
+# independently optional so one failed subsystem cannot hide the remaining APIs.
+try:
+    from engine.provenance_routes import register_provenance_routes
+    PROVENANCE_ROUTES_AVAILABLE = True
+except Exception as _prov_err:
+    register_provenance_routes = None  # type: ignore[assignment]
+    PROVENANCE_ROUTES_AVAILABLE = False
+    print(f"APEX 10 provenance routes unavailable (non-fatal): {_prov_err}", flush=True)
+
+try:
+    from engine.similarity_routes import register_similarity_routes
+    SIMILARITY_ROUTES_AVAILABLE = True
+except Exception as _sim_err:
+    register_similarity_routes = None  # type: ignore[assignment]
+    SIMILARITY_ROUTES_AVAILABLE = False
+    print(f"APEX 10 similarity routes unavailable (non-fatal): {_sim_err}", flush=True)
+
+try:
+    from engine.learning_routes import register_learning_routes
+    LEARNING_ROUTES_AVAILABLE = True
+except Exception as _learn_err:
+    register_learning_routes = None  # type: ignore[assignment]
+    LEARNING_ROUTES_AVAILABLE = False
+    print(f"APEX 10 learning routes unavailable (non-fatal): {_learn_err}", flush=True)
+
+try:
+    from engine.dashboard_evidence_routes import register_dashboard_evidence_routes
+    DASHBOARD_EVIDENCE_ROUTES_AVAILABLE = True
+except Exception as _dash_ev_err:
+    register_dashboard_evidence_routes = None  # type: ignore[assignment]
+    DASHBOARD_EVIDENCE_ROUTES_AVAILABLE = False
+    print(f"APEX 10 dashboard evidence routes unavailable (non-fatal): {_dash_ev_err}", flush=True)
+
+try:
+    from engine.institutional_state_routes import register_institutional_state_routes
+    INSTITUTIONAL_STATE_ROUTES_AVAILABLE = True
+except Exception as _inst_state_err:
+    register_institutional_state_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_STATE_ROUTES_AVAILABLE = False
+    print(f"APEX 10 institutional state routes unavailable (non-fatal): {_inst_state_err}", flush=True)
+
+try:
+    from engine.production_routes import register_production_routes
+    PRODUCTION_ROUTES_AVAILABLE = True
+except Exception as _prod_err:
+    register_production_routes = None  # type: ignore[assignment]
+    PRODUCTION_ROUTES_AVAILABLE = False
+    print(f"APEX 10 production routes unavailable (non-fatal): {_prod_err}", flush=True)
+
 WRITE_FEATURES_IN_SCANNER = os.getenv("WRITE_FEATURES_IN_SCANNER", "true").lower() == "true"
 FEATURE_WRITE_SESSIONS = {
     s.strip().upper() for s in
     os.getenv("FEATURE_WRITE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
 }
 
-VERSION = "9.5.1_FEATURE_STORE_WRITER"
+VERSION = "10.0.0_PRODUCTION_HARDENED"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -7951,6 +8002,73 @@ try:
         print(f"APEX Feature Store routes registered ({_FS_VERSION}).", flush=True)
 except Exception as e:
     print(f"Feature Store registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 10 Sprints 1-8 — register the APIs that were previously shipped as
+# modules but never attached to the production Flask app.
+def _apex10_last_result():
+    try:
+        with STATE_LOCK:
+            return dict(STATE.get("last_result") or {})
+    except Exception:
+        return {}
+
+try:
+    if PROVENANCE_ROUTES_AVAILABLE and register_provenance_routes is not None:
+        register_provenance_routes(app)
+        print("APEX 10 provenance routes registered.", flush=True)
+except Exception as e:
+    PROVENANCE_ROUTES_AVAILABLE = False
+    print(f"APEX 10 provenance registration unavailable (non-fatal): {e}", flush=True)
+
+try:
+    if SIMILARITY_ROUTES_AVAILABLE and register_similarity_routes is not None:
+        register_similarity_routes(app)
+        print("APEX 10 similarity routes registered.", flush=True)
+except Exception as e:
+    SIMILARITY_ROUTES_AVAILABLE = False
+    print(f"APEX 10 similarity registration unavailable (non-fatal): {e}", flush=True)
+
+try:
+    if LEARNING_ROUTES_AVAILABLE and register_learning_routes is not None:
+        register_learning_routes(app)
+        print("APEX 10 learning routes registered.", flush=True)
+except Exception as e:
+    LEARNING_ROUTES_AVAILABLE = False
+    print(f"APEX 10 learning registration unavailable (non-fatal): {e}", flush=True)
+
+try:
+    if DASHBOARD_EVIDENCE_ROUTES_AVAILABLE and register_dashboard_evidence_routes is not None:
+        register_dashboard_evidence_routes(app, last_result_provider=_apex10_last_result)
+        print("APEX 10 dashboard evidence route registered.", flush=True)
+except Exception as e:
+    DASHBOARD_EVIDENCE_ROUTES_AVAILABLE = False
+    print(f"APEX 10 dashboard evidence registration unavailable (non-fatal): {e}", flush=True)
+
+try:
+    if INSTITUTIONAL_STATE_ROUTES_AVAILABLE and register_institutional_state_routes is not None:
+        register_institutional_state_routes(app, last_result_provider=_apex10_last_result)
+        print("APEX 10 institutional state routes registered.", flush=True)
+except Exception as e:
+    INSTITUTIONAL_STATE_ROUTES_AVAILABLE = False
+    print(f"APEX 10 institutional state registration unavailable (non-fatal): {e}", flush=True)
+
+def _apex10_capabilities():
+    return {
+        "feature_store": bool(FEATURE_STORE_AVAILABLE),
+        "decision_provenance": bool(PROVENANCE_ROUTES_AVAILABLE),
+        "historical_similarity": bool(SIMILARITY_ROUTES_AVAILABLE),
+        "learning_calibration": bool(LEARNING_ROUTES_AVAILABLE),
+        "dashboard_evidence": bool(DASHBOARD_EVIDENCE_ROUTES_AVAILABLE),
+        "institutional_state": bool(INSTITUTIONAL_STATE_ROUTES_AVAILABLE),
+    }
+
+try:
+    if PRODUCTION_ROUTES_AVAILABLE and register_production_routes is not None:
+        register_production_routes(app, capability_provider=_apex10_capabilities)
+        print("APEX 10 production readiness routes registered.", flush=True)
+except Exception as e:
+    PRODUCTION_ROUTES_AVAILABLE = False
+    print(f"APEX 10 production route registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
