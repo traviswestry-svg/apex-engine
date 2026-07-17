@@ -5,6 +5,7 @@ from flask import jsonify, request
 
 from .decision_provenance import get_snapshot
 from .institutional_state import VERSION, build_institutional_state
+from .production_observability import increment, timed
 
 
 def register_institutional_state_routes(app, *, last_result_provider=None) -> None:
@@ -13,6 +14,7 @@ def register_institutional_state_routes(app, *, last_result_provider=None) -> No
 
     def _payload():
         ticker = (request.args.get("ticker") or "SPX").upper()
+        increment("institutional_state.requests")
         sample_id = request.args.get("sample_id")
         source = _current()
         replay = None
@@ -20,7 +22,8 @@ def register_institutional_state_routes(app, *, last_result_provider=None) -> No
             replay = get_snapshot(sample_id)
             if replay and replay.get("integrity_ok"):
                 source = (replay.get("payload") or {}).get("decision_output") or {}
-        state = build_institutional_state(current_result=source, ticker=ticker, sample_id=sample_id)
+        with timed("institutional_state.build"):
+            state = build_institutional_state(current_result=source, ticker=ticker, sample_id=sample_id)
         if replay is not None:
             state["replay"] = {
                 "available": True,
