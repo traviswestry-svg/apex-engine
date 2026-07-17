@@ -332,6 +332,18 @@ except Exception as _sim_err:
     SIMILARITY_AVAILABLE = False
     print(f"APEX Historical Similarity unavailable (non-fatal): {_sim_err}", flush=True)
 
+
+# APEX 10 Sprint 5 — leakage-safe learning and calibration proposals.
+try:
+    from engine.learning_routes import register_learning_routes
+    from engine.learning_calibration import LEARNING_VERSION as _LEARN_VERSION
+    LEARNING_AVAILABLE = True
+except Exception as _learn_err:
+    register_learning_routes = None  # type: ignore[assignment]
+    _LEARN_VERSION = "unavailable"
+    LEARNING_AVAILABLE = False
+    print(f"APEX Learning Calibration unavailable (non-fatal): {_learn_err}", flush=True)
+
 # APEX 10 Sprint 1 — immutable decision provenance / replay integrity.
 try:
     from engine.provenance_routes import register_provenance_routes
@@ -7975,6 +7987,15 @@ try:
         print(f"APEX Historical Similarity routes registered ({_SIM_VERSION}).", flush=True)
 except Exception as e:
     print(f"Historical Similarity registration unavailable (non-fatal): {e}", flush=True)
+
+
+# APEX 10 Sprint 5 — calibration reports and explicit policy proposals.
+try:
+    if LEARNING_AVAILABLE and register_learning_routes is not None:
+        register_learning_routes(app)
+        print(f"APEX Learning Calibration routes registered ({_LEARN_VERSION}).", flush=True)
+except Exception as e:
+    print(f"Learning Calibration registration unavailable (non-fatal): {e}", flush=True)
 
 # APEX 10 Sprint 1 — read-only immutable provenance snapshots.
 try:
