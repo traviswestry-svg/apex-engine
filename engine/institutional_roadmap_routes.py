@@ -14,6 +14,7 @@ from . import offline_weight_optimization as weight_opt
 from . import shadow_validation
 from . import production_governance
 from . import canary_deployment
+from . import institutional_release_manager
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -268,6 +269,30 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def canary_rollbacks(): return jsonify({'ok':True,'rollbacks':canary_deployment.rollbacks(int(request.args.get('limit',100)))})
     @app.get('/apex_os/canary_deployment')
     def canary_dashboard(): return render_template('canary_deployment.html')
+
+    # APEX 13.0 Sprint 9C institutional release manager.
+    @app.get('/api/production/releases/status')
+    def institutional_release_status(): return jsonify({'ok':True,**institutional_release_manager.status()})
+    @app.get('/api/production/releases')
+    def institutional_release_list(): return jsonify({'ok':True,'releases':institutional_release_manager.list_releases(int(request.args.get('limit',100)))})
+    @app.post('/api/production/releases')
+    def institutional_release_create():
+        b=request.get_json(silent=True) or {}; p=institutional_release_manager.create(b,actor=str(b.get('actor') or 'API')); return j(p,201 if p.get('ok') else 409)
+    @app.get('/api/production/releases/<release_id>')
+    def institutional_release_get(release_id):
+        p=institutional_release_manager.release(release_id); return j({'ok':False,'status':'UNAVAILABLE','error':'not_found'},404) if not p else jsonify({'ok':True,**p})
+    @app.post('/api/production/releases/<release_id>/health')
+    def institutional_release_health(release_id):
+        b=request.get_json(silent=True) or {}; p=institutional_release_manager.capture_health(release_id,actor=str(b.get('actor') or 'SYSTEM')); return j(p,200 if p.get('ok') else 409)
+    @app.post('/api/production/releases/<release_id>/close')
+    def institutional_release_close(release_id):
+        b=request.get_json(silent=True) or {}; p=institutional_release_manager.close(release_id,actor=str(b.get('actor') or 'API'),disposition=str(b.get('disposition') or 'CLOSED'),note=str(b.get('note') or '')); return j(p,200 if p.get('ok') else 409)
+    @app.get('/api/production/releases/<release_id>/timeline')
+    def institutional_release_timeline(release_id): return jsonify({'ok':True,'events':institutional_release_manager.timeline(release_id,int(request.args.get('limit',100)))})
+    @app.get('/api/production/release-health')
+    def institutional_release_health_list(): return jsonify({'ok':True,'snapshots':institutional_release_manager.health_snapshots(request.args.get('release_id'),int(request.args.get('limit',100)))})
+    @app.get('/apex_os/release_manager')
+    def institutional_release_dashboard(): return render_template('institutional_release_manager.html')
 
     # APEX 13.0 Sprint 1 institutional evidence case files.
     @app.get('/api/evidence/status')
