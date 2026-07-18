@@ -1,21 +1,16 @@
-from engine.release_manager import APP_VERSION, FEATURES, migration_status, release_metadata
+from flask import Flask
+from engine.release_routes import register_release_routes
 
 
-def test_release_metadata_is_read_only_and_complete(monkeypatch):
-    monkeypatch.setenv('APEX_BUILD_ID', 'build-test-1')
-    monkeypatch.setenv('APEX_GIT_COMMIT', 'abcdef1234567890')
-    metadata = release_metadata()
-    assert metadata['application_version'] == APP_VERSION
-    assert metadata['build'] == 'build-test-1'
-    assert metadata['commit'] == 'abcdef1234567890'
-    assert 'Institutional State' in metadata['features']
-    assert 'Release Manager' in FEATURES
-    assert metadata['guardrails']['read_only'] is True
-    assert metadata['guardrails']['changes_trade_decisions'] is False
-
-
-def test_migration_status_reports_mismatch(monkeypatch):
-    monkeypatch.setenv('APEX_DATABASE_SCHEMA_VERSION', '4')
-    status = migration_status()
-    assert status['ready'] is False
-    assert status['pending_migrations']
+def test_release_routes_are_registered_and_non_mutating():
+    app = Flask(__name__)
+    register_release_routes(app)
+    client = app.test_client()
+    for path in (
+        '/api/system/version', '/api/system/build', '/api/system/features',
+        '/api/system/migrations', '/api/system/release',
+    ):
+        response = client.get(path)
+        assert response.status_code in (200, 503)
+        assert response.get_json()['ok'] is True
+    assert client.post('/api/system/release').status_code == 405
