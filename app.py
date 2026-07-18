@@ -7125,6 +7125,33 @@ def api_mission_control():
         },
         "price": ms.get("price"),
     }
+
+    # APEX 11.0C — surface the live decision modules on Mission Control. Both are
+    # pure read-only reads of the same composed `last` bus; neither triggers a scan
+    # or an external call, so they respect the endpoint's "pure composition"
+    # contract. Failures are non-fatal: a missing module degrades its own panel to
+    # unavailable rather than 500-ing the whole workspace.
+    try:
+        from engine.probability_distribution import build_probability_distribution
+        payload["probability_distribution"] = build_probability_distribution(last)
+    except Exception as _pd_err:
+        payload["probability_distribution"] = {"available": False, "error": str(_pd_err)}
+
+    try:
+        from engine.confirmation_scanner import scan_confirmation
+        # SPX direction is an INPUT the scanner confirms — read it off the decision
+        # already made, never let the scanner form one.
+        _spx_dir = (last.get("approved_side") or cons.get("leading_side")
+                    or (last.get("flow") or {}).get("approved_side")
+                    or (last.get("flow") or {}).get("bias"))
+        _rot = last.get("rotation") if isinstance(last.get("rotation"), dict) else {}
+        _assets = dict(last.get("confirmation_assets") or {})
+        if _rot:
+            _assets.setdefault("rotation", _rot.get("regime") or _rot.get("state"))
+        payload["confirmation_scan"] = scan_confirmation(spx_direction=_spx_dir, assets=_assets)
+    except Exception as _cs_err:
+        payload["confirmation_scan"] = {"available": False, "error": str(_cs_err)}
+
     return jsonify(payload)
 
 
