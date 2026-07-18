@@ -18,6 +18,7 @@ from . import institutional_release_manager
 from . import decision_intelligence_core
 from . import confidence_attribution_engine
 from . import institutional_evidence_graph
+from . import decision_intelligence_center
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -431,6 +432,33 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
         out=institutional_evidence_graph.explain(identifier); return j(out,200 if out.get('ok') else 404)
     @app.get('/apex_os/evidence_graph')
     def evidence_graph_dashboard(): return render_template('institutional_evidence_graph.html')
+
+    # APEX 14 Sprint 10.4 — unified Decision Intelligence Center.
+    @app.get('/api/dic/status')
+    def dic_status(): return jsonify({'ok':True,**decision_intelligence_center.status()})
+    @app.get('/api/dic/summary/<identifier>')
+    def dic_summary(identifier):
+        out=decision_intelligence_center.summary(identifier); return j(out,200 if out.get('ok') else 404)
+    @app.get('/api/dic/dashboard/<identifier>')
+    def dic_dashboard(identifier):
+        out=decision_intelligence_center.dashboard(identifier); return j(out,200 if out.get('ok') else 404)
+    @app.get('/api/dic/evidence/<identifier>')
+    def dic_evidence(identifier):
+        out=decision_intelligence_center.dashboard(identifier); return j({'ok':False,'status':'UNAVAILABLE'},404) if not out.get('ok') else jsonify({'ok':True,'supporting_evidence':out['supporting_evidence'],'conflicting_evidence':out['conflicting_evidence']})
+    @app.get('/api/dic/confidence/<identifier>')
+    def dic_confidence(identifier):
+        out=decision_intelligence_center.dashboard(identifier); return j({'ok':False,'status':'UNAVAILABLE'},404) if not out.get('ok') else jsonify({'ok':True,'confidence':out['confidence']})
+    @app.get('/api/dic/timeline/<identifier>')
+    def dic_timeline(identifier):
+        out=decision_intelligence_center.dashboard(identifier); return j({'ok':False,'status':'UNAVAILABLE'},404) if not out.get('ok') else jsonify({'ok':True,'timeline':out['timeline']})
+    @app.get('/api/dic/risk/<identifier>')
+    def dic_risk(identifier):
+        out=decision_intelligence_center.dashboard(identifier); return j({'ok':False,'status':'UNAVAILABLE'},404) if not out.get('ok') else jsonify({'ok':True,'risk':out['risk'],'invalidation':out['invalidation']})
+    @app.get('/api/dic/governance/<identifier>')
+    def dic_governance(identifier):
+        out=decision_intelligence_center.dashboard(identifier); return j({'ok':False,'status':'UNAVAILABLE'},404) if not out.get('ok') else jsonify({'ok':True,'governance':out['governance']})
+    @app.get('/apex_os/decision_intelligence_center')
+    def dic_dashboard_page(): return render_template('decision_intelligence_center.html')
 
     @app.get('/apex_os/decision_intelligence')
     def decision_intelligence_dashboard(): return render_template('decision_intelligence_core.html')
