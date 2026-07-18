@@ -392,6 +392,15 @@ except Exception as _release_err:
     RELEASE_ROUTES_AVAILABLE = False
     print(f"APEX release manager routes unavailable (non-fatal): {_release_err}", flush=True)
 
+# APEX 11.0D — Operations Center and system checks (isolated, read-only).
+try:
+    from engine.operations_routes import register_operations_routes
+    OPERATIONS_ROUTES_AVAILABLE = True
+except Exception as _ops_err:
+    register_operations_routes = None  # type: ignore[assignment]
+    OPERATIONS_ROUTES_AVAILABLE = False
+    print(f"APEX Operations Center routes unavailable (non-fatal): {_ops_err}", flush=True)
+
 WRITE_FEATURES_IN_SCANNER = os.getenv("WRITE_FEATURES_IN_SCANNER", "true").lower() == "true"
 FEATURE_WRITE_SESSIONS = {
     s.strip().upper() for s in
@@ -8143,6 +8152,10 @@ try:
               f"/api/system/{{version,build,features,migrations,integrity,release}}.",
               flush=True)
         print("APEX 10 production readiness routes registered.", flush=True)
+
+    if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
+        register_operations_routes(app)
+        print("APEX Operations Center routes registered (11.0D).", flush=True)
 except Exception as e:
     PRODUCTION_ROUTES_AVAILABLE = False
     print(f"APEX 10 production route registration unavailable (non-fatal): {e}", flush=True)
