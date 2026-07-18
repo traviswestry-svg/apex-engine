@@ -56,3 +56,6 @@ def get_release_metadata() -> dict[str, Any]:
         "migration_status": "CURRENT",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+# Backward-compatible alias used by app.py
+APP_VERSION = APPLICATION_VERSION
