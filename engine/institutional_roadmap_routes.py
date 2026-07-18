@@ -15,6 +15,7 @@ from . import shadow_validation
 from . import production_governance
 from . import canary_deployment
 from . import institutional_release_manager
+from . import decision_intelligence_core
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -370,3 +371,33 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def institutional_similarity_dashboard(): return render_template('institutional_similarity_lab.html')
     @app.get('/apex_os/adaptive_learning')
     def roadmap_learning_dashboard(): return render_template('adaptive_learning.html')
+
+    # APEX 14 Sprint 10.1 — immutable Decision Intelligence Core.
+    @app.get('/api/decision-intelligence/status')
+    def decision_intelligence_status(): return jsonify({'ok':True,**decision_intelligence_core.status()})
+    @app.get('/api/decision-intelligence/records')
+    def decision_intelligence_records(): return jsonify({'ok':True,'status':'READY','records':decision_intelligence_core.list_records(int(request.args.get('limit',100)))})
+    @app.post('/api/decision-intelligence/capture')
+    def decision_intelligence_capture():
+        b=request.get_json(silent=True) or {}; rid=str(b.get('recommendation_id') or '').strip()
+        payload=b.get('decision_source') if isinstance(b.get('decision_source'),dict) else current()
+        out=decision_intelligence_core.capture(payload,recommendation_id=rid,actor=str(b.get('actor') or 'API'),session_state=b.get('session_state'))
+        return j(out,201 if out.get('created') else (200 if out.get('ok') else 409))
+    @app.get('/api/decision-intelligence/<identifier>')
+    def decision_intelligence_record(identifier):
+        out=decision_intelligence_core.get(identifier)
+        return j({'ok':False,'status':'UNAVAILABLE','error':'not_found'},404) if out is None else jsonify({'ok':True,'record':out})
+    @app.get('/api/decision-intelligence/<identifier>/evidence')
+    def decision_intelligence_evidence(identifier):
+        out=decision_intelligence_core.get(identifier)
+        return j({'ok':False,'status':'UNAVAILABLE','error':'not_found'},404) if out is None else jsonify({'ok':True,'status':'READY','decision_id':out['decision_id'],'evidence':out['evidence']})
+    @app.get('/api/decision-intelligence/<identifier>/contributions')
+    def decision_intelligence_contributions(identifier):
+        out=decision_intelligence_core.get(identifier)
+        return j({'ok':False,'status':'UNAVAILABLE','error':'not_found'},404) if out is None else jsonify({'ok':True,'status':'READY','decision_id':out['decision_id'],'contributions':out['contributions']})
+    @app.get('/api/decision-intelligence/<identifier>/timeline')
+    def decision_intelligence_timeline(identifier):
+        out=decision_intelligence_core.get(identifier)
+        return j({'ok':False,'status':'UNAVAILABLE','error':'not_found'},404) if out is None else jsonify({'ok':True,'status':'READY','decision_id':out['decision_id'],'timeline':out['timeline']})
+    @app.get('/apex_os/decision_intelligence')
+    def decision_intelligence_dashboard(): return render_template('decision_intelligence_core.html')
