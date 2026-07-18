@@ -8078,7 +8078,9 @@ try:
 
     if RELEASE_ROUTES_AVAILABLE and register_release_manager_routes is not None:
         register_release_manager_routes(app)
-        print(f"APEX Release Manager routes registered ({VERSION}).", flush=True)
+        print(f"APEX Release Manager routes registered ({VERSION}) — "
+              f"/api/system/{{version,build,features,migrations,integrity,release}}.",
+              flush=True)
         print("APEX 10 production readiness routes registered.", flush=True)
 except Exception as e:
     PRODUCTION_ROUTES_AVAILABLE = False
