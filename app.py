@@ -233,6 +233,24 @@ except Exception as _dc_err:
     DECISION_INTEL_AVAILABLE = False
     print(f"APEX Decision Intelligence unavailable (non-fatal): {_dc_err}", flush=True)
 
+# APEX 11.2/11.3 — Institutional Narrative, Consensus, Conviction, Decision Review & Replay
+try:
+    from engine.institutional_intelligence_routes import register_institutional_intelligence_routes
+    INSTITUTIONAL_NARRATIVE_AVAILABLE = True
+except Exception as _iin_err:
+    register_institutional_intelligence_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_NARRATIVE_AVAILABLE = False
+    print(f"APEX Institutional Narrative/Replay unavailable (non-fatal): {_iin_err}", flush=True)
+
+# APEX 11.4-12.3 — Historical Intelligence, Similarity Research, and Governed Learning
+try:
+    from engine.institutional_roadmap_routes import register_institutional_roadmap_routes
+    INSTITUTIONAL_ROADMAP_AVAILABLE = True
+except Exception as _roadmap_err:
+    register_institutional_roadmap_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_ROADMAP_AVAILABLE = False
+    print(f"APEX Institutional Roadmap unavailable (non-fatal): {_roadmap_err}", flush=True)
+
 # APEX 7.6.0 — Institutional Premium Strategy Engine (structure selection, read-only)
 try:
     from engine.premium_strategy_routes import (
@@ -7925,6 +7943,21 @@ try:
 except Exception as e:
     print(f"Premium Strategy unavailable (non-fatal): {e}", flush=True)
 
+# APEX 11.2/11.3 — Institutional narrative and replay routes.
+try:
+    if INSTITUTIONAL_NARRATIVE_AVAILABLE and register_institutional_intelligence_routes is not None:
+        def _iin_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+        register_institutional_intelligence_routes(app, last_result_provider=_iin_last_result)
+        print("APEX Institutional Narrative/Replay routes registered (11.2/11.3).", flush=True)
+except Exception as e:
+    INSTITUTIONAL_NARRATIVE_AVAILABLE = False
+    print(f"Institutional Narrative/Replay registration unavailable (non-fatal): {e}", flush=True)
+
 # APEX 11.0C Module 3 — Probability Distribution. Read-only consumer of the bus;
 # derives a live scenario distribution, makes no historical claims.
 try:
@@ -8150,6 +8183,14 @@ def _apex10_capabilities():
         "dashboard_evidence": bool(DASHBOARD_EVIDENCE_ROUTES_AVAILABLE),
         "institutional_state": bool(INSTITUTIONAL_STATE_ROUTES_AVAILABLE),
     }
+
+try:
+    if INSTITUTIONAL_ROADMAP_AVAILABLE and register_institutional_roadmap_routes is not None:
+        register_institutional_roadmap_routes(app, last_result_provider=_apex10_last_result)
+        print("APEX 11.4-12.3 institutional roadmap routes registered.", flush=True)
+except Exception as e:
+    INSTITUTIONAL_ROADMAP_AVAILABLE = False
+    print(f"APEX 11.4-12.3 route registration unavailable (non-fatal): {e}", flush=True)
 
 try:
     if PRODUCTION_ROUTES_AVAILABLE and register_production_routes is not None:
