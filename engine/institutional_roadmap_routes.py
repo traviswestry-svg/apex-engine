@@ -16,6 +16,7 @@ from . import production_governance
 from . import canary_deployment
 from . import institutional_release_manager
 from . import decision_intelligence_core
+from . import confidence_attribution_engine
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -399,5 +400,21 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def decision_intelligence_timeline(identifier):
         out=decision_intelligence_core.get(identifier)
         return j({'ok':False,'status':'UNAVAILABLE','error':'not_found'},404) if out is None else jsonify({'ok':True,'status':'READY','decision_id':out['decision_id'],'timeline':out['timeline']})
+    # APEX 14 Sprint 10.2 — deterministic Confidence Attribution Engine.
+    @app.get('/api/decision-intelligence/confidence/status')
+    def confidence_attribution_status(): return jsonify({'ok':True,**confidence_attribution_engine.status()})
+    @app.get('/api/decision-intelligence/confidence/analyses')
+    def confidence_attribution_analyses(): return jsonify({'ok':True,'status':'READY','analyses':confidence_attribution_engine.list_analyses(int(request.args.get('limit',100)))})
+    @app.post('/api/decision-intelligence/<identifier>/confidence/analyze')
+    def confidence_attribution_analyze(identifier):
+        b=request.get_json(silent=True) or {}; out=confidence_attribution_engine.analyze(identifier,actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else (200 if out.get('ok') else 404))
+    @app.get('/api/decision-intelligence/<identifier>/confidence')
+    def confidence_attribution_explain(identifier):
+        out=confidence_attribution_engine.explain(identifier)
+        return j(out,200 if out.get('ok') else 404)
+    @app.get('/apex_os/confidence_attribution')
+    def confidence_attribution_dashboard(): return render_template('confidence_attribution.html')
+
     @app.get('/apex_os/decision_intelligence')
     def decision_intelligence_dashboard(): return render_template('decision_intelligence_core.html')
