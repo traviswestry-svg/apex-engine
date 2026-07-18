@@ -382,13 +382,17 @@ except Exception as _prod_err:
     PRODUCTION_ROUTES_AVAILABLE = False
     print(f"APEX 10 production routes unavailable (non-fatal): {_prod_err}", flush=True)
 
+# APEX 10.0.2 — Release Manager metadata and read-only release APIs.
+# Import here, but register only after the Flask app has been created.
 try:
+    from engine.release_manager import APPLICATION_VERSION as RELEASE_APP_VERSION
     from engine.release_routes import register_release_manager_routes
-
-    register_release_manager_routes(app)
-    print("APEX release manager routes registered.")
-except Exception as exc:
-    print(f"APEX release manager routes unavailable (non-fatal): {exc}")
+    RELEASE_ROUTES_AVAILABLE = True
+except Exception as _release_err:
+    RELEASE_APP_VERSION = "10.0.2_RELEASE_MANAGER"
+    register_release_manager_routes = None  # type: ignore[assignment]
+    RELEASE_ROUTES_AVAILABLE = False
+    print(f"APEX release manager routes unavailable (non-fatal): {_release_err}", flush=True)
 
 WRITE_FEATURES_IN_SCANNER = os.getenv("WRITE_FEATURES_IN_SCANNER", "true").lower() == "true"
 FEATURE_WRITE_SESSIONS = {
@@ -8073,14 +8077,18 @@ def _apex10_capabilities():
 try:
     if PRODUCTION_ROUTES_AVAILABLE and register_production_routes is not None:
         register_production_routes(app, capability_provider=_apex10_capabilities)
-
-    if RELEASE_ROUTES_AVAILABLE and register_release_routes is not None:
-        register_release_routes(app)
-        print(f"APEX Release Manager routes registered ({VERSION}).", flush=True)
         print("APEX 10 production readiness routes registered.", flush=True)
 except Exception as e:
     PRODUCTION_ROUTES_AVAILABLE = False
     print(f"APEX 10 production route registration unavailable (non-fatal): {e}", flush=True)
+
+try:
+    if RELEASE_ROUTES_AVAILABLE and register_release_manager_routes is not None:
+        register_release_manager_routes(app)
+        print(f"APEX Release Manager routes registered ({VERSION}).", flush=True)
+except Exception as e:
+    RELEASE_ROUTES_AVAILABLE = False
+    print(f"APEX release manager route registration unavailable (non-fatal): {e}", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
