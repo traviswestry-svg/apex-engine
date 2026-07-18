@@ -365,6 +365,26 @@ def dispatch_and_log(
         _log_recommendation(ticker, panel, session_date, _safe_float(spot))
         out["logged"] = _DB_READY
 
+        # APEX 11.0E — capture the complete immutable decision-time genome.
+        # This is deliberately independent of the legacy premium scorecard so
+        # chain-priced economics, quote quality, evidence and provenance exist
+        # before any history-dependent calibration is attempted.
+        try:
+            from .recommendation_ledger import build_capture, record_recommendation
+            _capture = build_capture(
+                ticker=ticker, panel=panel, last_result=lr,
+                session_date=session_date, spot=_safe_float(spot),
+                application_version=os.getenv("APEX_VERSION") or os.getenv("APP_VERSION") or "11.0E",
+            )
+            _ledger_result = record_recommendation(_capture)
+            out["ledger_recorded"] = bool(_ledger_result.get("created") or _ledger_result.get("duplicate"))
+            out["recommendation_id"] = _ledger_result.get("recommendation_id")
+            out["ledger_duplicate"] = bool(_ledger_result.get("duplicate"))
+        except Exception as _ledger_error:  # pragma: no cover - capture must never stop live decisions
+            out["ledger_recorded"] = False
+            out["ledger_error"] = str(_ledger_error)
+            print(f"Recommendation ledger capture failed (non-fatal): {_ledger_error}", flush=True)
+
         # Alert only for actionable structures (a flip TO stand-aside is silent).
         if dispatcher and strategy != _NO_TRADE:
             try:

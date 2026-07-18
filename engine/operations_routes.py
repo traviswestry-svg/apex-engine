@@ -135,6 +135,40 @@ def _clock_check() -> Dict[str, Any]:
     return _check("PASS", "Server clock is available", utc=now.isoformat(), epoch=now.timestamp(), timezone="UTC")
 
 
+
+
+def _recommendation_ledger_check() -> Dict[str, Any]:
+    try:
+        from .recommendation_ledger import health as ledger_health, coverage as ledger_coverage, counts as ledger_counts
+        health = ledger_health()
+        coverage = ledger_coverage()
+        counts = ledger_counts()
+        if health.get("status") == "FAIL":
+            return _check("FAIL", "Recommendation ledger is not writable", health=health, coverage=coverage, counts=counts)
+        if counts.get("total", 0) == 0:
+            return _check("BLOCKED", "Recommendation ledger is ready and waiting for live captures", health=health, coverage=coverage, counts=counts)
+        if counts.get("gradeable", 0) == 0:
+            return _check("BLOCKED", "Recommendation ledger is capturing records but has no executable outcomes yet", health=health, coverage=coverage, counts=counts)
+        status = "PASS" if coverage.get("coverage_pct") == 100 else "WARN"
+        return _check(status, "Recommendation ledger is capturing durable decision records", health=health, coverage=coverage, counts=counts)
+    except Exception as exc:
+        return _check("FAIL", "Recommendation ledger functional check failed", error=str(exc))
+
+
+def _outcome_grader_check() -> Dict[str, Any]:
+    try:
+        from .recommendation_ledger import counts as ledger_counts, list_recommendations
+        c = ledger_counts()
+        pending = len(list_recommendations(limit=500, unresolved_only=True))
+        if c.get("total", 0) == 0:
+            return _check("BLOCKED", "Outcome grader is waiting for captured recommendations", pending=0)
+        if pending:
+            return _check("WARN", "Recommendations are awaiting executable close or settlement economics", pending=pending,
+                          policy="No directional proxy grading")
+        return _check("PASS", "All captured recommendations have terminal outcomes", pending=0)
+    except Exception as exc:
+        return _check("FAIL", "Outcome grader check failed", error=str(exc))
+
 def _route_group_check(app, title: str, routes: List[str], *, blocked_when_missing: bool = False) -> Dict[str, Any]:
     present = [r for r in routes if _route_exists(app, r)]
     missing = [r for r in routes if r not in present]
@@ -152,14 +186,8 @@ def _all_checks(app) -> Dict[str, Dict[str, Any]]:
         "database": _database_check(),
         "data_freshness": _route_group_check(app, "Market-data health", ["/api/market_health", "/api/market_status"]),
         "providers": _providers_check(),
-        "recommendation_ledger": _route_group_check(
-            app, "Recommendation ledger",
-            ["/api/recommendation-ledger/health", "/api/recommendation-ledger/coverage"],
-            blocked_when_missing=True),
-        "outcome_grader": _route_group_check(
-            app, "Outcome grader",
-            ["/api/recommendation-ledger/pending-grades", "/api/recommendation-ledger/grade-due"],
-            blocked_when_missing=True),
+        "recommendation_ledger": _recommendation_ledger_check(),
+        "outcome_grader": _outcome_grader_check(),
         "chain_quality": _route_group_check(app, "Chain quality", ["/api/options_chain_intelligence", "/api/premium_strategy"]),
         "execution": _route_group_check(app, "Execution", ["/api/broker/etrade/status", "/api/trade/spx/preview-entry"]),
         "clock": _clock_check(),
