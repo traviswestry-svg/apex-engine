@@ -17,6 +17,7 @@ from . import canary_deployment
 from . import institutional_release_manager
 from . import decision_intelligence_core
 from . import confidence_attribution_engine
+from . import institutional_evidence_graph
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -415,6 +416,21 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
         return j(out,200 if out.get('ok') else 404)
     @app.get('/apex_os/confidence_attribution')
     def confidence_attribution_dashboard(): return render_template('confidence_attribution.html')
+
+    # APEX 14 Sprint 10.3 — immutable Institutional Evidence Graph.
+    @app.get('/api/decision-intelligence/graph/status')
+    def evidence_graph_status(): return jsonify({'ok':True,**institutional_evidence_graph.status()})
+    @app.get('/api/decision-intelligence/graphs')
+    def evidence_graphs(): return jsonify({'ok':True,'status':'READY','graphs':institutional_evidence_graph.list_graphs(int(request.args.get('limit',100)))})
+    @app.post('/api/decision-intelligence/<identifier>/graph/build')
+    def evidence_graph_build(identifier):
+        b=request.get_json(silent=True) or {}; out=institutional_evidence_graph.create(identifier,actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else (200 if out.get('ok') else 404))
+    @app.get('/api/decision-intelligence/<identifier>/graph')
+    def evidence_graph_get(identifier):
+        out=institutional_evidence_graph.explain(identifier); return j(out,200 if out.get('ok') else 404)
+    @app.get('/apex_os/evidence_graph')
+    def evidence_graph_dashboard(): return render_template('institutional_evidence_graph.html')
 
     @app.get('/apex_os/decision_intelligence')
     def decision_intelligence_dashboard(): return render_template('decision_intelligence_core.html')
