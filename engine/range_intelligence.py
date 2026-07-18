@@ -566,13 +566,26 @@ def _invalidation(scenario: str) -> List[str]:
 #  Self-evaluation — range_projection_history
 # ════════════════════════════════════════════════════════════════════════════
 
-_DB_PATH = os.getenv("RANGE_DB_PATH", os.getenv("DIRECTOR_DB_PATH", os.getenv("DB_PATH", "apex_tracking.db")))
+def _db_path() -> str:
+    """Resolve the DB path at CALL time, not import time.
+
+    Binding at import makes the module's storage depend on which importer wins the
+    race: a test that sets RANGE_DB_PATH in its own header is silently ignored if
+    anything imported this module first (app.py, another test). The result is a
+    suite that passes or fails on collection order — which is how this surfaced.
+    """
+    return os.getenv("RANGE_DB_PATH",
+                     os.getenv("DIRECTOR_DB_PATH", os.getenv("DB_PATH", "apex_tracking.db")))
+
+
+# Back-compat: some callers read the module attribute directly.
+_DB_PATH = _db_path()
 _LOCK = threading.RLock()
 _INIT = False
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_DB_PATH, timeout=10)
+    conn = sqlite3.connect(_db_path(), timeout=10)
     conn.execute("PRAGMA journal_mode=WAL;")
     return conn
 
@@ -583,7 +596,7 @@ def init_history() -> bool:
         if _INIT:
             return True
         try:
-            d = os.path.dirname(_DB_PATH)
+            d = os.path.dirname(_db_path())
             if d:
                 os.makedirs(d, exist_ok=True)
             conn = _connect()
