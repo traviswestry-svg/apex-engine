@@ -3195,3 +3195,57 @@ html { overflow-x: hidden; }
 .market-status-value.good{color:#5de39a}.market-status-value.warn{color:#f6c85f}
 @media(max-width:1200px){.market-status-strip{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:720px){.market-status-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* ══ APEX 11.0C — Probability Distribution + Confirmation Scanner ══════════ */
+.mc-liveintel { gap: 12px; }
+.mc-prob, .mc-confirm {
+  flex: 1; min-width: 0; background: var(--panel2, #111827);
+  border: 1px solid var(--bdr, #232d3f); border-radius: var(--radius, 8px);
+  padding: 12px 14px;
+}
+.mc-prob-basis {
+  font: 400 9px/1 var(--mono, monospace); letter-spacing: .06em;
+  color: var(--faint, #64748b); text-transform: uppercase;
+  border: 1px solid var(--bdr, #232d3f); border-radius: 3px; padding: 2px 5px; margin-left: 8px;
+}
+.mc-prob-lean, .mc-confirm-verdict, .mc-confirm-mult {
+  font: 600 10px/1 var(--mono, monospace); letter-spacing: .04em; margin-left: auto;
+}
+.mc-prob-lean.up, .mc-confirm-verdict.up, .mc-confirm-mult.up { color: var(--green, #22c55e); }
+.mc-prob-lean.dn, .mc-confirm-verdict.dn, .mc-confirm-mult.dn { color: var(--red, #ef4444); }
+.mc-prob-lean.bal, .mc-confirm-verdict.bal, .mc-confirm-mult.bal { color: var(--muted, #8a94a3); }
+.mc-prob-bars { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.mc-prob-row { display: flex; align-items: center; gap: 8px; }
+.mc-prob-row.lead .mc-prob-lbl { color: var(--text, #e6ebf2); font-weight: 600; }
+.mc-prob-lbl {
+  flex: 0 0 108px; font: 400 11px/1.3 var(--sans, sans-serif);
+  color: var(--muted, #8a94a3); text-align: right;
+}
+.mc-prob-track {
+  flex: 1; height: 14px; background: rgba(255,255,255,.03);
+  border-radius: 3px; overflow: hidden;
+}
+.mc-prob-fill { display: block; height: 100%; border-radius: 3px; transition: width .5s ease; }
+.mc-prob-fill.up  { background: linear-gradient(90deg, rgba(34,197,94,.35), var(--green, #22c55e)); }
+.mc-prob-fill.dn  { background: linear-gradient(90deg, rgba(239,68,68,.35), var(--red, #ef4444)); }
+.mc-prob-fill.bal { background: linear-gradient(90deg, rgba(56,189,248,.3), var(--blue, #38bdf8)); }
+.mc-prob-pct {
+  flex: 0 0 34px; text-align: right;
+  font: 600 11px/1 var(--mono, monospace); color: var(--text, #e6ebf2);
+}
+.mc-prob-note, .mc-confirm-foot {
+  margin-top: 10px; font: 400 10px/1.4 var(--sans, sans-serif); color: var(--faint, #64748b);
+}
+.mc-prob-idle { font: 400 11px/1.4 var(--sans, sans-serif); color: var(--faint, #64748b); padding: 8px 0; }
+.mc-confirm-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mc-chip {
+  font: 500 10px/1 var(--mono, monospace); letter-spacing: .02em;
+  padding: 4px 7px; border-radius: 4px; border: 1px solid var(--bdr, #232d3f);
+  cursor: default;
+}
+.mc-chip.ok { color: var(--green, #22c55e); border-color: rgba(34,197,94,.4); background: rgba(34,197,94,.06); }
+.mc-chip.no { color: var(--red, #ef4444); border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.06); }
+@media (max-width: 720px) {
+  .mc-liveintel { flex-direction: column; }
+  .mc-prob-lbl { flex-basis: 88px; font-size: 10px; }
+}
