@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Iterable, List, Optional
 
-CHAIN_QUALITY_VERSION = "1.1.0"
+CHAIN_QUALITY_VERSION = "1.2.0"
 
 
 def _f(value: Any) -> Optional[float]:
@@ -73,21 +73,47 @@ def evaluate_chain_quality(
 
     shape_violations = 0
     ordered = sorted(usable, key=lambda r: (_f(r.get("strike")) or 0.0))
+    # Shape is tested against EXECUTABLE prices, not mids. Wide, asymmetric 0DTE
+    # quotes routinely invert the mids without any executable arbitrage existing
+    # — the exact false positive a mid-based test produces. A monotonicity
+    # violation is only real if you could actually put it on for a credit:
+    #   calls: ask(low K) < bid(high K)  -> buy low / sell high, collect a credit
+    #   puts:  ask(high K) < bid(low K)  -> buy high / sell low, collect a credit
+    # Everything short of that is spread noise, not a broken chain.
+    convexity_violations = 0
     for left, right in zip(ordered, ordered[1:]):
-        def mid(row):
-            m = _f(row.get("mid"))
-            if m is not None:
-                return m
-            b, a = _f(row.get("bid")), _f(row.get("ask"))
-            return (b + a) / 2 if b is not None and a is not None else None
-        lmid, rmid = mid(left), mid(right)
-        if lmid is None or rmid is None:
+        lb, la = _f(left.get("bid")), _f(left.get("ask"))
+        rb, ra = _f(right.get("bid")), _f(right.get("ask"))
+        if None in (lb, la, rb, ra):
             continue
         side = str(left.get("side") or "").upper()
-        if side == "CALL" and rmid > lmid + 0.01:
+        if side == "CALL" and la < rb:          # ask(lower strike) < bid(higher strike)
             shape_violations += 1
-        elif side == "PUT" and rmid < lmid - 0.01:
+        elif side == "PUT" and ra < lb:         # ask(higher strike) < bid(lower strike)
             shape_violations += 1
+
+    # Convexity (butterfly no-arbitrage): a call/put value curve must be convex in
+    # strike, so the cheapest executable body cannot fall below the two wings by
+    # more than the executable cost of the fly. Tested only on equal strike spacing,
+    # and only when a fly could actually be assembled for a credit — same
+    # executable-price discipline as the monotonicity test above.
+    # A long butterfly (buy 1 lower wing, buy 1 upper wing, sell 2 bodies) can
+    # never be entered for a credit on a convex curve — that would be free money.
+    # Executable worst case: pay ask on both wings, receive bid on the two bodies.
+    # Violation iff 2*body_bid > wing_ask_low + wing_ask_high, i.e. the short-fly
+    # collects more than the wings cost even at the worst executable prices.
+    for a, b, c in zip(ordered, ordered[1:], ordered[2:]):
+        ka, kb, kc = _f(a.get("strike")), _f(b.get("strike")), _f(c.get("strike"))
+        if None in (ka, kb, kc):
+            continue
+        if abs((kb - ka) - (kc - kb)) > 1e-6:   # unequal spacing: not a clean fly
+            continue
+        wl_ask, body_bid, wr_ask = _f(a.get("ask")), _f(b.get("bid")), _f(c.get("ask"))
+        if None in (wl_ask, body_bid, wr_ask):
+            continue
+        if 2.0 * body_bid > wl_ask + wr_ask + 1e-9:
+            convexity_violations += 1
+    shape_violations += convexity_violations
 
     valid_count = len(usable)
     quote_coverage = valid_count / total
@@ -157,6 +183,7 @@ def evaluate_chain_quality(
         "crossed_quote_count": crossed, "locked_quote_count": locked,
         "stale_quote_count": stale, "wide_spread_count": wide,
         "missing_quote_count": missing_quote, "shape_violation_count": shape_violations,
+        "convexity_violation_count": convexity_violations,
         "measurable_components": list(measured.keys()),
         "unmeasurable_components": [k for k, (_, v) in components.items() if v is None],
         "thresholds": {"max_quote_age_seconds": max_quote_age_seconds,

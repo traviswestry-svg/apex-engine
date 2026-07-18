@@ -141,9 +141,12 @@ def price_structure(
 
         chain = _Chain(chain_fetcher)
         priced: List[Dict[str, Any]] = []
+        leg_quotes: List[Dict[str, Any]] = []
         credit = 0.0
         for action, side, strike in spec:
             q = chain.quote(symbol, expiration, side, strike)
+            if q is not None:
+                leg_quotes.append(q)
             px, warns = _leg_price(q, action)
             row = {"action": action, "side": side, "strike": strike, "price": px,
                    "bid": _f((q or {}).get("bid")), "ask": _f((q or {}).get("ask")),
@@ -161,6 +164,13 @@ def price_structure(
                 out["warnings"].extend(chain.errors)
                 return out
             credit += px if action == "SELL" else -px
+
+        # Quality is assessed on the EXACT legs used to price the structure, not
+        # the whole chain. A structure is only as trustworthy as the four quotes
+        # it was built from — a pristine chain elsewhere doesn't rescue a stale
+        # short leg. This makes execution feasibility a first-class part of the
+        # price, so a degraded chain cannot outrank a verified one downstream.
+        out["chain_quality"] = _assess_leg_quality(leg_quotes)
 
         out["legs_priced"] = priced
         out["chain_fetches"] = chain.fetches
@@ -183,6 +193,46 @@ def price_structure(
     except Exception as e:  # pragma: no cover
         out["warnings"].append(f"chain pricing recovered: {e}")
         return out
+
+
+def _assess_leg_quality(leg_quotes: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Grade the quotes actually used to price the structure.
+
+    Delegates to the chain-quality gate so there is ONE definition of chain
+    quality in the system, not a second private copy that drifts. Returns a
+    compact summary the ranking layer can act on: grade, score, and an
+    execution_confidence in [0,1] used to cap confidence and break ranking ties
+    so verified-quote structures outrank degraded-quote ones.
+    """
+    try:
+        from .chain_quality import evaluate_chain_quality
+        q = evaluate_chain_quality(leg_quotes)
+    except Exception as e:  # pragma: no cover
+        return {"available": False, "grade": "UNKNOWN", "score": None,
+                "execution_confidence": 0.5, "note": f"quality assessment recovered: {e}"}
+    if not q.get("available"):
+        return {"available": False, "grade": "UNKNOWN", "score": None,
+                "execution_confidence": 0.5,
+                "note": "No quotes available to assess execution quality."}
+    score = q.get("score") or 0.0
+    conf = q.get("score_confidence_pct") or 0.0
+    # execution_confidence blends WHAT the score is with HOW MUCH was measurable:
+    # an unmeasurable chain is not a confident 1.0, it is a discount.
+    execution_confidence = round((score / 100.0) * (conf / 100.0), 3)
+    return {
+        "available": True,
+        "grade": q.get("grade"),
+        "score": score,
+        "score_confidence_pct": conf,
+        "gate_passed": q.get("gate_passed"),
+        "execution_confidence": execution_confidence,
+        "crossed_quote_count": q.get("crossed_quote_count"),
+        "locked_quote_count": q.get("locked_quote_count"),
+        "stale_quote_count": q.get("stale_quote_count"),
+        "shape_violation_count": q.get("shape_violation_count"),
+        "fresh_quote_pct": q.get("fresh_quote_pct"),
+        "warnings": q.get("warnings", []),
+    }
 
 
 def _leg_spec(strategy: str, legs: Dict[str, Any]) -> List[Tuple[str, str, float]]:

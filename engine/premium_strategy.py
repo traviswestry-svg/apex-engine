@@ -722,6 +722,13 @@ def _apply_chain_pricing(strategy: str, legs: Dict[str, Any], pricing: Dict[str,
     else:
         legs.pop("target_exit", None)
     legs["modeled_credit_for_reference"] = legs.pop("entry_credit_modeled", None)
+    # Execution feasibility travels with the price. The ranking layer reads
+    # chain_grade / execution_confidence so a structure priced off degraded quotes
+    # cannot outrank one priced off verified quotes (11.0B).
+    cq = pricing.get("chain_quality") or {}
+    legs["chain_quality"] = cq
+    legs["chain_grade"] = cq.get("grade", "UNKNOWN")
+    legs["execution_confidence"] = cq.get("execution_confidence", 0.5)
     return legs
 
 
@@ -791,6 +798,21 @@ def build_premium_strategy(
                     strategy, confidence, legs = NO_TRADE, min(confidence, 50.0), {}
                     case_label += "->QUALITY_REJECT"
                 else:
+                    # A trade is only as trustworthy as the quotes it was priced
+                    # from. Confidence is CAPPED by execution feasibility, never
+                    # raised by it: a HIGH chain leaves confidence untouched; a
+                    # DEGRADED chain pulls it down. This is what makes a degraded-
+                    # chain structure rank below a verified one (11.0B).
+                    xc = float((legs.get("execution_confidence") or 1.0))
+                    grade = legs.get("chain_grade", "UNKNOWN")
+                    capped = confidence * (0.5 + 0.5 * max(0.0, min(1.0, xc)))
+                    if capped < confidence - 0.5:
+                        reasons.append(
+                            f"Confidence capped from {confidence:.0f} to {capped:.0f}: the "
+                            f"legs were priced off a {grade} chain (execution confidence "
+                            f"{xc:.0%}). Degraded execution quality cannot be outranked by "
+                            f"a cleaner-priced trade.")
+                        confidence = capped
                     exit_plan = _build_exit_plan(strategy, legs, b)
 
         or_model = _opening_range_model(b, conf)
