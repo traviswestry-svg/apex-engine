@@ -19,6 +19,7 @@ from . import decision_intelligence_core
 from . import confidence_attribution_engine
 from . import institutional_evidence_graph
 from . import decision_intelligence_center
+from . import institutional_replay_2
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -459,6 +460,24 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
         out=decision_intelligence_center.dashboard(identifier); return j({'ok':False,'status':'UNAVAILABLE'},404) if not out.get('ok') else jsonify({'ok':True,'governance':out['governance']})
     @app.get('/apex_os/decision_intelligence_center')
     def dic_dashboard_page(): return render_template('decision_intelligence_center.html')
+
+    # APEX 14 Sprint 10.5 — Institutional Replay 2.0.
+    @app.get('/api/replay2/status')
+    def replay2_status(): return jsonify({'ok':True,**institutional_replay_2.status()})
+    @app.get('/api/replay2/replays')
+    def replay2_list(): return jsonify({'ok':True,'status':'READY','replays':institutional_replay_2.list_replays(int(request.args.get('limit',100)))})
+    @app.post('/api/replay2/<identifier>/build')
+    def replay2_build(identifier):
+        b=request.get_json(silent=True) or {}; out=institutional_replay_2.create(identifier,actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else (200 if out.get('ok') else 404))
+    @app.get('/api/replay2/<identifier>')
+    def replay2_get(identifier):
+        out=institutional_replay_2.get(identifier); return j(out,200 if out.get('ok') else 404)
+    @app.get('/api/replay2/<identifier>/frames')
+    def replay2_frames(identifier):
+        out=institutional_replay_2.get(identifier); return j(out,404) if not out.get('ok') else jsonify({'ok':True,'decision_id':out['decision_id'],'frames':out['replay']['frames']})
+    @app.get('/apex_os/institutional_replay')
+    def replay2_dashboard(): return render_template('institutional_replay_2.html')
 
     @app.get('/apex_os/decision_intelligence')
     def decision_intelligence_dashboard(): return render_template('decision_intelligence_core.html')
