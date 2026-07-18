@@ -401,6 +401,15 @@ except Exception as _ops_err:
     OPERATIONS_ROUTES_AVAILABLE = False
     print(f"APEX Operations Center routes unavailable (non-fatal): {_ops_err}", flush=True)
 
+# APEX 11.0E — Durable Recommendation Ledger.
+try:
+    from engine.recommendation_ledger_routes import register_recommendation_ledger_routes
+    RECOMMENDATION_LEDGER_ROUTES_AVAILABLE = True
+except Exception as _ledger_err:
+    register_recommendation_ledger_routes = None  # type: ignore[assignment]
+    RECOMMENDATION_LEDGER_ROUTES_AVAILABLE = False
+    print(f"APEX Recommendation Ledger unavailable (non-fatal): {_ledger_err}", flush=True)
+
 WRITE_FEATURES_IN_SCANNER = os.getenv("WRITE_FEATURES_IN_SCANNER", "true").lower() == "true"
 FEATURE_WRITE_SESSIONS = {
     s.strip().upper() for s in
@@ -8156,6 +8165,10 @@ try:
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)
         print("APEX Operations Center routes registered (11.0D).", flush=True)
+
+    if RECOMMENDATION_LEDGER_ROUTES_AVAILABLE and register_recommendation_ledger_routes is not None:
+        register_recommendation_ledger_routes(app)
+        print("APEX Recommendation Ledger routes registered (11.0E).", flush=True)
 except Exception as e:
     PRODUCTION_ROUTES_AVAILABLE = False
     print(f"APEX 10 production route registration unavailable (non-fatal): {e}", flush=True)
