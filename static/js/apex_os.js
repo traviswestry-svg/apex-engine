@@ -4253,6 +4253,81 @@ function renderMissionControl(d) {
     upd.textContent = (d.updated_at_et || '—') + (flags.length ? ' · ' + flags.join(' · ') : '')
                      + (d.price != null ? ' · ' + activeTicker + ' ' + fmt(d.price) : '');
   }
+
+  /* ── APEX 11.0C: probability distribution + confirmation scanner ── */
+  renderMcProbability(d.probability_distribution || {});
+  renderMcConfirmation(d.confirmation_scan || {});
+}
+
+function renderMcProbability(pd) {
+  const wrap = $('mcProbBars'), note = $('mcProbNote'), lean = $('mcProbLean');
+  if (!wrap) return;
+  if (!pd.available || !(pd.scenarios || []).length) {
+    wrap.innerHTML = '<div class="mc-prob-idle">Scenario distribution activates once the bus is composed.</div>';
+    if (note) note.textContent = '';
+    if (lean) { lean.textContent = ''; lean.className = 'mc-prob-lean'; }
+    return;
+  }
+  /* bars, bearish → bullish, so the strip reads like a spectrum */
+  const order = ['TREND_SELLOFF','MODERATE_SELLOFF','BALANCED_AUCTION','MODERATE_RALLY','LARGE_RALLY'];
+  const byKey = {};
+  pd.scenarios.forEach(s => { byKey[s.scenario] = s; });
+  const maxPct = Math.max.apply(null, pd.scenarios.map(s => s.probability_pct));
+  wrap.innerHTML = order.map(k => {
+    const s = byKey[k]; if (!s) return '';
+    const w = maxPct > 0 ? (s.probability_pct / maxPct * 100) : 0;
+    const tone = s.direction_index > 0 ? 'up' : s.direction_index < 0 ? 'dn' : 'bal';
+    const lead = s.scenario === pd.primary_scenario ? ' lead' : '';
+    return `<div class="mc-prob-row${lead}">
+      <span class="mc-prob-lbl">${esc(s.label)}</span>
+      <span class="mc-prob-track"><span class="mc-prob-fill ${tone}" style="width:${w.toFixed(0)}%"></span></span>
+      <span class="mc-prob-pct">${s.probability_pct.toFixed(0)}%</span>
+    </div>`;
+  }).join('');
+  const dl = pd.directional_lean || {};
+  if (lean) {
+    lean.textContent = (dl.label || 'BALANCED') + ' · bull ' + (dl.bullish_pct||0).toFixed(0)
+      + ' / bal ' + (dl.balanced_pct||0).toFixed(0) + ' / bear ' + (dl.bearish_pct||0).toFixed(0);
+    lean.className = 'mc-prob-lean ' + (dl.label === 'BULLISH' ? 'up' : dl.label === 'BEARISH' ? 'dn' : 'bal');
+  }
+  if (note) note.textContent = pd.distribution_is_informative ? (pd.note || '')
+    : 'Evidence is ambiguous — no scenario is meaningfully favoured.';
+}
+
+function renderMcConfirmation(cs) {
+  const strip = $('mcConfirmStrip'), verdict = $('mcConfirmVerdict'), mult = $('mcConfirmMult');
+  if (!strip) return;
+  if (!cs.available) {
+    strip.innerHTML = '<div class="mc-prob-idle">Confirmation assets unavailable this cycle.</div>';
+    if (verdict) verdict.textContent = '';
+    if (mult) mult.textContent = '';
+    return;
+  }
+  if (!cs.spx_direction) {
+    /* the scanner refuses to lead — say so plainly rather than showing a fake read */
+    strip.innerHTML = '<div class="mc-prob-idle">No SPX direction yet — nothing to confirm. '
+      + 'Confirmation assets only strengthen or weaken an existing view.</div>';
+    if (verdict) { verdict.textContent = 'NEUTRAL'; verdict.className = 'mc-confirm-verdict'; }
+    if (mult) mult.textContent = '×1.00';
+    return;
+  }
+  const chips = (cs.confirmations || []).map(c =>
+      `<span class="mc-chip ok" title="${esc(c.detail)}">${esc(c.asset)} ✓</span>`)
+    .concat((cs.divergences || []).map(x =>
+      `<span class="mc-chip no" title="${esc(x.detail)}">${esc(x.asset)} ✕</span>`));
+  strip.innerHTML = chips.length ? chips.join('')
+    : '<div class="mc-prob-idle">No confirmation assets readable — confidence unchanged.</div>';
+  if (verdict) {
+    const v = cs.verdict || 'MIXED';
+    verdict.textContent = v.replace(/_/g, ' ');
+    verdict.className = 'mc-confirm-verdict ' +
+      (/CONFIRM/.test(v) ? 'up' : /DIVERG/.test(v) ? 'dn' : 'bal');
+  }
+  if (mult) {
+    const m = Number(cs.confidence_multiplier || 1);
+    mult.textContent = '×' + m.toFixed(2);
+    mult.className = 'mc-confirm-mult ' + (m > 1.001 ? 'up' : m < 0.999 ? 'dn' : 'bal');
+  }
 }
 
 function setText(id, v) { const el = $(id); if (el) el.textContent = v; }
