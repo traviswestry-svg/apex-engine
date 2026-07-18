@@ -1,4 +1,3 @@
-cat > engine/release_manager.py <<'PY'
 from __future__ import annotations
 
 import os
@@ -57,4 +56,3 @@ def get_release_metadata() -> dict[str, Any]:
         "migration_status": "CURRENT",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-PY

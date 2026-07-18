@@ -1,4 +1,3 @@
-cat > engine/release_routes.py <<'PY'
 from __future__ import annotations
 
 from flask import jsonify
@@ -53,4 +52,3 @@ def register_release_manager_routes(app) -> None:
     @app.get("/api/system/release")
     def system_release():
         return jsonify(get_release_metadata())
-PY
