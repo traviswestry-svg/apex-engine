@@ -20,6 +20,7 @@ from . import confidence_attribution_engine
 from . import institutional_evidence_graph
 from . import decision_intelligence_center
 from . import institutional_replay_2
+from . import cross_examination_engine
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -478,6 +479,30 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
         out=institutional_replay_2.get(identifier); return j(out,404) if not out.get('ok') else jsonify({'ok':True,'decision_id':out['decision_id'],'frames':out['replay']['frames']})
     @app.get('/apex_os/institutional_replay')
     def replay2_dashboard(): return render_template('institutional_replay_2.html')
+
+    # Sprint 10.6 — Institutional Cross-Examination Engine.
+    @app.get('/api/cross-examination/status')
+    def cross_exam_status(): return jsonify({'ok':True,**cross_examination_engine.status()})
+    @app.get('/api/cross-examination/questions')
+    def cross_exam_questions(): return jsonify({'ok':True,'status':'READY','questions':cross_examination_engine.questions()})
+    @app.post('/api/cross-examination/ask')
+    def cross_exam_ask():
+        b=request.get_json(silent=True) or {}; identifier=str(b.get('identifier') or b.get('decision_id') or '')
+        out=cross_examination_engine.ask(identifier,str(b.get('question') or ''),actor=str(b.get('actor') or 'API'))
+        return j(out,200 if out.get('ok') else 400 if out.get('status')=='INVALID_REQUEST' else 404)
+    @app.get('/api/cross-examination/history')
+    def cross_exam_history_all(): return jsonify({'ok':True,'status':'READY','history':cross_examination_engine.history(limit=int(request.args.get('limit',100)))})
+    @app.get('/api/cross-examination/history/<identifier>')
+    def cross_exam_history(identifier): return jsonify({'ok':True,'status':'READY','history':cross_examination_engine.history(identifier,int(request.args.get('limit',100)))})
+    @app.get('/api/cross-examination/explain/<identifier>')
+    def cross_exam_explain(identifier):
+        out=cross_examination_engine.ask(identifier,str(request.args.get('question') or 'Why did APEX recommend this?'),actor='API',persist=False)
+        return j(out,200 if out.get('ok') else 404)
+    @app.get('/api/cross-examination/compare/<identifier_a>/<identifier_b>')
+    def cross_exam_compare(identifier_a,identifier_b):
+        out=cross_examination_engine.compare(identifier_a,identifier_b); return j(out,200 if out.get('ok') else 404)
+    @app.get('/apex_os/cross_examination')
+    def cross_exam_dashboard(): return render_template('cross_examination.html')
 
     @app.get('/apex_os/decision_intelligence')
     def decision_intelligence_dashboard(): return render_template('decision_intelligence_core.html')
