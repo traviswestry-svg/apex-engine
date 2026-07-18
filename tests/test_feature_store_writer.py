@@ -14,6 +14,22 @@ from engine import flow_pl_store as S
 from engine import feature_store_writer as W
 from engine.feature_store import LeakageError
 
+
+def _future_exp(days: int = 1) -> str:
+    """An expiration that is always in the future.
+
+    Hardcoding a date makes the fixture rot: these tests passed at 571/0 and began
+    failing the next calendar day, with no code change, because is_expired() started
+    returning True. Relative dates cannot rot.
+    """
+    import datetime as _d
+    return (_d.datetime.now(_d.timezone.utc).date() + _d.timedelta(days=days)).isoformat()
+
+
+def _future_exp_compact(days: int = 1) -> str:
+    return _future_exp(days).replace("-", "")
+
+
 SESSION = "2026-07-16"
 FRAMES = [{"session_date": SESSION, "frame_time": "10:26:00", "ticker": "SPX",
            "snapshot_json": '{"gamma_regime":"POSITIVE","ici":58,"stock_price":6295.0}'},
@@ -26,11 +42,11 @@ FRAMES = [{"session_date": SESSION, "frame_time": "10:26:00", "ticker": "SPX",
 
 def _cluster(end="10:31:11", **over):
     c = {"cluster_id": "c_1", "ticker": "SPX", "option_type": "CALL",
-         "expiration": "2026-07-17", "directional_interpretation": "BULLISH",
+         "expiration": _future_exp(), "directional_interpretation": "BULLISH",
          "cluster_key": {"ticker": "SPX", "option_type": "CALL",
-                         "expiration": "2026-07-17",
+                         "expiration": _future_exp(),
                          "directional_interpretation": "BULLISH"},
-         "cluster_key_string": "SPX|CALL|2026-07-17|BULLISH",
+         "cluster_key_string": f"SPX|CALL|{_future_exp()}|BULLISH",
          "start_time": "10:31:02", "end_time": end, "duration_seconds": 9,
          "number_of_prints": 4, "total_premium": 1_819_250, "total_contracts": 3350,
          "weighted_average_execution_price": 5.03, "aggression_score": 100.0,
@@ -236,7 +252,7 @@ def _seed(stores_ignored=None):
 
 def test_settle_labels_writes_from_cluster_excursions(stores):
     _seed()
-    key = "SPX|CALL|2026-07-17|BULLISH"
+    key = f"SPX|CALL|{_future_exp()}|BULLISH"
     S.record_cluster_observation(cluster_key=key, session_date=SESSION, ticker="SPX",
                                  pl_dollars=100_000.0, cost_basis=1_819_250.0)
     S.record_cluster_observation(cluster_key=key, session_date=SESSION, ticker="SPX",
@@ -245,7 +261,7 @@ def test_settle_labels_writes_from_cluster_excursions(stores):
                                  pl_dollars=-1_000_000.0, cost_basis=1_819_250.0)
     r = W.settle_labels(session_date=SESSION)
     assert r["labelled"] == 1
-    pairs = D.load_training_pairs(train_sessions=[SESSION], eval_sessions=["2026-07-17"])
+    pairs = D.load_training_pairs(train_sessions=[SESSION], eval_sessions=["2099-01-01"])
     lab = pairs["train"][0]["labels"]
     assert lab["mfe_dollars"] == 2_500_000.0
     assert lab["mae_dollars"] == -1_000_000.0
@@ -255,7 +271,7 @@ def test_settle_labels_writes_from_cluster_excursions(stores):
 
 def test_label_basis_names_the_thresholds_as_apex_defined(stores):
     _seed()
-    S.record_cluster_observation(cluster_key="SPX|CALL|2026-07-17|BULLISH",
+    S.record_cluster_observation(cluster_key=f"SPX|CALL|{_future_exp()}|BULLISH",
                                  session_date=SESSION, ticker="SPX",
                                  pl_dollars=100.0, cost_basis=1000.0)
     W.settle_labels(session_date=SESSION)
@@ -276,7 +292,7 @@ def test_sample_without_excursions_is_not_labelled(stores):
 
 def test_settle_is_idempotent(stores):
     _seed()
-    S.record_cluster_observation(cluster_key="SPX|CALL|2026-07-17|BULLISH",
+    S.record_cluster_observation(cluster_key=f"SPX|CALL|{_future_exp()}|BULLISH",
                                  session_date=SESSION, ticker="SPX",
                                  pl_dollars=100.0, cost_basis=1000.0)
     W.settle_labels(session_date=SESSION)
@@ -286,17 +302,17 @@ def test_settle_is_idempotent(stores):
 
 def test_labels_settle_at_session_close(stores):
     _seed()
-    S.record_cluster_observation(cluster_key="SPX|CALL|2026-07-17|BULLISH",
+    S.record_cluster_observation(cluster_key=f"SPX|CALL|{_future_exp()}|BULLISH",
                                  session_date=SESSION, ticker="SPX",
                                  pl_dollars=100.0, cost_basis=1000.0)
     W.settle_labels(session_date=SESSION)
-    pairs = D.load_training_pairs(train_sessions=[SESSION], eval_sessions=["2026-07-17"])
+    pairs = D.load_training_pairs(train_sessions=[SESSION], eval_sessions=["2099-01-01"])
     assert pairs["train"][0]["settled_at"] == f"{SESSION}T16:00:00"
 
 
 # ── cluster-level excursions (not summed member excursions) ───────────────
 def test_cluster_excursion_envelope_widens(stores):
-    key = "SPX|CALL|2026-07-17|BULLISH"
+    key = f"SPX|CALL|{_future_exp()}|BULLISH"
     for pl in (100.0, 900.0, -400.0, 50.0):
         S.record_cluster_observation(cluster_key=key, session_date=SESSION,
                                      ticker="SPX", pl_dollars=pl, cost_basis=1000.0)
@@ -306,10 +322,10 @@ def test_cluster_excursion_envelope_widens(stores):
 
 
 def test_cluster_excursions_are_scoped_to_a_session(stores):
-    key = "SPX|CALL|2026-07-17|BULLISH"
+    key = f"SPX|CALL|{_future_exp()}|BULLISH"
     S.record_cluster_observation(cluster_key=key, session_date=SESSION, ticker="SPX",
                                  pl_dollars=900.0, cost_basis=1000.0)
-    assert S.get_cluster_excursions([key], "2026-07-17") == {}
+    assert S.get_cluster_excursions([key], "2099-01-01") == {}
 
 
 def test_cluster_excursion_ignores_none_pl(stores):

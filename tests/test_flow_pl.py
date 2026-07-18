@@ -19,10 +19,26 @@ from engine.flow_pl import (
 )
 
 
+
+def _future_exp(days: int = 1) -> str:
+    """An expiration that is always in the future.
+
+    Hardcoding a date makes the fixture rot: these tests passed at 571/0 and began
+    failing the next calendar day, with no code change, because is_expired() started
+    returning True. Relative dates cannot rot.
+    """
+    import datetime as _d
+    return (_d.datetime.now(_d.timezone.utc).date() + _d.timedelta(days=days)).isoformat()
+
+
+def _future_exp_compact(days: int = 1) -> str:
+    return _future_exp(days).replace("-", "")
+
+
 def _row(**over):
     r = {
         "time_et": "10:31:02", "ticker": "SPX", "contract_type": "CALL",
-        "strike": 6300.0, "expiration": "2026-07-17", "premium": 500_000.0,
+        "strike": 6300.0, "expiration": _future_exp(), "premium": 500_000.0,
         "trade_price": 5.00, "contracts": 1000, "trade_side_code": "ABOVE_ASK",
         "consolidation_type": "SWEEP",
     }
@@ -373,7 +389,7 @@ def test_spread_leg_cluster_warns_package_construction_unknown():
 
 
 def test_roll_cluster_warns_package_construction_unknown():
-    rows = [_row(time_et="10:31:02", expiration="2026-07-17", trade_side_code="AT_BID"),
+    rows = [_row(time_et="10:31:02", expiration=_future_exp(), trade_side_code="AT_BID"),
             _row(time_et="10:31:03", expiration="2026-08-21", trade_side_code="ABOVE_ASK",
                  trade_price=9.40)]
     events = classify_flow_events(rows)["events"]
@@ -504,7 +520,7 @@ def test_forbidden_language_never_appears():
 from engine.flow_pl_pipeline import ChainCache, run_flow_pl, sample_flow_pl
 
 
-def _raw(t, ct, k, px, sz, side, cons="SWEEP", exp="20260717"):
+def _raw(t, ct, k, px, sz, side, cons="SWEEP", exp=_future_exp_compact()):
     return {"ticker": "SPX", "contractType": ct, "strike": k, "expiration": exp,
             "price": px, "size": sz, "premium": px * sz * 100, "tradeSideCode": side,
             "tradeConsolidationType": cons, "tradeTime": f"2026-07-16T{t}"}
@@ -688,7 +704,7 @@ def test_cluster_level_excursions_are_recorded_by_the_pipeline(store):
     run_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=6.00)))
     run_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=9.00)))
     run_flow_pl(**_args(ROWS, chain_fetcher=_chain_fetcher(bid=2.00)))
-    key = "SPX|CALL|2026-07-17|BULLISH"
+    key = f"SPX|CALL|{_future_exp()}|BULLISH"
     from engine.flow_pl_pipeline import session_date
     exc = S.get_cluster_excursions([key], session_date())
     assert key in exc
