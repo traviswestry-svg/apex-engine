@@ -383,14 +383,12 @@ except Exception as _prod_err:
     print(f"APEX 10 production routes unavailable (non-fatal): {_prod_err}", flush=True)
 
 try:
-    from engine.release_routes import register_release_routes
-    from engine.release_manager import APP_VERSION as RELEASE_APP_VERSION
-    RELEASE_ROUTES_AVAILABLE = True
-except Exception as _release_err:
-    register_release_routes = None  # type: ignore[assignment]
-    RELEASE_APP_VERSION = "10.0.2_RELEASE_MANAGER"
-    RELEASE_ROUTES_AVAILABLE = False
-    print(f"APEX release manager routes unavailable (non-fatal): {_release_err}", flush=True)
+    from engine.release_routes import register_release_manager_routes
+
+    register_release_manager_routes(app)
+    print("APEX release manager routes registered.")
+except Exception as exc:
+    print(f"APEX release manager routes unavailable (non-fatal): {exc}")
 
 WRITE_FEATURES_IN_SCANNER = os.getenv("WRITE_FEATURES_IN_SCANNER", "true").lower() == "true"
 FEATURE_WRITE_SESSIONS = {
