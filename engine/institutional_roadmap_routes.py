@@ -13,6 +13,7 @@ from . import institutional_research
 from . import offline_weight_optimization as weight_opt
 from . import shadow_validation
 from . import production_governance
+from . import canary_deployment
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -236,6 +237,37 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def production_audit(): return jsonify({'ok':True,'events':[x for x in gov.audits(int(request.args.get('limit',100))) if x.get('entity_type')=='production_promotion']})
     @app.get('/apex_os/production_governance')
     def production_governance_dashboard(): return render_template('production_governance.html')
+
+    # APEX 13.0 Sprint 9B bounded canary deployment controller.
+    @app.get('/api/production/canary/status')
+    def canary_status(): return jsonify({'ok':True,**canary_deployment.status()})
+    @app.get('/api/production/canaries')
+    def canary_list(): return jsonify({'ok':True,'canaries':canary_deployment.list_canaries(int(request.args.get('limit',100)))})
+    @app.post('/api/production/canaries')
+    def canary_create():
+        b=request.get_json(silent=True) or {}; p=canary_deployment.create(b,actor=str(b.get('actor') or 'API')); return j(p,201 if p.get('ok') else 409)
+    @app.get('/api/production/canaries/<canary_id>')
+    def canary_get(canary_id):
+        p=canary_deployment.canary(canary_id); return j({'ok':False,'status':'UNAVAILABLE','error':'not_found'},404) if not p else jsonify({'ok':True,**p})
+    @app.post('/api/production/canaries/<canary_id>/<action>')
+    def canary_action(canary_id,action):
+        if action not in {'start','pause','complete','stop'}: return j({'ok':False,'status':'UNAVAILABLE','error':'invalid action'},404)
+        b=request.get_json(silent=True) or {}; p=canary_deployment.transition(canary_id,action,actor=str(b.get('actor') or 'API'),reason=str(b.get('reason') or '')); return j(p,200 if p.get('ok') else 409)
+    @app.post('/api/production/canaries/<canary_id>/route')
+    def canary_route(canary_id):
+        b=request.get_json(silent=True) or {}; p=canary_deployment.route(canary_id,str(b.get('recommendation_id') or ''),b.get('context') or {}); return j(p,200 if p.get('ok') else 409)
+    @app.post('/api/production/canaries/<canary_id>/health')
+    def canary_health(canary_id):
+        b=request.get_json(silent=True) or {}; p=canary_deployment.health(canary_id,b,actor=str(b.get('actor') or 'SYSTEM')); return j(p,200 if p.get('ok') else 409)
+    @app.post('/api/production/canaries/<canary_id>/rollback')
+    def canary_rollback(canary_id):
+        b=request.get_json(silent=True) or {}; p=canary_deployment.rollback(canary_id,actor=str(b.get('actor') or 'API'),reason=str(b.get('reason') or 'manual rollback')); return j(p,200 if p.get('ok') else 409)
+    @app.get('/api/production/canary-health')
+    def canary_health_events(): return jsonify({'ok':True,'events':canary_deployment.events(request.args.get('canary_id'),int(request.args.get('limit',100)))})
+    @app.get('/api/production/canary-rollbacks')
+    def canary_rollbacks(): return jsonify({'ok':True,'rollbacks':canary_deployment.rollbacks(int(request.args.get('limit',100)))})
+    @app.get('/apex_os/canary_deployment')
+    def canary_dashboard(): return render_template('canary_deployment.html')
 
     # APEX 13.0 Sprint 1 institutional evidence case files.
     @app.get('/api/evidence/status')
