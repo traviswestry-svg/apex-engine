@@ -7880,6 +7880,40 @@ try:
 except Exception as e:
     print(f"Premium Strategy unavailable (non-fatal): {e}", flush=True)
 
+# APEX 11.0C Module 3 — Probability Distribution. Read-only consumer of the bus;
+# derives a live scenario distribution, makes no historical claims.
+try:
+    from engine.probability_distribution_routes import register_probability_distribution_routes
+
+    def _pd_last_result():
+        try:
+            with STATE_LOCK:
+                return dict(STATE.get("last_result") or {})
+        except Exception:
+            return {}
+
+    register_probability_distribution_routes(app, last_result_provider=_pd_last_result)
+    print("APEX Probability Distribution route registered (11.0.0).", flush=True)
+except Exception as e:
+    print(f"Probability Distribution unavailable (non-fatal): {e}", flush=True)
+
+# APEX 11.0C Module 8 — Confirmation Scanner. Read-only; STRENGTHENS or WEAKENS
+# confidence in the SPX decision only, never originates a direction or replaces SPX.
+try:
+    from engine.confirmation_scanner_routes import register_confirmation_scanner_routes
+
+    def _cs_last_result():
+        try:
+            with STATE_LOCK:
+                return dict(STATE.get("last_result") or {})
+        except Exception:
+            return {}
+
+    register_confirmation_scanner_routes(app, last_result_provider=_cs_last_result)
+    print("APEX Confirmation Scanner route registered (11.0.0).", flush=True)
+except Exception as e:
+    print(f"Confirmation Scanner unavailable (non-fatal): {e}", flush=True)
+
 # APEX 9 Step 2 — Flow Classifier routes. Read-only: the flow source is injected
 # as a closure over the app's EXISTING tape path (_fetch_flow_tape_rows +
 # build_flow_tape), so the classifier never talks to a provider itself and
