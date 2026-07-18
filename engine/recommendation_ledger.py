@@ -307,7 +307,10 @@ def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapp
                  event_at: Optional[str] = None) -> Dict[str, Any]:
     init_db()
     event = event_type.strip().upper().replace("-", "_")
-    allowed = {"ACTIVATED", "QUOTE_SNAPSHOT", "FILL", "CLOSED", "SETTLED", "INVALIDATED", "GRADED"}
+    allowed = {"ACTIVATED", "QUOTE_SNAPSHOT", "FILL", "CLOSED", "SETTLED", "INVALIDATED", "GRADED",
+               "STATE_CHANGE", "NARRATIVE_SNAPSHOT", "CONSENSUS_SNAPSHOT", "CONVICTION_SNAPSHOT",
+               "EXECUTION_SNAPSHOT", "POSITION_QUALITY_SNAPSHOT", "RISK_CHANGE", "INVALIDATION_CHANGE",
+               "MARKET_PROGRESS"}
     if event not in allowed:
         raise ValueError(f"unsupported event_type: {event_type}")
     at = event_at or _iso()
@@ -322,7 +325,7 @@ def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapp
         )
         updates = ["updated_at=?"]
         args: List[Any] = [_iso()]
-        if event != "QUOTE_SNAPSHOT":
+        if event not in {"QUOTE_SNAPSHOT", "NARRATIVE_SNAPSHOT", "CONSENSUS_SNAPSHOT", "CONVICTION_SNAPSHOT", "EXECUTION_SNAPSHOT", "POSITION_QUALITY_SNAPSHOT", "RISK_CHANGE", "INVALIDATION_CHANGE", "MARKET_PROGRESS"}:
             updates.append("state=?")
             args.append(event)
         if event in {"CLOSED", "SETTLED", "INVALIDATED", "GRADED"}:
