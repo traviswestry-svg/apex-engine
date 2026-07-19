@@ -343,6 +343,23 @@
 
   // ── controls ──────────────────────────────────────────────────────────────────
   async function armPlan() {
+    const rec = window.apexPremiumRecommendation || null;
+    if (rec && rec.strategy && rec.strategy !== "NO_TRADE") {
+      const expEl = document.getElementById("expSelect");
+      const expiration = expEl && expEl.value;
+      if (!expiration) { log("pick the recommended expiration before arming the strategy"); return; }
+      const qty = Math.max(1, parseInt($("tccQty").value || "1", 10));
+      log("resolving all contracts for " + (rec.strategy_label || rec.strategy) + "…");
+      try {
+        const r = await fetch("/api/trade/spx/arm-strategy", {method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({recommendation:rec, expiration, quantity:qty})});
+        const j = await r.json();
+        state.complexTicket = j.data || null; state.complexPreviewId = null;
+        renderComplexTicket(j);
+        if (state.complexTicket) { state.armed = true; log((j.ok ? "strategy armed — ready for broker preview" : "strategy populated — execution blocked until all legs validate")); }
+        return;
+      } catch (e) { log("strategy arm failed: " + e); return; }
+    }
     const spot = parseFloat($("tccSpot").value);
     const prem = parseFloat($("tccPrem").value);
     const delta = parseFloat($("tccDelta").value);
@@ -415,8 +432,49 @@
   function mapPrem() { const o = {}; Object.keys(state.lines).forEach((t) => (o[t] = state.lines[t].prem)); return o; }
   function closeModal() { $("tccModal").style.display = "none"; }
 
+  function renderComplexTicket(j) {
+    const box = $("complexTicket"); if (!box) return; box.style.display = "block";
+    const t = (j && j.data) || state.complexTicket || {}; const intent=t.intent||{}; const legs=intent.legs||[];
+    $("complexState").textContent = (t.state||"BLOCKED").replaceAll("_"," ");
+    $("complexState").className = "cc-chip " + (t.ready_for_preview ? "chip-active" : "chip-plan");
+    $("complexSummary").innerHTML = `<div><span>Strategy</span><b>${t.strategy_label||intent.strategy||"—"}</b></div>`+
+      `<div><span>Order</span><b>${intent.price_effect||"—"}</b></div><div><span>Expiration</span><b>${t.expiration||"—"}</b></div>`+
+      `<div><span>DTE</span><b>${t.dte==null?"—":t.dte}</b></div>`;
+    $("complexLegs").innerHTML = legs.map((x,i)=>`<tr><td>${i+1}</td><td><b>${x.action.replace("_"," TO ")}</b></td>`+
+      `<td>${x.side} ${x.strike}<br><small>${x.osi_key||"UNRESOLVED"}</small></td><td>${x.expiration}<br>${t.dte==null?"—":t.dte+" DTE"}</td>`+
+      `<td>${x.bid==null?"—":x.bid} / ${x.ask==null?"—":x.ask}</td><td>${x.mid==null?"—":x.mid}</td></tr>`).join("");
+    const e=t.economics||{}; $("complexEconomics").innerHTML = `<div><b>Recommended limit:</b> $${t.recommended_limit||"—"}</div>`+
+      `<div><b>Max profit:</b> ${e.max_profit==null?"—":money(e.max_profit)}</div><div><b>Max loss:</b> ${e.max_loss==null?"—":money(e.max_loss)}</div>`+
+      `<div><b>Breakeven:</b> ${(e.breakevens||[]).join(" / ")||"—"}</div>`;
+    $("complexLimit").value=t.recommended_limit||""; $("complexQty").value=intent.quantity||1;
+    const errs=(t.errors||j.errors||[]); $("complexErrors").innerHTML=errs.length?`<span class="neg">${errs.join("<br>")}</span>`:`<span class="pos">All contracts resolved and validated.</span>`;
+    $("complexPreview").disabled=!t.ready_for_preview; $("complexSubmit").disabled=true;
+  }
+
+  async function previewComplexStrategy() {
+    const t=state.complexTicket; if(!t){log("arm a strategy first");return;}
+    t.intent.limit_price=parseFloat($("complexLimit").value||t.recommended_limit); t.intent.quantity=parseInt($("complexQty").value||"1",10);
+    t.intent.legs.forEach(x=>x.quantity=t.intent.quantity);
+    try { const r=await fetch("/api/trade/spx/preview-strategy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(t)});
+      const j=await r.json(); state.complexPreviewId=j.data&&j.data.preview_id;
+      const m=$("tccModal"); $("tccModalTitle").textContent="E*TRADE Strategy Preview";
+      $("tccModalBody").innerHTML=j.ok?`<div class="mnote pos">✓ Broker preview approved.</div><div class="mrow"><span>Strategy</span><b>${t.strategy_label}</b></div><div class="mrow"><span>Legs</span><b>${t.intent.legs.length}</b></div><div class="mrow"><span>${t.intent.price_effect}</span><b>$${t.intent.limit_price}</b></div><div class="mrow"><span>Preview ID</span><b>${state.complexPreviewId||"received"}</b></div>`:`<div class="mnote neg">${(j.errors||["Preview failed"]).join("; ")}</div>`;
+      $("tccModalConfirm").style.display="none"; m.style.display="flex"; $("complexSubmit").disabled=!j.ok||!state.complexPreviewId; log(j.ok?"strategy preview approved — review then confirm and submit":"strategy preview blocked");
+    } catch(e){log("strategy preview failed: "+e);}
+  }
+
+  async function submitComplexStrategy() {
+    const t=state.complexTicket; if(!t||!state.complexPreviewId){log("successful preview required");return;}
+    if(!window.confirm("Submit this " + t.strategy_label + " to E*TRADE now?")) return;
+    const payload=Object.assign({},t,{confirmed:true,preview_id:state.complexPreviewId});
+    try { const r=await fetch("/api/trade/spx/place-strategy",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}); const j=await r.json();
+      log(j.ok?"complex strategy submitted":"submission blocked: "+(j.errors||[]).join("; ")); if(j.ok) $("complexSubmit").disabled=true;
+    } catch(e){log("submission failed: "+e);}
+  }
+
   // ── pre-flight order preview: run APEX risk guard (+ E*TRADE cost preview when live) ──
   async function previewOrder() {
+    if (state.complexTicket) return previewComplexStrategy();
     if (!state.armed) { log("arm a plan first"); return; }
     const m = $("tccModal");
     $("tccModalTitle").textContent = "Preview Entry Order — pre-flight";
@@ -516,6 +574,8 @@
     $("tccModeBtn").addEventListener("click", toggleMode);
     $("tccModalClose").addEventListener("click", closeModal);
     const pv = $("tccPreview"); if (pv) pv.addEventListener("click", previewOrder);
+    const cp=$("complexPreview"); if(cp) cp.addEventListener("click",previewComplexStrategy);
+    const cs=$("complexSubmit"); if(cs) cs.addEventListener("click",submitComplexStrategy);
     $("tccReload").addEventListener("click", loadCandles);
     document.querySelectorAll("[data-tccTf]").forEach((b) =>
       b.addEventListener("click", () => setTf(parseInt(b.getAttribute("data-tccTf"), 10))));
