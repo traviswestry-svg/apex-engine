@@ -260,6 +260,46 @@ class ETradeAdapter(BrokerInterface):
         body = self._order_payload(order_intent, preview=False, preview_id=preview_id)
         return self._request("POST", f"/v1/accounts/{key}/orders/place.json", json_body=body)
 
+    def _complex_order_payload(self, intent, preview: bool, *, preview_id: Optional[str] = None) -> Dict[str, Any]:
+        instruments = []
+        for leg in intent.legs:
+            instruments.append({
+                "Product": {"securityType": "OPTN", "symbol": intent.symbol},
+                "orderAction": leg.action,
+                "quantityType": "QUANTITY",
+                "quantity": leg.quantity,
+                "osiKey": leg.osi_key,
+            })
+        order = {
+            "allOrNone": "true" if intent.all_or_none else "false",
+            "priceType": "NET_CREDIT" if intent.price_effect == "NET_CREDIT" else ("NET_DEBIT" if intent.price_effect == "NET_DEBIT" else "LIMIT"),
+            "orderTerm": "GOOD_FOR_DAY" if intent.time_in_force == "DAY" else "GOOD_UNTIL_CANCEL",
+            "marketSession": "REGULAR",
+            "limitPrice": intent.limit_price,
+            "Instrument": instruments,
+        }
+        root = "PreviewOrderRequest" if preview else "PlaceOrderRequest"
+        body = {root: {"orderType": "OPTN", "clientOrderId": uuid.uuid4().hex[:20], "Order": [order]}}
+        if not preview and preview_id:
+            body[root]["PreviewIds"] = [{"previewId": preview_id}]
+        return body
+
+    def preview_complex_order(self, order_intent) -> BrokerResult:
+        key = self.account_id_key
+        if not key:
+            return BrokerResult(ok=False, mode=self.mode, errors=["No ETRADE_ACCOUNT_ID_KEY."])
+        r = self._request("POST", f"/v1/accounts/{key}/orders/preview.json", json_body=self._complex_order_payload(order_intent, True))
+        if r.ok:
+            pid = (((r.data or {}).get("PreviewOrderResponse") or {}).get("PreviewIds") or [{}])[0].get("previewId")
+            r.data["preview_id"] = pid
+        return r
+
+    def place_complex_order(self, preview_id: str, order_intent) -> BrokerResult:
+        if not self.trading_enabled:
+            return BrokerResult(ok=False, mode=self.mode, errors=["Order placement blocked — ETRADE_ENABLE_TRADING is not true."])
+        key = self.account_id_key
+        return self._request("POST", f"/v1/accounts/{key}/orders/place.json", json_body=self._complex_order_payload(order_intent, False, preview_id=preview_id))
+
     def cancel_order(self, order_id: str) -> BrokerResult:
         key = self.account_id_key
         body = {"CancelOrderRequest": {"orderId": order_id}}
