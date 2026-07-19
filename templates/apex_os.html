@@ -193,6 +193,16 @@
     </div>
   </div>
   
+      <section class="apex-panel" id="institutional-decision-panel" style="min-height:auto">
+        <div class="panel-head"><div><h3>Institutional Decision Engine</h3><p>Unified evidence · conflict resolution · scenarios · strategy</p></div><span id="ide-state" class="status-pill">LOADING</span></div>
+        <div class="metric-grid compact">
+          <div><span>Decision</span><strong id="ide-decision">—</strong></div><div><span>Bias</span><strong id="ide-bias">—</strong></div>
+          <div><span>Conviction</span><strong id="ide-confidence">—</strong></div><div><span>Regime</span><strong id="ide-regime">—</strong></div>
+        </div>
+        <p id="ide-headline" class="muted" style="margin:8px 0 0">Decision engine warming up…</p>
+        <div class="small-links"><a href="/api/institutional-decision/diagnostics" target="_blank">Diagnostics</a> · <a href="/api/institutional-decision/scenarios" target="_blank">Scenarios</a> · <a href="/api/institutional-decision/evidence" target="_blank">Evidence</a> · <a href="/api/institutional-decision/strategy" target="_blank">Strategy</a></div>
+      </section>
+
       <section class="apex-panel" id="institutional-intelligence-suite-panel" style="min-height:auto">
         <div class="panel-head"><div><h3>Institutional Intelligence Suite</h3><p>Dealer positioning · options flow · probabilities · adaptive learning</p></div><span id="iis-state" class="status-pill">LOADING</span></div>
         <div class="metric-grid compact">
@@ -1432,6 +1442,14 @@
   var d=v[0],f=v[1],p=v[2],l=v[3]; document.getElementById('iis-state').textContent=[d.state,f.state,p.state,l.state].indexOf('DEGRADED')>=0?'WARNING':'PASS';
   document.getElementById('iis-dealer').textContent=d.bias||'—'; document.getElementById('iis-flow').textContent=f.bias||'—'; document.getElementById('iis-prob').textContent=(p.directional?p.directional.bullish:'—')+'%'; document.getElementById('iis-learning').textContent=l.learning_readiness||'—';
  }).catch(function(){var e=document.getElementById('iis-state');if(e)e.textContent='UNAVAILABLE';});
+})();
+
+(function loadInstitutionalDecision(){
+ fetch('/api/institutional-decision/status',{cache:'no-store'}).then(function(r){return r.json();}).then(function(x){
+  var state=x.execution_eligible?'PASS':(x.decision==='STAND_DOWN'?'BLOCKED':'WARNING'); var el=document.getElementById('ide-state'); if(el){el.textContent=state;el.className='status-pill '+state;}
+  function t(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}
+  t('ide-decision',(x.decision||'—').replaceAll('_',' '));t('ide-bias',x.bias||'—');t('ide-confidence',x.confidence==null?'—':Math.round(x.confidence)+'/100');t('ide-regime',(x.regime||'—').replaceAll('_',' '));t('ide-headline',x.headline||'Decision unavailable');
+ }).catch(function(){var e=document.getElementById('ide-state');if(e)e.textContent='UNAVAILABLE';});
 })();
 </script>
 </body>
