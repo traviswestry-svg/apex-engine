@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "11.0.18_TRADE_LIFECYCLE_INTELLIGENCE"
-SEMANTIC_VERSION = "11.0.18"
+APPLICATION_VERSION = "11.0.19_STRATEGY_DISCOVERY_ENGINE"
+SEMANTIC_VERSION = "11.0.19"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -63,6 +63,7 @@ FEATURES = [
     "Institutional Learning Engine",
     "Decision Narrative",
     "Trade Lifecycle Intelligence",
+    "Strategy Discovery Engine",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its

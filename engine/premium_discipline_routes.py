@@ -24,6 +24,7 @@ from .premium_execution_orchestrator import PremiumExecutionOrchestrator
 from .institutional_learning_engine import LearningStore, build_learning_intelligence
 from .decision_narrative import build_decision_narrative
 from .trade_lifecycle_intelligence import LifecycleStore, evaluate_trade_lifecycle
+from .strategy_discovery_engine import StrategyDiscoveryStore, build_strategy_discovery, match_current_market
 
 try:
     from zoneinfo import ZoneInfo
@@ -46,6 +47,7 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
     execution_orchestrator = PremiumExecutionOrchestrator(db_path)
     learning_store = LearningStore(db_path)
     lifecycle_store = LifecycleStore(db_path)
+    strategy_discovery_store = StrategyDiscoveryStore(db_path)
 
     def snapshot(ticker: str) -> Dict[str, Any]:
         lr = (last_result_provider() or {}) if last_result_provider else {}
@@ -124,6 +126,10 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             portfolio=payload["portfolio_optimizer"], execution=payload["execution_reality"],
             risk=payload["portfolio_risk_governor"], learning=payload["institutional_learning"])
         payload["trade_lifecycle_intelligence"] = {"recent_events": lifecycle_store.recent(20), "advisory_only": True}
+        payload["strategy_discovery"] = build_strategy_discovery(strategy_discovery_store, current_context)
+        payload["institutional_playbook"] = payload["strategy_discovery"]["institutional_playbook"]
+        payload["pattern_similarity"] = payload["strategy_discovery"].get("pattern_similarity")
+        payload["pattern_drift"] = payload["strategy_discovery"]["pattern_drift"]
         return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
 
     @app.route("/api/premium_discipline/expectancy")
@@ -423,4 +429,42 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
         if not position: return jsonify({"ok":False,"error":"position is required."}),400
         result=evaluate_trade_lifecycle(position,market); record=lifecycle_store.record(result["position_id"],result)
         return jsonify({"ok":True,"trade_lifecycle":result,"record":record})
+    @app.route("/api/premium_discipline/strategy-discovery")
+    def premium_discipline_strategy_discovery():
+        ticker=(request.args.get("ticker") or "SPX").upper(); lr=(last_result_provider() or {}) if last_result_provider else {}
+        context={"ticker":ticker,"premium_regime":lr.get("premium_regime") or lr.get("regime"),"direction":lr.get("direction") or lr.get("bias"),"auction_state":lr.get("auction_state"),"gamma_regime":lr.get("gamma_regime"),"vix_regime":lr.get("vix_regime"),"time_bucket":lr.get("time_bucket")}
+        return jsonify({"ok":True,"ticker":ticker,"strategy_discovery":build_strategy_discovery(strategy_discovery_store,context)})
+
+    @app.route("/api/premium_discipline/strategy-discovery/playbook")
+    def premium_discipline_strategy_discovery_playbook():
+        return jsonify({"ok":True,"institutional_playbook":strategy_discovery_store.playbook()})
+
+    @app.route("/api/premium_discipline/strategy-discovery/patterns")
+    def premium_discipline_strategy_discovery_patterns():
+        try: limit=max(1,min(int(request.args.get("limit") or 100),1000))
+        except ValueError: limit=100
+        return jsonify({"ok":True,"patterns":strategy_discovery_store.patterns(limit),"audit":strategy_discovery_store.audit(50)})
+
+    @app.route("/api/premium_discipline/strategy-discovery/discover", methods=["POST"])
+    def premium_discipline_strategy_discovery_discover():
+        p=request.get_json(silent=True) or {}
+        try: result=strategy_discovery_store.discover(min_sample=int(p.get("min_sample",20)),lookback=int(p.get("lookback",5000)))
+        except (TypeError,ValueError) as exc: return jsonify({"ok":False,"error":str(exc)}),400
+        return jsonify({"ok":True,"discovery":result})
+
+    @app.route("/api/premium_discipline/strategy-discovery/promote", methods=["POST"])
+    def premium_discipline_strategy_discovery_promote():
+        p=request.get_json(silent=True) or {}; pid=str(p.get("pattern_id") or "").strip()
+        if not pid: return jsonify({"ok":False,"error":"pattern_id is required."}),400
+        try: result=strategy_discovery_store.promote(pid,str(p.get("promoted_by") or "operator"))
+        except ValueError as exc: return jsonify({"ok":False,"error":str(exc)}),409
+        return jsonify({"ok":True,"promotion":result})
+
+    @app.route("/api/premium_discipline/strategy-discovery/retire", methods=["POST"])
+    def premium_discipline_strategy_discovery_retire():
+        p=request.get_json(silent=True) or {}; pid=str(p.get("pattern_id") or "").strip()
+        if not pid: return jsonify({"ok":False,"error":"pattern_id is required."}),400
+        try: result=strategy_discovery_store.retire(pid,str(p.get("retired_by") or "operator"),str(p.get("reason") or ""))
+        except ValueError as exc: return jsonify({"ok":False,"error":str(exc)}),404
+        return jsonify({"ok":True,"retirement":result})
 
