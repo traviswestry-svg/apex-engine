@@ -7,9 +7,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import math
 from typing import Any, Dict, Iterable, List, Tuple
+from .institutional_market_structure_engine import build_institutional_market_structure
 
-VERSION = "12.0.0_INSTITUTIONAL_INTELLIGENCE_ENGINE"
-SEMANTIC_VERSION = "12.0.0"
+VERSION = "12.1.0_INSTITUTIONAL_MARKET_STRUCTURE_ENGINE"
+SEMANTIC_VERSION = "12.1.0"
 
 
 def _f(v: Any, d: float = 0.0) -> float:
@@ -142,11 +143,22 @@ def build_institutional_intelligence_v19(last: Dict[str, Any]) -> Dict[str, Any]
     if stale: quality_flags.append("STALE_DATA")
     execution_eligible = not stale and coverage >= 0.55 and bias != "NEUTRAL" and conviction >= 62
     if not execution_eligible: quality_flags.append("INTELLIGENCE_NOT_EXECUTION_ELIGIBLE")
-    scenario = "TREND_CONTINUATION" if bias != "NEUTRAL" and _direction(((dealer.get("gamma") or {}).get("regime"))) == bias else "ROTATION_OR_BALANCE" if bias == "NEUTRAL" else "DIRECTIONAL_OPPORTUNITY"
+    market_structure = build_institutional_market_structure(last)
+    ms_direction = market_structure.get("direction", "NEUTRAL")
+    if ms_direction in {"BULLISH", "BEARISH"}:
+        evidence.append({"source": "market_structure", "direction": ms_direction, "confidence": 70.0, "weight": 0.16})
+        if ms_direction == "BULLISH": bull += 11.2
+        else: bear += 11.2
+        coverage = min(1.0, coverage + 0.16)
+        net = (bull-bear)/max(1.0, coverage)
+        bias = "BULLISH" if net >= 12 else "BEARISH" if net <= -12 else "NEUTRAL"
+        conviction = _clamp(50 + abs(net)*0.65)
+    scenario = "TREND_CONTINUATION" if market_structure.get("day_type_probability",{}).get("classification") == "TREND_FAVORED" and bias != "NEUTRAL" else "ROTATION_OR_BALANCE" if bias == "NEUTRAL" else "DIRECTIONAL_OPPORTUNITY"
     return {"ok": True, "version": VERSION, "semantic_version": SEMANTIC_VERSION, "evaluated_at": datetime.now(timezone.utc).isoformat(),
             "ticker": str(last.get("ticker") or "SPX"), "price": round(price,2) if price else None, "bias": bias,
             "conviction": round(conviction,1), "coverage_pct": round(coverage*100,1), "scenario": scenario,
             "execution_eligible": execution_eligible, "quality_flags": quality_flags, "evidence": evidence,
             "volume_transition": volume, "expected_move": expected, "overnight_structure": overnight,
+            "market_structure": market_structure,
             "guardrails": {"read_only": True, "broker_mutation": False, "automatic_execution": False,
                            "note": "Intelligence output is advisory and remains subordinate to existing execution safety controls."}}

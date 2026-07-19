@@ -40,7 +40,7 @@ class PortfolioOutcomeStore:
         return dict(row) if row else {"portfolio_key":key,"recorded":False}
     def pending(self,limit:int=300)->List[Dict[str,Any]]:
         with self._connect() as c: return [dict(r) for r in c.execute("SELECT * FROM premium_portfolio_outcomes WHERE state='PENDING' ORDER BY id LIMIT ?",(limit,))]
-    def grade(self,row_id:int,outcome:str,pnl:Optional[float],attribution:List[Dict[str,Any]],notes:str):
+    def grade(self,row_id:int,outcome:str,pnl:Optional[float],attribution:Any,notes:str):
         with self._connect() as c:
             c.execute("UPDATE premium_portfolio_outcomes SET state='GRADED', outcome=?, modeled_pnl=?, attribution_json=?, notes=?, graded_at=? WHERE id=? AND state='PENDING'",
                       (outcome,pnl,json.dumps(attribution,sort_keys=True),notes,dt.datetime.now(dt.timezone.utc).isoformat(),row_id))
@@ -49,7 +49,7 @@ class PortfolioOutcomeStore:
             rows=[dict(r) for r in c.execute("SELECT * FROM premium_portfolio_outcomes ORDER BY id DESC LIMIT ?",(limit,))]
         for r in rows:
             for k in ("portfolio_json","attribution_json"):
-                try:r[k[:-5] if k.endswith('_json') else k]=json.loads(r.get(k) or ('[]' if k=='attribution_json' else '{}'))
+                try:r[k[:-5] if k.endswith('_json') else k]=json.loads(r.get(k) or ('{}' if k=='attribution_json' else '{}'))
                 except Exception:pass
         return rows
     def scorecard(self)->Dict[str,Any]:
@@ -60,12 +60,13 @@ class PortfolioOutcomeStore:
         wins=sum(1 for x in pnls if x>25); losses=sum(1 for x in pnls if x<-25)
         by={}
         for r in rows:
-            try: attrs=json.loads(r.get('attribution_json') or '[]')
-            except Exception: attrs=[]
-            for a in attrs:
+            try: attrs=json.loads(r.get('attribution_json') or '{}')
+            except Exception: attrs={}
+            positions = attrs.get('positions', []) if isinstance(attrs, dict) else attrs
+            for a in positions:
                 s=a.get('strategy','UNKNOWN'); by.setdefault(s,{"count":0,"total_pnl":0.0}); by[s]['count']+=1; by[s]['total_pnl']+=float(a.get('modeled_pnl') or 0)
         for v in by.values(): v['average_pnl']=round(v['total_pnl']/v['count'],2); v['total_pnl']=round(v['total_pnl'],2)
-        return {"version":VERSION,"graded":len(rows),"pending":pending,"wins":wins,"losses":losses,
+        return {"version":VERSION,"graded":len(rows),"pending":pending,"pending_portfolios":pending,"wins":wins,"losses":losses,
                 "win_rate":round(100*wins/len(pnls),1) if pnls else None,"average_modeled_pnl":round(sum(pnls)/len(pnls),2) if pnls else None,
                 "total_modeled_pnl":round(sum(pnls),2),"largest_win":max(pnls) if pnls else None,"largest_loss":min(pnls) if pnls else None,"strategy_attribution":by}
 
@@ -92,6 +93,6 @@ def replay_due_portfolios(store:PortfolioOutcomeStore,get_intraday_bars:Callable
             if cpnl is not None: total+=cpnl
             attrs.append({"strategy":p.get('strategy'),"contracts":contracts,"modeled_pnl":cpnl,"component_outcome":result.get('outcome'),"metrics":result.get('metrics')})
         outcome='NOT_EXECUTABLE' if not executable else ('PORTFOLIO_WIN' if total>25 else 'PORTFOLIO_LOSS' if total<-25 else 'PORTFOLIO_FLAT')
-        store.grade(row['id'],outcome,None if not executable else round(total,2),attrs,f"{outcome}; modeled portfolio P&L {total:+.2f}.")
+        store.grade(row['id'],outcome,None if not executable else round(total,2),{'positions': attrs},f"{outcome}; modeled portfolio P&L {total:+.2f}.")
         graded+=1; outcomes[outcome]=outcomes.get(outcome,0)+1
     return {"version":VERSION,"graded":graded,"deferred":deferred,"outcomes":outcomes}

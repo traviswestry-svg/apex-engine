@@ -22,9 +22,10 @@ class PortfolioCalibrationStore:
         with self._c() as c: rows=[dict(r) for r in c.execute("SELECT modeled_pnl,attribution_json FROM premium_portfolio_outcomes WHERE state='GRADED' AND modeled_pnl IS NOT NULL ORDER BY id DESC LIMIT ?",(lookback,))]
         by={}; total=len(rows)
         for r in rows:
-            try:a=json.loads(r['attribution_json'] or '[]')
-            except Exception:a=[]
-            for x in a:
+            try:a=json.loads(r['attribution_json'] or '{}')
+            except Exception:a={}
+            positions = a.get('positions', []) if isinstance(a, dict) else a
+            for x in positions:
                 s=x.get('strategy','UNKNOWN'); by.setdefault(s,[]).append(float(x.get('modeled_pnl') or 0))
         stats={s:{"sample_size":len(v),"average_pnl":round(sum(v)/len(v),2),"win_rate":round(100*sum(x>25 for x in v)/len(v),1)} for s,v in by.items() if v}
         active=self.active_policy(); rec={k:active[k] for k in DEFAULT}
