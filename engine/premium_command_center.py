@@ -58,7 +58,8 @@ def serialize_decision(row: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_command_center(*, snapshot: Dict[str, Any], decisions: List[Dict[str, Any]],
                          scorecard: Dict[str, Any], replay: Dict[str, Any],
-                         active_policy: Dict[str, Any], calibration_runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+                         active_policy: Dict[str, Any], calibration_runs: List[Dict[str, Any]],
+                         premium_intelligence: Dict[str, Any] | None = None) -> Dict[str, Any]:
     latest_run = calibration_runs[0] if calibration_runs else None
     recommendation = (latest_run or {}).get("recommendation") or {}
     readiness = "NO_HISTORY"
@@ -74,6 +75,7 @@ def build_command_center(*, snapshot: Dict[str, Any], decisions: List[Dict[str, 
         "scorecard": scorecard,
         "replay": replay,
         "active_policy": active_policy,
+        "premium_intelligence": premium_intelligence or {},
         "latest_calibration": latest_run,
         "calibration_readiness": readiness,
         "decisions": [serialize_decision(row) for row in decisions],

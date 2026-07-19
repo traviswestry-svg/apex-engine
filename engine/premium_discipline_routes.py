@@ -12,6 +12,7 @@ from .premium_strategy import build_premium_strategy
 from .refusal_replay import replay_due_refusals
 from .adaptive_refusal_calibration import CalibrationStore
 from .premium_command_center import build_command_center
+from .institutional_premium_intelligence import rank_premium_strategies
 
 try:
     from zoneinfo import ZoneInfo
@@ -54,12 +55,32 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             limit = 100
         current = snapshot(ticker)
         runs = calibration.recent(limit=20)
+        policy = calibration.active_policy()
+        lr = (last_result_provider() or {}) if last_result_provider else {}
+        now = dt.datetime.now(ET)
+        intelligence = rank_premium_strategies(
+            lr, chain_fetcher=chain_fetcher, now_et=now, symbol=ticker,
+            expiration=now.date().isoformat(), threshold=policy.get("threshold"),
+            weights=policy.get("weights"))
         payload = build_command_center(
             snapshot=current, decisions=ledger.recent(limit=limit),
             scorecard=ledger.scorecard(), replay=ledger.replay_scorecard(),
-            active_policy=calibration.active_policy(), calibration_runs=runs,
+            active_policy=policy, calibration_runs=runs,
+            premium_intelligence=intelligence,
         )
         return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
+
+    @app.route("/api/premium_discipline/intelligence")
+    def premium_discipline_intelligence():
+        ticker = (request.args.get("ticker") or "SPX").upper()
+        lr = (last_result_provider() or {}) if last_result_provider else {}
+        now = dt.datetime.now(ET)
+        policy = calibration.active_policy()
+        result = rank_premium_strategies(
+            lr, chain_fetcher=chain_fetcher, now_et=now, symbol=ticker,
+            expiration=now.date().isoformat(), threshold=policy.get("threshold"),
+            weights=policy.get("weights"))
+        return jsonify({"ok": True, "ticker": ticker, "premium_intelligence": result})
 
     @app.route("/api/premium_discipline")
     def premium_discipline():

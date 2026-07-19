@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-VERSION = "18.0.7_ADAPTIVE_REFUSAL_CALIBRATION"
+VERSION = "18.0.9_INSTITUTIONAL_PREMIUM_INTELLIGENCE"
 APPROVE = "APPROVE"
 REFUSE = "REFUSE"
 NOT_APPLICABLE = "NOT_APPLICABLE"
