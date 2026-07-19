@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>APEX Live Mission Control</title><style>body{font-family:Arial;background:#07101d;color:#e8eef7;margin:0;padding:20px}.top{display:flex;justify-content:space-between;align-items:end}.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px;margin-top:16px}.card{background:#111d2e;border:1px solid #293b57;border-radius:12px;padding:16px}.kpi{grid-column:span 3}.wide{grid-column:span 6}.full{grid-column:1/-1}.hero{font-size:38px;font-weight:800}.muted{color:#9db0c9}.grade{font-size:28px;font-weight:800}table{width:100%;border-collapse:collapse}td,th{padding:7px;border-bottom:1px solid #263850;text-align:left}@media(max-width:900px){.kpi,.wide{grid-column:1/-1}}</style></head><body><div class="top"><div><h1>APEX 16.5 — Live Mission Control</h1><div class="muted">Institutional Trading Desk • SPX Command Surface</div></div><div id="status" class="muted">Loading…</div></div><div id="root" class="grid"></div><script>
+const val=(x,f='—')=>x===undefined||x===null||x===''?f:x;
+async function load(){let d=await fetch('/api/mission-control/dashboard?symbol=SPX').then(r=>r.json());let p=d.institutional_pressure||{},m=d.market_state||{},b=d.playbook||{},c=d.institutional_confluence||{},pm=d.position_monitor||{},br=d.briefing||{};document.getElementById('status').textContent=d.status;
+let h=`<div class="card kpi"><div class="muted">Institutional Confluence</div><div class="hero">${val(c.institutional_confluence_score)}</div><div class="grade">${val(c.grade)}</div></div>`;
+h+=`<div class="card kpi"><div class="muted">Institutional Pressure</div><div class="hero">${val(p.institutional_pressure_score)}</div><div>${val(p.bias,'COLLECTING')}</div></div>`;
+h+=`<div class="card kpi"><div class="muted">Market State</div><div class="grade">${val(m.active_state)}</div><div class="muted">Stability ${val(m.stability||m.stability_index)}</div></div>`;
+h+=`<div class="card kpi"><div class="muted">Active Playbook</div><div class="grade">${val(b.active_playbook)}</div><div class="muted">PQS ${val(b.playbook_quality_score||b.pqs)}</div></div>`;
+h+=`<div class="card wide"><h3>Institutional Briefing</h3><h2>${val(br.headline)}</h2><p>${val(br.market_read)}</p><p><b>Directive:</b> ${val(br.directive)}</p><p><b>Invalidation:</b> ${val(br.primary_invalidation)}</p></div>`;
+h+=`<div class="card wide"><h3>Live Position Monitor</h3><div class="hero" style="font-size:26px">${val(pm.status)}</div><p>Unrealized P&amp;L: ${val(pm.unrealized_pnl)}</p><p>Remaining edge: ${val(pm.remaining_edge)}</p><p class="muted">Advisory only • No broker mutation</p></div>`;
+h+=`<div class="card full"><h3>Confluence Components</h3><table><tr><th>Engine</th><th>Score</th><th>Weight</th><th>Available</th></tr>${(c.components||[]).map(x=>`<tr><td>${x.name}</td><td>${x.score}</td><td>${Math.round(x.weight*100)}%</td><td>${x.available?'Yes':'No'}</td></tr>`).join('')}</table></div>`;
+document.getElementById('root').innerHTML=h}load();setInterval(load,15000)</script>
+<script>
+(async()=>{try{const d=await fetch('/api/broker-sync/dashboard?account_id=PRIMARY&broker=ETRADE').then(r=>r.json());const x=d.latest||{};let h=document.getElementById('broker-synchronized-state');if(!h){h=document.createElement('section');h.id='broker-synchronized-state';document.body.appendChild(h);}const snap=x.broker_snapshot||{};const acct=snap.account||{};const ds=x.discrepancies||[];h.innerHTML=`<h2>Broker-Synchronized Position State</h2><p><b>Broker:</b> ${snap.broker||'ETRADE'} &nbsp; <b>Sync:</b> ${x.sync_state||'BROKER_UNAVAILABLE'} &nbsp; <b>Mode:</b> Read Only</p><p><b>Account Value:</b> ${acct.account_value??'—'} &nbsp; <b>Buying Power:</b> ${acct.buying_power??'—'} &nbsp; <b>Positions:</b> ${x.position_count??0} &nbsp; <b>Open Orders:</b> ${x.open_order_count??0}</p>${ds.length?`<h3>Reconciliation Issues</h3><ul>${ds.map(v=>`<li><b>${v.severity}</b> — ${v.type}${v.symbol?` (${v.symbol})`:''}</li>`).join('')}</ul>`:'<p>No broker snapshot recorded yet.</p>'}<small>No broker order submission, cancellation, replacement, or position mutation.</small>`;}catch(e){}})();
+</script>
+</body></html>
+<script>
+(async()=>{try{const d=await fetch('/api/mission-control/dashboard?symbol=SPX').then(r=>r.json());const a=d.adaptive_trade_management||{};let host=document.getElementById('adaptive-trade-management');if(!host){host=document.createElement('section');host.id='adaptive-trade-management';host.innerHTML='<h2>Adaptive Trade Management</h2><div id="atm-body"></div>';document.body.appendChild(host);}const rec=(a.recommendations||[]).map(x=>`<li><b>${x.type}</b> — ${x.reason}</li>`).join('');document.getElementById('atm-body').innerHTML=`<p><b>Action:</b> ${a.action||'NO_ACTION'} &nbsp; <b>Urgency:</b> ${a.urgency||'NONE'}</p><p><b>Remaining Edge:</b> ${a.remaining_edge_score??0} &nbsp; <b>Progress:</b> ${a.progress_r??0}R</p><ul>${rec}</ul><small>Advisory only. No broker orders are changed.</small>`;}catch(e){}})();
+</script>
+<script>
+(async()=>{try{const d=await fetch('/api/mission-control/dashboard?symbol=SPX').then(r=>r.json());const x=d.portfolio_risk||{};let h=document.getElementById('portfolio-risk-intelligence');if(!h){h=document.createElement('section');h.id='portfolio-risk-intelligence';h.innerHTML='<h2>Portfolio & Risk Intelligence</h2><div id="pri-body"></div>';document.body.appendChild(h);}document.getElementById('pri-body').innerHTML=`<p><b>Risk State:</b> ${x.risk_state||'NORMAL'} &nbsp; <b>Risk Score:</b> ${x.risk_score??100}</p><p><b>Daily P&L:</b> $${x.daily_pnl??0} &nbsp; <b>Open Risk:</b> $${x.total_open_risk??0} &nbsp; <b>Heat:</b> ${x.position_heat_pct??0}%</p><p><b>Trades:</b> ${x.trades_today??0} &nbsp; <b>Losses:</b> ${x.losses_today??0} &nbsp; <b>Lockout:</b> ${x.lockout_recommended?'RECOMMENDED':'NO'}</p><small>Advisory only. Risk reduction is always allowed; no broker orders are changed.</small>`;}catch(e){}})();
+</script>
+<script>
+(async()=>{try{
+  let host=document.getElementById('explainable-intelligence-assistant');
+  if(!host){host=document.createElement('section');host.id='explainable-intelligence-assistant';document.body.appendChild(host);}
+  host.innerHTML=`<h2>Explainable Intelligence Assistant</h2>
+  <p>Ask why confidence changed, why an action is active, what changed, what invalidated the thesis, or request similar sessions.</p>
+  <input id="eia-question" style="width:70%" placeholder="Why is confidence changing?" />
+  <button id="eia-ask">Ask APEX</button><div id="eia-answer"></div>
+  <small>Evidence-grounded only. No recommendation, confidence, risk, position, or broker mutation.</small>`;
+  document.getElementById('eia-ask').onclick=async()=>{
+    const q=document.getElementById('eia-question').value;
+    const d=await fetch('/api/explainable-intelligence/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:'SPX',question:q})}).then(r=>r.json());
+    const cites=(d.citations||[]).slice(0,8).map(x=>`<li><b>${x.source}.${x.metric}</b>: ${JSON.stringify(x.value)}</li>`).join('');
+    document.getElementById('eia-answer').innerHTML=`<p><b>${d.intent||'EVIDENCE_SUMMARY'}</b></p><p>${d.answer||'Evidence Not Available'}</p><ul>${cites}</ul>`;
+  };
+}catch(e){}})();
+</script>
+
+<script>
+(async()=>{try{
+ const d=await fetch('/api/performance-intelligence/dashboard?symbol=SPX').then(r=>r.json()); const a=d.analysis||{};
+ let h=document.getElementById('performance-intelligence'); if(!h){h=document.createElement('section');h.id='performance-intelligence';document.body.appendChild(h);}
+ const top=(a.top_alpha_sources||[]).slice(0,5).map(x=>`<li><b>${x.dimension}: ${x.value}</b> — ${x.average_r}R avg, ${x.sample_size} trades</li>`).join('');
+ const weak=(a.largest_drawdown_sources||[]).slice(0,5).map(x=>`<li><b>${x.dimension}: ${x.value}</b> — ${x.average_r}R avg, ${x.sample_size} trades</li>`).join('');
+ h.innerHTML=`<h2>Performance Intelligence</h2><p><b>Status:</b> ${a.status||'COLLECTING'} &nbsp; <b>Sample:</b> ${a.sample_size||0} &nbsp; <b>Win rate:</b> ${(a.overall||{}).win_rate||0}% &nbsp; <b>Net P&L:</b> $${(a.overall||{}).net_pnl||0}</p><h3>Top Alpha Sources</h3><ul>${top||'<li>Collecting completed outcomes.</li>'}</ul><h3>Largest Drawdown Sources</h3><ul>${weak||'<li>Collecting completed outcomes.</li>'}</ul><small>Descriptive completed-outcome coaching only. No live policy or broker mutation.</small>`;
+}catch(e){}})();
+</script>
+<script>
+(async()=>{try{const d=await fetch('/api/live-operations/dashboard?symbol=SPX').then(r=>r.json());const x=d.assessment||{};let h=document.getElementById('live-operations-command');if(!h){h=document.createElement('section');h.id='live-operations-command';document.body.prepend(h);}const bad=(x.blocking_issues||[]).map(v=>`<li>${v}</li>`).join('');const feeds=(x.sources||[]).map(v=>`<li><b>${v.source}</b>: ${v.status} (${v.age_seconds??'—'}s / ${v.max_age_seconds}s)</li>`).join('');h.innerHTML=`<h2>Live Operations & Data Integrity</h2><p><b>System Health:</b> ${x.system_health||'UNKNOWN'} &nbsp; <b>Tradeability:</b> ${x.tradeability||'MARKET_CLOSED'} &nbsp; <b>Evidence:</b> ${x.evidence_completeness_score??0}%</p><p><b>Session:</b> ${x.session||'UNKNOWN'} &nbsp; <b>Snapshot Drift:</b> ${(x.decision_snapshot||{}).drift_seconds??0}s</p>${bad?`<h3>Blocking Issues</h3><ul>${bad}</ul>`:''}<details><summary>Source Health</summary><ul>${feeds}</ul></details><small>Internal tradeability governance only. No recommendation replacement or broker mutation.</small>`;}catch(e){}})();
+</script>
+
+<script>
+(async()=>{try{const d=await fetch('/api/strategy-promotion/dashboard').then(r=>r.json());const rows=d.recent_decisions||[];let h=document.getElementById('strategy-promotion-governance');if(!h){h=document.createElement('section');h.id='strategy-promotion-governance';document.body.appendChild(h);}const items=rows.slice(0,8).map(x=>`<li><b>${x.decision?.strategy_id||x.candidate_id}</b>: ${x.state} / ${x.approval_state}</li>`).join('');h.innerHTML=`<h2>Strategy Promotion Governance</h2><p><b>Mode:</b> Manual Approval Only &nbsp; <b>Automatic Promotion:</b> Disabled</p>${items?`<ul>${items}</ul>`:'<p>No promotion decisions recorded.</p>'}<small>Champion/challenger governance only. No automatic production, confidence, risk, or broker mutation.</small>`;}catch(e){}})();
+</script>
+
+<script>
+(async()=>{try{const d=await fetch('/api/execution-gate/dashboard').then(r=>r.json());let h=document.getElementById('confirmation-gated-execution');if(!h){h=document.createElement('section');h.id='confirmation-gated-execution';document.body.appendChild(h);}const sf=d.safety||{};const xs=d.recent_intents||[];h.innerHTML=`<h2>Confirmation-Gated Execution</h2><p><b>Mode:</b> ${sf.runtime_execution_enabled?'Explicit Confirmation Enabled':'Execution Disabled'} &nbsp; <b>Automatic Execution:</b> OFF</p><p>Preview → risk/data/broker-sync gates → explicit human confirmation → one-time idempotent submission.</p>${xs.length?`<h3>Recent Intents</h3><ul>${xs.slice(0,5).map(x=>`<li><b>${x.state}</b> — ${(x.intent||{}).symbol||''} ${(x.intent||{}).action||''} × ${(x.intent||{}).quantity||0}</li>`).join('')}</ul>`:'<p>No execution intents recorded.</p>'}<small>Order submission is impossible unless the server execution flag is enabled and a valid one-time confirmation exists.</small>`;}catch(e){}})();
+</script>
+<script>
+(async()=>{try{const d=await fetch('/api/sandbox-validation/dashboard').then(r=>r.json());let h=document.getElementById('sandbox-execution-validation');if(!h){h=document.createElement('section');h.id='sandbox-execution-validation';document.body.appendChild(h);}const x=d.latest_certification||{};h.innerHTML=`<h2>16.9.1 Sandbox Execution Certification</h2><p><b>Status:</b> ${x.status||'NOT_RUN'} &nbsp; <b>Score:</b> ${x.certification_score??0}%</p><p>${(x.blocking_checks||[]).length?`Blocking: ${(x.blocking_checks||[]).join(', ')}`:'Run the end-to-end E*TRADE sandbox certification before production consideration.'}</p><small>Sandbox only. Human confirmation remains mandatory. Production execution is not certified.</small>`;}catch(e){}})();
+</script>
