@@ -13,6 +13,7 @@ from .refusal_replay import replay_due_refusals
 from .adaptive_refusal_calibration import CalibrationStore
 from .premium_command_center import build_command_center
 from .institutional_premium_intelligence import rank_premium_strategies
+from .institutional_expectancy_intelligence import ExpectancyStore, build_expectancy_intelligence
 
 try:
     from zoneinfo import ZoneInfo
@@ -27,6 +28,7 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
                                        db_path: Optional[str] = None) -> None:
     ledger = RefusalLedger(db_path)
     calibration = CalibrationStore(db_path)
+    expectancy = ExpectancyStore(db_path)
 
     def snapshot(ticker: str) -> Dict[str, Any]:
         lr = (last_result_provider() or {}) if last_result_provider else {}
@@ -62,13 +64,42 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             lr, chain_fetcher=chain_fetcher, now_et=now, symbol=ticker,
             expiration=now.date().isoformat(), threshold=policy.get("threshold"),
             weights=policy.get("weights"))
+        expectancy_intelligence = build_expectancy_intelligence(
+            lr, store=expectancy, ticker=ticker, chain_fetcher=chain_fetcher,
+            now_et=now, expiration=now.date().isoformat(), threshold=policy.get("threshold"),
+            weights=policy.get("weights"))
         payload = build_command_center(
             snapshot=current, decisions=ledger.recent(limit=limit),
             scorecard=ledger.scorecard(), replay=ledger.replay_scorecard(),
             active_policy=policy, calibration_runs=runs,
             premium_intelligence=intelligence,
         )
+        payload["expectancy_intelligence"] = expectancy_intelligence
         return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
+
+    @app.route("/api/premium_discipline/expectancy")
+    def premium_discipline_expectancy():
+        ticker = (request.args.get("ticker") or "SPX").upper()
+        lr = (last_result_provider() or {}) if last_result_provider else {}
+        now = dt.datetime.now(ET)
+        policy = calibration.active_policy()
+        result = build_expectancy_intelligence(
+            lr, store=expectancy, ticker=ticker, chain_fetcher=chain_fetcher,
+            now_et=now, expiration=now.date().isoformat(),
+            threshold=policy.get("threshold"), weights=policy.get("weights"))
+        return jsonify({"ok": True, "ticker": ticker, "expectancy_intelligence": result})
+
+    @app.route("/api/premium_discipline/expectancy/grade", methods=["POST"])
+    def premium_discipline_expectancy_grade():
+        payload = request.get_json(silent=True) or {}
+        try:
+            row_id = int(payload.get("row_id"))
+            pnl = float(payload.get("pnl"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "row_id and numeric pnl are required."}), 400
+        outcome = str(payload.get("outcome") or ("WIN" if pnl > 0 else "LOSS" if pnl < 0 else "FLAT"))[:40]
+        ok = expectancy.grade(row_id, outcome=outcome, pnl=pnl, source=str(payload.get("source") or "OPERATOR")[:40])
+        return jsonify({"ok": ok, "row_id": row_id})
 
     @app.route("/api/premium_discipline/intelligence")
     def premium_discipline_intelligence():
