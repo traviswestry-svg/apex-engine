@@ -192,7 +192,16 @@
       <div class="di-pyr" id="diPyr"></div>
     </div>
   </div>
-  <script>
+  
+      <section class="apex-panel" id="institutional-intelligence-suite-panel" style="min-height:auto">
+        <div class="panel-head"><div><h3>Institutional Intelligence Suite</h3><p>Dealer positioning · options flow · probabilities · adaptive learning</p></div><span id="iis-state" class="status-pill">LOADING</span></div>
+        <div class="metric-grid compact">
+          <div><span>Dealer</span><strong id="iis-dealer">—</strong></div><div><span>Flow</span><strong id="iis-flow">—</strong></div>
+          <div><span>Bull Probability</span><strong id="iis-prob">—</strong></div><div><span>Learning</span><strong id="iis-learning">—</strong></div>
+        </div>
+        <div class="small-links"><a href="/api/dealer-positioning/diagnostics" target="_blank">Dealer</a> · <a href="/api/options-flow-intelligence/diagnostics" target="_blank">Flow</a> · <a href="/api/institutional-probability/diagnostics" target="_blank">Probability</a> · <a href="/api/adaptive-learning-v2/diagnostics" target="_blank">Learning</a></div>
+      </section>
+<script>
   (function(){
     var TICK='SPX';
     function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
@@ -1416,6 +1425,13 @@
     text('structureDay',((st.day_type_probability||{}).classification||'UNAVAILABLE').replaceAll('_',' '));
     text('structurePoc',((st.poc_value_migration||{}).poc_direction||'UNAVAILABLE').replaceAll('_',' '));
   }).catch(function(){text('structureState','WARNING');});
+})();
+
+(function loadInstitutionalSuite(){
+ Promise.all([fetch('/api/dealer-positioning/status',{cache:'no-store'}).then(r=>r.json()),fetch('/api/options-flow-intelligence/status',{cache:'no-store'}).then(r=>r.json()),fetch('/api/institutional-probability/status',{cache:'no-store'}).then(r=>r.json()),fetch('/api/adaptive-learning-v2/status',{cache:'no-store'}).then(r=>r.json())]).then(function(v){
+  var d=v[0],f=v[1],p=v[2],l=v[3]; document.getElementById('iis-state').textContent=[d.state,f.state,p.state,l.state].indexOf('DEGRADED')>=0?'WARNING':'PASS';
+  document.getElementById('iis-dealer').textContent=d.bias||'—'; document.getElementById('iis-flow').textContent=f.bias||'—'; document.getElementById('iis-prob').textContent=(p.directional?p.directional.bullish:'—')+'%'; document.getElementById('iis-learning').textContent=l.learning_readiness||'—';
+ }).catch(function(){var e=document.getElementById('iis-state');if(e)e.textContent='UNAVAILABLE';});
 })();
 </script>
 </body>
