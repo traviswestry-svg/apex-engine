@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "16.4.0_CONTINUOUS_LEARNING_CONFIDENCE_CALIBRATION"
-SEMANTIC_VERSION = "16.4.0"
+APPLICATION_VERSION = "16.5.0_INSTITUTIONAL_AI_TRADING_COACH"
+SEMANTIC_VERSION = "16.5.0"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -86,6 +86,10 @@ FEATURES = [
     "Continuous Learning & Confidence Calibration",
     "Learning Drift Detection",
     "Human-Approved Weight Recommendations",
+    "Institutional AI Trading Coach",
+    "Pre-Trade Coaching",
+    "Active-Trade Lifecycle Coaching",
+    "Post-Trade Behavioral Scorecard",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its
