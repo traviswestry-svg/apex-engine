@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-VERSION = "18.1.2_MULTI_STRATEGY_PORTFOLIO_OPTIMIZER"
+VERSION = "18.1.3_PORTFOLIO_OUTCOME_ATTRIBUTION"
 APPROVE = "APPROVE"
 REFUSE = "REFUSE"
 NOT_APPLICABLE = "NOT_APPLICABLE"
