@@ -268,7 +268,7 @@ except Exception as _ps_err:
     PREMIUM_STRATEGY_AVAILABLE = False
     print(f"APEX Premium Strategy unavailable (non-fatal): {_ps_err}", flush=True)
 
-# APEX 18.0.5 — Premium Discipline and Refusal Intelligence
+# APEX 18.0.6 — Premium Discipline and Trade Refusal Replay
 try:
     from engine.premium_discipline_routes import register_premium_discipline_routes
     from engine.premium_discipline import VERSION as PREMIUM_DISCIPLINE_VERSION
@@ -8100,13 +8100,14 @@ try:
 except Exception as e:
     print(f"Premium Strategy unavailable (non-fatal): {e}", flush=True)
 
-# APEX 18.0.5 — Premium Discipline routes. Advisory only: records approvals/refusals
+# APEX 18.0.6 — Premium Discipline + Refusal Replay routes. Advisory only: records approvals/refusals
 # and exposes refusal analytics without changing broker execution behavior.
 try:
     if PREMIUM_DISCIPLINE_AVAILABLE and register_premium_discipline_routes is not None:
         register_premium_discipline_routes(
             app, last_result_provider=_ps_last_result,
             chain_fetcher=globals().get("_premium_canonical_chain_fetcher"),
+            get_intraday_bars=get_intraday_bars,
         )
         print(f"APEX Premium Discipline routes registered ({PREMIUM_DISCIPLINE_VERSION}).", flush=True)
 except Exception as e:
