@@ -476,6 +476,15 @@ except Exception as _ide_err:
     INSTITUTIONAL_DECISION_ENGINE_AVAILABLE = False
     print(f"APEX Institutional Decision Engine unavailable (non-fatal): {_ide_err}", flush=True)
 
+# APEX 20.1-20.3 — execution optimization, replay lab, and strategy intelligence.
+try:
+    from engine.institutional_decision_suite_routes import register_institutional_decision_suite_routes
+    INSTITUTIONAL_DECISION_SUITE_AVAILABLE = True
+except Exception as _ids_err:
+    register_institutional_decision_suite_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_DECISION_SUITE_AVAILABLE = False
+    print(f"APEX Institutional Decision Suite unavailable (non-fatal): {_ids_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -8458,6 +8467,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_decision_engine_routes(app, last_result_provider=_ide_last_result)
         print("APEX 20.0 Institutional Decision Engine routes registered.", flush=True)
+
+    if INSTITUTIONAL_DECISION_SUITE_AVAILABLE and register_institutional_decision_suite_routes is not None:
+        def _ids_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_decision_suite_routes(app, last_result_provider=_ids_last_result)
+        print("APEX 20.1-20.3 Institutional Decision Suite routes registered.", flush=True)
 
     if INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE and register_institutional_market_structure_routes is not None:
         def _ims_last_result():
