@@ -1,16 +1,17 @@
-"""Flask routes for APEX 18.0.7 adaptive refusal calibration."""
+"""Flask routes for APEX 18.0.8 Premium Discipline Command Center."""
 from __future__ import annotations
 
 import datetime as dt
 from typing import Any, Callable, Dict, Optional
 
-from flask import jsonify, request
+from flask import jsonify, render_template, request
 
 from .confluence import build_confluence
 from .premium_discipline import RefusalLedger, evaluate_premium_eligibility
 from .premium_strategy import build_premium_strategy
 from .refusal_replay import replay_due_refusals
 from .adaptive_refusal_calibration import CalibrationStore
+from .premium_command_center import build_command_center
 
 try:
     from zoneinfo import ZoneInfo
@@ -39,6 +40,26 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
         rec = ledger.record(session_date=now.date().isoformat(), ticker=ticker,
                             candidate=candidate, decision=gate)
         return {"candidate": candidate, "eligibility": gate, "ledger": rec}
+
+    @app.route("/apex_os/premium_discipline")
+    def premium_discipline_command_center_page():
+        return render_template("premium_discipline_command_center.html")
+
+    @app.route("/api/premium_discipline/command-center")
+    def premium_discipline_command_center():
+        ticker = (request.args.get("ticker") or "SPX").upper()
+        try:
+            limit = max(1, min(int(request.args.get("limit") or 100), 500))
+        except ValueError:
+            limit = 100
+        current = snapshot(ticker)
+        runs = calibration.recent(limit=20)
+        payload = build_command_center(
+            snapshot=current, decisions=ledger.recent(limit=limit),
+            scorecard=ledger.scorecard(), replay=ledger.replay_scorecard(),
+            active_policy=calibration.active_policy(), calibration_runs=runs,
+        )
+        return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
 
     @app.route("/api/premium_discipline")
     def premium_discipline():
