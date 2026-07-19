@@ -24,6 +24,7 @@ class PortfolioOutcomeStore:
               outcome TEXT, attribution_json TEXT, notes TEXT, graded_at TEXT)""")
     def record(self,ticker:str,portfolio:Dict[str,Any],observed_at:Optional[dt.datetime]=None)->Dict[str,Any]:
         now=observed_at or dt.datetime.now(dt.timezone.utc)
+        if isinstance(now,str): now=dt.datetime.fromisoformat(now)
         if now.tzinfo is None: now=now.replace(tzinfo=dt.timezone.utc)
         selected=portfolio.get("selected_positions") or []
         key_parts=[now.astimezone(ET).date().isoformat(),ticker.upper()]
