@@ -203,6 +203,16 @@
         <div class="small-links"><a href="/api/institutional-decision/diagnostics" target="_blank">Diagnostics</a> · <a href="/api/institutional-decision/scenarios" target="_blank">Scenarios</a> · <a href="/api/institutional-decision/evidence" target="_blank">Evidence</a> · <a href="/api/institutional-decision/strategy" target="_blank">Strategy</a></div>
       </section>
 
+
+      <section class="apex-panel" id="decision-suite-panel" style="min-height:auto">
+        <div class="panel-head"><div><h3>Decision Optimization Suite</h3><p>Execution plan · replay lab · options strategy</p></div><span id="ids-state" class="status-pill">LOADING</span></div>
+        <div class="metric-grid compact">
+          <div><span>Execution</span><strong id="ids-execution">—</strong></div><div><span>Entry</span><strong id="ids-entry">—</strong></div>
+          <div><span>Strategy</span><strong id="ids-strategy">—</strong></div><div><span>Replay</span><strong id="ids-replay">READY</strong></div>
+        </div>
+        <div class="small-links"><a href="/api/execution-optimizer/plan" target="_blank">Execution Plan</a> · <a href="/api/replay-learning-lab/status" target="_blank">Replay Snapshot</a> · <a href="/api/strategy-intelligence/diagnostics" target="_blank">Strategy</a></div>
+      </section>
+
       <section class="apex-panel" id="institutional-intelligence-suite-panel" style="min-height:auto">
         <div class="panel-head"><div><h3>Institutional Intelligence Suite</h3><p>Dealer positioning · options flow · probabilities · adaptive learning</p></div><span id="iis-state" class="status-pill">LOADING</span></div>
         <div class="metric-grid compact">
@@ -1452,5 +1462,7 @@
  }).catch(function(){var e=document.getElementById('ide-state');if(e)e.textContent='UNAVAILABLE';});
 })();
 </script>
+
+<script>Promise.all([fetch('/api/execution-optimizer/status').then(r=>r.json()),fetch('/api/strategy-intelligence/status').then(r=>r.json())]).then(function(v){var e=v[0],s=v[1],st=document.getElementById('ids-state');if(st){st.textContent=(e.state==='READY'&&s.state==='READY')?'PASS':'WARNING';st.className='status-pill '+st.textContent;}var x=document.getElementById('ids-execution');if(x)x.textContent=e.state||'—';x=document.getElementById('ids-entry');if(x)x.textContent=((e.entry_zone||{}).anchor)||'—';x=document.getElementById('ids-strategy');if(x)x.textContent=s.preferred_structure||'—';}).catch(function(){var e=document.getElementById('ids-state');if(e)e.textContent='UNAVAILABLE';});</script>
 </body>
 </html>
