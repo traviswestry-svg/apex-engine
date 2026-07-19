@@ -21,6 +21,9 @@ from .adaptive_portfolio_calibration import PortfolioCalibrationStore
 from .execution_reality_slippage import ExecutionRealityStore, build_execution_reality, evaluate_candidate_execution
 from .premium_portfolio_risk_governor import RiskGovernorStore, evaluate_portfolio_risk
 from .premium_execution_orchestrator import PremiumExecutionOrchestrator
+from .institutional_learning_engine import LearningStore, build_learning_intelligence
+from .decision_narrative import build_decision_narrative
+from .trade_lifecycle_intelligence import LifecycleStore, evaluate_trade_lifecycle
 
 try:
     from zoneinfo import ZoneInfo
@@ -41,6 +44,8 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
     execution_reality_store = ExecutionRealityStore(db_path)
     risk_governor_store = RiskGovernorStore(db_path)
     execution_orchestrator = PremiumExecutionOrchestrator(db_path)
+    learning_store = LearningStore(db_path)
+    lifecycle_store = LifecycleStore(db_path)
 
     def snapshot(ticker: str) -> Dict[str, Any]:
         lr = (last_result_provider() or {}) if last_result_provider else {}
@@ -105,6 +110,20 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             account_size=float(request.args["account_size"]) if request.args.get("account_size") else None)
         payload["portfolio_risk_governor_record"] = risk_governor_store.record(ticker, payload["portfolio_risk_governor"], observed_at=now)
         payload["execution_orchestrator"] = {"recent_intents": execution_orchestrator.recent(10), "execution_enabled": False, "confirmation_required": True}
+        current_context = {
+            "ticker": ticker,
+            "premium_regime": (intelligence or {}).get("regime"),
+            "direction": (intelligence or {}).get("direction"),
+            "auction_state": lr.get("auction_state") or lr.get("auction", {}).get("state") if isinstance(lr, dict) else None,
+            "gamma_regime": lr.get("gamma_regime") if isinstance(lr, dict) else None,
+            "vix_regime": lr.get("vix_regime") if isinstance(lr, dict) else None,
+        }
+        payload["institutional_learning"] = build_learning_intelligence(learning_store, current_context)
+        payload["decision_narrative"] = build_decision_narrative(
+            eligibility=current.get("eligibility") or {}, intelligence=intelligence or {},
+            portfolio=payload["portfolio_optimizer"], execution=payload["execution_reality"],
+            risk=payload["portfolio_risk_governor"], learning=payload["institutional_learning"])
+        payload["trade_lifecycle_intelligence"] = {"recent_events": lifecycle_store.recent(20), "advisory_only": True}
         return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
 
     @app.route("/api/premium_discipline/expectancy")
@@ -364,3 +383,44 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
     def premium_execution_submit():
         p=request.get_json(silent=True) or {}; result=execution_orchestrator.submit(str(p.get("intent_id") or ""),str(p.get("confirmation_id") or ""),p.get("revalidation") or {})
         return jsonify(result), (200 if result.get("ok") else 409)
+
+    @app.route("/api/premium_discipline/learning")
+    def premium_discipline_learning():
+        ticker=(request.args.get("ticker") or "SPX").upper()
+        lr=(last_result_provider() or {}) if last_result_provider else {}
+        context={"ticker":ticker,"premium_regime":lr.get("premium_regime") or lr.get("regime"),"direction":lr.get("direction") or lr.get("bias"),"auction_state":lr.get("auction_state"),"gamma_regime":lr.get("gamma_regime"),"vix_regime":lr.get("vix_regime")}
+        try:min_sample=max(5,int(request.args.get("min_sample") or 20))
+        except ValueError:return jsonify({"ok":False,"error":"min_sample must be an integer."}),400
+        return jsonify({"ok":True,"ticker":ticker,"institutional_learning":build_learning_intelligence(learning_store,context,min_sample=min_sample)})
+
+    @app.route("/api/premium_discipline/learning/samples", methods=["GET","POST"])
+    def premium_discipline_learning_samples():
+        if request.method=="GET":
+            return jsonify({"ok":True,"samples":learning_store.recent(int(request.args.get("limit") or 100))})
+        p=request.get_json(silent=True) or {}
+        if not p.get("strategy"): return jsonify({"ok":False,"error":"strategy is required."}),400
+        rec=learning_store.record(str(p.get("ticker") or "SPX"),str(p["strategy"]),p.get("context") or {},outcome=p.get("outcome"),pnl=p.get("pnl"),source=str(p.get("source") or "SYSTEM"))
+        return jsonify({"ok":True,"sample":rec})
+
+    @app.route("/api/premium_discipline/learning/grade", methods=["POST"])
+    def premium_discipline_learning_grade():
+        p=request.get_json(silent=True) or {}
+        try: ok=learning_store.grade(int(p.get("row_id")),str(p.get("outcome") or "UNKNOWN"),float(p.get("pnl")),str(p.get("source") or "OPERATOR"))
+        except (TypeError,ValueError): return jsonify({"ok":False,"error":"row_id and numeric pnl are required."}),400
+        return jsonify({"ok":ok})
+
+    @app.route("/api/premium_discipline/decision-narrative")
+    def premium_discipline_decision_narrative():
+        ticker=(request.args.get("ticker") or "SPX").upper(); lr=(last_result_provider() or {}) if last_result_provider else {}; now=dt.datetime.now(ET); policy=calibration.active_policy()
+        current=snapshot(ticker); intel=rank_premium_strategies(lr,chain_fetcher=chain_fetcher,now_et=now,symbol=ticker,expiration=now.date().isoformat(),threshold=policy.get("threshold"),weights=policy.get("weights")); exp=build_expectancy_intelligence(lr,store=expectancy,ticker=ticker,chain_fetcher=chain_fetcher,now_et=now,expiration=now.date().isoformat(),threshold=policy.get("threshold"),weights=policy.get("weights")); portfolio=build_portfolio_optimizer(exp,allocation_policy=portfolio_calibration.active_policy()); execution=build_execution_reality(exp); risk=evaluate_portfolio_risk(portfolio,execution); learning=build_learning_intelligence(learning_store,{"ticker":ticker,"premium_regime":intel.get("regime"),"direction":intel.get("direction")})
+        narrative=build_decision_narrative(eligibility=current.get("eligibility") or {},intelligence=intel,portfolio=portfolio,execution=execution,risk=risk,learning=learning)
+        return jsonify({"ok":True,"ticker":ticker,"decision_narrative":narrative})
+
+    @app.route("/api/premium_discipline/trade-lifecycle", methods=["GET","POST"])
+    def premium_discipline_trade_lifecycle():
+        if request.method=="GET": return jsonify({"ok":True,"events":lifecycle_store.recent(int(request.args.get("limit") or 100))})
+        p=request.get_json(silent=True) or {}; position=p.get("position") or {}; market=p.get("market") or {}
+        if not position: return jsonify({"ok":False,"error":"position is required."}),400
+        result=evaluate_trade_lifecycle(position,market); record=lifecycle_store.record(result["position_id"],result)
+        return jsonify({"ok":True,"trade_lifecycle":result,"record":record})
+
