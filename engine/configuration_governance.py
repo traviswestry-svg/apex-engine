@@ -35,6 +35,13 @@ _REGISTRY_DATA = [{'name': 'ACCOUNT_SIZE', 'category': 'RISK', 'classification':
 REGISTRY: Dict[str, VariableDefinition] = {row["name"]: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
 _TRUE={"1","true","yes","on"}; _FALSE={"0","false","no","off"}
+_REGISTRY_DATA.extend([
+ {'name':'APEX_MARKET_MEMORY_DB','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'apex_market_memory.db','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite path for the append-only Market Memory store.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MARKET_MEMORY_CAPTURE_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables explicit Market Memory snapshot capture; disabled by default.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MARKET_MEMORY_OUTCOME_WRITES_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables governed attachment of outcomes to stored memory records; disabled by default.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MARKET_MEMORY_MIN_SESSIONS','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'20','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum stored observations before Market Memory reports readiness.','safety_critical':False,'used_in_code':True},
+])
+
 def _utcnow() -> str: return datetime.now(timezone.utc).isoformat()
 def _raw(env: Mapping[str,str], name: str) -> Optional[str]:
     v=env.get(name)

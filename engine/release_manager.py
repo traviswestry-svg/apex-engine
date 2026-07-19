@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "14.3.0_INSTITUTIONAL_MISSION_CONTROL_2"
-SEMANTIC_VERSION = "14.3.0"
+APPLICATION_VERSION = "15.0.0_MARKET_MEMORY_ENGINE"
+SEMANTIC_VERSION = "15.0.0"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -66,6 +66,10 @@ FEATURES = [
     "Institutional Probability Engine",
     "Adaptive Learning Engine v2",
     "Institutional Decision Engine",
+    "Institutional Volume Profile Intelligence",
+    "Institutional Trading Workspace",
+    "Institutional Mission Control 2.0",
+    "Market Memory Engine",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its
