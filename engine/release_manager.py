@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "11.0.0_RELEASE_MANAGER"
-SEMANTIC_VERSION = "11.0.0"
+APPLICATION_VERSION = "11.0.1_OPERATIONAL_OBSERVABILITY"
+SEMANTIC_VERSION = "11.0.1"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -95,6 +95,7 @@ def release_metadata() -> Dict[str, Any]:
         datetime.now(timezone.utc).strftime("%Y.%m.%d.%H%M")
     environment = _first_env("APEX_ENVIRONMENT", "RENDER_SERVICE_NAME", "FLASK_ENV",
                              "ENVIRONMENT") or "unknown"
+    deployed_at = _first_env("APEX_DEPLOYED_AT", "RENDER_DEPLOY_CREATED_AT")
 
     mig = migration_status()
     return {
@@ -104,6 +105,7 @@ def release_metadata() -> Dict[str, Any]:
         "commit": commit,
         "commit_known": commit != "unknown",
         "environment": environment,
+        "deployed_at": deployed_at,
         "features": list(FEATURES),
         "database_version": DATABASE_VERSION,
         "pending_migrations": mig["pending_migrations"],
