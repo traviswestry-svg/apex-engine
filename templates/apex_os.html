@@ -10,6 +10,11 @@
   .apex-nav a.nav-trade{color:#38bdf8;font-weight:700}
   .apex-nav a.nav-trade:hover{color:#7dd3fc}
   .apex-nav a.nav-trade::before{content:"▸ ";opacity:.7}
+
+    /* APEX 18.0.4 configuration governance */
+    .cfg-health{grid-column:1/-1;background:var(--panel);border:1px solid var(--bdr);border-radius:var(--radius);padding:12px 14px;display:grid;grid-template-columns:1.4fr repeat(7,minmax(82px,1fr));gap:10px;align-items:center}
+    .cfg-title{font-size:12px;font-weight:900;letter-spacing:.07em}.cfg-sub{font-size:11px;color:var(--muted);margin-top:3px}.cfg-k{font-size:10px;color:var(--muted);text-transform:uppercase}.cfg-v{font-size:14px;font-weight:850;margin-top:3px}.cfg-state{display:inline-block;padding:3px 9px;border-radius:999px;border:1px solid var(--bdr)}.cfg-state.PASS{color:var(--green)}.cfg-state.WARNING{color:var(--amber)}.cfg-state.BLOCKING{color:var(--red)}
+    @media(max-width:900px){.cfg-health{grid-template-columns:1fr 1fr}}
 </style>
 </head>
 <body>
@@ -479,6 +484,17 @@
       </div>
 
       <div class="mc-grid" id="mcGrid" style="display:none">
+
+        <section class="cfg-health" id="cfgHealth">
+          <div><div class="cfg-title">CONFIGURATION HEALTH <span class="cfg-state" id="cfgState">—</span></div><div class="cfg-sub" id="cfgIdentity">Loading governed deployment identity…</div></div>
+          <div><div class="cfg-k">Configured</div><div class="cfg-v" id="cfgConfigured">—</div></div>
+          <div><div class="cfg-k">Warnings</div><div class="cfg-v" id="cfgWarnings">—</div></div>
+          <div><div class="cfg-k">Blocking</div><div class="cfg-v" id="cfgBlocking">—</div></div>
+          <div><div class="cfg-k">Broker / Safety</div><div class="cfg-v" id="cfgBroker">—</div></div>
+          <div><div class="cfg-k">Scanner</div><div class="cfg-v" id="cfgScanner">—</div></div>
+          <div><div class="cfg-k">Sources</div><div class="cfg-v" id="cfgSources">—</div></div>
+          <div><div class="cfg-k">Diagnostics</div><div class="cfg-v"><a href="/api/configuration/diagnostics" target="_blank" rel="noopener">Open</a></div></div>
+        </section>
 
         <!-- ══ HERO: DECISION ═══════════════════════════════════════════════ -->
         <section class="mc-hero">
@@ -1337,5 +1353,20 @@
 </div><!-- /os-wrap -->
 
 <script src="{{ url_for('static', filename='js/apex_os.js') }}?v={{ asset_version or version }}"></script>
+
+<script>
+(function configurationHealth(){
+  function text(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}
+  Promise.all([fetch('/api/configuration/status',{cache:'no-store'}).then(r=>r.json()),fetch('/api/configuration/diagnostics',{cache:'no-store'}).then(r=>r.json())]).then(function(x){
+    var st=x[0]||{}, d=x[1]||{}, es=d.execution_safety||{}, di=d.deployment_identity||{};
+    var state=st.state==='BLOCKING'?'BLOCKING':st.state; text('cfgState',state); var el=document.getElementById('cfgState');if(el)el.className='cfg-state '+state;
+    text('cfgConfigured',st.configured==null?'—':st.configured); text('cfgWarnings',st.warnings||0); text('cfgBlocking',st.blocking||0);
+    text('cfgBroker',(es.broker_environment||'sandbox').toUpperCase()+' / '+(es.safe_to_submit?'SAFE':'LOCKED'));
+    text('cfgScanner',(d.derived&&d.derived.scanner_enabled)?'ENABLED':'DISABLED');
+    var sv=(d.variables||[]).filter(function(v){return ['MARKET_DATA','NEWS'].indexOf(v.category)>=0 && v.secret;}); var sc=sv.filter(function(v){return v.configured;}).length; text('cfgSources',sc+'/'+sv.length+' READY');
+    text('cfgIdentity',(di.application_version||st.version||'APEX')+' · '+(di.environment||'unknown')+' · schema '+(di.database_version||'unknown'));
+  }).catch(function(){text('cfgState','WARNING');text('cfgIdentity','Configuration diagnostics unavailable this cycle.');});
+})();
+</script>
 </body>
 </html>
