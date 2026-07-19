@@ -516,6 +516,15 @@ except Exception as _iri_err:
     INSTITUTIONAL_REGIME_INTELLIGENCE_AVAILABLE = False
     print(f"APEX Institutional Regime Intelligence unavailable (non-fatal): {_iri_err}", flush=True)
 
+# APEX 23.2 — Institutional Forecast Engine (read-only probabilistic layer).
+try:
+    from engine.institutional_forecast_routes import register_institutional_forecast_routes
+    INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE = True
+except Exception as _ife_err:
+    register_institutional_forecast_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE = False
+    print(f"APEX Institutional Forecast Engine unavailable (non-fatal): {_ife_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -8566,6 +8575,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_regime_intelligence_routes(app, last_result_provider=_iri_last_result)
         print("APEX 23.1 Institutional Regime Intelligence routes registered.", flush=True)
+
+    if INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE and register_institutional_forecast_routes is not None:
+        def _ife_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_forecast_routes(app, last_result_provider=_ife_last_result)
+        print("APEX 23.2 Institutional Forecast Engine routes registered.", flush=True)
 
     if PRE23_HARDENING_AVAILABLE and register_pre23_hardening_routes is not None:
         def _pre23_last_result():
