@@ -147,7 +147,7 @@
     function pct(x){return (x==null)?'—':Math.round(x*100)+'%';}
     function render(res){
       var card=document.getElementById('bttCard');
-      var p=(res&&res.premium_strategy)||{};
+      var p=(res&&res.premium_strategy)||{}; window.apexPremiumRecommendation=p;
       if(!res||!res.ok||!p||p.available===false){ if(!card.classList.contains('btt-hidden'))return; return; }
       card.classList.remove('btt-hidden');
       var noTrade=(p.strategy==='NO_TRADE');
@@ -198,6 +198,28 @@
       <button id="tccReload">Reload SPX</button>
       <span class="plan-note">Click a chain row to auto-fill premium &amp; delta, or type them in, then Arm Plan. Premium pane is delta-modeled until a live feed is connected.</span>
     </div>
+  </div>
+
+  <!-- APEX 18.0.1 broker-ready strategy ticket -->
+  <div class="card" id="complexTicket" style="display:none;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
+      <h2 style="margin:0">Strategy Order Ticket</h2>
+      <span class="cc-chip chip-plan" id="complexState">NOT ARMED</span>
+    </div>
+    <div id="complexSummary" class="btt-metrics"></div>
+    <div style="overflow-x:auto;margin-top:8px">
+      <table><thead><tr><th>Leg</th><th>Action</th><th>Contract</th><th>Expiration / DTE</th><th>Bid / Ask</th><th>Mid</th></tr></thead>
+      <tbody id="complexLegs"></tbody></table>
+    </div>
+    <div id="complexEconomics" class="btt-plan"></div>
+    <div id="complexErrors" class="mnote"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+      <label class="ctrl" style="min-width:120px"><span>Net Limit</span><input id="complexLimit" type="number" min="0.01" step="0.05"></label>
+      <label class="ctrl" style="min-width:100px"><span>Quantity</span><input id="complexQty" type="number" min="1" step="1" value="1"></label>
+      <button class="primary" id="complexPreview">Preview Strategy</button>
+      <button id="complexSubmit" disabled>Confirm &amp; Submit</button>
+    </div>
+    <div class="note" style="margin-top:7px">Arm Plan populates every exact contract. Preview and explicit confirmation remain mandatory. Multi-leg strategies are submitted as one complex order.</div>
   </div>
 
   <!-- MAIN: charts + command center -->
