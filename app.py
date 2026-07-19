@@ -5340,7 +5340,11 @@ def api_institutional_os():
                 try:
                     premium_dispatch_and_log(
                         result, ticker, send_telegram, now_et_provider=now_et,
-                        chain_fetcher=globals().get("_poly_chain_fetcher"),
+                        # Use the same canonical failover path as Trade Command Center:
+            # Polygon/Massive first, E*TRADE fallback. This prevents the premium
+            # strategy from declaring a structure unpriceable while the chain UI
+            # already has executable quotes from another registered provider.
+            chain_fetcher=globals().get("_premium_canonical_chain_fetcher"),
                     )
                 except Exception as _ps_disp_err:
                     print(f"premium dispatch error (non-fatal): {_ps_disp_err}", flush=True)
@@ -7760,6 +7764,18 @@ try:
         return _polygon_chain.fetch_expirations(
             safe_get_json, underlying=_POLY_UNDERLYING, next_page=_polygon_next_page)
 
+    def _premium_canonical_chain_fetcher(symbol, expiration, side):
+        """Canonical premium-pricing feed: Polygon first, E*TRADE fallback."""
+        rows = _poly_chain_fetcher(symbol, expiration, side)
+        if rows:
+            return rows
+        try:
+            from engine.brokers.etrade_adapter import ETradeAdapter
+            result = ETradeAdapter().get_option_chain(symbol, expiration, side)
+            return ((result.data or {}).get("contracts") or []) if result.ok else []
+        except Exception:
+            return []
+
     register_trade_routes(
         app,
         spot_provider=_spx_spot_provider,
@@ -7937,7 +7953,11 @@ try:
             # Without it the premium engine cannot price a structure, and will
             # publish the strikes as a candidate with no economics rather than a
             # modelled credit that reads as fact.
-            chain_fetcher=globals().get("_poly_chain_fetcher"),
+            # Use the same canonical failover path as Trade Command Center:
+            # Polygon/Massive first, E*TRADE fallback. This prevents the premium
+            # strategy from declaring a structure unpriceable while the chain UI
+            # already has executable quotes from another registered provider.
+            chain_fetcher=globals().get("_premium_canonical_chain_fetcher"),
         )
         print(f"APEX Premium Strategy routes registered ({PREMIUM_STRATEGY_VERSION}).", flush=True)
 except Exception as e:
