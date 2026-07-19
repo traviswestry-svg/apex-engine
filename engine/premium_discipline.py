@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-VERSION = "18.0.5_PREMIUM_DISCIPLINE"
+VERSION = "18.0.6_TRADE_REFUSAL_REPLAY"
 APPROVE = "APPROVE"
 REFUSE = "REFUSE"
 NOT_APPLICABLE = "NOT_APPLICABLE"
@@ -248,6 +248,13 @@ class RefusalLedger:
             )""")
             c.execute("CREATE INDEX IF NOT EXISTS idx_pdd_session ON premium_discipline_decisions(session_date, ticker)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_pdd_decision ON premium_discipline_decisions(decision, counterfactual_outcome)")
+            existing = {row[1] for row in c.execute("PRAGMA table_info(premium_discipline_decisions)").fetchall()}
+            for name, ddl in (
+                ("counterfactual_metrics_json", "TEXT"),
+                ("replay_version", "TEXT"),
+            ):
+                if name not in existing:
+                    c.execute(f"ALTER TABLE premium_discipline_decisions ADD COLUMN {name} {ddl}")
             c.commit()
 
     def record(self, *, session_date: str, ticker: str, candidate: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
@@ -266,6 +273,53 @@ class RefusalLedger:
             c.commit()
             row = c.execute("SELECT id, fingerprint, ts FROM premium_discipline_decisions WHERE fingerprint=?", (fp,)).fetchone()
         return {"recorded": True, "id": row["id"], "fingerprint": row["fingerprint"], "ts": row["ts"]}
+
+    def ungraded_refusals(self, limit: int = 300) -> List[Dict[str, Any]]:
+        limit = max(1, min(int(limit), 1000))
+        with self._connect() as c:
+            rows = c.execute(
+                "SELECT * FROM premium_discipline_decisions "
+                "WHERE decision=? AND counterfactual_outcome IS NULL "
+                "ORDER BY id ASC LIMIT ?", (REFUSE, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+    def grade(self, row_id: int, outcome: str, pnl: Optional[float], notes: str,
+              metrics: Optional[Dict[str, Any]] = None) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as c:
+            cur = c.execute(
+                "UPDATE premium_discipline_decisions SET counterfactual_outcome=?, "
+                "counterfactual_pnl=?, counterfactual_notes=?, graded_at=?, "
+                "counterfactual_metrics_json=?, replay_version=? "
+                "WHERE id=? AND counterfactual_outcome IS NULL",
+                (outcome, pnl, notes, now, json.dumps(metrics or {}, default=str),
+                 "18.0.6_TRADE_REFUSAL_REPLAY", int(row_id)))
+            c.commit()
+        return cur.rowcount == 1
+
+    def replay_scorecard(self) -> Dict[str, Any]:
+        with self._connect() as c:
+            rows = c.execute(
+                "SELECT counterfactual_outcome, counterfactual_pnl FROM premium_discipline_decisions "
+                "WHERE decision=? AND counterfactual_outcome IS NOT NULL", (REFUSE,)).fetchall()
+            pending = c.execute(
+                "SELECT COUNT(*) FROM premium_discipline_decisions WHERE decision=? "
+                "AND counterfactual_outcome IS NULL", (REFUSE,)).fetchone()[0]
+        counts: Dict[str, int] = {}
+        for row in rows:
+            key = row["counterfactual_outcome"] or "UNKNOWN"
+            counts[key] = counts.get(key, 0) + 1
+        protected = counts.get("AVOIDED_LOSS", 0) + counts.get("AVOIDED_STOP", 0)
+        missed = counts.get("MISSED_WIN", 0) + counts.get("FALSE_REJECTION", 0)
+        actionable = protected + missed
+        pnl_values = [_f(r["counterfactual_pnl"]) for r in rows if r["counterfactual_pnl"] is not None]
+        return {
+            "available": True, "version": "18.0.6_TRADE_REFUSAL_REPLAY",
+            "graded": len(rows), "pending": pending, "outcomes": counts,
+            "capital_protecting_refusals": protected, "missed_winners": missed,
+            "refusal_precision_pct": round(100 * protected / actionable, 1) if actionable else None,
+            "modeled_counterfactual_pnl_total": round(sum(pnl_values), 2) if pnl_values else None,
+        }
 
     def recent(self, limit: int = 50, decision: Optional[str] = None) -> List[Dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
