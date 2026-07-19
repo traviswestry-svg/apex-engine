@@ -511,6 +511,14 @@
           <div><span class="cfg-k">Execution gate</span> <span class="cfg-v" id="intelGate">LOCKED</span></div>
           <div><a href="/api/institutional-intelligence-engine/diagnostics" target="_blank" rel="noopener">Diagnostics</a></div>
         </section>
+        <section class="intel-health" id="structureHealth">
+          <div class="cfg-title">MARKET STRUCTURE <span class="cfg-state" id="structureState">—</span></div>
+          <div><span class="cfg-k">Direction</span> <span class="cfg-v" id="structureDirection">—</span></div>
+          <div><span class="cfg-k">Opening type</span> <span class="cfg-v" id="structureOpen">—</span></div>
+          <div><span class="cfg-k">Day type</span> <span class="cfg-v" id="structureDay">—</span></div>
+          <div><span class="cfg-k">POC migration</span> <span class="cfg-v" id="structurePoc">—</span></div>
+          <div><a href="/api/institutional-market-structure/diagnostics" target="_blank" rel="noopener">Diagnostics</a></div>
+        </section>
 
         <!-- ══ HERO: DECISION ═══════════════════════════════════════════════ -->
         <section class="mc-hero">
@@ -1398,6 +1406,16 @@
     text('intelBias',st.bias||'NEUTRAL'); text('intelConviction',st.conviction==null?'—':Math.round(st.conviction));
     text('intelScenario',(st.scenario||'UNAVAILABLE').replaceAll('_',' ')); text('intelGate',st.execution_eligible?'ELIGIBLE':'LOCKED');
   }).catch(function(){text('intelState','WARNING');});
+})();
+(function institutionalMarketStructureHealth(){
+  function text(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}
+  fetch('/api/institutional-market-structure/diagnostics',{cache:'no-store'}).then(function(r){return r.json();}).then(function(st){
+    var state=st.state==='READY'?'PASS':'WARNING', el=document.getElementById('structureState'); text('structureState',state); if(el)el.className='cfg-state '+state;
+    text('structureDirection',st.direction||'NEUTRAL');
+    text('structureOpen',((st.opening_type||{}).type||'UNAVAILABLE').replaceAll('_',' '));
+    text('structureDay',((st.day_type_probability||{}).classification||'UNAVAILABLE').replaceAll('_',' '));
+    text('structurePoc',((st.poc_value_migration||{}).poc_direction||'UNAVAILABLE').replaceAll('_',' '));
+  }).catch(function(){text('structureState','WARNING');});
 })();
 </script>
 </body>
