@@ -268,17 +268,6 @@ except Exception as _ps_err:
     PREMIUM_STRATEGY_AVAILABLE = False
     print(f"APEX Premium Strategy unavailable (non-fatal): {_ps_err}", flush=True)
 
-# APEX 18.0.8 — Premium Discipline Command Center
-try:
-    from engine.premium_discipline_routes import register_premium_discipline_routes
-    from engine.premium_discipline import VERSION as PREMIUM_DISCIPLINE_VERSION
-    PREMIUM_DISCIPLINE_AVAILABLE = True
-except Exception as _pdg_err:
-    register_premium_discipline_routes = None  # type: ignore[assignment]
-    PREMIUM_DISCIPLINE_VERSION = "unavailable"
-    PREMIUM_DISCIPLINE_AVAILABLE = False
-    print(f"APEX Premium Discipline unavailable (non-fatal): {_pdg_err}", flush=True)
-
 # APEX 9 Step 2 — Institutional Flow Classifier (read-only consumer of the
 # normalized flow tape; adds certainty-layered classification, never fabricates
 # intent). Non-fatal: if it fails to import, the tape is completely unaffected.
@@ -432,6 +421,15 @@ except Exception as _config_gov_err:
     safe_startup_validation = None  # type: ignore[assignment]
     CONFIGURATION_GOVERNANCE_AVAILABLE = False
     print(f"APEX Configuration Governance unavailable (non-fatal): {_config_gov_err}", flush=True)
+
+# APEX 18.0.5 — dependency and service governance (read-only APIs).
+try:
+    from engine.dependency_governance_routes import register_dependency_governance_routes
+    DEPENDENCY_GOVERNANCE_AVAILABLE = True
+except Exception as _dep_gov_err:
+    register_dependency_governance_routes = None  # type: ignore[assignment]
+    DEPENDENCY_GOVERNANCE_AVAILABLE = False
+    print(f"APEX Dependency Governance unavailable (non-fatal): {_dep_gov_err}", flush=True)
 
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
@@ -8100,20 +8098,6 @@ try:
 except Exception as e:
     print(f"Premium Strategy unavailable (non-fatal): {e}", flush=True)
 
-# APEX 18.0.8 — Premium Discipline Command Center + Replay + governed calibration routes. Advisory only: records approvals/refusals
-# and exposes refusal analytics without changing broker execution behavior.
-try:
-    if PREMIUM_DISCIPLINE_AVAILABLE and register_premium_discipline_routes is not None:
-        register_premium_discipline_routes(
-            app, last_result_provider=_ps_last_result,
-            chain_fetcher=globals().get("_premium_canonical_chain_fetcher"),
-            get_intraday_bars=get_intraday_bars,
-        )
-        print(f"APEX Premium Discipline routes registered ({PREMIUM_DISCIPLINE_VERSION}).", flush=True)
-except Exception as e:
-    PREMIUM_DISCIPLINE_AVAILABLE = False
-    print(f"Premium Discipline registration unavailable (non-fatal): {e}", flush=True)
-
 # APEX 11.2/11.3 — Institutional narrative and replay routes.
 try:
     if INSTITUTIONAL_NARRATIVE_AVAILABLE and register_institutional_intelligence_routes is not None:
@@ -8376,6 +8360,8 @@ try:
 
     if CONFIGURATION_GOVERNANCE_AVAILABLE and register_configuration_governance_routes is not None:
         register_configuration_governance_routes(app)
+    if DEPENDENCY_GOVERNANCE_AVAILABLE and register_dependency_governance_routes is not None:
+        register_dependency_governance_routes(app)
         _configuration_startup_result = safe_startup_validation() if safe_startup_validation else None
         print(f"APEX Configuration Governance routes registered ({VERSION}).", flush=True)
 

@@ -1,11 +1,10 @@
 # APEX 18.0.5 Deployment and Rollback
 
-## Deployment
-1. Back up the current APEX 18.0.4 deployment.
-2. Deploy the complete APEX 18.0.5 repository package.
-3. Optionally set `PREMIUM_ELIGIBILITY_THRESHOLD`; default is `65`.
-4. Confirm `/api/system/version` reports `11.0.3_PREMIUM_DISCIPLINE`.
-5. Confirm the three `/api/premium_discipline*` endpoints return HTTP 200.
+## Deploy
+1. Deploy the complete repository package through the existing GitHub/Render workflow.
+2. Do not change trading, confirmation, or broker-mutation environment variables.
+3. Verify `/health`, `/api/configuration/status`, and `/api/dependencies/status` return HTTP 200.
+4. Open Mission Control and confirm Configuration Health and Dependency Health render.
 
 ## Rollback
-Redeploy the prior APEX 18.0.4 complete repository. The added `premium_discipline_decisions` table may remain; prior versions ignore it. No destructive schema rollback is required.
+Redeploy the last known-good APEX 18.0.4 commit/package. No database migration or data rollback is required. The new dependency registry and circuit state are in-memory only.
