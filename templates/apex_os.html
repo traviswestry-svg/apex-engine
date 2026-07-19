@@ -80,6 +80,7 @@
     <section class="iw-card"><div class="iw-title">Volume Profile Intelligence</div><div class="iw-metrics"><div><span>Active</span><strong id="iwGreen" class="iw-heat GREEN">—</strong></div><div><span>Stalled</span><strong id="iwRed" class="iw-heat RED">—</strong></div><div><span>Heat</span><strong id="iwHeat">—</strong></div></div><div class="iw-links"><a href="/api/institutional-volume-profile/diagnostics" target="_blank">Profile diagnostics</a> · <a href="/api/institutional-volume-profile/levels" target="_blank">Ranked levels</a></div></section>
     <section class="iw-card"><div class="iw-title">Execution Workspace</div><div class="iw-metrics"><div><span>Entry</span><strong id="iwEntry">—</strong></div><div><span>Stop</span><strong id="iwStop">—</strong></div><div><span>TP1</span><strong id="iwTp1">—</strong></div></div><div class="iw-links"><a href="/api/institutional-workspace/status" target="_blank">Full workspace</a> · <a href="/api/institutional-workspace/layout" target="_blank">Context layout</a></div></section>
     <section class="iw-card"><div class="iw-title">Mission Control 2.0</div><div class="iw-metrics"><div><span>State</span><strong id="iwMcState">—</strong></div><div><span>Execution</span><strong id="iwMcExec">—</strong></div><div><span>Broker</span><strong id="iwMcBroker">LOCKED</strong></div></div><div class="iw-links"><a href="/api/mission-control-v2/diagnostics" target="_blank">Grouped diagnostics</a></div></section>
+    <section class="iw-card"><div class="iw-title">Market Memory</div><div class="iw-metrics"><div><span>State</span><strong id="mmState">DORMANT</strong></div><div><span>Sessions</span><strong id="mmSessions">0</strong></div><div><span>Learning</span><strong id="mmLearning">LOCKED</strong></div></div><div class="iw-links"><a href="/api/market-memory/diagnostics" target="_blank">Memory diagnostics</a><a href="/api/market-memory/similar" target="_blank">Similar sessions</a></div></section>
   </div>
 
   <!-- Institutional Ribbon -->
@@ -1501,5 +1502,12 @@
 })();
 </script>
 
+
+<script>
+fetch('/api/market-memory/status',{cache:'no-store'}).then(r=>r.json()).then(x=>{
+ const a=document.getElementById('mmState'),b=document.getElementById('mmSessions'),c=document.getElementById('mmLearning');
+ if(a)a.textContent=x.state||'DORMANT'; if(b)b.textContent=String(x.sessions||0); if(c)c.textContent=x.learning_ready?'READY':'LOCKED';
+}).catch(()=>{});
+</script>
 </body>
 </html>
