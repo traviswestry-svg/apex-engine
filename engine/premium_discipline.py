@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-VERSION = "18.1.1_DYNAMIC_POSITION_SIZING"
+VERSION = "18.1.2_MULTI_STRATEGY_PORTFOLIO_OPTIMIZER"
 APPROVE = "APPROVE"
 REFUSE = "REFUSE"
 NOT_APPLICABLE = "NOT_APPLICABLE"

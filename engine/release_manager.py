@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "11.0.9_DYNAMIC_POSITION_SIZING"
-SEMANTIC_VERSION = "11.0.9"
+APPLICATION_VERSION = "11.0.10_MULTI_STRATEGY_PORTFOLIO_OPTIMIZER"
+SEMANTIC_VERSION = "11.0.10"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -58,6 +58,7 @@ FEATURES = [
     "Premium Discipline",
     "Refusal Intelligence",
     "Dynamic Position Sizing",
+    "Multi-Strategy Portfolio Optimizer",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its
