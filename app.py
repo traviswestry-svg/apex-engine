@@ -552,6 +552,15 @@ except Exception as _iatc_err:
     INSTITUTIONAL_AI_TRADING_COACH_AVAILABLE = False
     print(f"APEX Institutional AI Trading Coach unavailable (non-fatal): {_iatc_err}", flush=True)
 
+# APEX 24.0 — Institutional Execution Intelligence (advisory-only lifecycle orchestration).
+try:
+    from engine.institutional_execution_intelligence_routes import register_institutional_execution_intelligence_routes
+    INSTITUTIONAL_EXECUTION_INTELLIGENCE_AVAILABLE = True
+except Exception as _iei_err:
+    register_institutional_execution_intelligence_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_EXECUTION_INTELLIGENCE_AVAILABLE = False
+    print(f"APEX Institutional Execution Intelligence unavailable (non-fatal): {_iei_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -8634,6 +8643,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_ai_trading_coach_routes(app, last_result_provider=_iatc_last_result)
         print("APEX 23.5 Institutional AI Trading Coach routes registered.", flush=True)
+
+    if INSTITUTIONAL_EXECUTION_INTELLIGENCE_AVAILABLE and register_institutional_execution_intelligence_routes is not None:
+        def _iei_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_execution_intelligence_routes(app, last_result_provider=_iei_last_result)
+        print("APEX 24.0 Institutional Execution Intelligence routes registered.", flush=True)
 
     if PRE23_HARDENING_AVAILABLE and register_pre23_hardening_routes is not None:
         def _pre23_last_result():
