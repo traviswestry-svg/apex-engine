@@ -18,6 +18,9 @@ from .dynamic_position_sizing import build_position_sizing
 from .multi_strategy_portfolio_optimizer import build_portfolio_optimizer
 from .portfolio_outcome_attribution import PortfolioOutcomeStore, replay_due_portfolios
 from .adaptive_portfolio_calibration import PortfolioCalibrationStore
+from .execution_reality_slippage import ExecutionRealityStore, build_execution_reality, evaluate_candidate_execution
+from .premium_portfolio_risk_governor import RiskGovernorStore, evaluate_portfolio_risk
+from .premium_execution_orchestrator import PremiumExecutionOrchestrator
 
 try:
     from zoneinfo import ZoneInfo
@@ -35,6 +38,9 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
     expectancy = ExpectancyStore(db_path)
     portfolio_outcomes = PortfolioOutcomeStore(db_path)
     portfolio_calibration = PortfolioCalibrationStore(db_path)
+    execution_reality_store = ExecutionRealityStore(db_path)
+    risk_governor_store = RiskGovernorStore(db_path)
+    execution_orchestrator = PremiumExecutionOrchestrator(db_path)
 
     def snapshot(ticker: str) -> Dict[str, Any]:
         lr = (last_result_provider() or {}) if last_result_provider else {}
@@ -86,6 +92,19 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
         payload["portfolio_outcome_record"] = portfolio_outcomes.record(ticker, payload["portfolio_optimizer"], observed_at=now)
         payload["portfolio_outcome_attribution"] = portfolio_outcomes.scorecard()
         payload["portfolio_calibration"] = {"active_policy": portfolio_calibration.active_policy(), "runs": portfolio_calibration.recent(limit=10)}
+        payload["execution_reality"] = build_execution_reality(expectancy_intelligence)
+        recommendation = payload["execution_reality"].get("recommendation")
+        payload["execution_reality_record"] = execution_reality_store.record_shadow(ticker, recommendation, observed_at=now) if recommendation else None
+        payload["execution_reality_scorecard"] = execution_reality_store.scorecard()
+        payload["portfolio_risk_governor"] = evaluate_portfolio_risk(
+            payload["portfolio_optimizer"], payload["execution_reality"],
+            daily_realized_pnl=float(request.args.get("daily_pnl") or 0),
+            open_risk=float(request.args.get("open_risk") or 0),
+            trades_today=int(request.args.get("trades_today") or 0),
+            losses_today=int(request.args.get("losses_today") or 0),
+            account_size=float(request.args["account_size"]) if request.args.get("account_size") else None)
+        payload["portfolio_risk_governor_record"] = risk_governor_store.record(ticker, payload["portfolio_risk_governor"], observed_at=now)
+        payload["execution_orchestrator"] = {"recent_intents": execution_orchestrator.recent(10), "execution_enabled": False, "confirmation_required": True}
         return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
 
     @app.route("/api/premium_discipline/expectancy")
@@ -217,6 +236,59 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
         return jsonify({"ok": True, "scorecard": ledger.scorecard(),
                         "replay": ledger.replay_scorecard()})
 
+
+    @app.route("/api/premium_discipline/execution-reality")
+    def premium_discipline_execution_reality():
+        ticker = (request.args.get("ticker") or "SPX").upper()
+        model = (request.args.get("model") or "MID_MINUS_ONE_TICK").upper()
+        lr = (last_result_provider() or {}) if last_result_provider else {}
+        now = dt.datetime.now(ET)
+        policy = calibration.active_policy()
+        exp = build_expectancy_intelligence(lr, store=expectancy, ticker=ticker, chain_fetcher=chain_fetcher, now_et=now, expiration=now.date().isoformat(), threshold=policy.get("threshold"), weights=policy.get("weights"))
+        result = build_execution_reality(exp, model=model)
+        record = execution_reality_store.record_shadow(ticker, result["recommendation"], observed_at=now) if result.get("recommendation") else None
+        return jsonify({"ok": True, "ticker": ticker, "execution_reality": result, "record": record})
+
+    @app.route("/api/premium_discipline/execution-reality/scorecard")
+    def premium_discipline_execution_reality_scorecard():
+        try: limit = max(1, min(int(request.args.get("limit") or 100), 500))
+        except ValueError: limit = 100
+        return jsonify({"ok": True, "scorecard": execution_reality_store.scorecard(), "records": execution_reality_store.recent(limit)})
+
+    @app.route("/api/premium_discipline/execution-reality/shadow-fill", methods=["POST"])
+    def premium_discipline_execution_reality_shadow_fill():
+        payload = request.get_json(silent=True) or {}
+        ticker = str(payload.get("ticker") or "SPX").upper()
+        candidate = payload.get("candidate")
+        if candidate:
+            result = evaluate_candidate_execution(candidate, model=str(payload.get("model") or "MID_MINUS_ONE_TICK"))
+        else:
+            lr = (last_result_provider() or {}) if last_result_provider else {}
+            now = dt.datetime.now(ET)
+            policy = calibration.active_policy()
+            exp = build_expectancy_intelligence(lr, store=expectancy, ticker=ticker, chain_fetcher=chain_fetcher, now_et=now, expiration=now.date().isoformat(), threshold=policy.get("threshold"), weights=policy.get("weights"))
+            reality = build_execution_reality(exp, model=str(payload.get("model") or "MID_MINUS_ONE_TICK"))
+            result = reality.get("recommendation")
+            if result is None:
+                return jsonify({"ok": False, "error": "No executable candidate is available for shadow fill."}), 409
+        record = execution_reality_store.record_shadow(ticker, result)
+        return jsonify({"ok": True, "shadow_fill": result, "record": record})
+
+    @app.route("/api/premium_discipline/execution-reality/actual-fill", methods=["POST"])
+    def premium_discipline_execution_reality_actual_fill():
+        payload = request.get_json(silent=True) or {}
+        try:
+            execution_id = int(payload.get("execution_id"))
+            actual_fill_credit = float(payload.get("actual_fill_credit"))
+            latency = int(payload["fill_latency_ms"]) if payload.get("fill_latency_ms") is not None else None
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "execution_id and actual_fill_credit are required numeric values."}), 400
+        try:
+            record = execution_reality_store.record_actual(execution_id, actual_fill_credit=actual_fill_credit, fill_latency_ms=latency, details=payload.get("details") or {})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 404
+        return jsonify({"ok": True, "actual_fill": record, "scorecard": execution_reality_store.scorecard()})
+
     @app.route("/api/premium_discipline/replay")
     def premium_discipline_replay():
         return jsonify({"ok": True, "replay": ledger.replay_scorecard()})
@@ -266,3 +338,29 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             return jsonify({"ok": False, "error": str(exc)}), 409
         return jsonify({"ok": True, "promotion": result})
 
+
+    @app.route("/api/premium_discipline/risk-governor")
+    def premium_discipline_risk_governor():
+        ticker=(request.args.get("ticker") or "SPX").upper(); lr=(last_result_provider() or {}) if last_result_provider else {}; now=dt.datetime.now(ET); policy=calibration.active_policy()
+        exp=build_expectancy_intelligence(lr,store=expectancy,ticker=ticker,chain_fetcher=chain_fetcher,now_et=now,expiration=now.date().isoformat(),threshold=policy.get("threshold"),weights=policy.get("weights"))
+        portfolio=build_portfolio_optimizer(exp,daily_realized_pnl=float(request.args.get("daily_pnl") or 0),open_risk=float(request.args.get("open_risk") or 0),account_size=float(request.args["account_size"]) if request.args.get("account_size") else None,allocation_policy=portfolio_calibration.active_policy())
+        reality=build_execution_reality(exp); risk=evaluate_portfolio_risk(portfolio,reality,daily_realized_pnl=float(request.args.get("daily_pnl") or 0),open_risk=float(request.args.get("open_risk") or 0),trades_today=int(request.args.get("trades_today") or 0),losses_today=int(request.args.get("losses_today") or 0),account_size=float(request.args["account_size"]) if request.args.get("account_size") else None)
+        return jsonify({"ok":True,"ticker":ticker,"risk_governor":risk,"record":risk_governor_store.record(ticker,risk,observed_at=now)})
+
+    @app.route("/api/premium_discipline/execution-orchestrator/intents", methods=["GET","POST"])
+    def premium_execution_intents():
+        if request.method=="GET": return jsonify({"ok":True,"intents":execution_orchestrator.recent(int(request.args.get("limit") or 100))})
+        p=request.get_json(silent=True) or {}; return jsonify(execution_orchestrator.create_intent(str(p.get("ticker") or "SPX"),p.get("portfolio") or {},p.get("risk_governor") or {},p.get("execution_reality") or {},p.get("idempotency_key")))
+
+    @app.route("/api/premium_discipline/execution-orchestrator/preview", methods=["POST"])
+    def premium_execution_preview():
+        p=request.get_json(silent=True) or {}; return jsonify(execution_orchestrator.preview(str(p.get("intent_id") or ""),int(p.get("ttl_seconds") or 120)))
+
+    @app.route("/api/premium_discipline/execution-orchestrator/confirm", methods=["POST"])
+    def premium_execution_confirm():
+        p=request.get_json(silent=True) or {}; return jsonify(execution_orchestrator.confirm(str(p.get("intent_id") or ""),str(p.get("confirmed_by") or ""),bool(p.get("acknowledgement")),int(p.get("ttl_seconds") or 90)))
+
+    @app.route("/api/premium_discipline/execution-orchestrator/submit", methods=["POST"])
+    def premium_execution_submit():
+        p=request.get_json(silent=True) or {}; result=execution_orchestrator.submit(str(p.get("intent_id") or ""),str(p.get("confirmation_id") or ""),p.get("revalidation") or {})
+        return jsonify(result), (200 if result.get("ok") else 409)

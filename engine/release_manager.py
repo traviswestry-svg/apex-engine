@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "11.0.12_ADAPTIVE_PORTFOLIO_ALLOCATION_CALIBRATION"
-SEMANTIC_VERSION = "11.0.12"
+APPLICATION_VERSION = "11.0.15_CONFIRMATION_GATED_EXECUTION_ORCHESTRATOR"
+SEMANTIC_VERSION = "11.0.13"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -59,6 +59,7 @@ FEATURES = [
     "Refusal Intelligence",
     "Dynamic Position Sizing",
     "Multi-Strategy Portfolio Optimizer",
+    "Execution Reality & Slippage Intelligence",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its
