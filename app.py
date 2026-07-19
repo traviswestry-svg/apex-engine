@@ -431,6 +431,17 @@ except Exception as _dep_gov_err:
     DEPENDENCY_GOVERNANCE_AVAILABLE = False
     print(f"APEX Dependency Governance unavailable (non-fatal): {_dep_gov_err}", flush=True)
 
+# APEX 19.0 — Institutional Intelligence Engine (read-only synthesis APIs).
+try:
+    from engine.institutional_intelligence_engine import build_institutional_intelligence_v19
+    from engine.institutional_intelligence_engine_routes import register_institutional_intelligence_engine_routes
+    INSTITUTIONAL_INTELLIGENCE_ENGINE_AVAILABLE = True
+except Exception as _iie_err:
+    build_institutional_intelligence_v19 = None  # type: ignore[assignment]
+    register_institutional_intelligence_engine_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_INTELLIGENCE_ENGINE_AVAILABLE = False
+    print(f"APEX 19.0 Institutional Intelligence Engine unavailable (non-fatal): {_iie_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -5361,6 +5372,13 @@ def api_institutional_os():
                 except Exception as _ii2:
                     print(f"Institutional intelligence error (non-fatal): {_ii2}", flush=True)
 
+            # ── APEX 19.0 Institutional Intelligence Engine ──
+            if INSTITUTIONAL_INTELLIGENCE_ENGINE_AVAILABLE and build_institutional_intelligence_v19 is not None:
+                try:
+                    result["institutional_intelligence_engine"] = build_institutional_intelligence_v19(result)
+                except Exception as _iie2:
+                    print(f"Institutional intelligence engine error (non-fatal): {_iie2}", flush=True)
+
             # ── APEX 8.0 Execution Intelligence Engine ──────────────────────
             if EIE_AVAILABLE and build_execution_intelligence is not None:
                 try:
@@ -8362,6 +8380,9 @@ try:
         register_configuration_governance_routes(app)
     if DEPENDENCY_GOVERNANCE_AVAILABLE and register_dependency_governance_routes is not None:
         register_dependency_governance_routes(app)
+    if INSTITUTIONAL_INTELLIGENCE_ENGINE_AVAILABLE and register_institutional_intelligence_engine_routes is not None:
+        register_institutional_intelligence_engine_routes(app, last_result_provider=_apex10_last_result)
+        print("APEX 19.0 Institutional Intelligence Engine routes registered.", flush=True)
         _configuration_startup_result = safe_startup_validation() if safe_startup_validation else None
         print(f"APEX Configuration Governance routes registered ({VERSION}).", flush=True)
 
