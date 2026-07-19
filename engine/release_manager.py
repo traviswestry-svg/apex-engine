@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "11.0.4_TRADE_REFUSAL_REPLAY"
-SEMANTIC_VERSION = "11.0.4"
+APPLICATION_VERSION = "11.0.5_ADAPTIVE_REFUSAL_CALIBRATION"
+SEMANTIC_VERSION = "11.0.5"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.

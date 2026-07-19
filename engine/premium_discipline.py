@@ -1,4 +1,4 @@
-"""APEX 18.0.5 — Premium Discipline and Refusal Intelligence.
+"""APEX 18.0.7 — Premium Discipline with governed adaptive calibration.
 
 A deterministic, read-only approval gate for 0DTE premium-selling candidates.
 It does not generate a trade and cannot place an order.  It answers whether a
@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-VERSION = "18.0.6_TRADE_REFUSAL_REPLAY"
+VERSION = "18.0.7_ADAPTIVE_REFUSAL_CALIBRATION"
 APPROVE = "APPROVE"
 REFUSE = "REFUSE"
 NOT_APPLICABLE = "NOT_APPLICABLE"
@@ -71,6 +71,7 @@ def evaluate_premium_eligibility(
     candidate: Dict[str, Any],
     *,
     threshold: Optional[float] = None,
+    weights: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """Return an explainable approval/refusal decision for a premium candidate.
 
@@ -79,6 +80,11 @@ def evaluate_premium_eligibility(
     explicit NO_TRADE candidate.
     """
     threshold = _clamp(_f(threshold, _f(os.getenv("PREMIUM_ELIGIBILITY_THRESHOLD"), _DEFAULT_THRESHOLD)))
+    base_weights = {"AUCTION": 0.20, "REGIME": 0.20, "GAMMA": 0.15, "FLOW": 0.15, "VOL": 0.10, "QUALITY": 0.20}
+    supplied = weights if isinstance(weights, dict) else {}
+    resolved_weights = {k: max(0.0, _f(supplied.get(k), v)) for k, v in base_weights.items()}
+    weight_total = sum(resolved_weights.values()) or 1.0
+    resolved_weights = {k: v / weight_total for k, v in resolved_weights.items()}
     c = candidate if isinstance(candidate, dict) else {}
     strategy = _u(c.get("strategy")) or "NO_TRADE"
     premium_kind = _u(c.get("premium_kind"))
@@ -129,14 +135,14 @@ def evaluate_premium_eligibility(
         warnings.append("Auction state is unavailable.")
     else:
         auction_score = 55
-    add("AUCTION", "Auction readability", auction_score, 0.20,
+    add("AUCTION", "Auction readability", auction_score, resolved_weights["AUCTION"],
         auction or "No auction state published")
 
     # 2. Mean-reversion vs expansion — 20%
     mr = x["mean_reversion_probability"]
     exp = x["expansion_probability"]
     regime_score = _clamp(50 + (mr - exp) * 0.6)
-    add("REGIME", "Mean reversion versus expansion", regime_score, 0.20,
+    add("REGIME", "Mean reversion versus expansion", regime_score, resolved_weights["REGIME"],
         f"mean_reversion={mr:.1f}, expansion={exp:.1f}")
 
     # 3. Gamma/pin containment — 15%
@@ -144,7 +150,7 @@ def evaluate_premium_eligibility(
     pin = x["pin_probability"]
     gamma_base = 75 if "POSITIVE" in gamma else 30 if "NEGATIVE" in gamma else 50
     gamma_score = _clamp(gamma_base * 0.65 + pin * 0.35)
-    add("GAMMA", "Gamma and pin containment", gamma_score, 0.15,
+    add("GAMMA", "Gamma and pin containment", gamma_score, resolved_weights["GAMMA"],
         f"gamma={gamma or 'UNKNOWN'}, pin={pin:.1f}")
 
     # 4. Flow agreement / contradiction — 15%
@@ -152,7 +158,7 @@ def evaluate_premium_eligibility(
     flow_score = _clamp(70 - contradictions * 18 + min(x["flow_conviction"], 30) * 0.4)
     if contradictions:
         warnings.append(f"{contradictions} flow contradiction(s) detected.")
-    add("FLOW", "Flow stability", flow_score, 0.15,
+    add("FLOW", "Flow stability", flow_score, resolved_weights["FLOW"],
         f"bias={x['flow_bias'] or 'UNKNOWN'}, conviction={x['flow_conviction']:.1f}, contradictions={contradictions}")
 
     # 5. Volatility suitability — 10%
@@ -166,7 +172,7 @@ def evaluate_premium_eligibility(
         warnings.append("VIX is unavailable.")
     else:
         vol_score = 30
-    add("VOL", "Volatility suitability", vol_score, 0.10,
+    add("VOL", "Volatility suitability", vol_score, resolved_weights["VOL"],
         f"VIX={vix:.2f}, regime={x['vol_regime'] or 'UNKNOWN'}")
 
     # 6. Canonical candidate quality — 20%
@@ -174,7 +180,7 @@ def evaluate_premium_eligibility(
     legs = c.get("legs") or {}
     pop = _f(legs.get("pop") or (c.get("pricing") or {}).get("pop")) * (100 if _f(legs.get("pop")) <= 1 else 1)
     quality_score = _clamp(confidence * 0.55 + pop * 0.45) if pop else _clamp(confidence * 0.75)
-    add("QUALITY", "Candidate quality", quality_score, 0.20,
+    add("QUALITY", "Candidate quality", quality_score, resolved_weights["QUALITY"],
         f"confidence={confidence:.1f}, probability={pop:.1f}" if pop else f"confidence={confidence:.1f}, probability unavailable")
 
     score = round(sum(f["score"] * f["weight"] for f in factors), 1)
@@ -188,6 +194,7 @@ def evaluate_premium_eligibility(
         "eligible": decision == APPROVE,
         "score": score,
         "threshold": threshold,
+        "weights": {k: round(v, 4) for k, v in resolved_weights.items()},
         "strategy": strategy,
         "blockers": blockers,
         "warnings": warnings,

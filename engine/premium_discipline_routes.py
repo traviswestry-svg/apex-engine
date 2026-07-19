@@ -1,4 +1,4 @@
-"""Flask routes for APEX 18.0.6 Premium Discipline and Refusal Replay."""
+"""Flask routes for APEX 18.0.7 adaptive refusal calibration."""
 from __future__ import annotations
 
 import datetime as dt
@@ -10,6 +10,7 @@ from .confluence import build_confluence
 from .premium_discipline import RefusalLedger, evaluate_premium_eligibility
 from .premium_strategy import build_premium_strategy
 from .refusal_replay import replay_due_refusals
+from .adaptive_refusal_calibration import CalibrationStore
 
 try:
     from zoneinfo import ZoneInfo
@@ -23,6 +24,7 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
                                        get_intraday_bars: Optional[Callable[..., Any]] = None,
                                        db_path: Optional[str] = None) -> None:
     ledger = RefusalLedger(db_path)
+    calibration = CalibrationStore(db_path)
 
     def snapshot(ticker: str) -> Dict[str, Any]:
         lr = (last_result_provider() or {}) if last_result_provider else {}
@@ -30,7 +32,10 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
         candidate = build_premium_strategy(
             lr, confluence=build_confluence(lr), chain_fetcher=chain_fetcher,
             now_et=now, symbol=ticker, expiration=now.date().isoformat())
-        gate = evaluate_premium_eligibility(lr, candidate)
+        policy = calibration.active_policy()
+        gate = evaluate_premium_eligibility(lr, candidate, threshold=policy.get("threshold"),
+                                            weights=policy.get("weights"))
+        gate["policy"] = policy
         rec = ledger.record(session_date=now.date().isoformat(), ticker=ticker,
                             candidate=candidate, decision=gate)
         return {"candidate": candidate, "eligibility": gate, "ledger": rec}
@@ -77,3 +82,38 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             limit = 300
         result = replay_due_refusals(ledger, get_intraday_bars, limit=limit)
         return jsonify({"ok": True, "run": result, "replay": ledger.replay_scorecard()})
+
+    @app.route("/api/premium_discipline/calibration")
+    def premium_discipline_calibration():
+        try:
+            limit = int(request.args.get("limit") or 20)
+        except ValueError:
+            limit = 20
+        return jsonify({"ok": True, "active_policy": calibration.active_policy(),
+                        "runs": calibration.recent(limit=limit)})
+
+    @app.route("/api/premium_discipline/calibration/run", methods=["POST"])
+    def premium_discipline_calibration_run():
+        payload = request.get_json(silent=True) or {}
+        try:
+            min_sample = int(payload.get("min_sample", request.args.get("min_sample") or 20))
+            lookback = int(payload.get("lookback", request.args.get("lookback") or 500))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "min_sample and lookback must be integers."}), 400
+        result = calibration.run(min_sample=max(5, min_sample), lookback=max(1, lookback))
+        return jsonify({"ok": True, "calibration": result})
+
+    @app.route("/api/premium_discipline/calibration/promote", methods=["POST"])
+    def premium_discipline_calibration_promote():
+        payload = request.get_json(silent=True) or {}
+        try:
+            run_id = int(payload.get("run_id"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "run_id is required."}), 400
+        promoted_by = str(payload.get("promoted_by") or "operator")[:120]
+        try:
+            result = calibration.promote(run_id, promoted_by=promoted_by)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 409
+        return jsonify({"ok": True, "promotion": result})
+
