@@ -38,6 +38,7 @@ from . import broker_synchronized_position_state as bsps
 from . import confirmation_gated_execution as cge
 from . import sandbox_execution_validation as sev
 from . import institutional_autonomous_desk as iad
+from . import institutional_trading_desk_ux as itdux
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -851,6 +852,11 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def autonomous_desk_history(): return jsonify({'ok':True,'status':'READY','history':iad.history(int(request.args.get('limit',50)),request.args.get('state'))})
     @app.get('/api/autonomous-desk/dashboard')
     def autonomous_desk_dashboard(): return jsonify(iad.dashboard(int(request.args.get('limit',12))))
+
+    @app.get('/api/trading-desk-ux/status')
+    def trading_desk_ux_status(): return jsonify({'ok':True,**itdux.status()})
+    @app.get('/api/trading-desk-ux/workspace')
+    def trading_desk_ux_workspace(): return jsonify(itdux.workspace(request.args.get('symbol','SPX')))
 
     @app.get('/apex_os/institutional_trading_desk')
     @app.get('/apex_os/trading_desk')
