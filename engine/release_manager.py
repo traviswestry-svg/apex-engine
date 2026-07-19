@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "16.2.0_INSTITUTIONAL_FORECAST_ENGINE"
-SEMANTIC_VERSION = "16.2.0"
+APPLICATION_VERSION = "16.3.0_INSTITUTIONAL_PLAYBOOK_ENGINE"
+SEMANTIC_VERSION = "16.3.0"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -55,6 +55,7 @@ FEATURES = [
     "Market Status",
     "Mission Control 2.0",
     "Institutional Trading Workspace",
+    "Institutional Playbook Engine",
     "Institutional Volume Profile Intelligence",
     "Release Manager",
     "Configuration Governance",
