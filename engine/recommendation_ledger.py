@@ -303,6 +303,35 @@ def record_recommendation(capture: Mapping[str, Any]) -> Dict[str, Any]:
     return {"created": True, "recommendation_id": capture["recommendation_id"], "duplicate": False}
 
 
+def _row_field(row: Any, key: str, default: Any = None) -> Any:
+    """Read a column from a sqlite3.Row (or mapping) that may be absent."""
+    try:
+        return row[key]
+    except (IndexError, KeyError, TypeError):
+        return default
+
+
+def _row_executable(row: Any) -> bool:
+    """Was this recommendation actually fillable at entry?
+
+    Read from the immutable capture, not recomputed. A structure is executable when
+    it was tradeable, priced from the live chain (not unpriceable/modeled), and
+    collected a positive credit. Anything else — an unpriceable structure, a
+    modeled-only price, a debit dressed as a credit — was never a real position and
+    must be excluded from directional grading.
+    """
+    tradeable = _row_field(row, "tradeable")
+    basis = str(_row_field(row, "pricing_basis") or "").lower()
+    credit = _safe_float(_row_field(row, "entry_credit"))
+    if not tradeable:
+        return False
+    if basis and basis != "live_chain_executable":
+        return False
+    if credit is not None and credit <= 0:
+        return False
+    return True
+
+
 def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapping[str, Any]] = None,
                  event_at: Optional[str] = None) -> Dict[str, Any]:
     init_db()
@@ -316,7 +345,7 @@ def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapp
     at = event_at or _iso()
     data = dict(payload or {})
     with _LOCK, _connect() as conn:
-        row = conn.execute("SELECT state FROM recommendation_ledger WHERE recommendation_id=?", (recommendation_id,)).fetchone()
+        row = conn.execute("SELECT state, tradeable, entry_credit, pricing_basis, chain_grade FROM recommendation_ledger WHERE recommendation_id=?", (recommendation_id,)).fetchone()
         if not row:
             raise KeyError(recommendation_id)
         conn.execute(
@@ -329,9 +358,27 @@ def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapp
             updates.append("state=?")
             args.append(event)
         if event in {"CLOSED", "SETTLED", "INVALIDATED", "GRADED"}:
+            # Executability gate: a recommendation that could never have been filled
+            # must not settle as a directional WIN/LOSS — that would teach the
+            # calibration engine confidence in trades that could not be taken (the
+            # broken-condor failure). If the captured row was not executable at
+            # entry, the outcome label is forced to NOT_EXECUTABLE and P/L to 0,
+            # whatever the caller passed. Executability is read from the immutable
+            # capture: a live-chain-executable basis with a positive credit.
+            label = data.get("outcome_label")
+            realized_pnl = _safe_float(data.get("realized_pnl"))
+            realized_r = _safe_float(data.get("realized_r"))
+            notes = data.get("notes")
+            if not _row_executable(row):
+                label = "NOT_EXECUTABLE"
+                realized_pnl = 0.0
+                realized_r = 0.0
+                notes = ("Not executable at entry (basis: "
+                         f"{_row_field(row, 'pricing_basis') or 'unknown'}). Excluded from "
+                         "directional grading: a trade that could not be filled cannot be "
+                         "a win or a loss.")
             updates.extend(["outcome_status=?", "outcome_label=?", "realized_pnl=?", "realized_r=?", "outcome_notes=?", "outcome_at=?"])
-            args.extend([event, data.get("outcome_label"), _safe_float(data.get("realized_pnl")),
-                         _safe_float(data.get("realized_r")), data.get("notes"), at])
+            args.extend([event, label, realized_pnl, realized_r, notes, at])
         args.append(recommendation_id)
         conn.execute(f"UPDATE recommendation_ledger SET {', '.join(updates)} WHERE recommendation_id=?", args)
         conn.commit()
@@ -385,10 +432,18 @@ def counts() -> Dict[str, Any]:
         today = _utcnow().date().isoformat()
         captured_today = conn.execute("SELECT COUNT(*) n FROM recommendation_ledger WHERE session_date=?", (today,)).fetchone()["n"]
         unresolved = conn.execute("SELECT COUNT(*) n FROM recommendation_ledger WHERE outcome_status IS NULL").fetchone()["n"]
+        # NOT_EXECUTABLE rows are settled but must never feed calibration — a trade
+        # that could not be filled is not a gradeable outcome. Counting them would
+        # overstate how much executable history exists.
+        not_executable = conn.execute(
+            "SELECT COUNT(*) n FROM recommendation_ledger WHERE outcome_label=?",
+            ("NOT_EXECUTABLE",)).fetchone()["n"]
         by_state = {r["state"]: r["n"] for r in conn.execute("SELECT state,COUNT(*) n FROM recommendation_ledger GROUP BY state")}
         by_strategy = {r["strategy"]: r["n"] for r in conn.execute("SELECT strategy,COUNT(*) n FROM recommendation_ledger GROUP BY strategy")}
     return {"total": total, "captured_today": captured_today, "unresolved": unresolved,
-            "gradeable": max(0, total - unresolved), "by_state": by_state, "by_strategy": by_strategy}
+            "not_executable": not_executable,
+            "gradeable": max(0, total - unresolved - not_executable),
+            "by_state": by_state, "by_strategy": by_strategy}
 
 
 def coverage() -> Dict[str, Any]:
