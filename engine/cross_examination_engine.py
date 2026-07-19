@@ -83,6 +83,10 @@ def route_question(question: str) -> str:
         return "UNSUPPORTED"
     if any(x in q for x in ("compare", "difference between", "versus", " vs ")):
         return "COMPARISON"
+    if any(x in q for x in ("playbook", "setup", "pattern selected", "why was not")):
+        return "PLAYBOOK"
+    if any(x in q for x in ("market state", "regime", "auction state", "gamma state", "volatility state")):
+        return "MARKET_STATE"
     if any(x in q for x in ("what changed", "when did", "timeline", "at 9", "at 10", "evolve")):
         return "TIMELINE"
     if any(x in q for x in ("which version", "production", "canary", "release", "schema", "governance", "hash")):
@@ -122,6 +126,22 @@ def _unavailable(intent: str, package: dict[str, Any], detail: str) -> tuple[dic
 
 def _answer(package: dict[str, Any], intent: str, question: str) -> tuple[dict[str, Any], dict[str, Any]]:
     summary = package["summary"]
+    if intent == "PLAYBOOK":
+        pb = package.get("playbook") or {}
+        if not pb:
+            return _unavailable(intent, package, "No immutable playbook record exists at or before the decision timestamp.")
+        return ({"status":"ANSWERED","intent":intent,
+                 "headline":f"The selected playbook was {pb.get('active_playbook_name')} with a quality score of {pb.get('playbook_quality_score')}.",
+                 "playbook":{"playbook_id":pb.get("active_playbook"),"name":pb.get("active_playbook_name"),"direction":pb.get("direction"),"playbook_quality_score":pb.get("playbook_quality_score"),"state_compatibility":pb.get("state_compatibility"),"ranked_candidates":pb.get("candidates"),"evidence":pb.get("evidence"),"invalidation":pb.get("invalidation")}},
+                {**_refs(package),"playbook_record_id":pb.get("playbook_record_id"),"playbook_integrity_hash":pb.get("integrity_hash")})
+    if intent == "MARKET_STATE":
+        state = package.get("market_state") or {}
+        if not state:
+            return _unavailable(intent, package, "No immutable market-state snapshot exists at or before the decision timestamp.")
+        return ({"status":"ANSWERED","intent":intent,
+                 "headline":f"The decision-time market state was {state.get('active_state')} with {state.get('active_confidence')} confidence.",
+                 "market_state":{"active_state":state.get("active_state"),"confidence":state.get("active_confidence"),"stability_index":state.get("stability_index"),"secondary_states":state.get("secondary_states"),"drivers":state.get("drivers")}},
+                {**_refs(package),"market_state_id":state.get("market_state_id"),"market_state_integrity_hash":state.get("integrity_hash")})
     if intent == "RATIONALE":
         support = package.get("supporting_evidence") or []
         if not support:
@@ -248,6 +268,8 @@ def history(identifier: str | None = None, limit: int = 100) -> list[dict[str, A
 
 def questions() -> list[dict[str, str]]:
     return [
+        {"intent": "PLAYBOOK", "example": "Why did APEX choose this playbook?"},
+        {"intent": "MARKET_STATE", "example": "Why did APEX classify this market state?"},
         {"intent": "RATIONALE", "example": "Why did APEX recommend this?"},
         {"intent": "CONFIDENCE", "example": "Why is confidence only 74?"},
         {"intent": "CONFLICT", "example": "What argued against the trade?"},

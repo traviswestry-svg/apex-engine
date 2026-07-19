@@ -21,6 +21,22 @@ from . import institutional_evidence_graph
 from . import decision_intelligence_center
 from . import institutional_replay_2
 from . import cross_examination_engine
+from . import institutional_market_state_engine as imse
+from . import institutional_playbook_engine as ipe
+from . import prediction_confidence_calibration as pcce
+from . import institutional_execution_intelligence as iei
+from . import institutional_research_lab as irl
+from . import institutional_order_flow_intelligence as iofi
+from . import live_mission_control as lmc
+from . import adaptive_trade_management as atm
+from . import portfolio_risk_intelligence as pri
+from . import explainable_intelligence_assistant as eia
+from . import performance_intelligence as pi
+from . import live_operations as lo
+from . import strategy_promotion_governance as spg
+from . import broker_synchronized_position_state as bsps
+from . import confirmation_gated_execution as cge
+from . import sandbox_execution_validation as sev
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -503,6 +519,321 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
         out=cross_examination_engine.compare(identifier_a,identifier_b); return j(out,200 if out.get('ok') else 404)
     @app.get('/apex_os/cross_examination')
     def cross_exam_dashboard(): return render_template('cross_examination.html')
+
+
+    # APEX 15.1 — Institutional Market State Engine (IMSE).
+    @app.get('/api/imse/status')
+    def imse_status(): return jsonify({'ok':True,**imse.status()})
+    @app.post('/api/imse/classify')
+    def imse_classify():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        return jsonify({'ok':True,'status':'CLASSIFIED',**imse.classify(snapshot)})
+    @app.post('/api/imse/record')
+    def imse_record():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        out=imse.record(snapshot,symbol=str(b.get('symbol') or 'SPX'),session_id=str(b.get('session_id') or ''),observed_at=b.get('observed_at'),actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else 200)
+    @app.get('/api/imse/current')
+    def imse_current():
+        out=imse.current(str(request.args.get('symbol') or 'SPX')); return j(out,200 if out.get('ok') else 404)
+    @app.get('/api/imse/history')
+    def imse_history(): return jsonify({'ok':True,'status':'READY','history':imse.history(str(request.args.get('symbol') or 'SPX'),int(request.args.get('limit',100)))})
+    @app.get('/api/imse/transitions')
+    def imse_transitions(): return jsonify({'ok':True,'status':'READY','transitions':imse.transitions(str(request.args.get('symbol') or 'SPX'),int(request.args.get('limit',100)))})
+    @app.get('/api/imse/dashboard')
+    def imse_dashboard_api(): return jsonify(imse.dashboard(str(request.args.get('symbol') or 'SPX')))
+    @app.get('/apex_os/regime_intelligence')
+    @app.get('/apex_os/institutional_market_state')
+    def imse_dashboard_page(): return render_template('institutional_market_state.html')
+
+
+    # APEX 15.2 — Institutional Playbook Engine (IPE).
+    @app.get('/api/playbooks/status')
+    def ipe_status(): return jsonify({'ok':True,**ipe.status()})
+    @app.get('/api/playbooks/library')
+    def ipe_library(): return jsonify({'ok':True,'status':'READY','library':[{'playbook_id':x['id'],'name':x['name'],'family':x['family'],'compatible_states':x['states'],'invalidation':x['invalidation']} for x in ipe.PLAYBOOK_LIBRARY]})
+    @app.post('/api/playbooks/evaluate')
+    def ipe_evaluate():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        return jsonify({'ok':True,'status':'EVALUATED',**ipe.evaluate(snapshot,symbol=str(b.get('symbol') or 'SPX'),observed_at=b.get('observed_at'))})
+    @app.post('/api/playbooks/record')
+    def ipe_record():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        out=ipe.record(snapshot,symbol=str(b.get('symbol') or 'SPX'),session_id=str(b.get('session_id') or ''),observed_at=b.get('observed_at'),actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else 200)
+    @app.get('/api/playbooks/current')
+    def ipe_current():
+        out=ipe.current(str(request.args.get('symbol') or 'SPX')); return j(out,200 if out.get('ok') else 404)
+    @app.get('/api/playbooks/history')
+    def ipe_history(): return jsonify({'ok':True,'status':'READY','history':ipe.history(str(request.args.get('symbol') or 'SPX'),int(request.args.get('limit',100)))})
+    @app.get('/api/playbooks/transitions')
+    def ipe_transitions(): return jsonify({'ok':True,'status':'READY','transitions':ipe.transitions(str(request.args.get('symbol') or 'SPX'),int(request.args.get('limit',100)))})
+    @app.get('/api/playbooks/statistics')
+    def ipe_statistics(): return jsonify(ipe.statistics(request.args.get('playbook_id')))
+    @app.get('/api/playbooks/dashboard')
+    def ipe_dashboard_api(): return jsonify(ipe.dashboard(str(request.args.get('symbol') or 'SPX')))
+    @app.get('/apex_os/playbook_engine')
+    @app.get('/apex_os/institutional_playbooks')
+    def ipe_dashboard_page(): return render_template('institutional_playbook_engine.html')
+
+    # APEX 15.3 — Prediction and Confidence Calibration Engine.
+    @app.get('/api/calibration/status')
+    def pcce_status(): return jsonify({'ok':True,**pcce.status()})
+    @app.post('/api/calibration/observations')
+    def pcce_ingest():
+        b=request.get_json(silent=True) or {}; out=pcce.ingest(str(b.get('prediction_id') or ''),float(b.get('confidence') or 0),b.get('outcome',False),symbol=str(b.get('symbol') or 'SPX'),predicted_at=str(b.get('predicted_at') or ''),outcome_at=str(b.get('outcome_at') or ''),segment=b.get('segment') or {},source=b.get('source') or {},actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.post('/api/calibration/analyze')
+    def pcce_analyze():
+        b=request.get_json(silent=True) or {}; return jsonify(pcce.analyze(as_of=b.get('as_of'),symbol=b.get('symbol'),bin_width=int(b.get('bin_width') or 10),persist=bool(b.get('persist',True)),actor=str(b.get('actor') or 'API')))
+    @app.get('/api/calibration/analyses')
+    def pcce_analyses(): return jsonify({'ok':True,'status':'READY','analyses':pcce.analyses(int(request.args.get('limit',100)))})
+    @app.get('/api/calibration/dashboard')
+    def pcce_dashboard_api(): return jsonify(pcce.dashboard(request.args.get('symbol')))
+    @app.get('/apex_os/confidence_calibration')
+    @app.get('/apex_os/prediction_calibration')
+    def pcce_dashboard_page(): return render_template('prediction_confidence_calibration.html')
+
+    # APEX 15.4 — Institutional Execution Intelligence.
+    @app.get('/api/execution-intelligence/status')
+    def iei_status(): return jsonify({'ok':True,**iei.status()})
+    @app.post('/api/execution-intelligence/evaluate')
+    def iei_evaluate():
+        b=request.get_json(silent=True) or {}; return jsonify({'ok':True,'status':'EVALUATED',**iei.evaluate_trade(side=str(b.get('side') or 'LONG'),quantity=float(b.get('quantity') or 1),planned_entry=float(b.get('planned_entry') or 0),actual_entry=float(b.get('actual_entry') or 0),actual_exit=float(b.get('actual_exit') or 0),opened_at=str(b.get('opened_at') or ''),closed_at=str(b.get('closed_at') or ''),stop_price=b.get('stop_price'),best_price=b.get('best_price'),worst_price=b.get('worst_price'),fees=float(b.get('fees') or 0),context=b.get('context') or {})})
+    @app.post('/api/execution-intelligence/records')
+    def iei_record():
+        b=request.get_json(silent=True) or {}; out=iei.record(trade_id=str(b.get('trade_id') or ''),symbol=str(b.get('symbol') or 'SPX'),side=str(b.get('side') or 'LONG'),quantity=float(b.get('quantity') or 1),planned_entry=float(b.get('planned_entry') or 0),actual_entry=float(b.get('actual_entry') or 0),actual_exit=float(b.get('actual_exit') or 0),opened_at=str(b.get('opened_at') or ''),closed_at=str(b.get('closed_at') or ''),stop_price=b.get('stop_price'),best_price=b.get('best_price'),worst_price=b.get('worst_price'),fees=float(b.get('fees') or 0),context=b.get('context') or {},actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.get('/api/execution-intelligence/records')
+    def iei_records(): return jsonify({'ok':True,'status':'READY','records':iei.records(int(request.args.get('limit',100)),request.args.get('symbol'))})
+    @app.post('/api/execution-intelligence/analyze')
+    def iei_analyze():
+        b=request.get_json(silent=True) or {}; return jsonify(iei.analyze(symbol=b.get('symbol'),as_of=b.get('as_of'),persist=bool(b.get('persist',True)),actor=str(b.get('actor') or 'API')))
+    @app.get('/api/execution-intelligence/dashboard')
+    def iei_dashboard_api(): return jsonify(iei.dashboard(request.args.get('symbol')))
+    @app.get('/apex_os/execution_intelligence')
+    @app.get('/apex_os/institutional_execution_intelligence')
+    def iei_dashboard_page(): return render_template('institutional_execution_intelligence.html')
+
+    # APEX 15.5 — Institutional Research Lab and Alpha Attribution.
+    @app.get('/api/research-lab/status')
+    def irl_status(): return jsonify({'ok':True,**irl.status()})
+    @app.post('/api/research-lab/candidates')
+    def irl_candidate():
+        b=request.get_json(silent=True) or {}; out=irl.register_candidate(name=str(b.get('name') or ''),candidate_type=str(b.get('candidate_type') or 'STRATEGY'),hypothesis=str(b.get('hypothesis') or ''),specification=b.get('specification') or {},owner=str(b.get('owner') or 'SYSTEM'),actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.get('/api/research-lab/candidates')
+    def irl_candidates(): return jsonify({'ok':True,'status':'READY','candidates':irl.candidates(int(request.args.get('limit',100)))})
+    @app.post('/api/research-lab/runs')
+    def irl_run():
+        b=request.get_json(silent=True) or {}; out=irl.record_run(candidate_id=str(b.get('candidate_id') or ''),dataset_id=str(b.get('dataset_id') or ''),started_at=str(b.get('started_at') or ''),completed_at=str(b.get('completed_at') or ''),methodology=b.get('methodology') or {},metrics=b.get('metrics') or {},diagnostics=b.get('diagnostics') or {},actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.get('/api/research-lab/runs')
+    def irl_runs(): return jsonify({'ok':True,'status':'READY','runs':irl.runs(request.args.get('candidate_id'),int(request.args.get('limit',100)))})
+    @app.post('/api/research-lab/compare')
+    def irl_compare():
+        b=request.get_json(silent=True) or {}; return jsonify(irl.compare(list(b.get('candidate_ids') or [])))
+    @app.post('/api/research-lab/readiness')
+    def irl_readiness():
+        b=request.get_json(silent=True) or {}; return jsonify(irl.assess_readiness(str(b.get('candidate_id') or ''),persist=bool(b.get('persist',True)),actor=str(b.get('actor') or 'API')))
+    @app.post('/api/alpha-attribution/records')
+    def irl_attribution():
+        b=request.get_json(silent=True) or {}; out=irl.alpha_attribution(scope_id=str(b.get('scope_id') or ''),total_result=float(b.get('total_result') or 0),contributions=b.get('contributions') or {},observed_at=b.get('observed_at'),actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.get('/api/alpha-attribution/records')
+    def irl_attributions(): return jsonify({'ok':True,'status':'READY','records':irl.attributions(int(request.args.get('limit',100)))})
+    @app.get('/api/research-lab/dashboard')
+    def irl_dashboard_api(): return jsonify(irl.dashboard())
+    @app.get('/apex_os/research_lab')
+    @app.get('/apex_os/alpha_attribution')
+    def irl_dashboard_page(): return render_template('institutional_research_lab.html')
+
+    # APEX 16.0 — Institutional Trading Desk / Order Flow Intelligence 2.0.
+    @app.get('/api/order-flow-intelligence/status')
+    def iofi_status(): return jsonify({'ok':True,**iofi.status()})
+    @app.post('/api/order-flow-intelligence/evaluate')
+    def iofi_evaluate():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        return jsonify({'ok':True,'status':'EVALUATED',**iofi.evaluate(snapshot)})
+    @app.post('/api/order-flow-intelligence/record')
+    def iofi_record():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        out=iofi.record(snapshot,symbol=str(b.get('symbol') or 'SPX'),session_id=str(b.get('session_id') or ''),observed_at=b.get('observed_at'),actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else 200)
+    @app.get('/api/order-flow-intelligence/current')
+    def iofi_current():
+        out=iofi.current(str(request.args.get('symbol') or 'SPX'),request.args.get('as_of')); return j(out,200 if out.get('ok') else 404)
+    @app.get('/api/order-flow-intelligence/history')
+    def iofi_history(): return jsonify({'ok':True,'status':'READY','history':iofi.history(str(request.args.get('symbol') or 'SPX'),int(request.args.get('limit',100)))})
+    @app.get('/api/order-flow-intelligence/transitions')
+    def iofi_transitions(): return jsonify({'ok':True,'status':'READY','transitions':iofi.transitions(str(request.args.get('symbol') or 'SPX'),int(request.args.get('limit',100)))})
+    @app.get('/api/order-flow-intelligence/dashboard')
+    def iofi_dashboard(): return jsonify(iofi.dashboard(str(request.args.get('symbol') or 'SPX')))
+    @app.get('/api/trading-desk/status')
+    @app.get('/api/mission-control/status')
+    def trading_desk_status(): return jsonify({'ok':True,**lmc.status(),'centerpiece':'INSTITUTIONAL_ORDER_FLOW_INTELLIGENCE_2'})
+    @app.get('/api/trading-desk/dashboard')
+    @app.get('/api/mission-control/dashboard')
+    def trading_desk_dashboard():
+        symbol=str(request.args.get('symbol') or 'SPX')
+        return jsonify(lmc.dashboard(symbol,current()))
+    @app.post('/api/mission-control/confluence')
+    def mission_control_confluence():
+        b=request.get_json(silent=True) or {}
+        return jsonify({'ok':True,'status':'EVALUATED',**lmc.confluence(pressure=b.get('pressure'),market_state=b.get('market_state'),playbook=b.get('playbook'),engine_snapshot=b.get('engine_snapshot'))})
+
+    # APEX 16.2 — Adaptive Trade Management (advisory only).
+    @app.get('/api/trade-management/status')
+    def adaptive_trade_management_status(): return jsonify({'ok':True,**atm.status()})
+    @app.post('/api/trade-management/evaluate')
+    def adaptive_trade_management_evaluate():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        return jsonify({'ok':True,**atm.evaluate(snapshot)})
+    @app.post('/api/trade-management/record')
+    def adaptive_trade_management_record():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        out=atm.record(snapshot,trade_id=b.get('trade_id'),symbol=str(b.get('symbol') or 'SPX'),observed_at=b.get('observed_at'),actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else 200)
+    @app.get('/api/trade-management/history')
+    def adaptive_trade_management_history():
+        return jsonify({'ok':True,'status':'READY','history':atm.history(request.args.get('trade_id'),int(request.args.get('limit',100)))})
+    # APEX 16.3 — Portfolio & Risk Intelligence (advisory only).
+    @app.get('/api/portfolio-risk/status')
+    def portfolio_risk_status(): return jsonify({'ok':True,**pri.status()})
+    @app.post('/api/portfolio-risk/evaluate')
+    def portfolio_risk_evaluate():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        return jsonify({'ok':True,**pri.evaluate(snapshot)})
+    @app.post('/api/portfolio-risk/record')
+    def portfolio_risk_record():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
+        out=pri.record(snapshot,account_id=str(b.get('account_id') or 'PRIMARY'),observed_at=b.get('observed_at'),actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else 200)
+    @app.get('/api/portfolio-risk/history')
+    def portfolio_risk_history(): return jsonify({'ok':True,'status':'READY','history':pri.history(str(request.args.get('account_id') or 'PRIMARY'),int(request.args.get('limit',100)))})
+
+    # APEX 16.4 — Explainable Intelligence Assistant.
+    @app.get('/api/explainable-intelligence/status')
+    def explainable_intelligence_status(): return jsonify({'ok':True,**eia.status()})
+    @app.post('/api/explainable-intelligence/ask')
+    def explainable_intelligence_ask():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else lmc.dashboard(str(b.get('symbol') or 'SPX'),current())
+        return jsonify({'ok':True,**eia.explain(str(b.get('question') or ''),snapshot,b.get('previous_snapshot'),b.get('similar_sessions'))})
+    @app.post('/api/explainable-intelligence/record')
+    def explainable_intelligence_record():
+        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else lmc.dashboard(str(b.get('symbol') or 'SPX'),current())
+        out=eia.record(str(b.get('question') or ''),snapshot,symbol=str(b.get('symbol') or 'SPX'),observed_at=b.get('observed_at'),previous_snapshot=b.get('previous_snapshot'),similar_sessions=b.get('similar_sessions'),actor=str(b.get('actor') or 'API'))
+        return j(out,201 if out.get('created') else 200)
+    @app.get('/api/explainable-intelligence/history')
+    def explainable_intelligence_history(): return jsonify({'ok':True,'status':'READY','history':eia.history(str(request.args.get('symbol') or 'SPX'),int(request.args.get('limit',100)))})
+
+    # APEX 16.5 — Performance Intelligence (descriptive completed-outcome coaching).
+    @app.get('/api/performance-intelligence/status')
+    def performance_intelligence_status(): return jsonify({'ok':True,**pi.status()})
+    @app.post('/api/performance-intelligence/evaluate')
+    def performance_intelligence_evaluate():
+        b=request.get_json(silent=True) or {}; trades=b.get('trades') if isinstance(b.get('trades'),list) else []
+        return jsonify({'ok':True,**pi.analyze(trades,symbol=str(b.get('symbol') or 'SPX'),minimum_sample=int(b.get('minimum_sample',3)))})
+    @app.post('/api/performance-intelligence/observations')
+    def performance_intelligence_observation():
+        b=request.get_json(silent=True) or {}; trade=b.get('trade') if isinstance(b.get('trade'),dict) else b
+        out=pi.record_observation(trade,actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.post('/api/performance-intelligence/analyze')
+    def performance_intelligence_analyze():
+        b=request.get_json(silent=True) or {}; return jsonify({'ok':True,**pi.analyze_stored(str(b.get('symbol') or 'SPX'),persist=bool(b.get('persist')),actor=str(b.get('actor') or 'API'))})
+    @app.get('/api/performance-intelligence/dashboard')
+    def performance_intelligence_dashboard(): return jsonify(pi.dashboard(str(request.args.get('symbol') or 'SPX')))
+
+
+    # APEX 16.6 — Live Operations & Data Integrity Command.
+    @app.get('/api/live-operations/status')
+    def live_operations_status(): return jsonify({'ok':True,**lo.status()})
+    @app.get('/api/live-operations/sources')
+    def live_operations_sources():
+        x=lo.latest(str(request.args.get('symbol') or 'SPX')); return jsonify({'ok':True,'status':'READY','sources':x.get('sources',[])})
+    @app.post('/api/live-operations/evaluate')
+    def live_operations_evaluate(): return jsonify({'ok':True,**lo.evaluate(request.get_json(silent=True) or {})})
+    @app.post('/api/live-operations/record')
+    def live_operations_record():
+        out=lo.record_assessment(request.get_json(silent=True) or {},actor=str((request.get_json(silent=True) or {}).get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.get('/api/live-operations/incidents')
+    def live_operations_incidents(): return jsonify({'ok':True,'status':'READY','incidents':lo.incidents(int(request.args.get('limit',100)))})
+    @app.get('/api/live-operations/session')
+    def live_operations_session(): return jsonify({'ok':True,'status':'READY','session':lo.session_state(request.args.get('at'))})
+    @app.get('/api/live-operations/tradeability')
+    def live_operations_tradeability():
+        x=lo.latest(str(request.args.get('symbol') or 'SPX')); return jsonify({'ok':True,'status':'READY','tradeability':x.get('tradeability'),'blocking_issues':x.get('blocking_issues',[]),'evidence_completeness_score':x.get('evidence_completeness_score')})
+    @app.get('/api/live-operations/dashboard')
+    def live_operations_dashboard(): return jsonify(lo.dashboard(str(request.args.get('symbol') or 'SPX')))
+
+
+    # APEX 16.7 — Governed Strategy Promotion & Champion/Challenger Control.
+    @app.get('/api/strategy-promotion/status')
+    def strategy_promotion_status(): return jsonify({'ok':True,**spg.status()})
+    @app.post('/api/strategy-promotion/evaluate')
+    def strategy_promotion_evaluate(): return jsonify({'ok':True,**spg.evaluate(request.get_json(silent=True) or {})})
+    @app.post('/api/strategy-promotion/candidates')
+    def strategy_promotion_candidates():
+        b=request.get_json(silent=True) or {}; out=spg.submit_candidate(b,actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.post('/api/strategy-promotion/decisions')
+    def strategy_promotion_decisions():
+        b=request.get_json(silent=True) or {}; out=spg.record_decision(b,actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.post('/api/strategy-promotion/approvals')
+    def strategy_promotion_approvals(): return jsonify(spg.approve(request.get_json(silent=True) or {}))
+    @app.get('/api/strategy-promotion/history')
+    def strategy_promotion_history(): return jsonify({'ok':True,'status':'READY','history':spg.history(int(request.args.get('limit',100)))})
+    @app.get('/api/strategy-promotion/dashboard')
+    def strategy_promotion_dashboard(): return jsonify(spg.dashboard())
+
+    # APEX 16.8 — Broker-Synchronized Position State (read-only).
+    @app.get('/api/broker-sync/status')
+    def broker_sync_status(): return jsonify({'ok':True,**bsps.status()})
+    @app.post('/api/broker-sync/evaluate')
+    def broker_sync_evaluate(): return jsonify({'ok':True,**bsps.reconcile(request.get_json(silent=True) or {})})
+    @app.post('/api/broker-sync/record')
+    def broker_sync_record():
+        b=request.get_json(silent=True) or {}; out=bsps.record(b,actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.get('/api/broker-sync/latest')
+    def broker_sync_latest(): return jsonify(bsps.latest(str(request.args.get('account_id') or 'PRIMARY'),str(request.args.get('broker') or 'ETRADE')))
+    @app.get('/api/broker-sync/history')
+    def broker_sync_history(): return jsonify({'ok':True,'status':'READY','history':bsps.history(str(request.args.get('account_id') or 'PRIMARY'),int(request.args.get('limit',100)))})
+    @app.get('/api/broker-sync/dashboard')
+    def broker_sync_dashboard(): return jsonify(bsps.dashboard(str(request.args.get('account_id') or 'PRIMARY'),str(request.args.get('broker') or 'ETRADE')))
+
+    # APEX 16.9 — Confirmation-Gated Execution.
+    @app.get('/api/execution-gate/status')
+    def execution_gate_status(): return jsonify({'ok':True,**cge.status()})
+    @app.post('/api/execution-gate/intents')
+    def execution_gate_intents():
+        b=request.get_json(silent=True) or {}; out=cge.create_intent(b,str(b.get('idempotency_key') or '') or None); return j(out,201 if out.get('created') else 200)
+    @app.post('/api/execution-gate/preview')
+    def execution_gate_preview():
+        b=request.get_json(silent=True) or {}; return jsonify(cge.preview(str(b.get('intent_id') or ''),b.get('gate_snapshot') or {},b.get('broker_preview') or {},int(b.get('ttl_seconds') or 120)))
+    @app.post('/api/execution-gate/confirm')
+    def execution_gate_confirm():
+        b=request.get_json(silent=True) or {}; return jsonify(cge.confirm(str(b.get('intent_id') or ''),str(b.get('preview_record_id') or ''),str(b.get('confirmed_by') or ''),bool(b.get('acknowledgement')),int(b.get('ttl_seconds') or 90)))
+    @app.post('/api/execution-gate/execute')
+    def execution_gate_execute():
+        b=request.get_json(silent=True) or {}; return jsonify(cge.execute(str(b.get('intent_id') or ''),str(b.get('confirmation_id') or ''),b.get('gate_snapshot') or {}))
+    @app.get('/api/execution-gate/history')
+    def execution_gate_history(): return jsonify({'ok':True,'status':'READY','history':cge.history(int(request.args.get('limit',100)))})
+    @app.get('/api/execution-gate/dashboard')
+    def execution_gate_dashboard(): return jsonify(cge.dashboard(int(request.args.get('limit',20))))
+
+    # APEX 16.9.1 — E*TRADE Sandbox Execution Certification.
+    @app.get('/api/sandbox-validation/status')
+    def sandbox_validation_status(): return jsonify({'ok':True,**sev.status()})
+    @app.post('/api/sandbox-validation/evaluate')
+    def sandbox_validation_evaluate(): return jsonify({'ok':True,**sev.evaluate(request.get_json(silent=True) or {})})
+    @app.post('/api/sandbox-validation/runs')
+    def sandbox_validation_runs():
+        b=request.get_json(silent=True) or {}; out=sev.record(b,actor=str(b.get('actor') or 'API')); return j(out,201 if out.get('created') else 200)
+    @app.get('/api/sandbox-validation/latest')
+    def sandbox_validation_latest(): return jsonify(sev.latest(str(request.args.get('account_id') or 'PRIMARY')))
+    @app.get('/api/sandbox-validation/history')
+    def sandbox_validation_history(): return jsonify({'ok':True,'status':'READY','history':sev.history(int(request.args.get('limit',50)))})
+    @app.get('/api/sandbox-validation/dashboard')
+    def sandbox_validation_dashboard(): return jsonify(sev.dashboard(str(request.args.get('account_id') or 'PRIMARY'),int(request.args.get('limit',10))))
+
+    @app.get('/apex_os/institutional_trading_desk')
+    @app.get('/apex_os/trading_desk')
+    @app.get('/apex_os/mission_control')
+    def institutional_trading_desk_page(): return render_template('institutional_trading_desk.html')
 
     @app.get('/apex_os/decision_intelligence')
     def decision_intelligence_dashboard(): return render_template('decision_intelligence_core.html')

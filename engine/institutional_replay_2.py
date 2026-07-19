@@ -16,6 +16,8 @@ from . import institutional_governance as gov
 from . import decision_intelligence_core as core
 from . import confidence_attribution_engine as attribution
 from . import institutional_evidence_graph as graphs
+from . import institutional_market_state_engine as imse
+from . import institutional_playbook_engine as ipe
 
 VERSION = "14.0.10.5"
 SCHEMA_VERSION = "apex.institutional_replay.v2"
@@ -87,11 +89,14 @@ def create(identifier: str, actor: str="SYSTEM") -> dict[str, Any]:
         if row: return {"ok":True,"status":"IMMUTABLE_EXISTS","replay_id":row["replay_id"],"integrity_hash":row["integrity_hash"],"created":False,"production_effect":"NONE"}
     attr=attribution.explain(identifier); graph=graphs.explain(identifier)
     frames=_frames(record)
+    market_state=imse.at_or_before(str(record.get("observed_at") or ""), str((record.get("decision") or {}).get("symbol") or "SPX"))
+    playbook=ipe.at_or_before(str(record.get("observed_at") or ""), str((record.get("decision") or {}).get("symbol") or "SPX"))
     replay={
       "decision_id":record["decision_id"],"recommendation_id":record["recommendation_id"],"explainability_id":record["explainability_id"],
       "mode":"LIVE_DECISION_TIME","cutoff_at":record.get("observed_at"),"frames":frames,
       "evidence":record.get("evidence") or [],"contributions":record.get("contributions") or [],
       "confidence_attribution":attr if attr.get("ok") else None,"evidence_graph":graph if graph.get("ok") else None,
+      "market_state":market_state if market_state.get("ok") else None,"playbook":playbook if playbook.get("ok") else None,
       "final_state":{"recommendation":record.get("recommendation"),"direction":record.get("direction"),"confidence":record.get("confidence"),"risk_level":record.get("risk_level")},
       "outcome":None,"future_information_included":False,
     }

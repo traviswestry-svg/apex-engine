@@ -9,6 +9,8 @@ from typing import Any
 from . import decision_intelligence_core as core
 from . import confidence_attribution_engine as attribution
 from . import institutional_evidence_graph as graphs
+from . import institutional_market_state_engine as imse
+from . import institutional_playbook_engine as ipe
 
 VERSION = "14.0.10.4"
 SCHEMA_VERSION = "apex.decision_intelligence_center.v1"
@@ -64,6 +66,8 @@ def dashboard(identifier: str) -> dict[str, Any]:
     risk_items = _items(decision.get("risks"))
     invalidation = _items(decision.get("invalidation"))
     quality = _quality(record, attr_data, graph_data)
+    market_state = imse.at_or_before(str(record.get("observed_at") or ""), str(decision.get("symbol") or "SPX"))
+    playbook = ipe.at_or_before(str(record.get("observed_at") or ""), str(decision.get("symbol") or "SPX"))
     summary = {
         "decision_id": record.get("decision_id"), "explainability_id": record.get("explainability_id"),
         "recommendation_id": record.get("recommendation_id"), "recommendation": record.get("recommendation"),
@@ -72,7 +76,7 @@ def dashboard(identifier: str) -> dict[str, Any]:
         "observed_at": record.get("observed_at"), "decision_quality": quality,
     }
     return {"ok":True,"status":"READY","schema_version":SCHEMA_VERSION,"build_version":VERSION,
-            "summary":summary,"confidence":attr_data,"evidence_graph":graph_data,
+            "summary":summary,"confidence":attr_data,"evidence_graph":graph_data,"market_state":market_state if market_state.get("ok") else None,"playbook":playbook if playbook.get("ok") else None,
             "supporting_evidence":supporting,"conflicting_evidence":conflicting,
             "risk":{"level":record.get("risk_level"),"drivers":risk_items},
             "invalidation":invalidation,"timeline":record.get("timeline") or [],
