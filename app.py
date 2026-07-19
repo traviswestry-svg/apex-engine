@@ -423,20 +423,23 @@ except Exception as _release_err:
 # APEX 18.0.4 — centralized configuration governance (read-only APIs).
 try:
     from engine.configuration_governance_routes import register_configuration_governance_routes
-    from engine.configuration_governance import safe_startup_validation
+    from engine.configuration_governance import safe_startup_validation, status as configuration_status
     CONFIGURATION_GOVERNANCE_AVAILABLE = True
 except Exception as _config_gov_err:
     register_configuration_governance_routes = None  # type: ignore[assignment]
     safe_startup_validation = None  # type: ignore[assignment]
+    configuration_status = None  # type: ignore[assignment]
     CONFIGURATION_GOVERNANCE_AVAILABLE = False
     print(f"APEX Configuration Governance unavailable (non-fatal): {_config_gov_err}", flush=True)
 
 # APEX 18.0.5 — dependency and service governance (read-only APIs).
 try:
     from engine.dependency_governance_routes import register_dependency_governance_routes
+    from engine.dependency_governance import status as dependency_status
     DEPENDENCY_GOVERNANCE_AVAILABLE = True
 except Exception as _dep_gov_err:
     register_dependency_governance_routes = None  # type: ignore[assignment]
+    dependency_status = None  # type: ignore[assignment]
     DEPENDENCY_GOVERNANCE_AVAILABLE = False
     print(f"APEX Dependency Governance unavailable (non-fatal): {_dep_gov_err}", flush=True)
 
@@ -484,6 +487,15 @@ except Exception as _ids_err:
     register_institutional_decision_suite_routes = None  # type: ignore[assignment]
     INSTITUTIONAL_DECISION_SUITE_AVAILABLE = False
     print(f"APEX Institutional Decision Suite unavailable (non-fatal): {_ids_err}", flush=True)
+
+# APEX 21.1-21.3 — volume profile intelligence, trading workspace, Mission Control 2.0.
+try:
+    from engine.institutional_workspace_routes import register_institutional_workspace_routes
+    INSTITUTIONAL_WORKSPACE_AVAILABLE = True
+except Exception as _iw_err:
+    register_institutional_workspace_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_WORKSPACE_AVAILABLE = False
+    print(f"APEX Institutional Workspace unavailable (non-fatal): {_iw_err}", flush=True)
 
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
@@ -8475,6 +8487,19 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_decision_suite_routes(app, last_result_provider=_ids_last_result)
         print("APEX 20.1-20.3 Institutional Decision Suite routes registered.", flush=True)
+
+    if INSTITUTIONAL_WORKSPACE_AVAILABLE and register_institutional_workspace_routes is not None:
+        def _iw_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_workspace_routes(
+            app,
+            last_result_provider=_iw_last_result,
+            configuration_status_provider=configuration_status if CONFIGURATION_GOVERNANCE_AVAILABLE else None,
+            dependency_status_provider=dependency_status if DEPENDENCY_GOVERNANCE_AVAILABLE else None,
+        )
+        print("APEX 21.1-21.3 Institutional Trading Workspace routes registered.", flush=True)
 
     if INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE and register_institutional_market_structure_routes is not None:
         def _ims_last_result():
