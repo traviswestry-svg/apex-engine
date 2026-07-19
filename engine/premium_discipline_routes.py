@@ -14,6 +14,7 @@ from .adaptive_refusal_calibration import CalibrationStore
 from .premium_command_center import build_command_center
 from .institutional_premium_intelligence import rank_premium_strategies
 from .institutional_expectancy_intelligence import ExpectancyStore, build_expectancy_intelligence
+from .dynamic_position_sizing import build_position_sizing
 
 try:
     from zoneinfo import ZoneInfo
@@ -75,6 +76,7 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             premium_intelligence=intelligence,
         )
         payload["expectancy_intelligence"] = expectancy_intelligence
+        payload["position_sizing"] = build_position_sizing(expectancy_intelligence, daily_realized_pnl=float(request.args.get("daily_pnl") or 0), open_risk=float(request.args.get("open_risk") or 0))
         return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
 
     @app.route("/api/premium_discipline/expectancy")
@@ -88,6 +90,19 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             now_et=now, expiration=now.date().isoformat(),
             threshold=policy.get("threshold"), weights=policy.get("weights"))
         return jsonify({"ok": True, "ticker": ticker, "expectancy_intelligence": result})
+
+    @app.route("/api/premium_discipline/position-sizing")
+    def premium_discipline_position_sizing():
+        ticker = (request.args.get("ticker") or "SPX").upper()
+        lr = (last_result_provider() or {}) if last_result_provider else {}
+        now = dt.datetime.now(ET)
+        policy = calibration.active_policy()
+        exp = build_expectancy_intelligence(lr, store=expectancy, ticker=ticker, chain_fetcher=chain_fetcher, now_et=now, expiration=now.date().isoformat(), threshold=policy.get("threshold"), weights=policy.get("weights"))
+        try:
+            result = build_position_sizing(exp, daily_realized_pnl=float(request.args.get("daily_pnl") or 0), open_risk=float(request.args.get("open_risk") or 0), account_size=float(request.args["account_size"]) if request.args.get("account_size") else None)
+        except ValueError:
+            return jsonify({"ok": False, "error": "daily_pnl, open_risk, and account_size must be numeric."}), 400
+        return jsonify({"ok": True, "ticker": ticker, "position_sizing": result})
 
     @app.route("/api/premium_discipline/expectancy/grade", methods=["POST"])
     def premium_discipline_expectancy_grade():
