@@ -37,13 +37,13 @@ def _exposure(strategy: str) -> str:
     return {"BULL_PUT": "BULLISH", "BEAR_CALL": "BEARISH", "IRON_CONDOR": "NEUTRAL"}.get(strategy, "UNKNOWN")
 
 
-def _pair_penalty(a: Dict[str, Any], b: Dict[str, Any]) -> Tuple[float, Optional[str]]:
+def _pair_penalty(a: Dict[str, Any], b: Dict[str, Any], bull_bear_pair_penalty: float = 0.35) -> Tuple[float, Optional[str]]:
     sa, sb = str(a.get("strategy")), str(b.get("strategy"))
     pair = {sa, sb}
     if "IRON_CONDOR" in pair:
         return 1.0, "Iron condor overlaps the directional credit-spread exposure."
     if pair == {"BULL_PUT", "BEAR_CALL"}:
-        return 0.35, None  # bounded diversification, but economically condor-like
+        return bull_bear_pair_penalty, None  # governed diversification penalty
     if sa == sb:
         return 1.0, "Duplicate strategy-family exposure is prohibited."
     return 0.15, None
@@ -83,8 +83,15 @@ def build_portfolio_optimizer(
     open_risk: float = 0.0, account_size: Optional[float] = None,
     max_portfolio_risk: Optional[float] = None, max_daily_loss: Optional[float] = None,
     max_positions: Optional[int] = None, max_contracts_per_strategy: Optional[int] = None,
+    allocation_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Construct the highest-scoring governed portfolio from eligible candidates."""
+    policy = allocation_policy or {}
+    score_weight = max(0.0, min(1.0, _f(policy.get("institutional_score_weight"), 0.50)))
+    ev_weight = max(0.0, min(1.0, _f(policy.get("expected_value_weight"), 0.50)))
+    norm = score_weight + ev_weight or 1.0
+    score_weight, ev_weight = score_weight / norm, ev_weight / norm
+    pair_penalty = max(0.0, min(1.0, _f(policy.get("bull_bear_pair_penalty"), 0.35)))
     acct = max(0.0, _f(account_size, _envf("ACCOUNT_SIZE", 0.0)))
     configured_risk = max(0.0, _f(max_portfolio_risk, _envf("APEX_PREMIUM_MAX_PORTFOLIO_RISK", 2500.0)))
     daily_cap = max(0.0, _f(max_daily_loss, _envf("TRADE_MAX_DAILY_LOSS", 2500.0)))
@@ -110,7 +117,7 @@ def build_portfolio_optimizer(
                 conflict = None
                 correlation_penalty = 0.0
                 for a, b in itertools.combinations(combo, 2):
-                    penalty, reason = _pair_penalty(a, b)
+                    penalty, reason = _pair_penalty(a, b, pair_penalty)
                     correlation_penalty += penalty
                     if reason:
                         conflict = reason
@@ -120,7 +127,7 @@ def build_portfolio_optimizer(
                 base_risk = sum(r["max_loss_per_contract"] for r in combo)
                 if base_risk > budget:
                     continue
-                quality = sum((r["institutional_score"] / 100.0) * max(0.0, r["blended_expected_value"]) for r in combo)
+                quality = sum(score_weight * (r["institutional_score"] / 100.0) + ev_weight * (max(0.0, r["blended_expected_value"]) / max(1.0, r["max_loss_per_contract"])) for r in combo)
                 score = quality * max(0.0, 1.0 - correlation_penalty)
                 if best is None or score > best["objective_score"]:
                     best = {"combo": combo, "objective_score": score, "correlation_penalty": correlation_penalty}
@@ -158,7 +165,7 @@ def build_portfolio_optimizer(
             reasons.append("Blended expected value is not positive.")
         if not reasons and selected:
             for chosen in selected:
-                _, reason = _pair_penalty(row, chosen)
+                _, reason = _pair_penalty(row, chosen, pair_penalty)
                 if reason:
                     reasons.append(reason)
                     break
@@ -187,5 +194,6 @@ def build_portfolio_optimizer(
                    "remaining_daily_loss_capacity": round(remaining_daily, 2), "account_risk_cap_pct": 3.0,
                    "max_positions": position_cap, "max_contracts_per_strategy": contract_cap, "account_size": acct or None},
         "blockers": blockers, "warnings": warnings,
+        "allocation_policy": {"source": policy.get("source", "DEFAULT"), "run_id": policy.get("run_id"), "institutional_score_weight": round(score_weight,4), "expected_value_weight": round(ev_weight,4), "bull_bear_pair_penalty": pair_penalty},
         "governance_note": "Portfolio construction is advisory and cannot bypass Premium Discipline, dynamic sizing, confirmation gates, or broker controls.",
     }

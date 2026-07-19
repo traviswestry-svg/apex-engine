@@ -17,6 +17,7 @@ from .institutional_expectancy_intelligence import ExpectancyStore, build_expect
 from .dynamic_position_sizing import build_position_sizing
 from .multi_strategy_portfolio_optimizer import build_portfolio_optimizer
 from .portfolio_outcome_attribution import PortfolioOutcomeStore, replay_due_portfolios
+from .adaptive_portfolio_calibration import PortfolioCalibrationStore
 
 try:
     from zoneinfo import ZoneInfo
@@ -33,6 +34,7 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
     calibration = CalibrationStore(db_path)
     expectancy = ExpectancyStore(db_path)
     portfolio_outcomes = PortfolioOutcomeStore(db_path)
+    portfolio_calibration = PortfolioCalibrationStore(db_path)
 
     def snapshot(ticker: str) -> Dict[str, Any]:
         lr = (last_result_provider() or {}) if last_result_provider else {}
@@ -80,9 +82,10 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
         )
         payload["expectancy_intelligence"] = expectancy_intelligence
         payload["position_sizing"] = build_position_sizing(expectancy_intelligence, daily_realized_pnl=float(request.args.get("daily_pnl") or 0), open_risk=float(request.args.get("open_risk") or 0))
-        payload["portfolio_optimizer"] = build_portfolio_optimizer(expectancy_intelligence, daily_realized_pnl=float(request.args.get("daily_pnl") or 0), open_risk=float(request.args.get("open_risk") or 0), account_size=float(request.args["account_size"]) if request.args.get("account_size") else None)
-        payload["portfolio_outcome_record"] = portfolio_outcomes.record(ticker, payload["portfolio_optimizer"])
+        payload["portfolio_optimizer"] = build_portfolio_optimizer(expectancy_intelligence, daily_realized_pnl=float(request.args.get("daily_pnl") or 0), open_risk=float(request.args.get("open_risk") or 0), account_size=float(request.args["account_size"]) if request.args.get("account_size") else None, allocation_policy=portfolio_calibration.active_policy())
+        payload["portfolio_outcome_record"] = portfolio_outcomes.record(ticker, payload["portfolio_optimizer"], observed_at=now)
         payload["portfolio_outcome_attribution"] = portfolio_outcomes.scorecard()
+        payload["portfolio_calibration"] = {"active_policy": portfolio_calibration.active_policy(), "runs": portfolio_calibration.recent(limit=10)}
         return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
 
     @app.route("/api/premium_discipline/expectancy")
@@ -125,30 +128,42 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
                 open_risk=float(request.args.get("open_risk") or 0),
                 account_size=float(request.args["account_size"]) if request.args.get("account_size") else None,
                 max_portfolio_risk=float(request.args["max_portfolio_risk"]) if request.args.get("max_portfolio_risk") else None,
+                allocation_policy=portfolio_calibration.active_policy(),
             )
         except ValueError:
             return jsonify({"ok": False, "error": "Risk and account query inputs must be numeric."}), 400
-        record = portfolio_outcomes.record(ticker, result)
-        return jsonify({"ok": True, "ticker": ticker, "portfolio_optimizer": result, "portfolio_outcome_record": record})
+        return jsonify({"ok": True, "ticker": ticker, "portfolio_optimizer": result})
+
 
     @app.route("/api/premium_discipline/portfolio/outcomes")
     def premium_discipline_portfolio_outcomes():
-        try:
-            limit = int(request.args.get("limit") or 50)
-        except ValueError:
-            limit = 50
-        return jsonify({"ok": True, "scorecard": portfolio_outcomes.scorecard(), "portfolios": portfolio_outcomes.recent(limit)})
+        try: limit = max(1, min(int(request.args.get("limit") or 100), 500))
+        except ValueError: limit = 100
+        return jsonify({"ok": True, "outcomes": portfolio_outcomes.recent(limit), "scorecard": portfolio_outcomes.scorecard()})
 
     @app.route("/api/premium_discipline/portfolio/replay/run", methods=["POST"])
     def premium_discipline_portfolio_replay_run():
-        if get_intraday_bars is None:
-            return jsonify({"ok": False, "error": "Intraday bar provider is unavailable."}), 503
-        try:
-            limit = int(request.args.get("limit") or 200)
-        except ValueError:
-            limit = 200
-        run = replay_due_portfolios(portfolio_outcomes, get_intraday_bars, limit=limit)
-        return jsonify({"ok": True, "run": run, "scorecard": portfolio_outcomes.scorecard()})
+        if get_intraday_bars is None: return jsonify({"ok": False, "error": "Intraday bar provider is unavailable."}), 503
+        result = replay_due_portfolios(portfolio_outcomes, get_intraday_bars)
+        return jsonify({"ok": True, "run": result, "scorecard": portfolio_outcomes.scorecard()})
+
+    @app.route("/api/premium_discipline/portfolio/calibration")
+    def premium_discipline_portfolio_calibration():
+        return jsonify({"ok": True, "active_policy": portfolio_calibration.active_policy(), "runs": portfolio_calibration.recent(limit=20)})
+
+    @app.route("/api/premium_discipline/portfolio/calibration/run", methods=["POST"])
+    def premium_discipline_portfolio_calibration_run():
+        payload=request.get_json(silent=True) or {}
+        try: result=portfolio_calibration.run(min_sample=max(5,int(payload.get("min_sample",20))),lookback=max(1,int(payload.get("lookback",500))))
+        except (TypeError,ValueError): return jsonify({"ok":False,"error":"min_sample and lookback must be integers."}),400
+        return jsonify({"ok":True,"calibration":result})
+
+    @app.route("/api/premium_discipline/portfolio/calibration/promote", methods=["POST"])
+    def premium_discipline_portfolio_calibration_promote():
+        payload=request.get_json(silent=True) or {}
+        try: result=portfolio_calibration.promote(int(payload.get("run_id")),str(payload.get("promoted_by") or "operator")[:120])
+        except (TypeError,ValueError) as exc: return jsonify({"ok":False,"error":str(exc)}),409
+        return jsonify({"ok":True,"promotion":result})
 
     @app.route("/api/premium_discipline/expectancy/grade", methods=["POST"])
     def premium_discipline_expectancy_grade():
