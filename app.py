@@ -8,6 +8,7 @@ import sqlite3
 import statistics
 import json
 import math
+import hmac
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -497,6 +498,17 @@ except Exception as _iw_err:
     INSTITUTIONAL_WORKSPACE_AVAILABLE = False
     print(f"APEX Institutional Workspace unavailable (non-fatal): {_iw_err}", flush=True)
 
+# APEX 22.5 — pre-23 hardening and consolidation.
+try:
+    from engine.pre23_hardening import acquire_scanner_lease
+    from engine.pre23_hardening_routes import register_pre23_hardening_routes
+    PRE23_HARDENING_AVAILABLE = True
+except Exception as _pre23_err:
+    acquire_scanner_lease = None
+    register_pre23_hardening_routes = None
+    PRE23_HARDENING_AVAILABLE = False
+    print(f"APEX Pre-23 Hardening unavailable (non-fatal): {_pre23_err}", flush=True)
+
 # APEX 22.0 — dormant-safe Market Memory Engine.
 try:
     from engine.market_memory_routes import register_market_memory_routes
@@ -542,7 +554,7 @@ BENZINGA_API_KEY = os.getenv("BENZINGA_API_KEY", "").strip()
 BENZINGA_SOURCE = os.getenv("BENZINGA_SOURCE", "massive").strip().lower()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "tv_institutional_signal").strip()
+WEBHOOK_SECRET = (os.getenv("TV_WEBHOOK_SECRET") or os.getenv("WEBHOOK_SECRET") or os.getenv("TRADINGVIEW_SECRET") or "").strip()
 SIGNAL_TTL_SECONDS = int(os.getenv("SIGNAL_TTL_SECONDS", "360"))
 ASSISTANT_TICKER = os.getenv("ASSISTANT_TICKER", "SPX").strip().upper()
 ASSISTANT_SIGNAL_VALID_SECONDS = int(os.getenv("ASSISTANT_SIGNAL_VALID_SECONDS", str(SIGNAL_TTL_SECONDS)))
@@ -3421,6 +3433,15 @@ def start_background_scanner() -> None:
     with SCANNER_START_LOCK:
         if SCANNER_STARTED:
             return
+        if PRE23_HARDENING_AVAILABLE and acquire_scanner_lease is not None:
+            lease = acquire_scanner_lease()
+            if not lease.get("acquired"):
+                with STATE_LOCK:
+                    STATE["scanner_started"] = False
+                    STATE["scanner_thread_alive"] = False
+                    STATE["last_scan_status"] = "Scanner standby: another worker owns the process lease."
+                print("APEX scanner standby: another process owns the scanner lease.", flush=True)
+                return
         SCANNER_STARTED = True
         with STATE_LOCK:
             STATE["scanner_started"] = True
@@ -4180,7 +4201,9 @@ def api_assistant():
 def tv_signal():
     payload = request.get_json(silent=True) or {}
     secret = str(payload.get("secret", ""))
-    if WEBHOOK_SECRET and secret != WEBHOOK_SECRET:
+    if not WEBHOOK_SECRET:
+        return jsonify({"ok": False, "error": "webhook disabled: secret not configured"}), 503
+    if not hmac.compare_digest(secret.encode("utf-8"), WEBHOOK_SECRET.encode("utf-8")):
         return jsonify({"ok": False, "error": "bad secret"}), 403
 
     ticker = normalize_signal_ticker(str(payload.get("ticker", ASSISTANT_TICKER)))
@@ -8509,6 +8532,14 @@ try:
             dependency_status_provider=dependency_status if DEPENDENCY_GOVERNANCE_AVAILABLE else None,
         )
         print("APEX 21.1-21.3 Institutional Trading Workspace routes registered.", flush=True)
+
+    if PRE23_HARDENING_AVAILABLE and register_pre23_hardening_routes is not None:
+        def _pre23_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_pre23_hardening_routes(app, last_result_provider=_pre23_last_result)
+        print("APEX 22.5 Pre-23 Hardening routes registered.", flush=True)
 
     if MARKET_MEMORY_AVAILABLE and register_market_memory_routes is not None:
         def _mm_last_result():
