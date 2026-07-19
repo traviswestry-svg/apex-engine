@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "15.5.0_PRE_23_HARDENING"
-SEMANTIC_VERSION = "15.5.0"
+APPLICATION_VERSION = "16.0.0_INSTITUTIONAL_TRADING_BRAIN"
+SEMANTIC_VERSION = "16.0.0"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -74,6 +74,11 @@ FEATURES = [
     "Route Assurance",
     "Persistence Governance",
     "Institutional Snapshot",
+    "Institutional Trading Brain",
+    "Dynamic Evidence Weighting",
+    "Conflict Resolution",
+    "Thesis Timeline",
+    "Confidence Calibration Hooks",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its
