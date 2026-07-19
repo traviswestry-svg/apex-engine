@@ -36,7 +36,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "16.0.0_INSTITUTIONAL_TRADING_BRAIN"
+APPLICATION_VERSION = "16.1.0_INSTITUTIONAL_REGIME_INTELLIGENCE"
 SEMANTIC_VERSION = "16.0.0"
 DATABASE_VERSION = "5"
 
