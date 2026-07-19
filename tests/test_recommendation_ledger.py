@@ -134,3 +134,50 @@ def test_uppercase_pricing_basis_is_recognized_executable(tmp_path, monkeypatch)
     L.append_event(rid, "SETTLED", {"outcome_label": "LOSS", "realized_pnl": -680.0})
     rec = L.get_recommendation(rid)
     assert rec["outcome_label"] == "LOSS"   # preserved, not forced
+
+
+def test_override_is_persisted_consistently_in_event_and_ledger(tmp_path, monkeypatch):
+    """The immutable event and current row must carry the same governed outcome."""
+    L = _reload(monkeypatch, tmp_path)
+    rid = _record(L, _unpriceable_panel())
+    result = L.append_event(
+        rid, "GRADED",
+        {"outcome_label": "WIN", "realized_pnl": 330.0, "realized_r": 0.48},
+    )
+    rec = L.get_recommendation(rid)
+    event = rec["events"][-1]["payload"]
+
+    assert result["executability_override"] is True
+    assert rec["outcome_label"] == event["outcome_label"] == "NOT_EXECUTABLE"
+    assert rec["realized_pnl"] == event["realized_pnl"] == 0.0
+    assert event["requested_outcome_label"] == "WIN"
+    assert event["requested_realized_pnl"] == 330.0
+    assert event["requested_realized_r"] == 0.48
+    assert event["override_reason"] == "ENTRY_NOT_EXECUTABLE"
+
+
+def test_missing_pricing_basis_fails_closed(tmp_path, monkeypatch):
+    """Missing entry provenance must not silently count as executable history."""
+    L = _reload(monkeypatch, tmp_path)
+    panel = _panel()
+    panel["legs"] = dict(panel["legs"])
+    panel["legs"].pop("pricing_basis")
+    rid = _record(L, panel)
+    L.append_event(rid, "SETTLED", {"outcome_label": "WIN", "realized_pnl": 100.0})
+    rec = L.get_recommendation(rid)
+    assert rec["outcome_label"] == "NOT_EXECUTABLE"
+    assert rec["realized_pnl"] == 0.0
+
+
+def test_missing_or_zero_entry_credit_fails_closed(tmp_path, monkeypatch):
+    """A credit strategy without positive captured credit is not gradeable."""
+    for credit in (None, 0.0, -0.1):
+        local = tmp_path / str(credit).replace(".", "_")
+        local.mkdir()
+        L = _reload(monkeypatch, local)
+        panel = _panel()
+        panel["legs"] = dict(panel["legs"])
+        panel["legs"]["entry_credit"] = credit
+        rid = _record(L, panel)
+        L.append_event(rid, "GRADED", {"outcome_label": "WIN", "realized_pnl": 50.0})
+        assert L.get_recommendation(rid)["outcome_label"] == "NOT_EXECUTABLE"
