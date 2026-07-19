@@ -458,6 +458,15 @@ except Exception as _ims_err:
     INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE = False
     print(f"APEX Institutional Market Structure unavailable (non-fatal): {_ims_err}", flush=True)
 
+# APEX 19.2-19.5 — dealer, flow, probability, and adaptive learning APIs.
+try:
+    from engine.institutional_intelligence_suite_routes import register_institutional_intelligence_suite_routes
+    INSTITUTIONAL_INTELLIGENCE_SUITE_AVAILABLE = True
+except Exception as _iis_err:
+    register_institutional_intelligence_suite_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_INTELLIGENCE_SUITE_AVAILABLE = False
+    print(f"APEX Institutional Intelligence Suite unavailable (non-fatal): {_iis_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -8424,6 +8433,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_intelligence_engine_routes(app, last_result_provider=_iie_last_result)
         print("APEX 19.0 Institutional Intelligence routes registered.", flush=True)
+
+    if INSTITUTIONAL_INTELLIGENCE_SUITE_AVAILABLE and register_institutional_intelligence_suite_routes is not None:
+        def _iis_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_intelligence_suite_routes(app, last_result_provider=_iis_last_result)
+        print("APEX 19.2-19.5 Institutional Intelligence Suite routes registered.", flush=True)
 
     if INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE and register_institutional_market_structure_routes is not None:
         def _ims_last_result():
