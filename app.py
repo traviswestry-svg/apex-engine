@@ -534,6 +534,15 @@ except Exception as _ipe_err:
     INSTITUTIONAL_PLAYBOOK_ENGINE_AVAILABLE = False
     print(f"APEX Institutional Playbook Engine unavailable (non-fatal): {_ipe_err}", flush=True)
 
+# APEX 23.4 — Continuous Learning & Confidence Calibration (advisory-only).
+try:
+    from engine.continuous_learning_routes import register_continuous_learning_routes
+    CONTINUOUS_LEARNING_CALIBRATION_AVAILABLE = True
+except Exception as _clc_err:
+    register_continuous_learning_routes = None  # type: ignore[assignment]
+    CONTINUOUS_LEARNING_CALIBRATION_AVAILABLE = False
+    print(f"APEX Continuous Learning & Calibration unavailable (non-fatal): {_clc_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -8600,6 +8609,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_playbook_routes(app, last_result_provider=_ipe_last_result)
         print("APEX 23.3 Institutional Playbook Engine routes registered.", flush=True)
+
+    if CONTINUOUS_LEARNING_CALIBRATION_AVAILABLE and register_continuous_learning_routes is not None:
+        def _clc_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_continuous_learning_routes(app, last_result_provider=_clc_last_result)
+        print("APEX 23.4 Continuous Learning & Confidence Calibration routes registered.", flush=True)
 
     if PRE23_HARDENING_AVAILABLE and register_pre23_hardening_routes is not None:
         def _pre23_last_result():
