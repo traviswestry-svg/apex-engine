@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "11.0.1_OPERATIONAL_OBSERVABILITY"
-SEMANTIC_VERSION = "11.0.1"
+APPLICATION_VERSION = "11.0.2_CONFIGURATION_GOVERNANCE"
+SEMANTIC_VERSION = "11.0.2"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -54,6 +54,7 @@ FEATURES = [
     "Production Readiness",
     "Market Status",
     "Release Manager",
+    "Configuration Governance",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its
