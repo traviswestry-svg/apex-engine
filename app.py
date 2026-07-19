@@ -543,6 +543,15 @@ except Exception as _clc_err:
     CONTINUOUS_LEARNING_CALIBRATION_AVAILABLE = False
     print(f"APEX Continuous Learning & Calibration unavailable (non-fatal): {_clc_err}", flush=True)
 
+# APEX 23.5 — Institutional AI Trading Coach (advisory-only lifecycle coaching).
+try:
+    from engine.institutional_ai_trading_coach_routes import register_institutional_ai_trading_coach_routes
+    INSTITUTIONAL_AI_TRADING_COACH_AVAILABLE = True
+except Exception as _iatc_err:
+    register_institutional_ai_trading_coach_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_AI_TRADING_COACH_AVAILABLE = False
+    print(f"APEX Institutional AI Trading Coach unavailable (non-fatal): {_iatc_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -8617,6 +8626,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_continuous_learning_routes(app, last_result_provider=_clc_last_result)
         print("APEX 23.4 Continuous Learning & Confidence Calibration routes registered.", flush=True)
+
+    if INSTITUTIONAL_AI_TRADING_COACH_AVAILABLE and register_institutional_ai_trading_coach_routes is not None:
+        def _iatc_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_ai_trading_coach_routes(app, last_result_provider=_iatc_last_result)
+        print("APEX 23.5 Institutional AI Trading Coach routes registered.", flush=True)
 
     if PRE23_HARDENING_AVAILABLE and register_pre23_hardening_routes is not None:
         def _pre23_last_result():
