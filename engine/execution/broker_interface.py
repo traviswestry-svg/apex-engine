@@ -131,6 +131,12 @@ class BrokerInterface:
     def place_order(self, preview_id: str, order_intent: OrderIntent) -> BrokerResult:
         raise NotImplementedError
 
+    def preview_complex_order(self, order_intent: Any) -> BrokerResult:
+        raise NotImplementedError
+
+    def place_complex_order(self, preview_id: str, order_intent: Any) -> BrokerResult:
+        raise NotImplementedError
+
     def cancel_order(self, order_id: str) -> BrokerResult:
         raise NotImplementedError
 

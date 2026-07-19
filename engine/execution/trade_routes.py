@@ -19,6 +19,7 @@ from flask import request, render_template, jsonify
 from engine.brokers.etrade_adapter import ETradeAdapter
 from engine.options.options_data_bus import OptionsDataBus
 from engine.execution.broker_interface import OrderIntent, ChangeIntent, envelope
+from engine.execution.complex_options import ComplexLeg, ComplexOrderIntent, build_ticket, validate_ticket
 from engine.execution.bracket_manager import get_bracket_manager
 from engine.execution import trade_risk_guard as guard
 from engine.execution.trade_audit import audit, read_audit
@@ -314,6 +315,79 @@ def register_trade_routes(
         audit("BROKER_RESPONSE", {"ok": r.ok, "data": r.data})
         return jsonify(envelope(r.ok, {"broker": r.data, "bracket_id": bracket},
                                 mode=r.mode, errors=r.errors))
+
+    # ── APEX 18.0.1 strategy arming / complex order preview and placement ──
+    @app.route("/api/trade/spx/arm-strategy", methods=["POST"])
+    def _arm_strategy():
+        body = request.get_json(silent=True) or {}
+        recommendation = body.get("recommendation") or {}
+        expiration = str(body.get("expiration") or "")
+        if not recommendation or not expiration:
+            return jsonify(envelope(False, errors=["recommendation and expiration are required."]))
+        calls = _bus().get_chain("SPX", expiration, "CALL")
+        puts = _bus().get_chain("SPX", expiration, "PUT")
+        ticket = build_ticket(
+            recommendation=recommendation, expiration=expiration,
+            call_contracts=calls.get("contracts", []), put_contracts=puts.get("contracts", []),
+            quantity=int(body.get("quantity") or 1), limit_price=body.get("limit_price"),
+        )
+        audit("STRATEGY_ARMED", {"strategy": recommendation.get("strategy"), "expiration": expiration,
+                                 "state": ticket.get("state"), "legs": len((ticket.get("intent") or {}).get("legs", []))})
+        return jsonify(envelope(ticket.get("ready_for_preview", False), ticket,
+                                warnings=ticket.get("warnings", []), errors=ticket.get("errors", [])))
+
+    def _complex_intent(payload):
+        raw = payload.get("intent") or payload
+        legs = tuple(ComplexLeg(**{k: v for k, v in leg.items() if k in ComplexLeg.__dataclass_fields__})
+                     for leg in (raw.get("legs") or []))
+        return ComplexOrderIntent(
+            symbol=str(raw.get("symbol") or "SPX"), strategy=str(raw.get("strategy") or "CUSTOM"),
+            legs=legs, quantity=int(raw.get("quantity") or 1),
+            price_effect=str(raw.get("price_effect") or "NET_DEBIT"),
+            limit_price=float(raw.get("limit_price") or 0),
+            time_in_force=str(raw.get("time_in_force") or "DAY"),
+            order_type=str(raw.get("order_type") or "LIMIT"),
+            all_or_none=bool(raw.get("all_or_none", False)),
+            recommendation_id=str(raw.get("recommendation_id") or ""),
+        )
+
+    @app.route("/api/trade/spx/preview-strategy", methods=["POST"])
+    def _preview_strategy():
+        body = request.get_json(silent=True) or {}
+        errors = validate_ticket(body)
+        max_loss = ((body.get("economics") or {}).get("max_loss"))
+        if max_loss is not None and float(max_loss) > guard.RiskLimits.from_env().max_risk_dollars:
+            errors.append(f"Maximum loss ${float(max_loss):.2f} exceeds APEX risk limit.")
+        if errors:
+            audit("COMPLEX_PREVIEW_REJECTED", {"errors": errors})
+            return jsonify(envelope(False, {"state": "ARMED_EXECUTION_BLOCKED"}, errors=errors))
+        intent = _complex_intent(body)
+        r = _adapter().preview_complex_order(intent)
+        data = {"state": "PREVIEWED" if r.ok else "ARMED_EXECUTION_BLOCKED",
+                "intent": intent.to_dict(), "broker": r.data,
+                "preview_id": (r.data or {}).get("preview_id"), "economics": body.get("economics") or {}}
+        audit("COMPLEX_PREVIEW_RESPONSE", {"ok": r.ok, "strategy": intent.strategy,
+                                           "preview_id": data.get("preview_id"), "legs": len(intent.legs)})
+        return jsonify(envelope(r.ok, data, mode=r.mode, warnings=r.warnings, errors=r.errors))
+
+    @app.route("/api/trade/spx/place-strategy", methods=["POST"])
+    def _place_strategy():
+        body = request.get_json(silent=True) or {}
+        if not body.get("confirmed"):
+            return jsonify(envelope(False, errors=["Explicit human confirmation is required."]))
+        if not body.get("preview_id"):
+            return jsonify(envelope(False, errors=["A valid broker preview_id is required."]))
+        errors = validate_ticket(body)
+        if errors:
+            return jsonify(envelope(False, errors=errors))
+        intent = _complex_intent(body)
+        r = _adapter().place_complex_order(str(body.get("preview_id")), intent)
+        if r.ok:
+            _LAST_ORDER_EPOCH["SPX"] = time.time()
+        audit("COMPLEX_ORDER_PLACED", {"ok": r.ok, "strategy": intent.strategy,
+                                       "legs": len(intent.legs), "preview_id": body.get("preview_id")})
+        return jsonify(envelope(r.ok, {"state": "SUBMITTED" if r.ok else "BLOCKED", "broker": r.data},
+                                mode=r.mode, warnings=r.warnings, errors=r.errors))
 
     @app.route("/api/trade/spx/active-position")
     def _active_position():
