@@ -497,6 +497,15 @@ except Exception as _iw_err:
     INSTITUTIONAL_WORKSPACE_AVAILABLE = False
     print(f"APEX Institutional Workspace unavailable (non-fatal): {_iw_err}", flush=True)
 
+# APEX 22.0 — dormant-safe Market Memory Engine.
+try:
+    from engine.market_memory_routes import register_market_memory_routes
+    MARKET_MEMORY_AVAILABLE = True
+except Exception as _mm_err:
+    register_market_memory_routes = None  # type: ignore[assignment]
+    MARKET_MEMORY_AVAILABLE = False
+    print(f"APEX Market Memory Engine unavailable (non-fatal): {_mm_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -8500,6 +8509,14 @@ try:
             dependency_status_provider=dependency_status if DEPENDENCY_GOVERNANCE_AVAILABLE else None,
         )
         print("APEX 21.1-21.3 Institutional Trading Workspace routes registered.", flush=True)
+
+    if MARKET_MEMORY_AVAILABLE and register_market_memory_routes is not None:
+        def _mm_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_market_memory_routes(app, last_result_provider=_mm_last_result)
+        print("APEX 22.0 Market Memory Engine routes registered.", flush=True)
 
     if INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE and register_institutional_market_structure_routes is not None:
         def _ims_last_result():
