@@ -12,6 +12,7 @@ from . import institutional_autonomous_desk as iad
 from . import live_mission_control as lmc
 from . import performance_intelligence as pi
 from . import broker_synchronized_position_state as bsps
+from . import adaptive_intelligence as ai18
 
 VERSION = "17.1_INSTITUTIONAL_TRADING_DESK_UX"
 
@@ -114,6 +115,7 @@ def workspace(symbol: str = "SPX") -> dict:
         "status": "READY",
         "symbol": symbol,
         "version": VERSION,
+        "adaptive_intelligence": _safe(lambda: ai18.dashboard(symbol), {"status": "UNAVAILABLE"}),
         "ribbon": _decision_ribbon(mission, broker),
         "mission_control": mission,
         "evidence": _evidence(mission),

@@ -39,6 +39,7 @@ from . import confirmation_gated_execution as cge
 from . import sandbox_execution_validation as sev
 from . import institutional_autonomous_desk as iad
 from . import institutional_trading_desk_ux as itdux
+from . import adaptive_intelligence as ai18
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -852,6 +853,33 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def autonomous_desk_history(): return jsonify({'ok':True,'status':'READY','history':iad.history(int(request.args.get('limit',50)),request.args.get('state'))})
     @app.get('/api/autonomous-desk/dashboard')
     def autonomous_desk_dashboard(): return jsonify(iad.dashboard(int(request.args.get('limit',12))))
+
+    # APEX 18.0 — Adaptive Intelligence (governed advisory learning).
+    @app.get('/api/adaptive-intelligence/status')
+    def adaptive_intelligence_status(): return jsonify({'ok':True,**ai18.status()})
+    @app.post('/api/adaptive-intelligence/sessions')
+    def adaptive_intelligence_record_session():
+        out=ai18.record_session(request.get_json(silent=True) or {}); return j(out,201 if out.get('created') else 200)
+    @app.get('/api/adaptive-intelligence/sessions')
+    def adaptive_intelligence_sessions(): return jsonify({'ok':True,'sessions':ai18.sessions(int(request.args.get('limit',100)))})
+    @app.post('/api/adaptive-intelligence/similarity')
+    def adaptive_intelligence_similarity():
+        b=request.get_json(silent=True) or {}; return jsonify(ai18.similar_sessions(b.get('profile') or {},int(b.get('top_k') or 5),b.get('exclude_date')))
+    @app.get('/api/adaptive-intelligence/calibration')
+    def adaptive_intelligence_calibration(): return jsonify(ai18.confidence_calibration(request.args.get('symbol','SPX')))
+    @app.get('/api/adaptive-intelligence/playbooks')
+    def adaptive_intelligence_playbooks(): return jsonify(ai18.playbook_rankings(request.args.get('symbol','SPX'),int(request.args.get('window',90))))
+    @app.post('/api/adaptive-intelligence/edge')
+    def adaptive_intelligence_edge(): return jsonify({'ok':True,**ai18.edge_score(request.get_json(silent=True) or {})})
+    @app.post('/api/adaptive-intelligence/reviews')
+    def adaptive_intelligence_review():
+        out=ai18.self_evaluate(request.get_json(silent=True) or {}); return j(out,201 if out.get('created') else 200)
+    @app.post('/api/adaptive-intelligence/journals')
+    def adaptive_intelligence_journal():
+        out=ai18.daily_journal(request.get_json(silent=True) or {}); return j(out,201 if out.get('created') else 200)
+    @app.post('/api/adaptive-intelligence/dashboard')
+    def adaptive_intelligence_dashboard():
+        b=request.get_json(silent=True) or {}; return jsonify(ai18.dashboard(str(b.get('symbol') or 'SPX'),b.get('current_profile') or {},b.get('raw_confidence')))
 
     @app.get('/api/trading-desk-ux/status')
     def trading_desk_ux_status(): return jsonify({'ok':True,**itdux.status()})
