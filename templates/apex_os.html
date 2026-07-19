@@ -11,9 +11,10 @@
   .apex-nav a.nav-trade:hover{color:#7dd3fc}
   .apex-nav a.nav-trade::before{content:"▸ ";opacity:.7}
 
-    /* APEX 18.0.4 configuration governance */
+    /* APEX 18.0.5 configuration and dependency governance */
     .cfg-health{grid-column:1/-1;background:var(--panel);border:1px solid var(--bdr);border-radius:var(--radius);padding:12px 14px;display:grid;grid-template-columns:1.4fr repeat(7,minmax(82px,1fr));gap:10px;align-items:center}
     .cfg-title{font-size:12px;font-weight:900;letter-spacing:.07em}.cfg-sub{font-size:11px;color:var(--muted);margin-top:3px}.cfg-k{font-size:10px;color:var(--muted);text-transform:uppercase}.cfg-v{font-size:14px;font-weight:850;margin-top:3px}.cfg-state{display:inline-block;padding:3px 9px;border-radius:999px;border:1px solid var(--bdr)}.cfg-state.PASS{color:var(--green)}.cfg-state.WARNING{color:var(--amber)}.cfg-state.BLOCKING{color:var(--red)}
+    .dep-health{grid-column:1/-1;background:var(--panel);border:1px solid var(--bdr);border-radius:var(--radius);padding:9px 14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}.dep-health .cfg-title{margin-right:auto}
     @media(max-width:900px){.cfg-health{grid-template-columns:1fr 1fr}}
 </style>
 </head>
@@ -494,6 +495,13 @@
           <div><div class="cfg-k">Scanner</div><div class="cfg-v" id="cfgScanner">—</div></div>
           <div><div class="cfg-k">Sources</div><div class="cfg-v" id="cfgSources">—</div></div>
           <div><div class="cfg-k">Diagnostics</div><div class="cfg-v"><a href="/api/configuration/diagnostics" target="_blank" rel="noopener">Open</a></div></div>
+        </section>
+        <section class="dep-health" id="depHealth">
+          <div class="cfg-title">DEPENDENCY HEALTH <span class="cfg-state" id="depState">—</span></div>
+          <div><span class="cfg-k">Configured</span> <span class="cfg-v" id="depConfigured">—</span></div>
+          <div><span class="cfg-k">Degraded</span> <span class="cfg-v" id="depDegraded">—</span></div>
+          <div><span class="cfg-k">Open circuits</span> <span class="cfg-v" id="depCircuits">—</span></div>
+          <div><a href="/api/dependencies/diagnostics" target="_blank" rel="noopener">Diagnostics</a></div>
         </section>
 
         <!-- ══ HERO: DECISION ═══════════════════════════════════════════════ -->
@@ -1366,6 +1374,13 @@
     var sv=(d.variables||[]).filter(function(v){return ['MARKET_DATA','NEWS'].indexOf(v.category)>=0 && v.secret;}); var sc=sv.filter(function(v){return v.configured;}).length; text('cfgSources',sc+'/'+sv.length+' READY');
     text('cfgIdentity',(di.application_version||st.version||'APEX')+' · '+(di.environment||'unknown')+' · schema '+(di.database_version||'unknown'));
   }).catch(function(){text('cfgState','WARNING');text('cfgIdentity','Configuration diagnostics unavailable this cycle.');});
+})();
+(function dependencyHealth(){
+  function text(id,v){var e=document.getElementById(id);if(e)e.textContent=v;}
+  fetch('/api/dependencies/status',{cache:'no-store'}).then(function(r){return r.json();}).then(function(st){
+    var state=st.state||'WARNING', el=document.getElementById('depState'); text('depState',state); if(el)el.className='cfg-state '+(state==='BLOCKED'?'BLOCKING':state);
+    text('depConfigured',st.configured==null?'—':st.configured+'/'+st.total); text('depDegraded',st.degraded||0); text('depCircuits',st.open_circuits||0);
+  }).catch(function(){text('depState','WARNING');});
 })();
 </script>
 </body>
