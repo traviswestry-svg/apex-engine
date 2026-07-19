@@ -83,6 +83,20 @@ def register_trade_routes(
         r = _adapter().status()
         return jsonify(envelope(r.ok, r.data, mode=r.mode, warnings=r.warnings, errors=r.errors))
 
+    @app.route("/api/broker/etrade/diagnostics")
+    def _etrade_diagnostics():
+        from engine.broker_integration_completion import build_diagnostics
+        exp = request.args.get("expiration", "")
+        side = request.args.get("side", "CALL").upper()
+        def fetch(symbol, expiration, option_side):
+            started = time.perf_counter()
+            result = _bus().get_chain(symbol, expiration, option_side)
+            result["latency_ms"] = round((time.perf_counter() - started) * 1000.0, 1)
+            return result
+        data = build_diagnostics(adapter=_adapter(), chain_fetcher=fetch,
+                                 expiration=exp, side=side)
+        return jsonify(envelope(True, data, mode=_adapter().mode))
+
     @app.route("/api/broker/etrade/accounts")
     def _etrade_accounts():
         r = _adapter().list_accounts()
@@ -115,7 +129,22 @@ def register_trade_routes(
         res = _bus().get_chain("SPX", exp, side)
         audit("QUOTE_SNAPSHOT", {"expiration": exp, "side": side,
                                  "source": res.get("source"), "n": len(res.get("contracts", []))})
-        return jsonify(envelope(bool(res.get("contracts")), res,
+        contracts = res.get("contracts", [])
+        res["field_sources"] = {
+            "bid": res.get("source"), "ask": res.get("source"),
+            "mid": "apex_calculated", "spread_pct": "apex_calculated",
+            "liquidity_score": "apex_calculated",
+            "volume": res.get("source"), "open_interest": res.get("source"),
+            "delta": res.get("source"), "gamma": res.get("source"),
+            "theta": res.get("source"), "vega": res.get("source"), "iv": res.get("source"),
+        }
+        res["coverage"] = {
+            "contracts": len(contracts),
+            "two_sided_quotes": sum(1 for c in contracts if c.get("bid") is not None and c.get("ask") is not None),
+            "greeks": sum(1 for c in contracts if any(c.get(k) is not None for k in ("delta", "gamma", "theta", "vega"))),
+            "iv": sum(1 for c in contracts if c.get("iv") is not None),
+        }
+        return jsonify(envelope(bool(contracts), res,
                                 warnings=res.get("warnings", [])))
 
     @app.route("/api/trade/spx/recommended-contracts")

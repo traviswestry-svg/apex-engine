@@ -173,6 +173,7 @@
       <div style="margin-top:6px">
         <button class="mini-btn" onclick="loadStatus()">Refresh</button>
         <button class="mini-btn" onclick="loadAccounts()">List Accounts</button>
+        <button class="mini-btn" onclick="loadDiagnostics()">Diagnostics</button>
       </div>
       <div id="accountsBox" class="note" style="margin-top:5px">Click "List Accounts".</div>
     </div>
@@ -225,6 +226,20 @@ async function loadStatus(){
     kv('Configured',d.configured?'YES':'NO',d.configured?'ok':'bad')+
     kv('Trading enabled',d.trading_enabled?'LIVE':'blocked',d.trading_enabled?'warn':'ok')+
     kv('Account key set',d.account_id_key_set?'yes':'no',d.account_id_key_set?'ok':'warn');
+}
+async function loadDiagnostics(){
+  const exp=$('expSelect').value||'';
+  const j=await api('/api/broker/etrade/diagnostics?expiration='+encodeURIComponent(exp)+'&side='+chainSide);
+  const d=j.data||{}, c=d.checks||{}, ch=d.chain||{};
+  $('statusBox').innerHTML =
+    kv('OAuth',c.oauth||'—',(c.oauth==='PASS')?'ok':'bad')+
+    kv('Accounts',(c.accounts||'—')+(c.account_count!=null?' ('+c.account_count+')':''),(c.accounts==='PASS')?'ok':'bad')+
+    kv('Option chain',c.option_chain||'NOT TESTED',(c.option_chain==='PASS')?'ok':'warn')+
+    kv('Quotes',c.quotes||'NOT TESTED',(c.quotes==='PASS')?'ok':'warn')+
+    kv('Greeks',c.greeks||'NOT TESTED',(c.greeks==='PASS')?'ok':'warn')+
+    kv('Execution',c.execution||'BLOCKED','ok')+
+    kv('Latency',ch.latency_ms==null?'—':ch.latency_ms+' ms');
+  tlog('broker diagnostics: chain '+(c.option_chain||'NOT_TESTED')+', quotes '+(c.quotes||'NOT_TESTED')+', greeks '+(c.greeks||'NOT_TESTED'));
 }
 async function loadAccounts(){
   const j=await api('/api/broker/etrade/accounts');
