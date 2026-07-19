@@ -507,6 +507,15 @@ except Exception as _itb_err:
     INSTITUTIONAL_TRADING_BRAIN_AVAILABLE = False
     print(f"APEX Institutional Trading Brain unavailable (non-fatal): {_itb_err}", flush=True)
 
+# APEX 23.1 — Institutional Regime Intelligence (read-only adaptive layer).
+try:
+    from engine.institutional_regime_intelligence_routes import register_institutional_regime_intelligence_routes
+    INSTITUTIONAL_REGIME_INTELLIGENCE_AVAILABLE = True
+except Exception as _iri_err:
+    register_institutional_regime_intelligence_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_REGIME_INTELLIGENCE_AVAILABLE = False
+    print(f"APEX Institutional Regime Intelligence unavailable (non-fatal): {_iri_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -8549,6 +8558,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_trading_brain_routes(app, last_result_provider=_itb_last_result)
         print("APEX 23.0 Institutional Trading Brain routes registered.", flush=True)
+
+    if INSTITUTIONAL_REGIME_INTELLIGENCE_AVAILABLE and register_institutional_regime_intelligence_routes is not None:
+        def _iri_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_regime_intelligence_routes(app, last_result_provider=_iri_last_result)
+        print("APEX 23.1 Institutional Regime Intelligence routes registered.", flush=True)
 
     if PRE23_HARDENING_AVAILABLE and register_pre23_hardening_routes is not None:
         def _pre23_last_result():
