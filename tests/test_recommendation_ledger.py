@@ -67,3 +67,70 @@ def test_calibration_is_blocked_without_history(tmp_path, monkeypatch):
     readiness = ledger.calibration_readiness(50)
     assert readiness["status"] == "INSUFFICIENT_HISTORY"
     assert readiness["calibration_enabled"] is False
+
+
+def _unpriceable_panel():
+    """A structure the chain could not price — the broken-condor class."""
+    return {
+        "available": True, "tradeable": False, "strategy": "IRON_CONDOR",
+        "premium_kind": "CREDIT", "confidence": 71.0,
+        "legs": {"put_short": 7400.0, "call_short": 7570.0,
+                 "economics_available": False,
+                 "pricing_basis": "unpriceable_chain_unavailable"},
+    }
+
+
+def _reload(monkeypatch, tmp_path):
+    monkeypatch.setenv("RECOMMENDATION_LEDGER_DB_PATH", str(tmp_path / "ledger.db"))
+    import engine.recommendation_ledger as L
+    importlib.reload(L)
+    L.init_db()
+    return L
+
+
+def _record(L, panel):
+    cap = L.build_capture(ticker="SPX", panel=panel, session_date="2026-07-16", spot=6300.0)
+    return L.record_recommendation(cap)["recommendation_id"]
+
+
+def test_unexecutable_outcome_is_forced_not_executable(tmp_path, monkeypatch):
+    """Settling an unfillable trade as a directional WIN must be overridden."""
+    L = _reload(monkeypatch, tmp_path)
+    rid = _record(L, _unpriceable_panel())
+    # caller tries to record it as a +330 win
+    L.append_event(rid, "GRADED", {"outcome_label": "WIN", "realized_pnl": 330.0})
+    rec = L.get_recommendation(rid)
+    assert rec["outcome_label"] == "NOT_EXECUTABLE"
+    assert rec["realized_pnl"] == 0.0
+    assert "could not be filled" in (rec["outcome_notes"] or "")
+
+
+def test_executable_outcome_is_preserved(tmp_path, monkeypatch):
+    """A genuine, chain-priced credit keeps its realized outcome."""
+    L = _reload(monkeypatch, tmp_path)
+    rid = _record(L, _panel())   # the fixture panel is executable
+    L.append_event(rid, "GRADED", {"outcome_label": "WIN", "realized_pnl": 180.0, "realized_r": 0.22})
+    rec = L.get_recommendation(rid)
+    assert rec["outcome_label"] == "WIN"
+    assert rec["realized_pnl"] == 180.0
+
+
+def test_not_executable_rows_excluded_from_gradeable_count(tmp_path, monkeypatch):
+    """Calibration must not think it has more executable history than it does."""
+    L = _reload(monkeypatch, tmp_path)
+    good = _record(L, _panel())
+    bad = _record(L, _unpriceable_panel())
+    L.append_event(good, "GRADED", {"outcome_label": "WIN", "realized_pnl": 180.0})
+    L.append_event(bad, "GRADED", {"outcome_label": "WIN", "realized_pnl": 330.0})
+    c = L.counts()
+    assert c["gradeable"] == 1
+    assert c["not_executable"] == 1
+
+
+def test_uppercase_pricing_basis_is_recognized_executable(tmp_path, monkeypatch):
+    """The capture may store LIVE_CHAIN_EXECUTABLE in any case — the guard must match."""
+    L = _reload(monkeypatch, tmp_path)
+    rid = _record(L, _panel())   # fixture uses 'LIVE_CHAIN_EXECUTABLE'
+    L.append_event(rid, "SETTLED", {"outcome_label": "LOSS", "realized_pnl": -680.0})
+    rec = L.get_recommendation(rid)
+    assert rec["outcome_label"] == "LOSS"   # preserved, not forced
