@@ -36,11 +36,26 @@ REGISTRY: Dict[str, VariableDefinition] = {row["name"]: VariableDefinition(**row
 
 _TRUE={"1","true","yes","on"}; _FALSE={"0","false","no","off"}
 _REGISTRY_DATA.extend([
+ {'name':'APEX_EXECUTION_TICK_SIZE','category':'EXECUTION','classification':'OPTIONAL','required_when':None,'default':'0.05','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum execution price increment used by advisory planning.','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_MAX_TOTAL_OPEN_RISK','category':'RISK','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum governed aggregate open risk.','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_PREMIUM_EXECUTION_ENABLED','category':'EXECUTION','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables premium strategy execution eligibility; authoritative trading controls still apply.','safety_critical':True,'used_in_code':True},
+ {'name':'PREMIUM_ELIGIBILITY_THRESHOLD','category':'RISK','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum confidence threshold for premium strategy eligibility.','safety_critical':True,'used_in_code':True},
+ {'name':'TRADE_MAX_DAILY_LOSS','category':'RISK','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum daily trading loss before lockout.','safety_critical':True,'used_in_code':True},
+ {'name':'TRADE_MAX_TRADES_PER_DAY','category':'RISK','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum trades permitted per day.','safety_critical':True,'used_in_code':True},
+ {'name':'TRADE_LOSS_LOCKOUT_COUNT','category':'RISK','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Consecutive loss count that triggers the daily lockout.','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_SCANNER_LEASE_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/tmp/apex_scanner.lock','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Process lease path preventing duplicate scanner ownership.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_PERSISTENT_DISK_PATH','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Declared persistent-disk root for local SQLite stores.','safety_critical':False,'used_in_code':True},
+ {'name':'RENDER_DISK_PATH','category':'DEPLOYMENT','classification':'DERIVED','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Render-provided persistent disk mount path when available.','safety_critical':False,'used_in_code':True},
+])
+
+_REGISTRY_DATA.extend([
  {'name':'APEX_MARKET_MEMORY_DB','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'apex_market_memory.db','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite path for the append-only Market Memory store.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_MARKET_MEMORY_CAPTURE_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables explicit Market Memory snapshot capture; disabled by default.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_MARKET_MEMORY_OUTCOME_WRITES_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables governed attachment of outcomes to stored memory records; disabled by default.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_MARKET_MEMORY_MIN_SESSIONS','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'20','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum stored observations before Market Memory reports readiness.','safety_critical':False,'used_in_code':True},
 ])
+
+REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
 def _utcnow() -> str: return datetime.now(timezone.utc).isoformat()
 def _raw(env: Mapping[str,str], name: str) -> Optional[str]:
