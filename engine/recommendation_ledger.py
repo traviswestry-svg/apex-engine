@@ -16,7 +16,7 @@ import threading
 import uuid
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-VERSION = "11.0E_RECOMMENDATION_LEDGER"
+VERSION = "18.0.2_EXECUTABILITY_PROTECTED_SETTLEMENT"
 SCHEMA_VERSION = 1
 _LOCK = threading.RLock()
 _REQUIRED_CAPTURE_FIELDS = (
@@ -312,24 +312,49 @@ def _row_field(row: Any, key: str, default: Any = None) -> Any:
 
 
 def _row_executable(row: Any) -> bool:
-    """Was this recommendation actually fillable at entry?
+    """Return whether the immutable recommendation was executable at entry.
 
-    Read from the immutable capture, not recomputed. A structure is executable when
-    it was tradeable, priced from the live chain (not unpriceable/modeled), and
-    collected a positive credit. Anything else — an unpriceable structure, a
-    modeled-only price, a debit dressed as a credit — was never a real position and
-    must be excluded from directional grading.
+    Settlement callers cannot provide or override these fields. A recommendation is
+    executable only when it was marked tradeable, priced from the executable live
+    option chain, and captured a positive entry credit. Missing values fail closed.
     """
-    tradeable = _row_field(row, "tradeable")
-    basis = str(_row_field(row, "pricing_basis") or "").lower()
+    tradeable = bool(_row_field(row, "tradeable", False))
+    basis = str(_row_field(row, "pricing_basis", "") or "").strip().lower()
     credit = _safe_float(_row_field(row, "entry_credit"))
-    if not tradeable:
-        return False
-    if basis and basis != "live_chain_executable":
-        return False
-    if credit is not None and credit <= 0:
-        return False
-    return True
+    return tradeable and basis == "live_chain_executable" and credit is not None and credit > 0
+
+
+def _normalize_settlement_payload(row: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    """Normalize terminal outcome data before either immutable write occurs.
+
+    The caller's attempted values are retained as audit metadata, while downstream
+    analytics see only the governed outcome. This guarantees that the event stream
+    and the current ledger row cannot disagree about executability.
+    """
+    data = dict(payload or {})
+    if _row_executable(row):
+        return data
+
+    requested_label = data.get("outcome_label")
+    requested_pnl = data.get("realized_pnl")
+    requested_r = data.get("realized_r")
+    basis = _row_field(row, "pricing_basis") or "unknown"
+
+    data.update({
+        "requested_outcome_label": requested_label,
+        "requested_realized_pnl": requested_pnl,
+        "requested_realized_r": requested_r,
+        "executability_override": True,
+        "override_reason": "ENTRY_NOT_EXECUTABLE",
+        "outcome_label": "NOT_EXECUTABLE",
+        "realized_pnl": 0.0,
+        "realized_r": 0.0,
+        "notes": data.get("notes") or (
+            f"Not executable at entry (basis: {basis}). Excluded from directional "
+            "grading: a trade that could not be filled cannot be a win or a loss."
+        ),
+    })
+    return data
 
 
 def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapping[str, Any]] = None,
@@ -345,9 +370,22 @@ def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapp
     at = event_at or _iso()
     data = dict(payload or {})
     with _LOCK, _connect() as conn:
-        row = conn.execute("SELECT state, tradeable, entry_credit, pricing_basis, chain_grade FROM recommendation_ledger WHERE recommendation_id=?", (recommendation_id,)).fetchone()
+        row = conn.execute(
+            "SELECT state, tradeable, entry_credit, pricing_basis, chain_grade "
+            "FROM recommendation_ledger WHERE recommendation_id=?",
+            (recommendation_id,),
+        ).fetchone()
         if not row:
             raise KeyError(recommendation_id)
+
+        # Normalize before persisting the immutable event. This prevents a split
+        # audit trail where the event says WIN while the ledger row says
+        # NOT_EXECUTABLE. INVALIDATED may be terminal without carrying an outcome;
+        # only normalize terminal events that actually submit outcome economics.
+        outcome_supplied = any(k in data for k in ("outcome_label", "realized_pnl", "realized_r"))
+        if event in {"CLOSED", "SETTLED", "GRADED"} and outcome_supplied:
+            data = _normalize_settlement_payload(row, data)
+
         conn.execute(
             "INSERT INTO recommendation_ledger_events(recommendation_id,event_type,event_at,payload_json) VALUES(?,?,?,?)",
             (recommendation_id, event, at, _json(data)),
@@ -358,31 +396,20 @@ def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapp
             updates.append("state=?")
             args.append(event)
         if event in {"CLOSED", "SETTLED", "INVALIDATED", "GRADED"}:
-            # Executability gate: a recommendation that could never have been filled
-            # must not settle as a directional WIN/LOSS — that would teach the
-            # calibration engine confidence in trades that could not be taken (the
-            # broken-condor failure). If the captured row was not executable at
-            # entry, the outcome label is forced to NOT_EXECUTABLE and P/L to 0,
-            # whatever the caller passed. Executability is read from the immutable
-            # capture: a live-chain-executable basis with a positive credit.
-            label = data.get("outcome_label")
-            realized_pnl = _safe_float(data.get("realized_pnl"))
-            realized_r = _safe_float(data.get("realized_r"))
-            notes = data.get("notes")
-            if not _row_executable(row):
-                label = "NOT_EXECUTABLE"
-                realized_pnl = 0.0
-                realized_r = 0.0
-                notes = ("Not executable at entry (basis: "
-                         f"{_row_field(row, 'pricing_basis') or 'unknown'}). Excluded from "
-                         "directional grading: a trade that could not be filled cannot be "
-                         "a win or a loss.")
             updates.extend(["outcome_status=?", "outcome_label=?", "realized_pnl=?", "realized_r=?", "outcome_notes=?", "outcome_at=?"])
-            args.extend([event, label, realized_pnl, realized_r, notes, at])
+            args.extend([
+                event,
+                data.get("outcome_label"),
+                _safe_float(data.get("realized_pnl")),
+                _safe_float(data.get("realized_r")),
+                data.get("notes"),
+                at,
+            ])
         args.append(recommendation_id)
         conn.execute(f"UPDATE recommendation_ledger SET {', '.join(updates)} WHERE recommendation_id=?", args)
         conn.commit()
-    return {"ok": True, "recommendation_id": recommendation_id, "event_type": event, "event_at": at}
+    return {"ok": True, "recommendation_id": recommendation_id, "event_type": event, "event_at": at,
+            "executability_override": bool(data.get("executability_override", False))}
 
 
 def _decode_row(row: sqlite3.Row) -> Dict[str, Any]:
