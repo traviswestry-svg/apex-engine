@@ -440,6 +440,24 @@ except Exception as _dep_gov_err:
     DEPENDENCY_GOVERNANCE_AVAILABLE = False
     print(f"APEX Dependency Governance unavailable (non-fatal): {_dep_gov_err}", flush=True)
 
+# APEX 19.0 — unified institutional intelligence (read-only APIs).
+try:
+    from engine.institutional_intelligence_engine_routes import register_institutional_intelligence_engine_routes
+    INSTITUTIONAL_INTELLIGENCE_ENGINE_AVAILABLE = True
+except Exception as _iie_err:
+    register_institutional_intelligence_engine_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_INTELLIGENCE_ENGINE_AVAILABLE = False
+    print(f"APEX Institutional Intelligence Engine unavailable (non-fatal): {_iie_err}", flush=True)
+
+# APEX 19.1 — institutional market structure (read-only intelligence APIs).
+try:
+    from engine.institutional_market_structure_routes import register_institutional_market_structure_routes
+    INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE = True
+except Exception as _ims_err:
+    register_institutional_market_structure_routes = None  # type: ignore[assignment]
+    INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE = False
+    print(f"APEX Institutional Market Structure unavailable (non-fatal): {_ims_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -8398,6 +8416,22 @@ try:
         register_dependency_governance_routes(app)
         _configuration_startup_result = safe_startup_validation() if safe_startup_validation else None
         print(f"APEX Configuration Governance routes registered ({VERSION}).", flush=True)
+
+    if INSTITUTIONAL_INTELLIGENCE_ENGINE_AVAILABLE and register_institutional_intelligence_engine_routes is not None:
+        def _iie_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_intelligence_engine_routes(app, last_result_provider=_iie_last_result)
+        print("APEX 19.0 Institutional Intelligence routes registered.", flush=True)
+
+    if INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE and register_institutional_market_structure_routes is not None:
+        def _ims_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_institutional_market_structure_routes(app, last_result_provider=_ims_last_result)
+        print("APEX 19.1 Institutional Market Structure routes registered.", flush=True)
 
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)
