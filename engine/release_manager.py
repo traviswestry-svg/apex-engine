@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "11.0.19_STRATEGY_DISCOVERY_ENGINE"
-SEMANTIC_VERSION = "11.0.19"
+APPLICATION_VERSION = "11.0.3_DEPENDENCY_GOVERNANCE"
+SEMANTIC_VERSION = "11.0.3"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -55,15 +55,7 @@ FEATURES = [
     "Market Status",
     "Release Manager",
     "Configuration Governance",
-    "Premium Discipline",
-    "Refusal Intelligence",
-    "Dynamic Position Sizing",
-    "Multi-Strategy Portfolio Optimizer",
-    "Execution Reality & Slippage Intelligence",
-    "Institutional Learning Engine",
-    "Decision Narrative",
-    "Trade Lifecycle Intelligence",
-    "Strategy Discovery Engine",
+    "Dependency Governance",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its
