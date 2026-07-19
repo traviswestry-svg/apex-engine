@@ -411,6 +411,17 @@ except Exception as _release_err:
     RELEASE_ROUTES_AVAILABLE = False
     print(f"APEX release manager routes unavailable (non-fatal): {_release_err}", flush=True)
 
+# APEX 18.0.4 — centralized configuration governance (read-only APIs).
+try:
+    from engine.configuration_governance_routes import register_configuration_governance_routes
+    from engine.configuration_governance import safe_startup_validation
+    CONFIGURATION_GOVERNANCE_AVAILABLE = True
+except Exception as _config_gov_err:
+    register_configuration_governance_routes = None  # type: ignore[assignment]
+    safe_startup_validation = None  # type: ignore[assignment]
+    CONFIGURATION_GOVERNANCE_AVAILABLE = False
+    print(f"APEX Configuration Governance unavailable (non-fatal): {_config_gov_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -8337,6 +8348,11 @@ try:
               f"/api/system/{{version,build,features,migrations,integrity,release}}.",
               flush=True)
         print("APEX 10 production readiness routes registered.", flush=True)
+
+    if CONFIGURATION_GOVERNANCE_AVAILABLE and register_configuration_governance_routes is not None:
+        register_configuration_governance_routes(app)
+        _configuration_startup_result = safe_startup_validation() if safe_startup_validation else None
+        print(f"APEX Configuration Governance routes registered ({VERSION}).", flush=True)
 
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)
