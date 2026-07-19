@@ -18,6 +18,7 @@ from . import live_operations as lo
 from . import strategy_promotion_governance as spg
 from . import broker_synchronized_position_state as bsps
 from . import confirmation_gated_execution as cge
+from . import institutional_autonomous_desk as iad
 from . import sandbox_execution_validation as sev
 
 VERSION='16.1.16.1'; SCHEMA_VERSION='apex.mission_control.v1'
@@ -117,6 +118,6 @@ def dashboard(symbol='SPX',engine_snapshot:dict|None=None):
       'institutional_confluence':ics,'briefing':briefing(pressure=pp,market_state=mm,playbook=bb,ics=ics,engine_snapshot=engine_snapshot),
       'position_monitor':position_monitor(engine_snapshot),'portfolio_risk':pri.evaluate(engine_snapshot or {}),'adaptive_trade_management':atm.evaluate({**(engine_snapshot or {}),'institutional_confluence':ics,'pressure':pp or {},'market_state':mm or {},'playbook':bb or {}}),
       'structure':_pick(engine_snapshot or {},'structure','levels',default={}),
-      'trade_director':_pick(engine_snapshot or {},'trade_director','active_trade_director',default={}),'explainable_intelligence':{'status':'READY','supported_intents':list(eia.SUPPORTED_INTENTS),'evidence_grounded_only':True},'performance_intelligence':pi.analyze_stored(symbol),'live_operations':lo.latest(symbol),'strategy_promotion':spg.dashboard(),'broker_sync':bsps.latest('PRIMARY','ETRADE'),'confirmation_gated_execution':cge.dashboard(10),'sandbox_execution_validation':sev.dashboard('PRIMARY',5),'safety':status()}
+      'trade_director':_pick(engine_snapshot or {},'trade_director','active_trade_director',default={}),'explainable_intelligence':{'status':'READY','supported_intents':list(eia.SUPPORTED_INTENTS),'evidence_grounded_only':True},'performance_intelligence':pi.analyze_stored(symbol),'live_operations':lo.latest(symbol),'strategy_promotion':spg.dashboard(),'broker_sync':bsps.latest('PRIMARY','ETRADE'),'confirmation_gated_execution':cge.dashboard(10),'sandbox_execution_validation':sev.dashboard('PRIMARY',5),'institutional_autonomous_desk':iad.dashboard(8),'safety':status()}
     result['integrity_hash']=hashlib.sha256(json.dumps(result,sort_keys=True,default=str,separators=(',',':')).encode()).hexdigest()
     return result

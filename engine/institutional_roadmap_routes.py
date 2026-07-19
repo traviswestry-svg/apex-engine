@@ -37,6 +37,7 @@ from . import strategy_promotion_governance as spg
 from . import broker_synchronized_position_state as bsps
 from . import confirmation_gated_execution as cge
 from . import sandbox_execution_validation as sev
+from . import institutional_autonomous_desk as iad
 
 
 def register_institutional_roadmap_routes(app, *, last_result_provider):
@@ -829,6 +830,27 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def sandbox_validation_history(): return jsonify({'ok':True,'status':'READY','history':sev.history(int(request.args.get('limit',50)))})
     @app.get('/api/sandbox-validation/dashboard')
     def sandbox_validation_dashboard(): return jsonify(sev.dashboard(str(request.args.get('account_id') or 'PRIMARY'),int(request.args.get('limit',10))))
+
+
+    # APEX 17.0 — Institutional Autonomous Desk.
+    @app.get('/api/autonomous-desk/status')
+    def autonomous_desk_status(): return jsonify({'ok':True,**iad.status()})
+    @app.post('/api/autonomous-desk/trades')
+    def autonomous_desk_create_trade():
+        b=request.get_json(silent=True) or {}; out=iad.create_trade(b,str(b.get('idempotency_key') or '') or None); return j(out,201 if out.get('created') else 200)
+    @app.post('/api/autonomous-desk/trades/<desk_trade_id>/transition')
+    def autonomous_desk_transition(desk_trade_id):
+        b=request.get_json(silent=True) or {}; return jsonify(iad.transition(desk_trade_id,str(b.get('to_state') or ''),b.get('evidence') or {},actor=str(b.get('actor') or 'SYSTEM')))
+    @app.post('/api/autonomous-desk/trades/<desk_trade_id>/artifacts')
+    def autonomous_desk_artifact(desk_trade_id):
+        b=request.get_json(silent=True) or {}; return jsonify(iad.attach_artifact(desk_trade_id,str(b.get('artifact_type') or ''),b.get('payload') or {},str(b.get('external_id') or '')))
+    @app.get('/api/autonomous-desk/trades/<desk_trade_id>')
+    def autonomous_desk_trade(desk_trade_id):
+        out=iad.timeline(desk_trade_id); return j(out,200 if out.get('ok') else 404)
+    @app.get('/api/autonomous-desk/history')
+    def autonomous_desk_history(): return jsonify({'ok':True,'status':'READY','history':iad.history(int(request.args.get('limit',50)),request.args.get('state'))})
+    @app.get('/api/autonomous-desk/dashboard')
+    def autonomous_desk_dashboard(): return jsonify(iad.dashboard(int(request.args.get('limit',12))))
 
     @app.get('/apex_os/institutional_trading_desk')
     @app.get('/apex_os/trading_desk')
