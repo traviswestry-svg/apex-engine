@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "13.3.0_STRATEGY_INTELLIGENCE"
-SEMANTIC_VERSION = "13.0.0"
+APPLICATION_VERSION = "14.3.0_INSTITUTIONAL_MISSION_CONTROL_2"
+SEMANTIC_VERSION = "14.3.0"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
@@ -53,6 +53,9 @@ FEATURES = [
     "Learning Engine",
     "Production Readiness",
     "Market Status",
+    "Mission Control 2.0",
+    "Institutional Trading Workspace",
+    "Institutional Volume Profile Intelligence",
     "Release Manager",
     "Configuration Governance",
     "Dependency Governance",
