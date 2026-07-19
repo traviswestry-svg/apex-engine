@@ -402,11 +402,12 @@ except Exception as _prod_err:
 
 try:
     from engine.release_routes import register_release_manager_routes
-    from engine.release_manager import APP_VERSION as RELEASE_APP_VERSION
+    from engine.release_manager import APP_VERSION as RELEASE_APP_VERSION, release_metadata as get_release_metadata
     RELEASE_ROUTES_AVAILABLE = True
 except Exception as _release_err:
     register_release_manager_routes = None  # type: ignore[assignment]
     RELEASE_APP_VERSION = "10.0.2_RELEASE_MANAGER"
+    get_release_metadata = None  # type: ignore[assignment]
     RELEASE_ROUTES_AVAILABLE = False
     print(f"APEX release manager routes unavailable (non-fatal): {_release_err}", flush=True)
 
@@ -499,6 +500,7 @@ DYNAMIC_TICKERS_ENABLED = os.getenv("DYNAMIC_TICKERS_ENABLED", "true").lower() =
 MAX_DYNAMIC_TICKERS = int(os.getenv("MAX_DYNAMIC_TICKERS", "25"))
 
 app = Flask(__name__)
+APP_PROCESS_STARTED_AT = dt.datetime.now(dt.timezone.utc).isoformat()
 
 @app.after_request
 def add_no_cache_headers(response):
@@ -4551,37 +4553,150 @@ def _briefing_headline(session, hstate, events) -> str:
     return base
 
 
+def _iso_age_seconds(timestamp, now=None):
+    """Return non-negative age for an ISO timestamp, or None when unavailable."""
+    if not timestamp:
+        return None
+    now = now or dt.datetime.now(dt.timezone.utc)
+    try:
+        parsed = dt.datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return max(0.0, round((now - parsed.astimezone(dt.timezone.utc)).total_seconds(), 3))
+    except (TypeError, ValueError):
+        return None
+
+
+def _source_observability(raw_sources, generated_at):
+    """Normalize source availability without inventing latency or freshness.
+
+    Existing deployments often expose booleans only. Richer source records may
+    additionally provide latency_ms, last_success_at, quote_age_seconds, and error.
+    Missing measurements remain null rather than being represented as healthy zeros.
+    """
+    result = {}
+    for name, raw in (raw_sources or {}).items():
+        if isinstance(raw, dict):
+            available = bool(raw.get("available", raw.get("ok", raw.get("connected", False))))
+            last_success = raw.get("last_success_at") or raw.get("updated_at")
+            result[name] = {
+                "available": available,
+                "state": "AVAILABLE" if available else "UNAVAILABLE",
+                "latency_ms": raw.get("latency_ms"),
+                "last_success_at": last_success,
+                "last_success_age_seconds": _iso_age_seconds(last_success),
+                "quote_age_seconds": raw.get("quote_age_seconds"),
+                "error": raw.get("error"),
+                "observed_at": generated_at,
+            }
+        else:
+            available = bool(raw)
+            result[name] = {
+                "available": available,
+                "state": "AVAILABLE" if available else "UNAVAILABLE",
+                "latency_ms": None,
+                "last_success_at": None,
+                "last_success_age_seconds": None,
+                "quote_age_seconds": None,
+                "error": None,
+                "observed_at": generated_at,
+            }
+    return result
+
+
+def _deployment_metadata():
+    """Return one authoritative release identity, recovering safely if unavailable."""
+    if get_release_metadata is not None:
+        try:
+            meta = get_release_metadata()
+            return {
+                "application_version": meta.get("application_version", VERSION),
+                "semantic_version": meta.get("version"),
+                "build": meta.get("build"),
+                "git_sha": meta.get("commit"),
+                "git_sha_known": meta.get("commit_known", False),
+                "environment": meta.get("environment"),
+                "deployed_at": meta.get("deployed_at"),
+                "database_version": meta.get("database_version"),
+                "migration_status": meta.get("migration_status"),
+            }
+        except Exception:
+            pass
+    return {
+        "application_version": VERSION,
+        "semantic_version": None,
+        "build": None,
+        "git_sha": None,
+        "git_sha_known": False,
+        "environment": os.getenv("APEX_ENVIRONMENT") or os.getenv("RENDER_SERVICE_NAME") or "unknown",
+        "deployed_at": os.getenv("APEX_DEPLOYED_AT") or os.getenv("RENDER_DEPLOY_CREATED_AT"),
+        "database_version": None,
+        "migration_status": "UNKNOWN",
+    }
+
+
 @app.route("/health")
 def health():
+    generated_dt = dt.datetime.now(dt.timezone.utc)
+    generated_at = generated_dt.isoformat()
     with STATE_LOCK:
-        s_updated  = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
+        scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
         s_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
-        s_sources  = SCANNER_STATE.get("data_sources") or STATE.get("data_sources")
-        s_session  = session_status()
-        s_inprog   = SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress")
+        s_sources = SCANNER_STATE.get("data_sources") or STATE.get("data_sources") or {}
+        s_session = session_status()
+        s_inprog = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
+        scan_started_at = SCANNER_STATE.get("scan_started_at") or STATE.get("scan_started_at")
+        scanner_heartbeat_at = SCANNER_STATE.get("scanner_heartbeat_at") or STATE.get("scanner_heartbeat_at")
+        scanner_thread_alive = bool(STATE.get("scanner_thread_alive", SCANNER_STARTED))
+        last_error = STATE.get("last_error")
         _mode = system_mode(s_session)
         _hstate = _resolve_health_state(
-            session=s_session, scan_in_progress=bool(s_inprog),
-            updated_at=s_updated, last_scan_duration=s_duration,
+            session=s_session, scan_in_progress=s_inprog,
+            updated_at=scan_updated_at, last_scan_duration=s_duration,
             scanner_started=SCANNER_STARTED,
         )
-        return jsonify({
-            "ok":                         True,
-            "version":                    VERSION,
-            "mode":                       VERSION,   # legacy alias — kept for back-compat
-            "system_mode":                _mode["mode"],
-            "system_mode_detail":         _mode,
-            "session":                    s_session,
-            "health_state":               _hstate["state"],       # HEALTHY|WARMING|STALE|DEGRADED|CLOSED
-            "health_detail":              _hstate["detail"],
-            "data_fresh":                 _hstate["data_fresh"],
-            "updated_at":                 s_updated,
-            "scanner_started":            SCANNER_STARTED,
-            "scan_in_progress":           s_inprog,
-            "last_scan_duration_seconds": s_duration,
-            "sources":                    s_sources,
-            "is_tradeable":               s_session == "MARKET_OPEN",
-        })
+
+    scan_age = _iso_age_seconds(scan_updated_at, generated_dt)
+    heartbeat_age = _iso_age_seconds(scanner_heartbeat_at, generated_dt)
+    effective_updated_at = scan_updated_at or generated_at
+    updated_at_basis = "last_completed_scan" if scan_updated_at else "status_generated_at"
+
+    return jsonify({
+        "ok": True,
+        "version": VERSION,
+        "mode": VERSION,
+        "deployment": _deployment_metadata(),
+        "system_mode": _mode["mode"],
+        "system_mode_detail": _mode,
+        "session": s_session,
+        "health_state": _hstate["state"],
+        "health_detail": _hstate["detail"],
+        "data_fresh": _hstate["data_fresh"],
+        # Back-compatible field, now guaranteed non-null. The basis says whether
+        # it represents a completed scan or this status evaluation.
+        "updated_at": effective_updated_at,
+        "updated_at_basis": updated_at_basis,
+        "status_generated_at": generated_at,
+        "health_age_seconds": scan_age if scan_age is not None else 0.0,
+        "process_started_at": APP_PROCESS_STARTED_AT,
+        "process_uptime_seconds": _iso_age_seconds(APP_PROCESS_STARTED_AT, generated_dt),
+        "scanner_started": SCANNER_STARTED,
+        "scanner_thread_alive": scanner_thread_alive,
+        "scanner_heartbeat_at": scanner_heartbeat_at,
+        "scanner_heartbeat_age_seconds": heartbeat_age,
+        "scan_in_progress": s_inprog,
+        "scan_started_at": scan_started_at,
+        "last_scan_at": scan_updated_at,
+        "last_scan_age_seconds": scan_age,
+        "last_scan_duration_seconds": s_duration,
+        "last_error": last_error,
+        # Keep the original simple map for old clients while adding honest,
+        # measurement-aware source records for Mission Control.
+        "sources": {k: bool(v.get("available", v.get("ok", False))) if isinstance(v, dict) else bool(v)
+                    for k, v in s_sources.items()},
+        "source_health": _source_observability(s_sources, generated_at),
+        "is_tradeable": s_session == "MARKET_OPEN",
+    })
 
 # =============================================================================
 # APEX 4.5 NEW API ROUTES
