@@ -1,2 +1,2 @@
-No files were removed in APEX 25.3.
+No files were removed in APEX 25.4.
 No obsolete 25.x placeholder files were found for this sprint.

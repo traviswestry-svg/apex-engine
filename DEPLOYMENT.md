@@ -1,25 +1,25 @@
-# APEX 25.3 — DEPLOYMENT
+# APEX 25.4 — DEPLOYMENT
 
 ## Prerequisites
-- APEX 25.0, 25.1, and 25.2 already deployed. The 25.3 app.py is cumulative
-  through 25.3 and expects the 25.2 blocks already present.
+- APEX 25.0-25.3 deployed. The 25.4 app.py is cumulative through 25.4.
 
 ## Steps
-1. Extract `APEX_25_3_DELTA.zip` into the repository root (paths preserved).
-2. Leave `APEX_CALIBRATION_PRODUCTION_ENABLED` and
-   `APEX_CALIBRATION_PROMOTION_APPROVED` unset/false. Calibration stays shadow.
-3. Restart the app / Gunicorn. Expect on boot:
-   `APEX 25.3 Adaptive Confidence Calibration routes registered (6 canonical
-   routes verified, shadow-mode).`
-4. Verify `GET /api/confidence-calibration/status` -> `shadow_mode: true`,
-   `production_effect: "NONE"`.
+1. Extract `APEX_25_4_DELTA.zip` into the repository root (paths preserved).
+2. Set `APEX_DECISION_REVIEW_DB` to a path under your production data volume
+   (optional; defaults to apex_decision_review.db).
+3. To enable recommendation approvals, set `APEX_OPERATOR_TOKEN` to a strong
+   secret. Leave it unset to keep approve/reject disabled (they return 503).
+4. Restart the app / Gunicorn. Expect on boot:
+   `APEX 25.4 Institutional Decision Review routes registered (10 canonical
+   routes verified, advisory-only).`
+5. Verify `GET /api/decision-review/status` -> `production_effect: "NONE"`.
+
+## Approvals
+Send approve/reject with header `X-APEX-Operator-Token: <APEX_OPERATOR_TOKEN>`.
+Approval only advances the governance workflow and writes an audit entry; it
+never changes weights, thresholds, confidence, or execution.
 
 ## Post-deploy checks
-- `/api/confidence-calibration/current` returns the six confidence layers with
-  `final_calibrated_confidence <= integrity_ceiling`.
-- `/api/confidence-calibration/drift` and `/curve` respond 200.
+- `/api/decision-review/recent|best|worst` respond 200.
+- `/api/decision-review/report/daily_decision_review` responds 200.
 - No new scanner process; existing endpoints unaffected.
-
-## Promotion (later, deliberate)
-Do NOT enable calibrated production confidence until the promotion panel reports
-READY on live data AND you set both flags. Nothing self-promotes.

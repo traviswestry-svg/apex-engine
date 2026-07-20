@@ -682,6 +682,21 @@ except Exception as _acc253_err:
     ADAPTIVE_CONFIDENCE_CALIBRATION_V253_AVAILABLE = False
     print(f"APEX Adaptive Confidence Calibration import failed: {_acc253_err}", flush=True)
 
+# APEX 25.4 — Institutional Decision Review & Learning (required, advisory-only).
+try:
+    from engine.institutional_decision_review_v254_routes import (
+        register_institutional_decision_review_v254_routes,
+        verify_registered as _idr254_verify_registered,
+        REQUIRED_ROUTES as _IDR254_REQUIRED,
+    )
+    INSTITUTIONAL_DECISION_REVIEW_V254_AVAILABLE = True
+except Exception as _idr254_err:
+    register_institutional_decision_review_v254_routes = None  # type: ignore[assignment]
+    _idr254_verify_registered = None  # type: ignore[assignment]
+    _IDR254_REQUIRED = ()  # type: ignore[assignment]
+    INSTITUTIONAL_DECISION_REVIEW_V254_AVAILABLE = False
+    print(f"APEX Institutional Decision Review import failed: {_idr254_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -9032,6 +9047,31 @@ else:
             f"routes: {', '.join(_acc253_missing)}")
     print(f"APEX 25.3 Adaptive Confidence Calibration routes registered "
           f"({len(_ACC253_REQUIRED)} canonical routes verified, shadow-mode).", flush=True)
+
+
+# APEX 25.4 — Institutional Decision Review & Learning registration. Required and fail-loud.
+if not INSTITUTIONAL_DECISION_REVIEW_V254_AVAILABLE or register_institutional_decision_review_v254_routes is None:
+    raise RuntimeError(
+        "APEX 25.4 Institutional Decision Review routes are required but the "
+        "module failed to import. See the earlier import diagnostic.")
+else:
+    def _idr254_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_institutional_decision_review_v254_routes(app, last_result_provider=_idr254_last_result)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 25.4 Institutional Decision Review route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _idr254_missing = _idr254_verify_registered(app)
+    if _idr254_missing:
+        raise RuntimeError(
+            "APEX 25.4 Institutional Decision Review failed to register required "
+            f"routes: {', '.join(_idr254_missing)}")
+    print(f"APEX 25.4 Institutional Decision Review routes registered "
+          f"({len(_IDR254_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
