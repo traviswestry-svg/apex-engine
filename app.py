@@ -652,6 +652,21 @@ except Exception as _ir251_err:
     INSTITUTIONAL_REASONING_V251_AVAILABLE = False
     print(f"APEX Institutional Reasoning import failed: {_ir251_err}", flush=True)
 
+# APEX 25.2 — Decision Outcome Forecasting (required, shadow-mode only).
+try:
+    from engine.decision_outcome_forecast_v252_routes import (
+        register_decision_outcome_forecast_v252_routes,
+        verify_registered as _dof252_verify_registered,
+        REQUIRED_ROUTES as _DOF252_REQUIRED,
+    )
+    DECISION_OUTCOME_FORECAST_V252_AVAILABLE = True
+except Exception as _dof252_err:
+    register_decision_outcome_forecast_v252_routes = None  # type: ignore[assignment]
+    _dof252_verify_registered = None  # type: ignore[assignment]
+    _DOF252_REQUIRED = ()  # type: ignore[assignment]
+    DECISION_OUTCOME_FORECAST_V252_AVAILABLE = False
+    print(f"APEX Decision Outcome Forecast import failed: {_dof252_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -8952,6 +8967,31 @@ else:
             f"routes: {', '.join(_ir251_missing)}")
     print(f"APEX 25.1 Institutional Reasoning routes registered "
           f"({len(_IR251_REQUIRED)} canonical routes verified).", flush=True)
+
+
+# APEX 25.2 — Decision Outcome Forecast registration. Required and fail-loud.
+if not DECISION_OUTCOME_FORECAST_V252_AVAILABLE or register_decision_outcome_forecast_v252_routes is None:
+    raise RuntimeError(
+        "APEX 25.2 Decision Outcome Forecast routes are required but the module "
+        "failed to import. See the earlier import diagnostic.")
+else:
+    def _dof252_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_decision_outcome_forecast_v252_routes(app, last_result_provider=_dof252_last_result)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 25.2 Decision Outcome Forecast route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _dof252_missing = _dof252_verify_registered(app)
+    if _dof252_missing:
+        raise RuntimeError(
+            "APEX 25.2 Decision Outcome Forecast failed to register required "
+            f"routes: {', '.join(_dof252_missing)}")
+    print(f"APEX 25.2 Decision Outcome Forecast routes registered "
+          f"({len(_DOF252_REQUIRED)} canonical routes verified, shadow-mode).", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
