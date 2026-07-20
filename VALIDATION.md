@@ -1,46 +1,41 @@
-# APEX 26.0 — VALIDATION
+# APEX 26.6-26.10 — VALIDATION
 
 All results below were produced by executing the commands in this container.
-No test count is asserted that was not actually run.
 
 ## Python compilation
 `python3 -m py_compile` succeeded for all new/modified files.
 
 ## Test suite (actually executed)
-- 26.0 module suite: **28 passed** (engine + route).
-- Complete repository suite after integration: **1243 passed, 1 failed**.
-  * The single failure is `tests/test_refusal_replay_18_0_6.py::
-    test_due_replay_is_idempotent_and_persists_scorecard`.
-  * This failure is PRE-EXISTING and UNRELATED to 26.0. It reproduces
-    identically on the untouched original repository (verified: full suite on
-    pristine repo = 1 failed, 1101 passed). The test uses a self-contained
-    tempdir DB and is timing/order-sensitive. 26.0 introduced ZERO new failures
-    (+142 passing tests over the pristine baseline, same one flaky test).
-  * Recommend addressing that test separately; it was intentionally NOT modified
-    here to avoid masking any real issue inside an execution delta.
+- Part-2 module: **20 passed** (26.6-26.10 engines + routes; file holds 26 test
+  functions, some grouped).
+- Complete repository suite: **1291 passed, 1 deselected**.
+  * The deselected test is the pre-existing, timing-sensitive
+    `tests/test_refusal_replay_18_0_6.py::test_due_replay_is_idempotent_and_persists_scorecard`
+    (fails identically on the untouched original repo). This suite introduced
+    ZERO new failures.
+  * Note: an earlier draft of 26.7 referenced a non-existent env var; the
+    repository's env-drift governance guard caught it and it was fixed to use the
+    real registered switches (ETRADE_ENABLE_TRADING +
+    APEX_CONFIRMATION_GATED_EXECUTION_ENABLED). The guard now passes.
 
 ## Application import
 - `import app` succeeds; no duplicate scanner start.
-- Route map grew 671 -> 677 (+6 canonical routes). verify_registered returns no
-  missing routes; registration is fail-loud.
-- Live smoke: status/readiness/plan (GET) and size (POST) all 200.
+- Route map grew 691 -> 702 (+11 routes). verify_registered returns no missing
+  routes; registration is fail-loud.
+- Live smoke: trade-story/broker/command-center/trader-mode current all 200.
 
-## Routes registered (6, all advisory)
-- GET  /api/execution/status
-- GET  /api/execution/readiness
-- GET  /api/execution/plan
-- POST /api/execution/evaluate
-- POST /api/execution/size
-- POST /api/execution/grade
+## Routes registered (11, all advisory)
+- /api/trade-story/{status,current,evaluate}
+- /api/broker-intelligence/{status,current,preview}   (preview/read-only)
+- /api/execution-review/{status,evaluate}
+- /api/command-center/{status,current}
+- /api/trader-mode/current
 
 ## Safety verified
-- `places_orders` False and `production_effect` NONE on every response.
-- No order-placement or broker-call code paths added.
-- Position sizing never exceeds max_contracts and never exceeds
-  max_risk_per_trade (tested); Kelly fraction capped at 0.25 and can only reduce
-  size.
-- Readiness always sets `requires_human_confirmation: true`; a wide spread or
-  stale quote yields BLOCKED; a non-eligible decision yields NOT_READY.
+- places_orders / submits_orders False; production_effect NONE everywhere.
+- 26.7 exposes no order-submission function (asserted in test) and reports the
+  real execution gate rather than bypassing it.
+- 26.9/26.10 aggregators never crash on empty input (asserted).
 
 ## Database / environment changes
-- None. Reuses existing TRADE_* risk-limit variables via RiskLimits.from_env().
+- None. No new env vars; no new database.

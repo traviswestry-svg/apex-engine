@@ -1,1 +1,1 @@
-No files were removed in APEX 26.0.
+No files were removed in APEX 26.6-26.10.
