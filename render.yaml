@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: starter
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120"
+    startCommand: "./start_render.sh"
     disk:
       name: apex-tracking-disk
       mountPath: /data
@@ -35,7 +35,31 @@ services:
       - key: SCAN_INTERVAL_SECONDS
         value: "300"
       - key: RUN_SCANNER_ON_IMPORT
-        value: "true"
+        value: "false"
+      - key: APEX_PERSISTENT_DISK_PATH
+        value: "/data"
+      - key: RENDER_DISK_PATH
+        value: "/data"
+      - key: APEX_SCANNER_LEASE_PATH
+        value: "/data/apex_scanner.lock"
+      - key: APEX_SCANNER_HEARTBEAT_PATH
+        value: "/data/scanner_heartbeat.json"
+      - key: APEX_SIMILARITY_DB
+        value: "/data/apex_similarity.db"
+      - key: APEX_GOVERNANCE_DB
+        value: "/data/apex_governance.db"
+      - key: APEX_MARKET_MEMORY_DB
+        value: "/data/apex_market_memory.db"
+      - key: APEX_EVIDENCE_DB
+        value: "/data/apex_evidence.db"
+      - key: APEX_RESEARCH_DB
+        value: "/data/apex_research.db"
+      - key: APEX_SQLITE_TIMEOUT_SECONDS
+        value: "15"
+      - key: APEX_DISK_WARN_FREE_PCT
+        value: "15"
+      - key: APEX_DISK_CRITICAL_FREE_PCT
+        value: "7"
       - key: SEND_TELEGRAM
         value: "true"
       - key: SCAN_WORKERS

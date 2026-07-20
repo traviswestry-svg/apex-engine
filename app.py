@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, render_template, request, redirect
+from engine.operational_runtime import storage_status, read_scanner_heartbeat
 
 # APEX Institutional OS 6.0.1 modular engines
 try:
@@ -560,6 +561,66 @@ except Exception as _iei_err:
     register_institutional_execution_intelligence_routes = None  # type: ignore[assignment]
     INSTITUTIONAL_EXECUTION_INTELLIGENCE_AVAILABLE = False
     print(f"APEX Institutional Execution Intelligence unavailable (non-fatal): {_iei_err}", flush=True)
+
+# APEX 24.1 — Institutional Portfolio & Risk Intelligence (advisory-only portfolio risk).
+try:
+    from engine.institutional_portfolio_risk_v241_routes import (
+        register_institutional_portfolio_risk_v241_routes,
+        verify_registered as _ipr_verify_registered,
+        REQUIRED_ROUTES as _IPR_REQUIRED,
+    )
+    INSTITUTIONAL_PORTFOLIO_RISK_V241_AVAILABLE = True
+except Exception as _ipr_err:
+    register_institutional_portfolio_risk_v241_routes = None  # type: ignore[assignment]
+    _ipr_verify_registered = None  # type: ignore[assignment]
+    _IPR_REQUIRED = ()  # type: ignore[assignment]
+    INSTITUTIONAL_PORTFOLIO_RISK_V241_AVAILABLE = False
+    print(f"APEX Institutional Portfolio Risk Intelligence import failed: {_ipr_err}", flush=True)
+
+# APEX 24.2 — Institutional Replay & Simulator (read-only, advisory).
+try:
+    from engine.institutional_replay_v242_routes import (
+        register_institutional_replay_v242_routes,
+        verify_registered as _irp_verify_registered,
+        REQUIRED_ROUTES as _IRP_REQUIRED,
+    )
+    INSTITUTIONAL_REPLAY_V242_AVAILABLE = True
+except Exception as _irp_err:
+    register_institutional_replay_v242_routes = None  # type: ignore[assignment]
+    _irp_verify_registered = None  # type: ignore[assignment]
+    _IRP_REQUIRED = ()  # type: ignore[assignment]
+    INSTITUTIONAL_REPLAY_V242_AVAILABLE = False
+    print(f"APEX Institutional Replay & Simulator import failed: {_irp_err}", flush=True)
+
+# APEX 24.3 — Strategy Research Laboratory (offline research, advisory).
+try:
+    from engine.institutional_research_lab_v243_routes import (
+        register_institutional_research_lab_v243_routes,
+        verify_registered as _irl_verify_registered,
+        REQUIRED_ROUTES as _IRL_REQUIRED,
+    )
+    INSTITUTIONAL_RESEARCH_LAB_V243_AVAILABLE = True
+except Exception as _irl_err:
+    register_institutional_research_lab_v243_routes = None  # type: ignore[assignment]
+    _irl_verify_registered = None  # type: ignore[assignment]
+    _IRL_REQUIRED = ()  # type: ignore[assignment]
+    INSTITUTIONAL_RESEARCH_LAB_V243_AVAILABLE = False
+    print(f"APEX Strategy Research Laboratory import failed: {_irl_err}", flush=True)
+
+# APEX 24.4 — Multi-Timeframe Intelligence (read-only, advisory).
+try:
+    from engine.institutional_multi_timeframe_v244_routes import (
+        register_institutional_multi_timeframe_v244_routes,
+        verify_registered as _mtf_verify_registered,
+        REQUIRED_ROUTES as _MTF_REQUIRED,
+    )
+    INSTITUTIONAL_MULTI_TIMEFRAME_V244_AVAILABLE = True
+except Exception as _mtf_err:
+    register_institutional_multi_timeframe_v244_routes = None  # type: ignore[assignment]
+    _mtf_verify_registered = None  # type: ignore[assignment]
+    _MTF_REQUIRED = ()  # type: ignore[assignment]
+    INSTITUTIONAL_MULTI_TIMEFRAME_V244_AVAILABLE = False
+    print(f"APEX Multi-Timeframe Intelligence import failed: {_mtf_err}", flush=True)
 
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
@@ -4876,6 +4937,8 @@ def health():
         "sources": {k: bool(v.get("available", v.get("ok", False))) if isinstance(v, dict) else bool(v)
                     for k, v in s_sources.items()},
         "source_health": _source_observability(s_sources, generated_at),
+        "storage": storage_status(),
+        "scanner_process": read_scanner_heartbeat(),
         "is_tradeable": s_session == "MARKET_OPEN",
     })
 
@@ -7642,9 +7705,12 @@ def _record_replay_frame(ticker: str, snapshot: Dict[str, Any]) -> None:
     _store_replay_frame(session_key, frame_time, ticker, snapshot)
 
 
-@app.route("/api/replay/session")
+# APEX 24.2 — the canonical /api/replay/session route is owned by the
+# institutional replay engine, which delegates here for the legacy intraday
+# session index contract (?ticker=&date=). This helper is intentionally not
+# route-decorated to avoid a duplicate registration.
 def api_replay_session():
-    """APEX 6.4.0 — Replay session index.
+    """APEX 6.4.0 — Legacy intraday replay session index (helper).
 
     GET /api/replay/session?ticker=SPX&date=YYYY-MM-DD
 
@@ -7972,7 +8038,7 @@ def chart_dashboard():
     return render_template("chart.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
 
 
-# Existing Render/Gunicorn service should keep RUN_SCANNER_ON_IMPORT=true.
+# APEX 24.2.1: web imports are side-effect free by default; start_render.sh launches scanner_worker.py.
 # Placed after all route registrations so direct `python app.py` and Gunicorn
 # expose the same endpoints.
 try:
@@ -8690,6 +8756,121 @@ try:
 except Exception as e:
     PRODUCTION_ROUTES_AVAILABLE = False
     print(f"APEX 10 production route registration unavailable (non-fatal): {e}", flush=True)
+
+# APEX 24.1 — Institutional Portfolio & Risk Intelligence registration.
+# Portfolio Intelligence is a REQUIRED surface, so its registration lives
+# OUTSIDE the broad non-fatal try/except above. Registration failures (including
+# duplicate-route / endpoint conflicts) are logged explicitly and re-raised so
+# startup fails loudly rather than silently dropping the routes.
+if not INSTITUTIONAL_PORTFOLIO_RISK_V241_AVAILABLE or register_institutional_portfolio_risk_v241_routes is None:
+    raise RuntimeError(
+        "APEX 24.1 Portfolio & Risk Intelligence routes are required but the "
+        "module failed to import. See the earlier import diagnostic.")
+else:
+    def _ipr_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_institutional_portfolio_risk_v241_routes(app, last_result_provider=_ipr_last_result)
+    except (AssertionError, ValueError) as e:
+        # Flask raises when a rule or endpoint name collides with an existing one.
+        raise RuntimeError(
+            "APEX 24.1 Portfolio & Risk Intelligence route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _ipr_missing = _ipr_verify_registered(app)
+    if _ipr_missing:
+        raise RuntimeError(
+            "APEX 24.1 Portfolio & Risk Intelligence failed to register required "
+            f"routes: {', '.join(_ipr_missing)}")
+    print(f"APEX 24.1 Institutional Portfolio & Risk Intelligence routes registered "
+          f"({len(_IPR_REQUIRED)} canonical routes verified).", flush=True)
+
+# APEX 24.2 — Institutional Replay & Simulator registration (required surface,
+# outside the broad non-fatal block; fails loudly on missing/duplicate routes).
+if not INSTITUTIONAL_REPLAY_V242_AVAILABLE or register_institutional_replay_v242_routes is None:
+    raise RuntimeError(
+        "APEX 24.2 Institutional Replay & Simulator routes are required but the "
+        "module failed to import. See the earlier import diagnostic.")
+else:
+    def _irp_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_institutional_replay_v242_routes(
+            app, last_result_provider=_irp_last_result,
+            legacy_session_provider=api_replay_session)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 24.2 Institutional Replay & Simulator route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _irp_missing = _irp_verify_registered(app)
+    if _irp_missing:
+        raise RuntimeError(
+            "APEX 24.2 Institutional Replay & Simulator failed to register required "
+            f"routes: {', '.join(_irp_missing)}")
+    print(f"APEX 24.2 Institutional Replay & Simulator routes registered "
+          f"({len(_IRP_REQUIRED)} canonical routes verified).", flush=True)
+
+# APEX 24.3 — Strategy Research Laboratory registration (required surface,
+# outside the broad non-fatal block; fails loudly on missing/duplicate routes).
+if not INSTITUTIONAL_RESEARCH_LAB_V243_AVAILABLE or register_institutional_research_lab_v243_routes is None:
+    raise RuntimeError(
+        "APEX 24.3 Strategy Research Laboratory routes are required but the module "
+        "failed to import. See the earlier import diagnostic.")
+else:
+    def _research_legacy_status():
+        # Preserves the pre-24.3 /api/research/status payload (research findings +
+        # similarity + governed research status) so existing consumers keep their
+        # fields under the canonical route.
+        from engine import institutional_governance as _gov
+        from engine import institutional_similarity as _sim
+        from engine import institutional_research as _res
+        try:
+            return {**_gov.research_status(), "institutional_similarity": _sim.status(),
+                    "institutional_research": _res.status()}
+        except Exception:
+            return {}
+    try:
+        register_institutional_research_lab_v243_routes(
+            app, legacy_status_provider=_research_legacy_status)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 24.3 Strategy Research Laboratory route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _irl_missing = _irl_verify_registered(app)
+    if _irl_missing:
+        raise RuntimeError(
+            "APEX 24.3 Strategy Research Laboratory failed to register required "
+            f"routes: {', '.join(_irl_missing)}")
+    print(f"APEX 24.3 Strategy Research Laboratory routes registered "
+          f"({len(_IRL_REQUIRED)} canonical routes verified).", flush=True)
+
+# APEX 24.4 — Multi-Timeframe Intelligence registration (required surface,
+# outside the broad non-fatal block; fails loudly on missing/duplicate routes).
+if not INSTITUTIONAL_MULTI_TIMEFRAME_V244_AVAILABLE or register_institutional_multi_timeframe_v244_routes is None:
+    raise RuntimeError(
+        "APEX 24.4 Multi-Timeframe Intelligence routes are required but the module "
+        "failed to import. See the earlier import diagnostic.")
+else:
+    def _mtf_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_institutional_multi_timeframe_v244_routes(app, last_result_provider=_mtf_last_result)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 24.4 Multi-Timeframe Intelligence route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _mtf_missing = _mtf_verify_registered(app)
+    if _mtf_missing:
+        raise RuntimeError(
+            "APEX 24.4 Multi-Timeframe Intelligence failed to register required "
+            f"routes: {', '.join(_mtf_missing)}")
+    print(f"APEX 24.4 Multi-Timeframe Intelligence routes registered "
+          f"({len(_MTF_REQUIRED)} canonical routes verified).", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
