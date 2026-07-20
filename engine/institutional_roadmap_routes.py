@@ -102,9 +102,8 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
         p=gov.ingest_outcome(request.get_json(silent=True) or {}); return j(p,201 if p.get('ok') else 409)
 
     # Similarity and research.
-    @app.get('/api/research/status')
-    def roadmap_research_status():
-        return jsonify({'ok':True,**gov.research_status(),'institutional_similarity':institutional_similarity.status(),'institutional_research':institutional_research.status()})
+    # APEX 24.3 owns the canonical /api/research/status; it preserves these
+    # research/similarity fields via a legacy status provider injected in app.py.
     @app.get('/api/research/clusters')
     def roadmap_research_clusters():
         return jsonify({'ok':True,'status':'COLLECTING','clusters':[],'message':'Clustering hooks are available, but no production clusters are published without validated research evidence.'})
@@ -695,13 +694,12 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     @app.get('/api/trade-management/history')
     def adaptive_trade_management_history():
         return jsonify({'ok':True,'status':'READY','history':atm.history(request.args.get('trade_id'),int(request.args.get('limit',100)))})
-    # APEX 16.3 — Portfolio & Risk Intelligence (advisory only).
-    @app.get('/api/portfolio-risk/status')
-    def portfolio_risk_status(): return jsonify({'ok':True,**pri.status()})
-    @app.post('/api/portfolio-risk/evaluate')
-    def portfolio_risk_evaluate():
-        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
-        return jsonify({'ok':True,**pri.evaluate(snapshot)})
+    # APEX 16.3 -> 24.1 — Portfolio & Risk Intelligence (advisory only).
+    # /status and /evaluate are now owned by the canonical APEX 24.1 engine
+    # (engine/institutional_portfolio_risk_v241_routes.py) so the platform has a
+    # single, richer portfolio-risk surface. The immutable snapshot endpoints
+    # (/record, /history) remain here on the 16.3 persistence layer, which the
+    # 24.1 engine reuses rather than duplicates.
     @app.post('/api/portfolio-risk/record')
     def portfolio_risk_record():
         b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b

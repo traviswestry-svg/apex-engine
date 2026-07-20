@@ -36,8 +36,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "17.0.0_INSTITUTIONAL_EXECUTION_INTELLIGENCE"
-SEMANTIC_VERSION = "17.0.0"
+APPLICATION_VERSION = "24.2.1_PRODUCTION_HARDENING"
+SEMANTIC_VERSION = "24.2.1"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
