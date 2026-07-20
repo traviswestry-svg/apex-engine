@@ -1,17 +1,16 @@
-# APEX 25.4 — FILE MANIFEST
+# APEX 26.0 — FILE MANIFEST
 
 Extract directly into the repository root (repo-relative paths preserved).
-Apply on top of a repository that already contains the 25.2 and 25.3 deltas.
+Apply on top of a repository that already contains the 25.2-25.5 deltas.
 
 ## NEW
-- engine/institutional_decision_review_v254.py
-- engine/institutional_decision_review_v254_routes.py
-- tests/test_institutional_decision_review_v254.py
-- tests/test_institutional_decision_review_v254_routes.py
+- engine/execution_intelligence_core_v260.py
+- engine/execution_intelligence_core_v260_routes.py
+- tests/test_execution_intelligence_core_v260.py
+- tests/test_execution_intelligence_core_v260_routes.py
 
 ## MODIFIED
-- app.py                                  (adds 25.4 import + registration; cumulative through 25.4)
-- engine/configuration_governance.py      (registers APEX_DECISION_REVIEW_DB + APEX_OPERATOR_TOKEN; cumulative)
+- app.py                                  (adds 26.0 import + registration; cumulative through 26.0)
 
 ## REMOVED
 - (none) — see REMOVED.txt

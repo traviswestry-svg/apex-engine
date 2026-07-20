@@ -697,6 +697,36 @@ except Exception as _idr254_err:
     INSTITUTIONAL_DECISION_REVIEW_V254_AVAILABLE = False
     print(f"APEX Institutional Decision Review import failed: {_idr254_err}", flush=True)
 
+# APEX 25.5 — Institutional Validation & Promotion Gate (required, supervisory).
+try:
+    from engine.institutional_validation_promotion_v255_routes import (
+        register_institutional_validation_promotion_v255_routes,
+        verify_registered as _ivp255_verify_registered,
+        REQUIRED_ROUTES as _IVP255_REQUIRED,
+    )
+    INSTITUTIONAL_VALIDATION_PROMOTION_V255_AVAILABLE = True
+except Exception as _ivp255_err:
+    register_institutional_validation_promotion_v255_routes = None  # type: ignore[assignment]
+    _ivp255_verify_registered = None  # type: ignore[assignment]
+    _IVP255_REQUIRED = ()  # type: ignore[assignment]
+    INSTITUTIONAL_VALIDATION_PROMOTION_V255_AVAILABLE = False
+    print(f"APEX Institutional Validation & Promotion import failed: {_ivp255_err}", flush=True)
+
+# APEX 26.0 — Execution Intelligence Core (required, advisory-only; never places orders).
+try:
+    from engine.execution_intelligence_core_v260_routes import (
+        register_execution_intelligence_core_v260_routes,
+        verify_registered as _eic260_verify_registered,
+        REQUIRED_ROUTES as _EIC260_REQUIRED,
+    )
+    EXECUTION_INTELLIGENCE_CORE_V260_AVAILABLE = True
+except Exception as _eic260_err:
+    register_execution_intelligence_core_v260_routes = None  # type: ignore[assignment]
+    _eic260_verify_registered = None  # type: ignore[assignment]
+    _EIC260_REQUIRED = ()  # type: ignore[assignment]
+    EXECUTION_INTELLIGENCE_CORE_V260_AVAILABLE = False
+    print(f"APEX Execution Intelligence Core import failed: {_eic260_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -9072,6 +9102,56 @@ else:
             f"routes: {', '.join(_idr254_missing)}")
     print(f"APEX 25.4 Institutional Decision Review routes registered "
           f"({len(_IDR254_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
+
+
+# APEX 25.5 — Institutional Validation & Promotion Gate registration. Required and fail-loud.
+if not INSTITUTIONAL_VALIDATION_PROMOTION_V255_AVAILABLE or register_institutional_validation_promotion_v255_routes is None:
+    raise RuntimeError(
+        "APEX 25.5 Institutional Validation & Promotion routes are required but "
+        "the module failed to import. See the earlier import diagnostic.")
+else:
+    def _ivp255_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_institutional_validation_promotion_v255_routes(app, last_result_provider=_ivp255_last_result)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 25.5 Institutional Validation & Promotion route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _ivp255_missing = _ivp255_verify_registered(app)
+    if _ivp255_missing:
+        raise RuntimeError(
+            "APEX 25.5 Institutional Validation & Promotion failed to register required "
+            f"routes: {', '.join(_ivp255_missing)}")
+    print(f"APEX 25.5 Institutional Validation & Promotion routes registered "
+          f"({len(_IVP255_REQUIRED)} canonical routes verified, supervisory).", flush=True)
+
+
+# APEX 26.0 — Execution Intelligence Core registration. Required and fail-loud.
+if not EXECUTION_INTELLIGENCE_CORE_V260_AVAILABLE or register_execution_intelligence_core_v260_routes is None:
+    raise RuntimeError(
+        "APEX 26.0 Execution Intelligence Core routes are required but the module "
+        "failed to import. See the earlier import diagnostic.")
+else:
+    def _eic260_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_execution_intelligence_core_v260_routes(app, last_result_provider=_eic260_last_result)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 26.0 Execution Intelligence Core route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _eic260_missing = _eic260_verify_registered(app)
+    if _eic260_missing:
+        raise RuntimeError(
+            "APEX 26.0 Execution Intelligence Core failed to register required "
+            f"routes: {', '.join(_eic260_missing)}")
+    print(f"APEX 26.0 Execution Intelligence Core routes registered "
+          f"({len(_EIC260_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()

@@ -1,4 +1,4 @@
-# APEX 25.4 — VALIDATION
+# APEX 26.0 — VALIDATION
 
 All results below were produced by executing the commands in this container.
 No test count is asserted that was not actually run.
@@ -7,56 +7,40 @@ No test count is asserted that was not actually run.
 `python3 -m py_compile` succeeded for all new/modified files.
 
 ## Test suite (actually executed)
-- 25.4 module suite: **30 passed** (17 engine + 13 route; engine file holds 20
-  test functions, several parametrized paths counted once).
-- Complete repository suite after integration: **1186 passed, 0 failed**
-  (`python3 -m pytest tests/ -q`) = prior 1156 + 30 new. No regressions.
+- 26.0 module suite: **28 passed** (engine + route).
+- Complete repository suite after integration: **1243 passed, 1 failed**.
+  * The single failure is `tests/test_refusal_replay_18_0_6.py::
+    test_due_replay_is_idempotent_and_persists_scorecard`.
+  * This failure is PRE-EXISTING and UNRELATED to 26.0. It reproduces
+    identically on the untouched original repository (verified: full suite on
+    pristine repo = 1 failed, 1101 passed). The test uses a self-contained
+    tempdir DB and is timing/order-sensitive. 26.0 introduced ZERO new failures
+    (+142 passing tests over the pristine baseline, same one flaky test).
+  * Recommend addressing that test separately; it was intentionally NOT modified
+    here to avoid masking any real issue inside an execution delta.
 
 ## Application import
 - `import app` succeeds; no duplicate scanner start.
-- Route map grew 646 -> 657 (+10 canonical routes + 1 read-only report route).
-  verify_registered returns no missing routes; registration is fail-loud.
-- Static routes (status/recent/best/worst/recommendations/promotion-queue) are
-  not shadowed by the dynamic `<decision_id>` route (verified live).
+- Route map grew 671 -> 677 (+6 canonical routes). verify_registered returns no
+  missing routes; registration is fail-loud.
+- Live smoke: status/readiness/plan (GET) and size (POST) all 200.
 
-## Routes registered (10 canonical + 1 report)
-- GET  /api/decision-review/status
-- GET  /api/decision-review/recent
-- GET  /api/decision-review/best
-- GET  /api/decision-review/worst
-- GET  /api/decision-review/<decision_id>
-- GET  /api/decision-review/recommendations
-- GET  /api/decision-review/promotion-queue
-- POST /api/decision-review/evaluate
-- POST /api/decision-review/recommendations/<id>/approve   (operator-authorized)
-- POST /api/decision-review/recommendations/<id>/reject    (operator-authorized)
-- GET  /api/decision-review/report/<kind>                  (read-only reports)
+## Routes registered (6, all advisory)
+- GET  /api/execution/status
+- GET  /api/execution/readiness
+- GET  /api/execution/plan
+- POST /api/execution/evaluate
+- POST /api/execution/size
+- POST /api/execution/grade
 
-## Authorization (verified)
-- approve/reject with no APEX_OPERATOR_TOKEN -> 503 AUTHZ_NOT_CONFIGURED.
-- approve/reject with wrong token -> 403 UNAUTHORIZED.
-- approve/reject with correct token -> 200 and governance audit entry.
+## Safety verified
+- `places_orders` False and `production_effect` NONE on every response.
+- No order-placement or broker-call code paths added.
+- Position sizing never exceeds max_contracts and never exceeds
+  max_risk_per_trade (tested); Kelly fraction capped at 0.25 and can only reduce
+  size.
+- Readiness always sets `requires_human_confirmation: true`; a wide spread or
+  stale quote yields BLOCKED; a non-eligible decision yields NOT_READY.
 
-## Database changes
-- New governed sqlite store `apex_decision_review.db`
-  (env APEX_DECISION_REVIEW_DB): tables decision_lifecycle_v254 and
-  review_recommendations_v254, created lazily. Not created at import; not written
-  to repo root when the env var points elsewhere.
-
-## Environment-variable changes
-- APEX_DECISION_REVIEW_DB (OPTIONAL, DATABASE, default apex_decision_review.db).
-- APEX_OPERATOR_TOKEN (CONDITIONAL, secret, safety-critical). Unset disables
-  approvals (routes return 503).
-
-## Guarantees verified
-- Grades reproducible (identical inputs -> identical grade + decomposition).
-- Losing outcome not auto-bad; winning outcome not auto-good (luck flags).
-- NOT_GRADEABLE used when outcome missing/immature.
-- Every recommendation carries supporting evidence + rollback; workflow enforced.
-- Replay reconstructs from the stored snapshot; production_effect NONE throughout.
-
-## Known limitations
-- Reviews reflect whatever matured outcomes are supplied/stored; with a cold
-  store, recent/best/worst are empty and reports return zero distributions.
-- No dashboard HTML panel ships (consistent with 25.0-25.3). `mission_control_group`
-  returns the canonical review panel payload.
+## Database / environment changes
+- None. Reuses existing TRADE_* risk-limit variables via RiskLimits.from_env().
