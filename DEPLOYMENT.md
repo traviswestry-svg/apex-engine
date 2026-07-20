@@ -1,25 +1,25 @@
-# APEX 25.2 — DEPLOYMENT
+# APEX 25.3 — DEPLOYMENT
 
 ## Prerequisites
-- APEX 25.0 and 25.1 already deployed (this sprint imports 25.0 directly).
+- APEX 25.0, 25.1, and 25.2 already deployed. The 25.3 app.py is cumulative
+  through 25.3 and expects the 25.2 blocks already present.
 
 ## Steps
-1. Extract `APEX_25_2_DELTA.zip` into the repository root (paths are preserved).
-2. (Optional) Set `APEX_DECISION_FORECAST_DB` to a path under your production
-   data volume. If unset it defaults to `apex_decision_forecast.db`.
-3. Restart the app / Gunicorn. On boot you should see:
-   `APEX 25.2 Decision Outcome Forecast routes registered (6 canonical routes
-   verified, shadow-mode).`
-4. Verify: `GET /api/decision-forecast/status` returns `shadow_mode: true` and
+1. Extract `APEX_25_3_DELTA.zip` into the repository root (paths preserved).
+2. Leave `APEX_CALIBRATION_PRODUCTION_ENABLED` and
+   `APEX_CALIBRATION_PROMOTION_APPROVED` unset/false. Calibration stays shadow.
+3. Restart the app / Gunicorn. Expect on boot:
+   `APEX 25.3 Adaptive Confidence Calibration routes registered (6 canonical
+   routes verified, shadow-mode).`
+4. Verify `GET /api/confidence-calibration/status` -> `shadow_mode: true`,
    `production_effect: "NONE"`.
 
 ## Post-deploy checks
-- `GET /api/decision-forecast/current` returns a forecast for the current
-  `last_result` snapshot.
-- Scenario probabilities in `/api/decision-forecast/scenarios` sum to 100.
-- No new scanner process starts; existing health/replay/signal-log endpoints
-  remain functional.
+- `/api/confidence-calibration/current` returns the six confidence layers with
+  `final_calibrated_confidence <= integrity_ceiling`.
+- `/api/confidence-calibration/drift` and `/curve` respond 200.
+- No new scanner process; existing endpoints unaffected.
 
-## Rollout note
-25.2 is shadow-only and safe to run in production immediately; it cannot affect
-execution. Let forecasts accumulate and mature before any future promotion work.
+## Promotion (later, deliberate)
+Do NOT enable calibrated production confidence until the promotion panel reports
+READY on live data AND you set both flags. Nothing self-promotes.

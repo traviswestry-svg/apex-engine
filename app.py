@@ -667,6 +667,21 @@ except Exception as _dof252_err:
     DECISION_OUTCOME_FORECAST_V252_AVAILABLE = False
     print(f"APEX Decision Outcome Forecast import failed: {_dof252_err}", flush=True)
 
+# APEX 25.3 — Adaptive Confidence Calibration (required, shadow-mode only).
+try:
+    from engine.adaptive_confidence_calibration_v253_routes import (
+        register_adaptive_confidence_calibration_v253_routes,
+        verify_registered as _acc253_verify_registered,
+        REQUIRED_ROUTES as _ACC253_REQUIRED,
+    )
+    ADAPTIVE_CONFIDENCE_CALIBRATION_V253_AVAILABLE = True
+except Exception as _acc253_err:
+    register_adaptive_confidence_calibration_v253_routes = None  # type: ignore[assignment]
+    _acc253_verify_registered = None  # type: ignore[assignment]
+    _ACC253_REQUIRED = ()  # type: ignore[assignment]
+    ADAPTIVE_CONFIDENCE_CALIBRATION_V253_AVAILABLE = False
+    print(f"APEX Adaptive Confidence Calibration import failed: {_acc253_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -8992,6 +9007,31 @@ else:
             f"routes: {', '.join(_dof252_missing)}")
     print(f"APEX 25.2 Decision Outcome Forecast routes registered "
           f"({len(_DOF252_REQUIRED)} canonical routes verified, shadow-mode).", flush=True)
+
+
+# APEX 25.3 — Adaptive Confidence Calibration registration. Required and fail-loud.
+if not ADAPTIVE_CONFIDENCE_CALIBRATION_V253_AVAILABLE or register_adaptive_confidence_calibration_v253_routes is None:
+    raise RuntimeError(
+        "APEX 25.3 Adaptive Confidence Calibration routes are required but the "
+        "module failed to import. See the earlier import diagnostic.")
+else:
+    def _acc253_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_adaptive_confidence_calibration_v253_routes(app, last_result_provider=_acc253_last_result)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 25.3 Adaptive Confidence Calibration route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _acc253_missing = _acc253_verify_registered(app)
+    if _acc253_missing:
+        raise RuntimeError(
+            "APEX 25.3 Adaptive Confidence Calibration failed to register required "
+            f"routes: {', '.join(_acc253_missing)}")
+    print(f"APEX 25.3 Adaptive Confidence Calibration routes registered "
+          f"({len(_ACC253_REQUIRED)} canonical routes verified, shadow-mode).", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()

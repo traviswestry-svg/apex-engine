@@ -1,59 +1,52 @@
-# APEX 25.2 — VALIDATION
+# APEX 25.3 — VALIDATION
 
 All results below were produced by executing the commands in this container.
 No test count is asserted that was not actually run.
 
 ## Python compilation
-`python3 -m py_compile` succeeded for all new/modified files:
-- engine/decision_outcome_forecast_v252.py
-- engine/decision_outcome_forecast_v252_routes.py
-- engine/configuration_governance.py
-- app.py
-- tests/test_decision_outcome_forecast_v252.py
-- tests/test_decision_outcome_forecast_v252_routes.py
+`python3 -m py_compile` succeeded for all new/modified files.
 
 ## Test suite (actually executed)
-- 25.2 module suite: **28 passed** (18 engine + 10 route).
-- Complete repository suite after integration: **1130 passed, 0 failed**
-  (`python3 -m pytest tests/ -q`). This is the prior baseline of 1102 passing
-  tests plus the 28 new 25.2 tests. No pre-existing test regressed.
+- 25.3 module suite: **26 passed** (18 engine + 8 route).
+- Complete repository suite after integration: **1156 passed, 0 failed**
+  (`python3 -m pytest tests/ -q`) = prior 1130 baseline + 26 new. No regressions.
 
 ## Application import
-- `import app` succeeds with no duplicate scanner start (scanner remains gated
-  on RUN_SCANNER_ON_IMPORT).
-- Route map grew from 634 to **640** (+6 canonical 25.2 routes). All routes
-  register exactly once; `verify_registered` returns no missing routes.
-- Live smoke via `app.test_client()`: `/status`, `/current`, `/scenarios` all 200.
+- `import app` succeeds; no duplicate scanner start (scanner still gated on
+  RUN_SCANNER_ON_IMPORT).
+- Route map grew 640 -> 646 (+6 canonical 25.3 routes). verify_registered
+  returns no missing routes; registration is fail-loud.
+- Live smoke via test_client: status/current/curve/buckets/drift all 200.
 
 ## Routes registered (6)
-- GET  /api/decision-forecast/status
-- GET  /api/decision-forecast/current
-- GET  /api/decision-forecast/scenarios
-- GET  /api/decision-forecast/analogs
-- GET  /api/decision-forecast/history
-- POST /api/decision-forecast/evaluate
+- GET  /api/confidence-calibration/status
+- GET  /api/confidence-calibration/current
+- GET  /api/confidence-calibration/curve
+- GET  /api/confidence-calibration/buckets
+- GET  /api/confidence-calibration/drift
+- POST /api/confidence-calibration/evaluate
 
 ## Database changes
-- New governed sqlite store `apex_decision_forecast.db` (env
-  `APEX_DECISION_FORECAST_DB`), created lazily via `init_db()`; not created at
-  import and not written to the repo root when the env var points elsewhere.
-- Registered in `configuration_governance` so the env-drift guard passes.
+- None. 25.3 reuses the existing 23.4 outcome store (apex_learning_outcomes_v234,
+  DB_PATH). No new schema, no new database file.
 
 ## Environment-variable changes
-- Added `APEX_DECISION_FORECAST_DB` (OPTIONAL, DATABASE, default
-  `apex_decision_forecast.db`).
+- Added (both OPTIONAL, FEATURE_FLAGS, default 'false', safety_critical):
+  APEX_CALIBRATION_PRODUCTION_ENABLED, APEX_CALIBRATION_PROMOTION_APPROVED.
 
 ## Shadow-mode status
-- Enforced. Every payload carries `production_effect: "NONE"` and a guardrails
-  block; there is no code path from 25.2 to eligibility, confidence, weights, or
-  order submission.
+- Enforced. `production_effect: NONE` on every payload. `shadow_mode()` returns
+  True unless BOTH flags are set, and even then the engine only reports promotion
+  readiness — it never writes production confidence.
+
+## Ceiling invariant
+- Asserted in `build_calibration` for historical/regime/execution/final layers
+  and covered by `test_no_layer_exceeds_integrity_ceiling`.
 
 ## Known limitations
-- Analog magnitude uses provided `comparable_sessions`; when the live similarity
-  engine feed is wired into `STATE["last_result"]`, no code change is required —
-  the engine already reads `comparable_sessions`/`historical_similarity`.
-- No dashboard HTML panel is shipped (consistent with 25.0/25.1, which are
-  API + Mission Control only). `mission_control_group()` returns the canonical
-  panel payload for the front-end to consume.
-- Forecast evaluator requires realized-outcome truth to be supplied by the
-  caller/replay harness; 25.2 does not itself watch live price.
+- Calibration reflects whatever graded outcomes exist in the 23.4 store; with a
+  cold store it reports INSUFFICIENT_DATA and caps confidence conservatively.
+- Isotonic calibration is intentionally not applied at current sample sizes; the
+  engine uses bucketed empirical + Bayesian shrinkage until data supports more.
+- No dashboard HTML panel ships (consistent with 25.0-25.2). `mission_control_group()`
+  returns the canonical panel payload including the full confidence-layer stack.
