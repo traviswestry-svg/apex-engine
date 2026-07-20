@@ -55,6 +55,27 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_MARKET_MEMORY_MIN_SESSIONS','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'20','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum stored observations before Market Memory reports readiness.','safety_critical':False,'used_in_code':True},
 ])
 
+# APEX 24.1 - Institutional Portfolio & Risk Intelligence governed limits.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_DAILY_RISK_BUDGET','category':'RISK','classification':'OPTIONAL','required_when':None,'default':'1500','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Governed daily portfolio risk budget (advisory portfolio risk).','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_WEEKLY_RISK_BUDGET','category':'RISK','classification':'OPTIONAL','required_when':None,'default':'4500','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Governed weekly portfolio risk budget (advisory portfolio risk).','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_MONTHLY_DRAWDOWN_LIMIT','category':'RISK','classification':'OPTIONAL','required_when':None,'default':'9000','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Governed monthly drawdown limit (advisory portfolio risk).','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_MAX_CONCURRENT_POSITIONS','category':'RISK','classification':'OPTIONAL','required_when':None,'default':'3','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Governed maximum concurrent open positions (advisory portfolio risk).','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_MAX_PREMIUM_AT_RISK','category':'RISK','classification':'OPTIONAL','required_when':None,'default':'3000','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Governed maximum aggregate premium at risk (advisory portfolio risk).','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_MAX_DIRECTIONAL_BIAS_PCT','category':'RISK','classification':'OPTIONAL','required_when':None,'default':'60','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Governed maximum net directional bias as percent of equity (advisory portfolio risk).','safety_critical':True,'used_in_code':True},
+ {'name':'APEX_MAX_PORTFOLIO_HEAT_PCT','category':'RISK','classification':'OPTIONAL','required_when':None,'default':'35','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Governed maximum portfolio heat as percent of equity (advisory portfolio risk).','safety_critical':True,'used_in_code':True},
+])
+
+# APEX 24.2.1 - production runtime and storage telemetry.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_SQLITE_TIMEOUT_SECONDS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite connection and busy timeout in seconds.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_DISK_WARN_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a warning.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_DISK_CRITICAL_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'7','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a critical state.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_LOCAL_DATA_DIR','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'.','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Writable local fallback when a persistent mount is unavailable.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCANNER_HEARTBEAT_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/scanner_heartbeat.json','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cross-process scanner heartbeat file.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Dedicated scanner process heartbeat interval.','safety_critical':False,'used_in_code':True},
+])
+
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
 def _utcnow() -> str: return datetime.now(timezone.utc).isoformat()
