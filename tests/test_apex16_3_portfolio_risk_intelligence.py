@@ -22,6 +22,18 @@ def test_immutable_record(tmp_path,monkeypatch):
     assert a['created'] and not b['created'] and b['status']=='IMMUTABLE_EXISTS'
 
 def test_routes_present():
+    # APEX 24.1 owns the canonical /status and /evaluate; the 16.3 immutable
+    # persistence endpoints (/record, /history) remain on the roadmap routes.
     from pathlib import Path
-    s=(Path(__file__).parents[1]/'engine/institutional_roadmap_routes.py').read_text()
-    assert '/api/portfolio-risk/evaluate' in s and '/api/portfolio-risk/record' in s
+    from flask import Flask
+    from engine.institutional_portfolio_risk_v241_routes import (
+        register_institutional_portfolio_risk_v241_routes,
+    )
+    roadmap = (Path(__file__).parents[1] / 'engine/institutional_roadmap_routes.py').read_text()
+    assert '/api/portfolio-risk/record' in roadmap and '/api/portfolio-risk/history' in roadmap
+    app = Flask(__name__)
+    register_institutional_portfolio_risk_v241_routes(app, last_result_provider=lambda: {})
+    paths = {str(r) for r in app.url_map.iter_rules()}
+    assert '/api/portfolio-risk/evaluate' in paths
+    assert '/api/portfolio-risk/status' in paths
+    assert '/api/portfolio-risk/exposure' in paths
