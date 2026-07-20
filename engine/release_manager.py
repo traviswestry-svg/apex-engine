@@ -36,14 +36,20 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "24.2.1_PRODUCTION_HARDENING"
-SEMANTIC_VERSION = "24.2.1"
+APPLICATION_VERSION = "25.1.0_INSTITUTIONAL_REASONING"
+SEMANTIC_VERSION = "25.1.0"
 DATABASE_VERSION = "5"
 
 # Backward-compatible alias used by app.py.
 APP_VERSION = APPLICATION_VERSION
 
 FEATURES = [
+    "Institutional Reasoning Engine",
+    "Evidence Ranking",
+    "Contradiction Analysis",
+    "Confidence Waterfall",
+    "Institutional Story Timeline",
+    "Institutional Decision Integrity Engine",
     "Institutional State",
     "Evidence Graph",
     "Decision Trace",
