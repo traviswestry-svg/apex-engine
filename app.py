@@ -9134,11 +9134,16 @@ else:
           f"({len(_IDR254_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
 
 
-# APEX 25.5 — Institutional Validation & Promotion Gate registration. Required and fail-loud.
+# APEX 25.5 — Institutional Validation & Promotion Gate registration.
+# Deployment-safe behavior: repositories assembled from changed-files-only release
+# packages may legitimately omit this optional future module. Do not prevent the
+# rest of APEX from booting; retain a loud diagnostic and leave the routes absent.
 if not INSTITUTIONAL_VALIDATION_PROMOTION_V255_AVAILABLE or register_institutional_validation_promotion_v255_routes is None:
-    raise RuntimeError(
-        "APEX 25.5 Institutional Validation & Promotion routes are required but "
-        "the module failed to import. See the earlier import diagnostic.")
+    print(
+        "APEX 25.5 Institutional Validation & Promotion routes unavailable — "
+        "continuing without the optional supervisory module.",
+        flush=True,
+    )
 else:
     def _ivp255_last_result():
         with STATE_LOCK:
@@ -9184,11 +9189,16 @@ else:
           f"({len(_EIC260_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
 
 
-# APEX 26.1-26.5 — Execution Intelligence Suite registration. Required and fail-loud.
+# APEX 26.1-26.5 — Execution Intelligence Suite registration.
+# Deployment-safe behavior mirrors 25.5: a missing optional suite must not take
+# down the production application. APEX 26.0 and 26.6-26.10 still register when
+# their modules are present.
 if not EXECUTION_SUITE_V26X_AVAILABLE or register_execution_suite_v26x_routes is None:
-    raise RuntimeError(
-        "APEX 26.1-26.5 Execution Intelligence Suite routes are required but the "
-        "module failed to import. See the earlier import diagnostic.")
+    print(
+        "APEX 26.1-26.5 Execution Intelligence Suite routes unavailable — "
+        "continuing without the optional advisory suite.",
+        flush=True,
+    )
 else:
     def _es26x_last_result():
         with STATE_LOCK:
