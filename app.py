@@ -622,6 +622,36 @@ except Exception as _mtf_err:
     INSTITUTIONAL_MULTI_TIMEFRAME_V244_AVAILABLE = False
     print(f"APEX Multi-Timeframe Intelligence import failed: {_mtf_err}", flush=True)
 
+# APEX 25.0 — Institutional Decision Integrity (required, read-only governance).
+try:
+    from engine.institutional_decision_integrity_v250_routes import (
+        register_institutional_decision_integrity_v250_routes,
+        verify_registered as _idi_verify_registered,
+        REQUIRED_ROUTES as _IDI_REQUIRED,
+    )
+    INSTITUTIONAL_DECISION_INTEGRITY_V250_AVAILABLE = True
+except Exception as _idi_err:
+    register_institutional_decision_integrity_v250_routes = None  # type: ignore[assignment]
+    _idi_verify_registered = None  # type: ignore[assignment]
+    _IDI_REQUIRED = ()  # type: ignore[assignment]
+    INSTITUTIONAL_DECISION_INTEGRITY_V250_AVAILABLE = False
+    print(f"APEX Institutional Decision Integrity import failed: {_idi_err}", flush=True)
+
+# APEX 25.1 — Institutional Reasoning (required, read-only explanation).
+try:
+    from engine.institutional_reasoning_v251_routes import (
+        register_institutional_reasoning_v251_routes,
+        verify_registered as _ir251_verify_registered,
+        REQUIRED_ROUTES as _IR251_REQUIRED,
+    )
+    INSTITUTIONAL_REASONING_V251_AVAILABLE = True
+except Exception as _ir251_err:
+    register_institutional_reasoning_v251_routes = None  # type: ignore[assignment]
+    _ir251_verify_registered = None  # type: ignore[assignment]
+    _IR251_REQUIRED = ()  # type: ignore[assignment]
+    INSTITUTIONAL_REASONING_V251_AVAILABLE = False
+    print(f"APEX Institutional Reasoning import failed: {_ir251_err}", flush=True)
+
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -8871,6 +8901,57 @@ else:
             f"routes: {', '.join(_mtf_missing)}")
     print(f"APEX 24.4 Multi-Timeframe Intelligence routes registered "
           f"({len(_MTF_REQUIRED)} canonical routes verified).", flush=True)
+
+
+# APEX 25.0 — Institutional Decision Integrity registration. This governance
+# surface is required and fails loudly if route registration is incomplete.
+if not INSTITUTIONAL_DECISION_INTEGRITY_V250_AVAILABLE or register_institutional_decision_integrity_v250_routes is None:
+    raise RuntimeError(
+        "APEX 25.0 Institutional Decision Integrity routes are required but the "
+        "module failed to import. See the earlier import diagnostic.")
+else:
+    def _idi_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_institutional_decision_integrity_v250_routes(app, last_result_provider=_idi_last_result)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 25.0 Institutional Decision Integrity route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _idi_missing = _idi_verify_registered(app)
+    if _idi_missing:
+        raise RuntimeError(
+            "APEX 25.0 Institutional Decision Integrity failed to register required "
+            f"routes: {', '.join(_idi_missing)}")
+    print(f"APEX 25.0 Institutional Decision Integrity routes registered "
+          f"({len(_IDI_REQUIRED)} canonical routes verified).", flush=True)
+
+
+# APEX 25.1 — Institutional Reasoning registration. Required and fail-loud.
+if not INSTITUTIONAL_REASONING_V251_AVAILABLE or register_institutional_reasoning_v251_routes is None:
+    raise RuntimeError(
+        "APEX 25.1 Institutional Reasoning routes are required but the module "
+        "failed to import. See the earlier import diagnostic.")
+else:
+    def _ir251_last_result():
+        with STATE_LOCK:
+            value = STATE.get("last_result") or {}
+            return dict(value) if isinstance(value, dict) else {}
+    try:
+        register_institutional_reasoning_v251_routes(app, last_result_provider=_ir251_last_result)
+    except (AssertionError, ValueError) as e:
+        raise RuntimeError(
+            "APEX 25.1 Institutional Reasoning route registration failed "
+            f"(likely a duplicate route or endpoint conflict): {e}") from e
+    _ir251_missing = _ir251_verify_registered(app)
+    if _ir251_missing:
+        raise RuntimeError(
+            "APEX 25.1 Institutional Reasoning failed to register required "
+            f"routes: {', '.join(_ir251_missing)}")
+    print(f"APEX 25.1 Institutional Reasoning routes registered "
+          f"({len(_IR251_REQUIRED)} canonical routes verified).", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
