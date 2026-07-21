@@ -2696,6 +2696,14 @@ def init_tracking_db() -> None:
             db_dir = os.path.dirname(DB_PATH)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
+            # Quarantine a corrupt DB (e.g. from an interrupted deploy write) so a
+            # fresh one is created instead of bricking tracking with
+            # 'file is not a database'.
+            try:
+                from engine.db_resilience import ensure_healthy_db as _ensure_healthy_db
+                _ensure_healthy_db(DB_PATH)
+            except Exception:
+                pass
             conn = get_db_connection()
             try:
                 conn.execute("""
