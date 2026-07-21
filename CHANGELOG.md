@@ -1,34 +1,33 @@
-# APEX DB Resilience Hotfix (CHANGELOG)
+# /api/institutional_os Single-Flight Hotfix
 
-Fixes the two production faults in the deploy log: 'file is not a database'
-(corrupt tracking DB) and 'no such table: pine_signals' (evaluator read before
-init). Safe to apply on the currently deployed build (25.4) — it does not touch
-route registration and adds no engine dependencies.
+## Problem (from your DevTools capture)
+Console: `/api/institutional_os timed out after 6s` looping; Network: all API
+calls (pending)/(canceled) at 0 kB. The endpoint composes the full nine-engine
+pipeline live per request (6 parallel provider fetches). Its single-flight guard
+only returned early when a cached result already existed:
+    if cached is not None and _IOS_CACHE[ticker]['in_progress']: return cached
+On a cold start (pre-market, nothing cached yet) cached is None, so every retry
+fell through and launched its own compose — a thundering herd that saturated the
+gunicorn worker (1 worker x 4 threads). One slow endpoint starved the whole
+dashboard.
 
-## Root cause
-- A live `apex_tracking.db` was committed to the repo, and rapid/cancelled
-  deploys interrupted a write to `/data/apex_tracking.db`, leaving an invalid
-  SQLite header. SQLite then raised 'file is not a database' on every open,
-  silently disabling tracking and the signal evaluator (so calibration/review
-  had no data).
-- `signal_evaluator.mark_due_signals()` SELECTed `pine_signals` without
-  guaranteeing `init_signal_eval_db()` had run first; on a fresh/replaced DB the
-  scanner thread could query before init -> 'no such table: pine_signals'.
+## Fix
+- New `_ios_try_begin(ticker)`: atomic check-and-set single-flight claim under
+  the existing `_IOS_CACHE_LOCK`. Exactly one caller composes; concurrent callers
+  return stale cache (or a fast 'refresh_in_progress' warming-up payload)
+  immediately — including the cold-start no-cache case that was the actual bug.
+- Self-healing: a slot held > 30s (leaked/stalled compose) is reclaimed, so the
+  endpoint can never freeze permanently on 'refresh_in_progress'.
+- Closed a flag-leak path in the apex_engines-unavailable fallback.
 
-## Added
-- `engine/db_resilience.py` — `ensure_healthy_db(path)`: cheaply detects a
-  corrupt SQLite file (invalid header) and renames it aside to
-  `<path>.corrupt-<UTC>.bak` so the app recreates a fresh DB. Never deletes data;
-  leaves healthy or unknown-error files untouched.
+## Verified
+- 7 new tests pass (cold-start claim, concurrent rejection, slot release,
+  self-heal reclaim, in-window block, and the endpoint returning in <2s with
+  refresh_in_progress instead of composing).
+- Full suite: 1306 passed, 1 deselected (pre-existing unrelated refusal_replay).
+- No new env vars; the timeout is a constant (no governance/env-drift impact).
 
-## Modified
-- `signal_evaluator.py` — heal + cached self-init (`_ensure_ready()`), called at
-  the top of `mark_due_signals`, `scorecard`, and `record_signal`. Table
-  creation is now independent of startup ordering, and a corrupt DB is
-  quarantined before use.
-
-## Manual steps (see DEPLOYMENT.md)
-- Apply the small app.py heal snippet (optional but recommended).
-- `git rm --cached apex_tracking.db` and add the .gitignore lines
-  (gitignore_additions.txt) so a DB is never committed again.
-- Clear the corrupt file on the Render disk once.
+## Not a full re-architecture
+This stops the starvation. The deeper improvement (move the compose to the
+background scanner and have the endpoint only ever SERVE cache) is a larger
+change worth doing later; this hotfix is the surgical, low-risk piece.

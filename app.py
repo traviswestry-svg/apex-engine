@@ -5133,6 +5133,39 @@ def _ios_mark_in_progress(ticker: str, flag: bool) -> None:
             _IOS_CACHE[ticker]["in_progress"] = flag
 
 
+# Max time a single compose may hold the single-flight slot before it is treated
+# as stale and reclaimed. Guards against a leaked in-progress flag (e.g. an
+# uncaught error path) freezing the endpoint permanently on 'refresh_in_progress'.
+_IOS_MAX_INFLIGHT = 30.0
+
+
+def _ios_try_begin(ticker: str) -> bool:
+    """Atomically claim the single-flight compose slot for ``ticker``.
+
+    Returns True if this caller should run the compose, or False if another
+    compose is already in flight (the caller should return cached / warming-up
+    data immediately instead of launching its own). This closes the cold-start
+    hole where, with no cached result yet, every concurrent request fell through
+    and started its own compose — the thundering herd that saturates the worker
+    threads. A slot held longer than ``_IOS_MAX_INFLIGHT`` seconds is reclaimed,
+    so a leaked flag self-heals rather than freezing the endpoint.
+    """
+    with _IOS_CACHE_LOCK:
+        entry = _IOS_CACHE.get(ticker)
+        now = time.monotonic()
+        if entry and entry.get("in_progress"):
+            started = entry.get("inflight_since", 0.0)
+            if (now - started) < _IOS_MAX_INFLIGHT:
+                return False
+        if entry is None:
+            _IOS_CACHE[ticker] = {"data": None, "ts": 0.0, "in_progress": True,
+                                  "inflight_since": now}
+        else:
+            entry["in_progress"] = True
+            entry["inflight_since"] = now
+        return True
+
+
 def _safe_result(future, label: str, default: Any, timeout: float = _FETCH_TIMEOUT) -> Tuple[Any, Optional[str]]:
     """Resolve a future with timeout; return (value, timed_out_label_or_None)."""
     try:
@@ -5157,16 +5190,21 @@ def api_institutional_os():
     include_heatmap = request.args.get("heatmap", "0") == "1"   # default OFF — loaded lazily
     force = request.args.get("force", "0") == "1"
 
-    # ── Return cached data immediately if a refresh is already running ──────
+    # ── Single-flight: at most one compose per ticker at a time. Concurrent
+    #    callers — including the cold-start case with no cache yet — return
+    #    immediately instead of piling on and starving the worker threads. ─────
     if not force:
-        cached = _ios_cached(ticker)
-        if cached is not None and _IOS_CACHE.get(ticker, {}).get("in_progress"):
-            payload = dict(cached)
+        if not _ios_try_begin(ticker):
+            cached = _ios_cached(ticker)
+            payload = dict(cached) if cached is not None else {
+                "ok": True, "ticker": ticker,
+                "interpretation": "Composing institutional OS — first result not ready yet.",
+            }
             payload.update({"stale": True, "status": "refresh_in_progress",
-                             "response_ms": round((time.monotonic()-t_start)*1000, 1)})
+                            "response_ms": round((time.monotonic() - t_start) * 1000, 1)})
             return jsonify(payload)
-
-    _ios_mark_in_progress(ticker, True)
+    else:
+        _ios_mark_in_progress(ticker, True)
 
     if APEX_ENGINES_AVAILABLE and _build_institutional_decision is not None:
         try:
@@ -5885,6 +5923,7 @@ def api_institutional_os():
                 return jsonify({"ok": False, "error": str(e2), "version": VERSION_45}), 500
 
     # apex_engines.py not available — use 4.5 build_institutional_os
+    _ios_mark_in_progress(ticker, False)  # release single-flight slot
     try:
         data = build_institutional_os(ticker, include_heatmap=include_heatmap)
         data["engine_mode"] = "STANDARD_45"
