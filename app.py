@@ -742,21 +742,6 @@ except Exception as _es26x_err:
     EXECUTION_SUITE_V26X_AVAILABLE = False
     print(f"APEX Execution Intelligence Suite import failed: {_es26x_err}", flush=True)
 
-# APEX 26.6-26.10 — Execution Intelligence Suite part 2 (required, advisory/read-only).
-try:
-    from engine.execution_suite_v26x_part2_routes import (
-        register_execution_suite_v26x_part2_routes,
-        verify_registered as _es26x2_verify_registered,
-        REQUIRED_ROUTES as _ES26X2_REQUIRED,
-    )
-    EXECUTION_SUITE_V26X_PART2_AVAILABLE = True
-except Exception as _es26x2_err:
-    register_execution_suite_v26x_part2_routes = None  # type: ignore[assignment]
-    _es26x2_verify_registered = None  # type: ignore[assignment]
-    _ES26X2_REQUIRED = ()  # type: ignore[assignment]
-    EXECUTION_SUITE_V26X_PART2_AVAILABLE = False
-    print(f"APEX Execution Intelligence Suite part 2 import failed: {_es26x2_err}", flush=True)
-
 # APEX 22.5 — pre-23 hardening and consolidation.
 try:
     from engine.pre23_hardening import acquire_scanner_lease
@@ -9134,16 +9119,11 @@ else:
           f"({len(_IDR254_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
 
 
-# APEX 25.5 — Institutional Validation & Promotion Gate registration.
-# Deployment-safe behavior: repositories assembled from changed-files-only release
-# packages may legitimately omit this optional future module. Do not prevent the
-# rest of APEX from booting; retain a loud diagnostic and leave the routes absent.
+# APEX 25.5 — Institutional Validation & Promotion Gate registration. Required and fail-loud.
 if not INSTITUTIONAL_VALIDATION_PROMOTION_V255_AVAILABLE or register_institutional_validation_promotion_v255_routes is None:
-    print(
-        "APEX 25.5 Institutional Validation & Promotion routes unavailable — "
-        "continuing without the optional supervisory module.",
-        flush=True,
-    )
+    raise RuntimeError(
+        "APEX 25.5 Institutional Validation & Promotion routes are required but "
+        "the module failed to import. See the earlier import diagnostic.")
 else:
     def _ivp255_last_result():
         with STATE_LOCK:
@@ -9189,16 +9169,11 @@ else:
           f"({len(_EIC260_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
 
 
-# APEX 26.1-26.5 — Execution Intelligence Suite registration.
-# Deployment-safe behavior mirrors 25.5: a missing optional suite must not take
-# down the production application. APEX 26.0 and 26.6-26.10 still register when
-# their modules are present.
+# APEX 26.1-26.5 — Execution Intelligence Suite registration. Required and fail-loud.
 if not EXECUTION_SUITE_V26X_AVAILABLE or register_execution_suite_v26x_routes is None:
-    print(
-        "APEX 26.1-26.5 Execution Intelligence Suite routes unavailable — "
-        "continuing without the optional advisory suite.",
-        flush=True,
-    )
+    raise RuntimeError(
+        "APEX 26.1-26.5 Execution Intelligence Suite routes are required but the "
+        "module failed to import. See the earlier import diagnostic.")
 else:
     def _es26x_last_result():
         with STATE_LOCK:
@@ -9217,31 +9192,6 @@ else:
             f"routes: {', '.join(_es26x_missing)}")
     print(f"APEX 26.1-26.5 Execution Intelligence Suite routes registered "
           f"({len(_ES26X_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
-
-
-# APEX 26.6-26.10 — Execution Intelligence Suite part 2 registration. Required and fail-loud.
-if not EXECUTION_SUITE_V26X_PART2_AVAILABLE or register_execution_suite_v26x_part2_routes is None:
-    raise RuntimeError(
-        "APEX 26.6-26.10 Execution Intelligence Suite part 2 routes are required "
-        "but the module failed to import. See the earlier import diagnostic.")
-else:
-    def _es26x2_last_result():
-        with STATE_LOCK:
-            value = STATE.get("last_result") or {}
-            return dict(value) if isinstance(value, dict) else {}
-    try:
-        register_execution_suite_v26x_part2_routes(app, last_result_provider=_es26x2_last_result)
-    except (AssertionError, ValueError) as e:
-        raise RuntimeError(
-            "APEX 26.6-26.10 Execution Intelligence Suite part 2 route registration "
-            f"failed (likely a duplicate route or endpoint conflict): {e}") from e
-    _es26x2_missing = _es26x2_verify_registered(app)
-    if _es26x2_missing:
-        raise RuntimeError(
-            "APEX 26.6-26.10 Execution Intelligence Suite part 2 failed to register "
-            f"required routes: {', '.join(_es26x2_missing)}")
-    print(f"APEX 26.6-26.10 Execution Intelligence Suite part 2 routes registered "
-          f"({len(_ES26X2_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
