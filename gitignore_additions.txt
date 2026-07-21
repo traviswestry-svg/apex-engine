@@ -1,4 +1,4 @@
-# Append to .gitignore — runtime DBs must never be committed:
+# Append these lines to your .gitignore (runtime DBs must never be committed):
 *.db
 *.db.corrupt-*.bak
 apex_tracking.db
