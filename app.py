@@ -845,7 +845,7 @@ RUN_SCANNER_ON_IMPORT = os.getenv("RUN_SCANNER_ON_IMPORT", "false").lower() == "
 # APEX 7.6.0 — keep the institutional bus (STATE["last_result"]) warm from the
 # scanner thread so premium/directional alerts fire even with no dashboard open.
 # Gated to actionable sessions to avoid burning API calls overnight.
-COMPOSE_IOS_IN_SCANNER = os.getenv("COMPOSE_IOS_IN_SCANNER", "true").lower() == "true"
+COMPOSE_IOS_IN_SCANNER = os.getenv("COMPOSE_IOS_IN_SCANNER", "false").lower() == "true"
 IOS_COMPOSE_SESSIONS = {
     s.strip().upper() for s in
     os.getenv("IOS_COMPOSE_SESSIONS", "MARKET_OPEN,PREMARKET").split(",") if s.strip()
@@ -5133,6 +5133,17 @@ def _ios_mark_in_progress(ticker: str, flag: bool) -> None:
             _IOS_CACHE[ticker]["in_progress"] = flag
 
 
+def _ios_cache_snapshot(ticker: str) -> Tuple[Optional[Dict[str, Any]], float, bool]:
+    """Return cached payload, age in seconds, and in-progress state atomically."""
+    with _IOS_CACHE_LOCK:
+        entry = _IOS_CACHE.get(ticker)
+        if not entry:
+            return None, float("inf"), False
+        data = entry.get("data")
+        age = time.monotonic() - float(entry.get("ts") or 0.0)
+        return data, age, bool(entry.get("in_progress"))
+
+
 # Max time a single compose may hold the single-flight slot before it is treated
 # as stale and reclaimed. Guards against a leaked in-progress flag (e.g. an
 # uncaught error path) freezing the endpoint permanently on 'refresh_in_progress'.
@@ -5189,6 +5200,20 @@ def api_institutional_os():
     ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
     include_heatmap = request.args.get("heatmap", "0") == "1"   # default OFF — loaded lazily
     force = request.args.get("force", "0") == "1"
+
+    # Serve a fresh composed payload immediately. The previous implementation
+    # kept recomposing on every 12-second browser poll even though an 8-second
+    # cache existed, creating avoidable provider traffic and worker contention.
+    if not force:
+        cached_now, cache_age, cache_refreshing = _ios_cache_snapshot(ticker)
+        if cached_now is not None and cache_age < _IOS_CACHE_TTL and not cache_refreshing:
+            payload = dict(cached_now)
+            payload.update({
+                "stale": False, "cache_hit": True,
+                "cache_age_seconds": round(cache_age, 2),
+                "response_ms": round((time.monotonic() - t_start) * 1000, 1),
+            })
+            return jsonify(payload)
 
     # ── Single-flight: at most one compose per ticker at a time. Concurrent
     #    callers — including the cold-start case with no cache yet — return
@@ -5250,13 +5275,20 @@ def api_institutional_os():
             intraday_bars = fetched["intraday_bars"]
             vix_price = fetched["vix_price"]
 
-            # Volume profile with its own timeout protection
+            # Volume profile must also be bounded. Previously this direct call
+            # had no timeout despite the comment and could hold the only Render
+            # worker after all six provider calls had already been bounded.
+            vp_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="apex-os-vp")
+            vp_future = vp_pool.submit(_volume_profile_bundle, ticker=ticker, days=1, multiplier=5)
             try:
-                volume_bundle = _volume_profile_bundle(ticker=ticker, days=1, multiplier=5)
+                volume_bundle = vp_future.result(timeout=_FETCH_TIMEOUT)
             except Exception as vp_err:
-                print(f"[IOS] volume_profile failed: {vp_err}", flush=True)
+                vp_future.cancel()
+                print(f"[IOS] volume_profile timed out / failed: {vp_err}", flush=True)
                 volume_bundle = {}
                 timed_out.append("volume_profile")
+            finally:
+                vp_pool.shutdown(wait=False, cancel_futures=True)
 
             # Run nine-engine pipeline
             result = _build_institutional_decision(
@@ -5929,17 +5961,30 @@ def api_institutional_os():
             return jsonify(result_payload)
 
         except Exception as e:
-            # Nine-engine pipeline failed — fall back to 4.5 build_institutional_os
+            # Do not invoke the legacy fallback here: it repeats the same live
+            # provider calls without the bounded fan-out and can freeze the
+            # worker a second time. Return the last good composition, or a
+            # truthful degraded payload that lets every dashboard panel recover.
             _ios_mark_in_progress(ticker, False)
-            print(f"Nine-engine pipeline error (falling back): {e}", flush=True)
-            try:
-                data = build_institutional_os(ticker, include_heatmap=include_heatmap)
-                data["engine_mode"] = "FALLBACK_45"
-                data["pipeline_error"] = str(e)
-                _record_confidence_timeline_point(ticker, data)
-                return jsonify({"ok": True, **data})
-            except Exception as e2:
-                return jsonify({"ok": False, "error": str(e2), "version": VERSION_45}), 500
+            print(f"Nine-engine pipeline error (degraded response): {e}", flush=True)
+            cached, cache_age, _ = _ios_cache_snapshot(ticker)
+            if cached is not None:
+                payload = dict(cached)
+                payload.update({
+                    "ok": True, "stale": True, "partial": True,
+                    "status": "pipeline_degraded", "pipeline_error": str(e),
+                    "cache_age_seconds": round(cache_age, 2),
+                    "response_ms": round((time.monotonic() - t_start) * 1000, 1),
+                })
+                return jsonify(payload)
+            return jsonify({
+                "ok": True, "ticker": ticker, "stale": True, "partial": True,
+                "status": "warming", "engine_mode": "DEGRADED_STARTUP",
+                "pipeline_error": str(e),
+                "interpretation": "Institutional engines are warming; retrying automatically.",
+                "session": session_ctx,
+                "response_ms": round((time.monotonic() - t_start) * 1000, 1),
+            })
 
     # apex_engines.py not available — use 4.5 build_institutional_os
     _ios_mark_in_progress(ticker, False)  # release single-flight slot
