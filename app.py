@@ -845,6 +845,8 @@ RUN_SCANNER_ON_IMPORT = os.getenv("RUN_SCANNER_ON_IMPORT", "false").lower() == "
 # APEX 7.6.0 — keep the institutional bus (STATE["last_result"]) warm from the
 # scanner thread so premium/directional alerts fire even with no dashboard open.
 # Gated to actionable sessions to avoid burning API calls overnight.
+# Institutional OS composition is isolated from the scanner and web request workers.
+# The scanner may opt in explicitly, but the safe Render default is disabled.
 COMPOSE_IOS_IN_SCANNER = os.getenv("COMPOSE_IOS_IN_SCANNER", "false").lower() == "true"
 IOS_COMPOSE_SESSIONS = {
     s.strip().upper() for s in
@@ -3724,7 +3726,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_css2"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg3"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -5105,8 +5107,12 @@ def apex_os_dashboard():
 # or when the last response was < CACHE_TTL seconds ago.
 _IOS_CACHE: Dict[str, Any] = {}          # {ticker: {data, ts, in_progress}}
 _IOS_CACHE_LOCK = threading.Lock()
-_IOS_CACHE_TTL  = float(os.getenv("IOS_CACHE_TTL_SECONDS", "8"))
+_IOS_CACHE_TTL  = float(os.getenv("IOS_CACHE_TTL_SECONDS", "15"))
 _FETCH_TIMEOUT  = float(os.getenv("IOS_FETCH_TIMEOUT_SECONDS", "3"))
+# Browser requests never execute the expensive composition. They schedule one
+# daemon refresh and immediately return the last good cache (or WARMING state).
+_IOS_REFRESH_THREADS: set[str] = set()
+_IOS_REFRESH_THREADS_LOCK = threading.Lock()
 
 
 def _ios_cached(ticker: str) -> Optional[Dict[str, Any]]:
@@ -5125,23 +5131,51 @@ def _ios_set_cache(ticker: str, data: Dict[str, Any]) -> None:
         _IOS_CACHE[ticker] = {"data": data, "ts": time.monotonic(), "in_progress": False}
 
 
+def _ios_cache_snapshot(ticker: str) -> Tuple[Optional[Dict[str, Any]], float, bool]:
+    """Return last cache regardless of TTL so the web route can always respond."""
+    with _IOS_CACHE_LOCK:
+        entry = _IOS_CACHE.get(ticker)
+        if not entry:
+            return None, float("inf"), False
+        data = entry.get("data")
+        age = max(0.0, time.monotonic() - float(entry.get("ts") or 0.0))
+        return (dict(data) if isinstance(data, dict) else None,
+                age,
+                bool(entry.get("in_progress")))
+
+
+def _ios_background_worker(ticker: str) -> None:
+    try:
+        compose_institutional_os_headless(ticker)
+    except Exception as exc:
+        print(f"[IOS] background compose failed for {ticker}: {exc}", flush=True)
+    finally:
+        with _IOS_REFRESH_THREADS_LOCK:
+            _IOS_REFRESH_THREADS.discard(ticker)
+
+
+def _schedule_ios_refresh(ticker: str) -> bool:
+    """Start at most one isolated composer per ticker; never block an HTTP worker."""
+    ticker = (ticker or ASSISTANT_TICKER).upper()
+    with _IOS_REFRESH_THREADS_LOCK:
+        if ticker in _IOS_REFRESH_THREADS:
+            return False
+        _IOS_REFRESH_THREADS.add(ticker)
+    threading.Thread(
+        target=_ios_background_worker,
+        args=(ticker,),
+        name=f"apex-ios-compose-{ticker}",
+        daemon=True,
+    ).start()
+    return True
+
+
 def _ios_mark_in_progress(ticker: str, flag: bool) -> None:
     with _IOS_CACHE_LOCK:
         if ticker not in _IOS_CACHE:
             _IOS_CACHE[ticker] = {"data": None, "ts": 0.0, "in_progress": flag}
         else:
             _IOS_CACHE[ticker]["in_progress"] = flag
-
-
-def _ios_cache_snapshot(ticker: str) -> Tuple[Optional[Dict[str, Any]], float, bool]:
-    """Return cached payload, age in seconds, and in-progress state atomically."""
-    with _IOS_CACHE_LOCK:
-        entry = _IOS_CACHE.get(ticker)
-        if not entry:
-            return None, float("inf"), False
-        data = entry.get("data")
-        age = time.monotonic() - float(entry.get("ts") or 0.0)
-        return data, age, bool(entry.get("in_progress"))
 
 
 # Max time a single compose may hold the single-flight slot before it is treated
@@ -5200,22 +5234,36 @@ def api_institutional_os():
     ticker = request.args.get("ticker", ASSISTANT_TICKER).upper()
     include_heatmap = request.args.get("heatmap", "0") == "1"   # default OFF — loaded lazily
     force = request.args.get("force", "0") == "1"
+    internal_compose = request.args.get("_compose", "0") == "1"
 
-    # Serve a fresh composed payload immediately. The previous implementation
-    # kept recomposing on every 12-second browser poll even though an 8-second
-    # cache existed, creating avoidable provider traffic and worker contention.
-    if not force:
-        cached_now, cache_age, cache_refreshing = _ios_cache_snapshot(ticker)
-        if cached_now is not None and cache_age < _IOS_CACHE_TTL and not cache_refreshing:
-            payload = dict(cached_now)
+    # Public/browser requests are read-only. Heavy composition is executed by a
+    # single daemon worker so a slow market-data provider cannot consume the only
+    # Render gunicorn worker. The route always responds immediately.
+    if not internal_compose:
+        cached, age_seconds, in_progress = _ios_cache_snapshot(ticker)
+        refresh_needed = cached is None or age_seconds >= _IOS_CACHE_TTL
+        scheduled = _schedule_ios_refresh(ticker) if refresh_needed else False
+        if cached is not None:
+            payload = dict(cached)
             payload.update({
-                "stale": False, "cache_hit": True,
-                "cache_age_seconds": round(cache_age, 2),
+                "ok": True,
+                "stale": age_seconds >= _IOS_CACHE_TTL,
+                "cache_age_seconds": round(age_seconds, 1),
+                "status": "refresh_in_progress" if (in_progress or scheduled) else "cached",
                 "response_ms": round((time.monotonic() - t_start) * 1000, 1),
             })
             return jsonify(payload)
+        return jsonify({
+            "ok": True,
+            "ticker": ticker,
+            "stale": True,
+            "status": "warming",
+            "refresh_in_progress": True,
+            "interpretation": "Institutional engines are composing in the background.",
+            "response_ms": round((time.monotonic() - t_start) * 1000, 1),
+        })
 
-    # ── Single-flight: at most one compose per ticker at a time. Concurrent
+    # ── Internal background composition: at most one compose per ticker. ─────
     #    callers — including the cold-start case with no cache yet — return
     #    immediately instead of piling on and starving the worker threads. ─────
     if not force:
@@ -5275,9 +5323,9 @@ def api_institutional_os():
             intraday_bars = fetched["intraday_bars"]
             vix_price = fetched["vix_price"]
 
-            # Volume profile must also be bounded. Previously this direct call
-            # had no timeout despite the comment and could hold the only Render
-            # worker after all six provider calls had already been bounded.
+            # Volume profile must also be bounded. A Future timeout cannot kill
+            # an already-running task, so detach the daemon executor immediately;
+            # provider-level HTTP timeouts remain the final containment boundary.
             vp_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="apex-os-vp")
             vp_future = vp_pool.submit(_volume_profile_bundle, ticker=ticker, days=1, multiplier=5)
             try:
@@ -5961,29 +6009,32 @@ def api_institutional_os():
             return jsonify(result_payload)
 
         except Exception as e:
-            # Do not invoke the legacy fallback here: it repeats the same live
-            # provider calls without the bounded fan-out and can freeze the
-            # worker a second time. Return the last good composition, or a
-            # truthful degraded payload that lets every dashboard panel recover.
+            # Never repeat the same live provider fan-out through the legacy
+            # fallback. Preserve the last good composition and publish a truthful
+            # degraded response so the worker remains available.
             _ios_mark_in_progress(ticker, False)
-            print(f"Nine-engine pipeline error (degraded response): {e}", flush=True)
-            cached, cache_age, _ = _ios_cache_snapshot(ticker)
+            print(f"Nine-engine pipeline error (degraded): {e}", flush=True)
+            cached, age_seconds, _ = _ios_cache_snapshot(ticker)
             if cached is not None:
                 payload = dict(cached)
                 payload.update({
-                    "ok": True, "stale": True, "partial": True,
-                    "status": "pipeline_degraded", "pipeline_error": str(e),
-                    "cache_age_seconds": round(cache_age, 2),
-                    "response_ms": round((time.monotonic() - t_start) * 1000, 1),
+                    "ok": True,
+                    "stale": True,
+                    "partial": True,
+                    "status": "degraded",
+                    "pipeline_error": str(e),
+                    "cache_age_seconds": round(age_seconds, 1),
                 })
                 return jsonify(payload)
             return jsonify({
-                "ok": True, "ticker": ticker, "stale": True, "partial": True,
-                "status": "warming", "engine_mode": "DEGRADED_STARTUP",
+                "ok": True,
+                "ticker": ticker,
+                "stale": True,
+                "partial": True,
+                "status": "warming",
+                "engine_mode": "DEGRADED_NO_CACHE",
                 "pipeline_error": str(e),
-                "interpretation": "Institutional engines are warming; retrying automatically.",
-                "session": session_ctx,
-                "response_ms": round((time.monotonic() - t_start) * 1000, 1),
+                "interpretation": "Institutional composition failed; a later background cycle will retry.",
             })
 
     # apex_engines.py not available — use 4.5 build_institutional_os
@@ -6007,7 +6058,7 @@ def compose_institutional_os_headless(ticker: str = ASSISTANT_TICKER) -> bool:
     call sees the other and returns stale instead of double-composing. Non-fatal.
     """
     try:
-        with app.test_request_context(f"/api/institutional_os?ticker={ticker}"):
+        with app.test_request_context(f"/api/institutional_os?ticker={ticker}&_compose=1&heatmap=0"):
             api_institutional_os()
         return True
     except Exception as e:
@@ -9343,6 +9394,16 @@ else:
             f"required routes: {', '.join(_es26x2_missing)}")
     print(f"APEX 26.6-26.10 Execution Intelligence Suite part 2 routes registered "
           f"({len(_ES26X2_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
+
+# Warm the cache after Gunicorn has finished importing routes. This uses an
+# isolated daemon thread and never delays the health check or first HTTP request.
+if os.getenv("WARM_IOS_ON_IMPORT", "true").lower() == "true":
+    _ios_warm_timer = threading.Timer(
+        float(os.getenv("IOS_WARM_DELAY_SECONDS", "12")),
+        lambda: _schedule_ios_refresh(ASSISTANT_TICKER),
+    )
+    _ios_warm_timer.daemon = True
+    _ios_warm_timer.start()
 
 if RUN_SCANNER_ON_IMPORT:
     start_background_scanner()
