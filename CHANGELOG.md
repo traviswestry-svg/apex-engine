@@ -1,33 +1,34 @@
-# APEX 26.6-26.10 — Execution Intelligence Suite, Part 2 (CHANGELOG)
+# APEX DB Resilience Hotfix (CHANGELOG)
 
-Completes the APEX 26.x line. Advisory/read-only; nothing places, modifies, or
-submits an order. Built on 26.0-26.5 (assumes 25.0-25.5 + 26.0-26.5 deployed).
+Fixes the two production faults in the deploy log: 'file is not a database'
+(corrupt tracking DB) and 'no such table: pine_signals' (evaluator read before
+init). Safe to apply on the currently deployed build (25.4) — it does not touch
+route registration and adds no engine dependencies.
+
+## Root cause
+- A live `apex_tracking.db` was committed to the repo, and rapid/cancelled
+  deploys interrupted a write to `/data/apex_tracking.db`, leaving an invalid
+  SQLite header. SQLite then raised 'file is not a database' on every open,
+  silently disabling tracking and the signal evaluator (so calibration/review
+  had no data).
+- `signal_evaluator.mark_due_signals()` SELECTed `pine_signals` without
+  guaranteeing `init_signal_eval_db()` had run first; on a fresh/replaced DB the
+  scanner thread could query before init -> 'no such table: pine_signals'.
 
 ## Added
-- `engine/trade_story_v266.py` (26.6) — institutional narrative: why entered /
-  holding / scaling / exiting, plus updated confidence, reasoning, and forecast,
-  composed from the governed 25.x + 26.x state.
-- `engine/broker_intelligence_v267.py` (26.7) — PREVIEW/READ-ONLY broker layer for
-  Power E*TRADE / Interactive Brokers / thinkorswim: connectivity health, and
-  normalized preview economics (buying power, margin, commission, estimated cost,
-  order/fill status, reject reason, latency). NO order-submission path exists in
-  this module; it reports the real execution gate (ETRADE_ENABLE_TRADING kill
-  switch + APEX_CONFIRMATION_GATED_EXECUTION_ENABLED) and cannot bypass it.
-- `engine/execution_review_v268.py` (26.8) — grades EXECUTION quality independent
-  of forecast: entry/exit quality, timing, slippage, spread capture, risk control,
-  profit efficiency, management quality -> execution grade.
-- `engine/command_center_v269.py` (26.9 + 26.10) — read-only aggregators:
-  Command Center (execution desk view) and Institutional Trader Mode (full-platform
-  view). Compose the 25.x + 26.x engines; degrade gracefully, never crash.
-- `engine/execution_suite_v26x_part2_routes.py` — 11 advisory routes.
-- `tests/test_execution_suite_v26x_part2.py` — 26 engine + route tests.
+- `engine/db_resilience.py` — `ensure_healthy_db(path)`: cheaply detects a
+  corrupt SQLite file (invalid header) and renames it aside to
+  `<path>.corrupt-<UTC>.bak` so the app recreates a fresh DB. Never deletes data;
+  leaves healthy or unknown-error files untouched.
 
 ## Modified
-- `app.py` — fail-loud import + registration for part 2 (mirrors 25.x/26.x).
+- `signal_evaluator.py` — heal + cached self-init (`_ensure_ready()`), called at
+  the top of `mark_due_signals`, `scorecard`, and `record_signal`. Table
+  creation is now independent of startup ordering, and a corrupt DB is
+  quarantined before use.
 
-## Safety
-- places_orders / submits_orders False; production_effect NONE on every response.
-- 26.7 exposes no place_order/submit_order/send_order function (tested) and
-  reports (never bypasses) the confirmation-gated execution path.
-- No new environment variables (uses existing registered ETRADE_ENABLE_TRADING
-  and APEX_CONFIRMATION_GATED_EXECUTION_ENABLED); no new database.
+## Manual steps (see DEPLOYMENT.md)
+- Apply the small app.py heal snippet (optional but recommended).
+- `git rm --cached apex_tracking.db` and add the .gitignore lines
+  (gitignore_additions.txt) so a DB is never committed again.
+- Clear the corrupt file on the Render disk once.

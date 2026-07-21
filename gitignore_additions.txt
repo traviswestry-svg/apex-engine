@@ -1,0 +1,7 @@
+# Append these lines to your .gitignore (runtime DBs must never be committed):
+*.db
+*.db.corrupt-*.bak
+apex_tracking.db
+apex_decision_forecast.db
+apex_decision_review.db
+apex_validation.db

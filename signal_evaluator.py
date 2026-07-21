@@ -81,8 +81,36 @@ def _conn() -> sqlite3.Connection:
     return c
 
 
+try:  # optional heal helper; degrade to a no-op if unavailable
+    from engine.db_resilience import ensure_healthy_db as _ensure_healthy_db  # type: ignore
+except Exception:  # pragma: no cover
+    def _ensure_healthy_db(path):  # type: ignore
+        return {"ok": True, "healed": False}
+
+
+_READY = False
+
+
+def _ensure_ready() -> bool:
+    """Quarantine a corrupt DB and ensure the pine_signals table exists.
+
+    Idempotent and cached per process so readers (mark_due_signals, scorecard,
+    record_signal) can call it cheaply. This is what makes table creation
+    independent of startup ordering — a fresh or replaced DB is initialized on
+    first read instead of raising 'no such table: pine_signals'.
+    """
+    global _READY
+    if _READY:
+        return True
+    _ensure_healthy_db(_db_path())
+    ok = init_signal_eval_db()
+    _READY = ok
+    return ok
+
+
 def init_signal_eval_db() -> bool:
     """Create the signals table if absent. Returns True on success."""
+    _ensure_healthy_db(_db_path())
     try:
         with _conn() as c:
             c.execute(
@@ -125,6 +153,7 @@ def record_signal(sig: Dict[str, Any]) -> None:
 
     Idempotent on received_at (INSERT OR IGNORE) so a replay never double-inserts.
     """
+    _ensure_ready()
     try:
         entry = sig.get("price")
         if entry is None:
@@ -260,6 +289,7 @@ def mark_due_signals(
     grace = dt.timedelta(minutes=SIGNAL_EVAL_GRACE_MIN)
     due_before = now_utc - window - grace
 
+    _ensure_ready()
     try:
         with _conn() as c:
             rows = c.execute(
@@ -359,6 +389,7 @@ def scorecard(system: Optional[str] = None) -> Dict[str, Any]:
     if system:
         q += " AND system=?"
         params.append(system)
+    _ensure_ready()
     try:
         with _conn() as c:
             rows = c.execute(q, params).fetchall()

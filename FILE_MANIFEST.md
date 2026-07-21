@@ -1,18 +1,19 @@
-# APEX 26.6-26.10 — FILE MANIFEST
+# APEX DB Resilience Hotfix — FILE MANIFEST
 
-Extract directly into the repository root (repo-relative paths preserved).
-Apply on top of a repository that already contains the 25.2-25.5 and 26.0-26.5 deltas.
+Extract into the repository root (repo-relative paths preserved).
+Safe on the deployed 25.4 build and on the full 25.x/26.x stack.
 
 ## NEW
-- engine/trade_story_v266.py                    (26.6)
-- engine/broker_intelligence_v267.py            (26.7, preview/read-only)
-- engine/execution_review_v268.py               (26.8)
-- engine/command_center_v269.py                 (26.9 + 26.10)
-- engine/execution_suite_v26x_part2_routes.py   (shared routes)
-- tests/test_execution_suite_v26x_part2.py
+- engine/db_resilience.py
+- tests/test_db_resilience.py
 
-## MODIFIED
-- app.py                                         (adds part-2 import + registration; cumulative)
+## MODIFIED (drop-in; version-independent)
+- signal_evaluator.py
+
+## MANUAL (not auto-applied — see DEPLOYMENT.md)
+- app.py            (apply the ~8-line heal snippet to init_tracking_db)
+- .gitignore        (append gitignore_additions.txt)
+- remove committed apex_tracking.db from git history/tracking
 
 ## REMOVED
-- (none) — see REMOVED.txt
+- (none auto) — you must run: git rm --cached apex_tracking.db
