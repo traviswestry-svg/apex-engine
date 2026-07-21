@@ -1543,9 +1543,9 @@ function initRunScanButtons() {
    MASTER LOAD
    ════════════════════════════════════════════════════════════════════════════ */
 
-/* ── Fix 4: AbortController timeout + Fix 6: heatmap=0 default ────────────
+/* ── Bounded API timeout + heatmap=0 default ───────────────────────────
    fetchInstitutionalOS():
-     - 6-second hard timeout via AbortController
+     - 12-second hard timeout via AbortController
      - heatmap=0 by default (loaded lazily by its own panel)
      - Returns stale osData on timeout rather than throwing
      - Shows "Engines warming up" if no stale data available
@@ -1554,7 +1554,7 @@ async function fetchInstitutionalOS() {
   // Fix 6: heatmap=0 — heatmap loads in its own lazy panel
   const url = '/api/institutional_os?ticker=' + encodeURIComponent(activeTicker) + '&heatmap=0';
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 6000);   // Fix 4: 6s hard timeout
+  const timer = setTimeout(() => controller.abort(), 12000);  // allow bounded server compose
 
   try {
     const r = await fetch(url, { cache: 'no-store', signal: controller.signal });
@@ -1566,7 +1566,7 @@ async function fetchInstitutionalOS() {
   } catch (err) {
     clearTimeout(timer);
     const wasTimeout = err.name === 'AbortError';
-    if (wasTimeout) console.warn('[APEX] /api/institutional_os timed out after 6s');
+    if (wasTimeout) console.warn('[APEX] /api/institutional_os timed out after 12s');
     else            console.warn('[APEX] /api/institutional_os failed:', err.message);
     // Fix 4: return stale data if available, otherwise signal warming-up state
     if (osData) return { data: osData, timedOut: wasTimeout, stale: true };
