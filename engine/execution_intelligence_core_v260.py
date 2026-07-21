@@ -345,9 +345,48 @@ def build_execution_plan(payload: Optional[Mapping[str, Any]], *,
 
     readiness = assess_readiness(root, evaluated)
     strategy = select_strategy(root, evaluated)
+
+    # Prefer the full 26.1-26.4 engines when present; fall back to the built-in
+    # lightweight assessments otherwise. Existing plan keys are preserved either
+    # way (the full engines are supersets).
     entry = optimize_entry(root, readiness)
     sizing = size_position(root, confidence=decision_block.get("integrity_adjusted_confidence"))
+    contract = None
+    liquidity_block = None
+    try:
+        from . import entry_optimization_v261 as _entry_opt
+        entry = _entry_opt.optimize(root)
+    except Exception:
+        pass
+    try:
+        from . import position_sizing_v264 as _sizing
+        sizing = _sizing.size(root, confidence=decision_block.get("integrity_adjusted_confidence"))
+    except Exception:
+        pass
+    try:
+        from . import contract_intelligence_v262 as _contract
+        contract = _contract.recommend(root)
+    except Exception:
+        pass
+    try:
+        from . import liquidity_slippage_v263 as _liquidity
+        liquidity_block = _liquidity.analyze(root)
+    except Exception:
+        pass
+
     exits = frame_exits(root, readiness)
+
+    execution_plan = {
+        "readiness": readiness,
+        "strategy": strategy,
+        "entry": entry,
+        "position_sizing": sizing,
+        "exits": exits,
+    }
+    if contract is not None:
+        execution_plan["contract"] = contract
+    if liquidity_block is not None:
+        execution_plan["liquidity"] = liquidity_block
 
     return {
         "ok": True,
@@ -357,13 +396,7 @@ def build_execution_plan(payload: Optional[Mapping[str, Any]], *,
         "generated_at": _iso_now(),
         "symbol": _text(root.get("symbol") or _mapping(root.get("market_state")).get("symbol") or "SPX"),
         "direction": _text(decision_block.get("direction")),
-        "execution_plan": {
-            "readiness": readiness,
-            "strategy": strategy,
-            "entry": entry,
-            "position_sizing": sizing,
-            "exits": exits,
-        },
+        "execution_plan": execution_plan,
         "guardrails": {
             "places_orders": False,
             "auto_submits": False,
