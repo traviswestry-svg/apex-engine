@@ -15,7 +15,8 @@ let replayTimer   = null;
 let reviewLog     = [];    // session review entries stored in memory
 let confidenceLog = [];    // server-backed ICI timeline for command center
 let activeTicker  = new URLSearchParams(location.search).get('ticker') || 'SPX';
-const AUTO_INTERVAL = 12000; // ms between auto-refreshes
+const AUTO_INTERVAL = 15000; // cache poll only; heavy composition is background-only
+let osRetryTimer = null;
 
 /* ── Utilities ────────────────────────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
@@ -1554,7 +1555,7 @@ async function fetchInstitutionalOS() {
   // Fix 6: heatmap=0 — heatmap loads in its own lazy panel
   const url = '/api/institutional_os?ticker=' + encodeURIComponent(activeTicker) + '&heatmap=0';
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);  // bounded cold-start compose
+  const timer = setTimeout(() => controller.abort(), 12000);  // allow bounded server compose
 
   try {
     const r = await fetch(url, { cache: 'no-store', signal: controller.signal });
@@ -1562,17 +1563,16 @@ async function fetchInstitutionalOS() {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     if (!data.ok) throw new Error(data.error || 'API error');
-    // A refresh-in-progress or cold-start shell is a control response, not a
-    // composed Institutional OS payload. Treat it as warming so it is never
-    // stored in osData and rendered as a page full of em dashes.
-    const warmingOnly = ['refresh_in_progress', 'warming'].includes(data.status)
-      && !data.decision_state && !data.ribbon && !data.institutional_intelligence;
-    if (warmingOnly) return { data: null, timedOut: false, stale: true, warming: true };
+    // A cold cache is a valid warming state, not renderable institutional data.
+    if ((data.status === 'warming' || data.status === 'refresh_in_progress') &&
+        !data.engine_mode && !data.institutional_intelligence && !data.decision) {
+      return { data: osData || null, timedOut: false, stale: true, warming: true };
+    }
     return { data, timedOut: false, stale: !!data.stale, warming: false };
   } catch (err) {
     clearTimeout(timer);
     const wasTimeout = err.name === 'AbortError';
-    if (wasTimeout) console.warn('[APEX] /api/institutional_os timed out after 15s');
+    if (wasTimeout) console.warn('[APEX] /api/institutional_os timed out after 12s');
     else            console.warn('[APEX] /api/institutional_os failed:', err.message);
     // Fix 4: return stale data if available, otherwise signal warming-up state
     if (osData) return { data: osData, timedOut: wasTimeout, stale: true };
@@ -1594,11 +1594,12 @@ async function loadOS() {
       if (errEl) {
         errEl.style.display = '';
         errEl.textContent = apiResult.timedOut
-          ? '⌛ Engines warming up — retrying in 3 seconds…'
-          : '⌛ Institutional composition in progress — retrying in 3 seconds…';
+          ? '⌛ Engines warming up — retrying in 5 seconds…'
+          : '⚠ No data yet — retrying in 5 seconds…';
       }
-      if (osData) await _renderAll(osData);   // render only a real prior composition
-      setTimeout(loadOS, 3000);
+      if (osData) await _renderAll(osData);   // render stale data if available
+      if (osRetryTimer) clearTimeout(osRetryTimer);
+      osRetryTimer = setTimeout(() => { osRetryTimer = null; loadOS(); }, 5000);
       return;
     }
 
@@ -1606,9 +1607,12 @@ async function loadOS() {
 
     // Banner: stale vs fresh
     if (errEl) {
-      if (apiResult.stale || data.stale) {
+      if (apiResult.warming) {
         errEl.style.display = '';
-        errEl.textContent = '⟳ Showing cached data — refresh in progress';
+        errEl.textContent = '⌛ Engines warming in the background — dashboard remains available';
+      } else if (apiResult.stale || data.stale) {
+        errEl.style.display = '';
+        errEl.textContent = '⟳ Showing cached data — background refresh in progress';
       } else {
         errEl.style.display = 'none';
         errEl.textContent = '';
