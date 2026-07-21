@@ -1555,7 +1555,7 @@ async function fetchInstitutionalOS() {
   // Fix 6: heatmap=0 — heatmap loads in its own lazy panel
   const url = '/api/institutional_os?ticker=' + encodeURIComponent(activeTicker) + '&heatmap=0';
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);  // allow bounded server compose
+  const timer = setTimeout(() => controller.abort('institutional_os_timeout'), 5000);  // cache-only route should answer quickly
 
   try {
     const r = await fetch(url, { cache: 'no-store', signal: controller.signal });
@@ -1572,7 +1572,7 @@ async function fetchInstitutionalOS() {
   } catch (err) {
     clearTimeout(timer);
     const wasTimeout = err.name === 'AbortError';
-    if (wasTimeout) console.warn('[APEX] /api/institutional_os timed out after 12s');
+    if (wasTimeout) console.warn('[APEX] /api/institutional_os timed out after 5s');
     else            console.warn('[APEX] /api/institutional_os failed:', err.message);
     // Fix 4: return stale data if available, otherwise signal warming-up state
     if (osData) return { data: osData, timedOut: wasTimeout, stale: true };
@@ -3149,24 +3149,28 @@ document.addEventListener('DOMContentLoaded', () => {
     if (frame && !frame.src) frame.src = '/chart';
   });
 
+  // Render starter runs one Gunicorn worker. Do not fire every dashboard API
+  // at once: the browser burst previously queued /api/institutional_os behind
+  // slower endpoints and made a cache-only request appear to hang.
   loadOS();
-  loadMissionControl();
-  loadScannerIdeas();
-  loadFlowTape();
-  loadReviewSummary();
-  loadTradeHistory();
-  loadMarketStatus();
-  loadSavedReviews();
-  loadSignalLog();
-  loadEdgeStats();
+  setTimeout(loadMissionControl, 750);
+  setTimeout(loadMarketStatus, 1500);
+  setTimeout(loadScannerIdeas, 2250);
+  setTimeout(loadFlowTape, 3500);
+  setTimeout(loadSignalLog, 5000);
+  setTimeout(loadEdgeStats, 6500);
+  setTimeout(loadReviewSummary, 8000);
+  setTimeout(loadTradeHistory, 9500);
+  setTimeout(loadSavedReviews, 11000);
 
-  setInterval(loadOS, AUTO_INTERVAL);
-  setInterval(loadMissionControl, 5000);
-  setInterval(loadScannerIdeas, 30000);
-  setInterval(loadFlowTape, 45000);
-  setInterval(loadMarketStatus, 60000);
-  setInterval(loadSignalLog, 30000);
-  setInterval(loadEdgeStats, 60000);
+  // Offset recurring polls so they do not synchronize into another request burst.
+  setTimeout(() => setInterval(loadOS, AUTO_INTERVAL), 2000);
+  setTimeout(() => setInterval(loadMissionControl, 15000), 4500);
+  setTimeout(() => setInterval(loadScannerIdeas, 30000), 7000);
+  setTimeout(() => setInterval(loadFlowTape, 45000), 10500);
+  setTimeout(() => setInterval(loadMarketStatus, 60000), 13500);
+  setTimeout(() => setInterval(loadSignalLog, 30000), 16500);
+  setTimeout(() => setInterval(loadEdgeStats, 60000), 19500);
 });
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -4091,7 +4095,7 @@ async function loadMissionControl() {
   try {
     const url = '/api/mission_control?ticker=' + encodeURIComponent(activeTicker);
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 5000);
+    const t = setTimeout(() => ctrl.abort('mission_control_timeout'), 8000);
     const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
     clearTimeout(t);
     const d = await r.json();
