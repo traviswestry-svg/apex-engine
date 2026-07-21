@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from flask import Flask, jsonify, render_template, request, redirect
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 
@@ -5213,23 +5213,42 @@ def api_institutional_os():
             session_ctx = market_session_context()
             timed_out: List[str] = []
 
-            # Fetch all data inputs in parallel with per-component timeouts
-            with ThreadPoolExecutor(max_workers=6, thread_name_prefix="apex-os-fetch") as pool:
-                f_flow    = pool.submit(quantdata_flow_snapshot, ticker)
-                f_spy     = pool.submit(get_daily_bars, "SPY", 260)
-                f_qqq     = pool.submit(get_daily_bars, "QQQ", 260)
-                f_daily   = pool.submit(get_daily_bars, ticker, 260)
-                f_intra   = pool.submit(get_intraday_bars, ticker, 5, 3)
-                f_vix     = pool.submit(get_vix_price)
+            # Fetch all data inputs in parallel under ONE shared timeout.
+            # Do not use a ThreadPoolExecutor context manager here: its __exit__
+            # waits for every provider task, which previously defeated the timeout
+            # and blocked the Render gunicorn worker indefinitely.
+            pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="apex-os-fetch")
+            future_map = {
+                pool.submit(quantdata_flow_snapshot, ticker): ("flow_snapshot", {}),
+                pool.submit(get_daily_bars, "SPY", 260): ("spy_bars", []),
+                pool.submit(get_daily_bars, "QQQ", 260): ("qqq_bars", []),
+                pool.submit(get_daily_bars, ticker, 260): ("daily_bars", []),
+                pool.submit(get_intraday_bars, ticker, 5, 3): ("intraday_bars", []),
+                pool.submit(get_vix_price): ("vix_price", None),
+            }
+            done, not_done = wait(tuple(future_map), timeout=_FETCH_TIMEOUT)
+            fetched = {}
+            for future, (label, default) in future_map.items():
+                if future in done:
+                    try:
+                        fetched[label] = future.result()
+                    except Exception as exc:
+                        print(f"[IOS] {label} failed ({type(exc).__name__}: {exc})", flush=True)
+                        fetched[label] = default
+                        timed_out.append(label)
+                else:
+                    future.cancel()
+                    fetched[label] = default
+                    timed_out.append(label)
+                    print(f"[IOS] {label} timed out after {_FETCH_TIMEOUT:.1f}s", flush=True)
+            pool.shutdown(wait=False, cancel_futures=True)
 
-            flow_snapshot, to1 = _safe_result(f_flow,  "flow_snapshot",  {})
-            spy_bars,      to2 = _safe_result(f_spy,   "spy_bars",       [])
-            qqq_bars,      to3 = _safe_result(f_qqq,   "qqq_bars",       [])
-            daily_bars,    to4 = _safe_result(f_daily, "daily_bars",     [])
-            intraday_bars, to5 = _safe_result(f_intra, "intraday_bars",  [])
-            vix_price,     to6 = _safe_result(f_vix,   "vix_price",      None)
-            for t in [to1,to2,to3,to4,to5,to6]:
-                if t: timed_out.append(t)
+            flow_snapshot = fetched["flow_snapshot"]
+            spy_bars = fetched["spy_bars"]
+            qqq_bars = fetched["qqq_bars"]
+            daily_bars = fetched["daily_bars"]
+            intraday_bars = fetched["intraday_bars"]
+            vix_price = fetched["vix_price"]
 
             # Volume profile with its own timeout protection
             try:
