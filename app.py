@@ -116,6 +116,14 @@ except Exception as _td14_err:
     TRADE_DIRECTOR_PHASE14_AVAILABLE = False
     print(f"Trade Director Phase 14 unavailable: {_td14_err}", flush=True)
 
+# APEX Trade Director Phase 15 — options intelligence and contract ranking
+try:
+    from engine.trade_director_options_intelligence import build_options_intelligence as td15_build_options_intelligence
+    TRADE_DIRECTOR_PHASE15_AVAILABLE = True
+except Exception as _td15_err:
+    TRADE_DIRECTOR_PHASE15_AVAILABLE = False
+    print(f"Trade Director Phase 15 unavailable: {_td15_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5224,6 +5232,28 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td14_build_err:
             result["strategy_orchestration"] = {"version": "PHASE_14", "error": str(_td14_build_err)}
 
+    if TRADE_DIRECTOR_PHASE15_AVAILABLE:
+        try:
+            # Cached-only discovery. Phase 15 never invokes a provider or broker.
+            with STATE_LOCK:
+                _td15_cached = dict(STATE.get("last_result") or {})
+            _td15_contracts = []
+            def _td15_collect(node):
+                if isinstance(node, dict):
+                    for key, value in node.items():
+                        if key in ("contracts", "option_contracts", "chain") and isinstance(value, list):
+                            _td15_contracts.extend(x for x in value if isinstance(x, dict))
+                        elif isinstance(value, (dict, list)):
+                            _td15_collect(value)
+                elif isinstance(node, list):
+                    for value in node:
+                        if isinstance(value, (dict, list)):
+                            _td15_collect(value)
+            _td15_collect(_td15_cached)
+            result["options_intelligence"] = td15_build_options_intelligence(result, _td15_contracts[:1000])
+        except Exception as _td15_build_err:
+            result["options_intelligence"] = {"version": "PHASE_15", "error": str(_td15_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5235,6 +5265,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase13_last_intelligence"] = dict(result["cross_asset_intelligence"])
         if result.get("strategy_orchestration"):
             ACTIVE_POSITION["phase14_last_orchestration"] = dict(result["strategy_orchestration"])
+        if result.get("options_intelligence"):
+            ACTIVE_POSITION["phase15_last_intelligence"] = dict(result["options_intelligence"])
 
     return result
 
@@ -7570,6 +7602,24 @@ def api_position_cross_asset_intelligence():
         intelligence = td13_build_intelligence(snapshot, monitor, history)
     return jsonify({"ok": True, "cross_asset_intelligence": intelligence or cached_result})
 
+
+
+
+@app.route("/api/position/options-intelligence", methods=["GET", "POST"])
+def api_position_options_intelligence():
+    if not TRADE_DIRECTOR_PHASE15_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 15 unavailable"}), 503
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        monitor = monitor_active_position()
+        data = td15_build_options_intelligence(monitor, body.get("contracts") or [])
+        return jsonify({"ok": True, "options_intelligence": data})
+    monitor = monitor_active_position()
+    data = monitor.get("options_intelligence")
+    if not data:
+        with ACTIVE_POSITION_LOCK:
+            data = dict(ACTIVE_POSITION.get("phase15_last_intelligence") or {})
+    return jsonify({"ok": True, "options_intelligence": data})
 
 @app.route("/api/position/strategy-orchestration")
 def api_position_strategy_orchestration():
