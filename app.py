@@ -165,6 +165,16 @@ except Exception as _td19_err:
     TRADE_DIRECTOR_PHASE19_AVAILABLE = False
     print(f"Trade Director Phase 19 unavailable: {_td19_err}", flush=True)
 
+# APEX Trade Director Phase 20 — institutional decision engine
+try:
+    from engine.trade_director_institutional_decision_engine import (
+        build_institutional_decision_engine as td20_build_institutional_decision_engine,
+    )
+    TRADE_DIRECTOR_PHASE20_AVAILABLE = True
+except Exception as _td20_err:
+    TRADE_DIRECTOR_PHASE20_AVAILABLE = False
+    print(f"Trade Director Phase 20 unavailable: {_td20_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5330,6 +5340,14 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td19_build_err:
             result["decision_intelligence"] = {"version": "PHASE_19", "error": str(_td19_build_err)}
 
+    if TRADE_DIRECTOR_PHASE20_AVAILABLE:
+        try:
+            with ACTIVE_POSITION_LOCK:
+                _td20_prior = dict(ACTIVE_POSITION.get("phase20_last_decision_engine") or {})
+            result["institutional_decision_engine"] = td20_build_institutional_decision_engine(result, _td20_prior)
+        except Exception as _td20_build_err:
+            result["institutional_decision_engine"] = {"version": "PHASE_20", "error": str(_td20_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5351,6 +5369,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase18_last_flow_intelligence"] = dict(result["flow_intelligence"])
         if result.get("decision_intelligence"):
             ACTIVE_POSITION["phase19_last_decision_intelligence"] = dict(result["decision_intelligence"])
+        if result.get("institutional_decision_engine"):
+            ACTIVE_POSITION["phase20_last_decision_engine"] = dict(result["institutional_decision_engine"])
 
     return result
 
@@ -7777,6 +7797,26 @@ def api_position_institutional_decision_intelligence():
         with ACTIVE_POSITION_LOCK:
             data = dict(ACTIVE_POSITION.get("phase19_last_decision_intelligence") or {})
     return jsonify({"ok": True, "decision_intelligence": data})
+
+@app.route("/api/position/institutional-decision-engine", methods=["GET", "POST"])
+def api_position_institutional_decision_engine():
+    """Return or evaluate Phase 20 governed institutional decision lifecycle."""
+    if not TRADE_DIRECTOR_PHASE20_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 20 unavailable"}), 503
+    monitor = monitor_active_position()
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        context = dict(monitor)
+        context.update(body.get("context") or body.get("evidence") or {})
+        prior = body.get("prior") or {}
+        data = td20_build_institutional_decision_engine(context, prior)
+        return jsonify({"ok": True, "institutional_decision_engine": data})
+    data = monitor.get("institutional_decision_engine")
+    if not data:
+        with ACTIVE_POSITION_LOCK:
+            data = dict(ACTIVE_POSITION.get("phase20_last_decision_engine") or {})
+    return jsonify({"ok": True, "institutional_decision_engine": data})
+
 
 @app.route("/api/position/strategy-orchestration")
 def api_position_strategy_orchestration():
