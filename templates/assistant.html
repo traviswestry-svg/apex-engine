@@ -47,6 +47,8 @@
 
 .phase5-panel{margin-top:12px;padding:14px;border:1px solid rgba(168,85,247,.35);border-radius:14px;background:#110d1d}.phase5-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.coach-title{font-size:18px;font-weight:900}.coach-copy{font-size:14px;line-height:1.55;color:#d8e5f7;margin-top:8px}.coach-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:10px;margin-top:12px}.coach-card{background:#090d18;border:1px solid #2e2541;border-radius:11px;padding:12px}.coach-evidence{margin-top:8px}.coach-ev{padding:7px 0;border-bottom:1px solid #211b30;font-size:12px;line-height:1.45}.coach-ev:last-child{border-bottom:0}.coach-ev .src{color:var(--muted);font-size:10px;text-transform:uppercase}.coach-ev.support{color:#c9f7d7}.coach-ev.risk{color:#ffd1d1}.coach-ask{display:flex;gap:8px;margin-top:10px}.coach-ask input{flex:1;background:#070b13;border:1px solid #34294b;color:var(--text);border-radius:9px;padding:10px}.coach-answer{margin-top:9px;min-height:44px;padding:10px;border-radius:9px;background:#080c15;border:1px solid #241d34;color:#cbd8ea;font-size:12px;line-height:1.5}.phase5-timeline{max-height:250px;overflow:auto;margin-top:8px}.p5-event{padding:8px 0;border-bottom:1px solid #211b30}.p5-event-top{display:flex;justify-content:space-between;gap:8px;font-size:11px}.p5-event-rec{font-weight:900}.p5-event-summary{font-size:11px;color:#b7c7dd;margin-top:4px;line-height:1.4}.review-panel{display:none;margin:12px 0;padding:14px;border:1px solid rgba(245,158,11,.45);border-radius:14px;background:#171208}.review-panel.active{display:block}.review-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}.review-stat{background:#0d0b07;border:1px solid #3b2f15;border-radius:9px;padding:9px}.review-stat strong{display:block;font-size:20px;margin-top:4px}.review-lessons{margin-top:10px;color:#d9c79f;line-height:1.5;font-size:12px}
 @media(max-width:760px){.coach-grid{grid-template-columns:1fr}.phase5-head{display:block}.review-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.coach-ask{display:block}.coach-ask button{margin-top:8px;width:100%}}
+
+.phase6-panel{margin-top:14px;border:1px solid rgba(110,231,249,.35);background:#081321;border-radius:14px;padding:14px}.phase6-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-top:10px}.phase6-field label{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;margin-bottom:4px}.phase6-field input,.phase6-field select,.phase6-field textarea{width:100%;background:#050c16;color:var(--text);border:1px solid #2b405d;border-radius:8px;padding:8px}.phase6-result{margin-top:10px;color:#cfe0f5;line-height:1.5}.scorecard-row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #1b2b3f;font-size:12px}
 </style></head><body>
 <nav class="apex-nav">
   <a href="/" class="nav-logo">APEX</a>
@@ -87,6 +89,7 @@
 </div>
 <script>
 const TICKER = new URLSearchParams(location.search).get('ticker') || 'SPX';
+let LAST_ARCHIVE_ID = '';
 
 function toggleEntryForm(){const f=document.getElementById('entryForm');f.style.display=f.style.display==='none'?'block':'none';}
 function fieldNum(id){const v=document.getElementById(id).value;return v===''?0:Number(v);}
@@ -96,7 +99,7 @@ async function startTrade(){
   try{const r=await fetch('/api/position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Unable to start trade');status.textContent='Trade confirmed. APEX is now in management mode.';document.getElementById('entryForm').style.display='none';await loadDirector();}catch(e){status.textContent=e.message;}
 }
 async function positionAction(action,extra={}){
-  try{const r=await fetch('/api/position/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Action failed');if(j.post_trade_review)renderPostTradeReview(j.post_trade_review);await loadDirector();}catch(e){alert(e.message);}
+  try{const r=await fetch('/api/position/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Action failed');if(j.position?.phase6_archive_id)LAST_ARCHIVE_ID=j.position.phase6_archive_id;if(j.post_trade_review)renderPostTradeReview(j.post_trade_review,j.position?.phase6_archive_id);await loadDirector();}catch(e){alert(e.message);}
 }
 async function updatePremium(){const v=Number(document.getElementById('livePremium')?.value||0);if(v<=0){alert('Enter the current option premium.');return;}await positionAction('UPDATE_PREMIUM',{option_current_price:v});}
 
@@ -143,12 +146,29 @@ function renderPositionIntelligence(p4){
 }
 
 
-function renderPostTradeReview(r){
+function renderPostTradeReview(r,tradeId=''){
   const el=document.getElementById('postTradeReview');
   if(!r){el.className='review-panel';el.innerHTML='';return;}
+  if(tradeId)LAST_ARCHIVE_ID=tradeId;
   const lessons=(r.lessons||[]).map(x=>`<div>• ${esc(x)}</div>`).join('');
   el.className='review-panel active';
-  el.innerHTML=`<div class="label">PHASE 5 POST-TRADE REVIEW</div><div class="coach-title">Institutional Trade Coach Review</div><div class="review-grid"><div class="review-stat"><span class="label">Duration</span><strong>${r.duration_minutes==null?'--':r.duration_minutes+'m'}</strong></div><div class="review-stat"><span class="label">Health Start / Peak / Close</span><strong>${r.starting_health??'--'} / ${r.peak_health??'--'} / ${r.closing_health??'--'}</strong></div><div class="review-stat"><span class="label">Process Score</span><strong>${r.process_score==null?'--':r.process_score+'/100'}</strong></div><div class="review-stat"><span class="label">Est. P/L</span><strong>${r.estimated_realized_pnl==null?'--':money(r.estimated_realized_pnl)}</strong></div></div><div class="review-lessons">${lessons}</div><div class="intel-note">${esc(r.calibration_note||'')}</div>`;
+  el.innerHTML=`<div class="label">PHASE 5 POST-TRADE REVIEW</div><div class="coach-title">Institutional Trade Coach Review</div><div class="review-grid"><div class="review-stat"><span class="label">Duration</span><strong>${r.duration_minutes==null?'--':r.duration_minutes+'m'}</strong></div><div class="review-stat"><span class="label">Health Start / Peak / Close</span><strong>${r.starting_health??'--'} / ${r.peak_health??'--'} / ${r.closing_health??'--'}</strong></div><div class="review-stat"><span class="label">Process Score</span><strong>${r.process_score==null?'--':r.process_score+'/100'}</strong></div><div class="review-stat"><span class="label">Est. P/L</span><strong>${r.estimated_realized_pnl==null?'--':money(r.estimated_realized_pnl)}</strong></div></div><div class="review-lessons">${lessons}</div><div class="intel-note">${esc(r.calibration_note||'')}</div>
+  <div class="phase6-panel"><div class="label">TRADE DIRECTOR PHASE 6</div><div class="coach-title">Confirm Outcome & Train APEX</div><div class="sub">Record the actual result so recommendation scoring is based on your confirmed trade, not an inferred broker fill.</div><div class="phase6-grid"><div class="phase6-field"><label>Exit Premium</label><input id="p6ExitPremium" type="number" step="0.01"></div><div class="phase6-field"><label>Realized P/L</label><input id="p6RealizedPnl" type="number" step="0.01"></div><div class="phase6-field"><label>Followed APEX?</label><select id="p6Followed"><option value="">Not recorded</option><option value="true">Yes</option><option value="false">No</option></select></div><div class="phase6-field"><label>Post-exit move (SPX pts)</label><input id="p6PostMove" type="number" step="0.1"></div></div><div class="phase6-field" style="margin-top:9px"><label>Outcome Notes</label><textarea id="p6Notes" rows="2" placeholder="What happened after the exit?"></textarea></div><div class="actions"><button class="btn goodbtn" onclick="savePhase6Outcome()">Save Outcome & Score</button><button class="btn" onclick="loadPhase6Scorecard()">View Learning Scorecard</button><button class="btn" onclick="loadPhase6Replay()">Replay Trade</button></div><div id="phase6Result" class="phase6-result">Awaiting a user-confirmed outcome.</div></div>`;
+}
+
+async function savePhase6Outcome(){
+  const out=document.getElementById('phase6Result'); out.textContent='Scoring recommendations…';
+  const followed=document.getElementById('p6Followed')?.value;
+  const body={trade_id:LAST_ARCHIVE_ID,exit_premium:Number(document.getElementById('p6ExitPremium')?.value||0)||null,realized_pnl:Number(document.getElementById('p6RealizedPnl')?.value||0),post_exit_move_points:Number(document.getElementById('p6PostMove')?.value||0)||null,followed_apex:followed===''?null:followed==='true',notes:document.getElementById('p6Notes')?.value||''};
+  try{const r=await fetch('/api/position/outcome',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Unable to save outcome');LAST_ARCHIVE_ID=j.trade_id;const sc=j.scoring||{};out.innerHTML=`Outcome saved for <b>${esc(j.trade_id)}</b>. Recommendation score: <b>${sc.average_recommendation_score??'--'}/100</b> across ${sc.recommendations_scored||0} events.<div class="intel-note">${esc(sc.note||'')}</div>`;}catch(e){out.textContent=e.message;}
+}
+async function loadPhase6Scorecard(){
+  const out=document.getElementById('phase6Result');out.textContent='Loading calibration scorecard…';
+  try{const r=await fetch('/api/position/learning/scorecard');const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Unable to load scorecard');const s=j.scorecard||{},rows=(s.by_recommendation||[]).map(x=>`<div class="scorecard-row"><span>${esc(actionLabel(x.recommendation))}</span><strong>${x.average_score}/100 · n=${x.samples}</strong></div>`).join('');out.innerHTML=`<b>${esc(s.calibration_status||'LEARNING')}</b> · ${s.trades_scored||0} scored of ${s.trades_archived||0} archived trades · overall ${s.overall_score??'--'}/100${rows}<div class="intel-note">${esc(s.minimum_sample_note||'')}</div>`;}catch(e){out.textContent=e.message;}
+}
+async function loadPhase6Replay(){
+  const out=document.getElementById('phase6Result');out.textContent='Loading trade replay…';
+  try{const q=LAST_ARCHIVE_ID?'?trade_id='+encodeURIComponent(LAST_ARCHIVE_ID):'';const r=await fetch('/api/position/replay'+q);const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Unable to load replay');const t=j.replay||{},events=t.timeline||[];out.innerHTML=`<b>${esc(t.trade_id||'')}</b> · ${esc(t.ticker||'')} ${esc(t.side||'')} · ${events.length} timeline events · ${t.outcome?'outcome confirmed':'outcome pending'}.<div class="intel-note">Replay data is preserved in the Phase 6 archive and available through the replay endpoint.</div>`;}catch(e){out.textContent=e.message;}
 }
 
 async function askApex(){
