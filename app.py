@@ -40,6 +40,14 @@ except Exception as _td7_err:
     TRADE_DIRECTOR_PHASE7_AVAILABLE = False
     print(f"Trade Director Phase 7 unavailable: {_td7_err}", flush=True)
 
+# APEX Trade Director Phase 8 — stable, confirmation-gated management policy
+try:
+    from engine.trade_director_policy import build_management_policy as td8_build_policy
+    TRADE_DIRECTOR_PHASE8_AVAILABLE = True
+except Exception as _td8_err:
+    TRADE_DIRECTOR_PHASE8_AVAILABLE = False
+    print(f"Trade Director Phase 8 unavailable: {_td8_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -3749,7 +3757,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td7"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td8"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -5026,6 +5034,19 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception:
             phase7_profile = None
             phase7_guidance = None
+    phase8_policy = None
+    if TRADE_DIRECTOR_PHASE8_AVAILABLE:
+        try:
+            with ACTIVE_POSITION_LOCK:
+                _phase8_prior = dict(ACTIVE_POSITION.get("phase8_policy_state") or {})
+            phase8_policy = td8_build_policy(
+                recommendation, confidence, phase3, phase4, phase7_guidance, _phase8_prior
+            )
+            with ACTIVE_POSITION_LOCK:
+                ACTIVE_POSITION["phase8_policy_state"] = dict(phase8_policy.get("state") or {})
+                ACTIVE_POSITION["phase8_last_policy"] = {k:v for k,v in phase8_policy.items() if k != "state"}
+        except Exception:
+            phase8_policy = None
     event = {
         "time": now_et().strftime("%H:%M:%S"),
         "timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
@@ -5065,6 +5086,7 @@ def monitor_active_position() -> Dict[str, Any]:
         "trade_coach": phase5,
         "adaptive_intelligence": phase7_guidance,
         "adaptive_profile": phase7_profile,
+        "management_policy": phase8_policy,
         "recommendation_timeline": timeline,
         "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "flow_snapshot": {
@@ -7168,6 +7190,60 @@ def api_position_learning_adaptive_profile():
         return jsonify({"ok": True, "profile": profile, "guidance": guidance})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/position/policy")
+def api_position_policy():
+    """Return the current Phase 8 policy without executing any order."""
+    if not TRADE_DIRECTOR_PHASE8_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 8 policy engine unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        is_open = bool(ACTIVE_POSITION and ACTIVE_POSITION.get("status") == "OPEN")
+        last_policy = dict(ACTIVE_POSITION.get("phase8_last_policy") or {})
+        audit = list(ACTIVE_POSITION.get("phase8_policy_audit") or [])[-20:]
+    if is_open:
+        monitor = monitor_active_position()
+        last_policy = monitor.get("management_policy") or last_policy
+    return jsonify({"ok": True, "status": "MONITORING" if is_open else "NO_POSITION", "policy": last_policy, "audit": audit})
+
+
+@app.route("/api/position/policy/decision", methods=["POST"])
+def api_position_policy_decision():
+    """Audit a trader acknowledgement or override; never place a broker order."""
+    body = request.get_json(silent=True) or {}
+    decision = str(body.get("decision") or "").upper().strip()
+    selected = str(body.get("selected_action") or "").upper().strip()
+    reason = str(body.get("reason") or "").strip()[:500]
+    if decision not in {"ACKNOWLEDGE", "OVERRIDE"}:
+        return jsonify({"ok": False, "error": "decision must be ACKNOWLEDGE or OVERRIDE"}), 400
+    allowed = {"HOLD", "PROTECT_PROFIT", "TRIM_25", "TRIM_50", "TRIM_75", "EXIT"}
+    if decision == "OVERRIDE" and selected not in allowed:
+        return jsonify({"ok": False, "error": "selected_action is invalid"}), 400
+    with ACTIVE_POSITION_LOCK:
+        if not ACTIVE_POSITION or ACTIVE_POSITION.get("status") != "OPEN":
+            return jsonify({"ok": False, "error": "no open manual position"}), 409
+        policy = dict(ACTIVE_POSITION.get("phase8_last_policy") or {})
+        record = {
+            "time": now_et().strftime("%H:%M:%S"),
+            "timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+            "decision": decision,
+            "policy_action": policy.get("policy_action"),
+            "selected_action": selected or policy.get("policy_action"),
+            "reason": reason,
+        }
+        audit = list(ACTIVE_POSITION.get("phase8_policy_audit") or [])
+        audit.append(record)
+        ACTIVE_POSITION["phase8_policy_audit"] = audit[-100:]
+        timeline = list(ACTIVE_POSITION.get("recommendation_timeline") or [])
+        timeline.append({
+            "time": record["time"], "timestamp": record["timestamp"], "kind": "POLICY_DECISION",
+            "recommendation": record["selected_action"], "trade_health": policy.get("trade_health"),
+            "confidence": policy.get("confidence"),
+            "summary": ("Trader acknowledged Phase 8 policy." if decision == "ACKNOWLEDGE" else "Trader overrode Phase 8 policy: " + (reason or "reason not entered")),
+            "snapshot": record,
+        })
+        ACTIVE_POSITION["recommendation_timeline"] = timeline[-120:]
+    return jsonify({"ok": True, "record": record, "execution_note": "Audit recorded only; no broker order was sent."})
 
 
 @app.route("/api/performance")
