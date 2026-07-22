@@ -82,6 +82,21 @@ except Exception as _td11_err:
     TRADE_DIRECTOR_PHASE11_AVAILABLE = False
     print(f"Trade Director Phase 11 unavailable: {_td11_err}", flush=True)
 
+# APEX Trade Director Phase 12 — institutional intelligence and market memory
+try:
+    from engine.trade_director_market_memory import (
+        build_market_snapshot as td12_build_snapshot,
+        build_intelligence as td12_build_intelligence,
+        archive_session as td12_archive_session,
+        memory_sessions as td12_memory_sessions,
+        record_missed_opportunity as td12_record_missed,
+        missed_opportunities as td12_missed_opportunities,
+    )
+    TRADE_DIRECTOR_PHASE12_AVAILABLE = True
+except Exception as _td12_err:
+    TRADE_DIRECTOR_PHASE12_AVAILABLE = False
+    print(f"Trade Director Phase 12 unavailable: {_td12_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5165,11 +5180,21 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td11_build_err:
             result["session_intelligence"] = {"version": "PHASE_11", "error": str(_td11_build_err)}
 
+    if TRADE_DIRECTOR_PHASE12_AVAILABLE:
+        try:
+            _td12_history = td6_trade_history(250) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
+            _td12_snapshot = td12_build_snapshot(pos, result, result.get("session_intelligence"), now_et().replace(tzinfo=None))
+            result["market_memory"] = td12_build_intelligence(_td12_snapshot, td12_memory_sessions(500), _td12_history)
+        except Exception as _td12_build_err:
+            result["market_memory"] = {"version": "PHASE_12", "error": str(_td12_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
         if result.get("session_intelligence"):
             ACTIVE_POSITION["phase11_last_session"] = dict(result["session_intelligence"])
+        if result.get("market_memory"):
+            ACTIVE_POSITION["phase12_last_intelligence"] = dict(result["market_memory"])
 
     return result
 
@@ -7465,6 +7490,65 @@ def api_position_session_intelligence():
         history = td6_trade_history(250) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
         session = td11_build_session_intelligence(pos, monitor, history, now_et().replace(tzinfo=None))
     return jsonify({"ok": True, "session_intelligence": session or cached})
+
+
+@app.route("/api/position/market-memory")
+def api_position_market_memory():
+    """Return Phase 12 historical similarity, probabilities, and playbooks."""
+    if not TRADE_DIRECTOR_PHASE12_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 12 market memory unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        pos = dict(ACTIVE_POSITION)
+        cached = dict(ACTIVE_POSITION.get("phase12_last_intelligence") or {})
+    monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
+    if monitor.get("market_memory"):
+        intelligence = monitor["market_memory"]
+    else:
+        history = td6_trade_history(250) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
+        session = cached.get("session_intelligence") or {}
+        snapshot = td12_build_snapshot(pos, monitor, session, now_et().replace(tzinfo=None))
+        intelligence = td12_build_intelligence(snapshot, td12_memory_sessions(500), history)
+    return jsonify({"ok": True, "market_memory": intelligence or cached})
+
+
+@app.route("/api/position/market-memory/archive", methods=["POST"])
+def api_position_market_memory_archive():
+    """Archive the current session snapshot; lazy local persistence only."""
+    if not TRADE_DIRECTOR_PHASE12_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 12 market memory unavailable"}), 503
+    payload = request.get_json(silent=True) or {}
+    with ACTIVE_POSITION_LOCK:
+        pos = dict(ACTIVE_POSITION)
+    monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
+    snapshot = payload.get("snapshot") or td12_build_snapshot(pos, monitor, monitor.get("session_intelligence"), now_et().replace(tzinfo=None))
+    archived = td12_archive_session(dict(snapshot), payload.get("outcome"), str(payload.get("source") or "MANUAL"))
+    return jsonify({"ok": True, "archived": archived})
+
+
+@app.route("/api/position/market-memory/replay")
+def api_position_market_memory_replay():
+    """Return a stored Phase 12 session without future-data enrichment."""
+    if not TRADE_DIRECTOR_PHASE12_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 12 market memory unavailable"}), 503
+    session_id = str(request.args.get("session_id") or "").strip()
+    rows = td12_memory_sessions(1000)
+    row = next((x for x in rows if x.get("session_id") == session_id), None) if session_id else (rows[0] if rows else None)
+    if not row:
+        return jsonify({"ok": False, "error": "No archived market-memory session found"}), 404
+    return jsonify({"ok": True, "replay": row, "lookahead_protection": True})
+
+
+@app.route("/api/position/market-memory/missed-opportunity", methods=["GET", "POST"])
+def api_position_market_memory_missed_opportunity():
+    """Record or list opportunities intentionally passed by the trader."""
+    if not TRADE_DIRECTOR_PHASE12_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 12 market memory unavailable"}), 503
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        if not payload.get("setup") and not payload.get("opportunity"):
+            return jsonify({"ok": False, "error": "setup or opportunity is required"}), 400
+        return jsonify({"ok": True, "record": td12_record_missed(payload)})
+    return jsonify({"ok": True, "opportunities": td12_missed_opportunities(request.args.get("limit", 50))})
 
 
 @app.route("/api/position/policy")
