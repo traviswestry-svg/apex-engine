@@ -4153,6 +4153,141 @@ def set_active_position(ticker: str, side: str, entry_price: float, stop: float,
     return pos
 
 
+
+def _trade_director_phase2_synthesis(
+    side: str,
+    base_recommendation: str,
+    base_health: float,
+    base_confidence: float,
+    current_price: float,
+    entry_price: float,
+) -> Dict[str, Any]:
+    """Create one post-entry recommendation from the latest cached APEX intelligence.
+
+    This is a read-only, deterministic synthesis layer. It never calls a market
+    provider and therefore adds no web-worker fan-out or import-time workload.
+    Missing engines are reported as unavailable instead of being fabricated.
+    """
+    with STATE_LOCK:
+        snapshot = dict(STATE.get("last_result") or {})
+
+    wanted = "BULL" if str(side).upper() == "CALL" else "BEAR"
+    opposed = "BEAR" if wanted == "BULL" else "BULL"
+
+    def _pick(*paths, default=None):
+        for path in paths:
+            cur = snapshot
+            ok = True
+            for part in path.split("."):
+                if not isinstance(cur, dict) or part not in cur:
+                    ok = False
+                    break
+                cur = cur.get(part)
+            if ok and cur not in (None, "", [], {}):
+                return cur
+        return default
+
+    def _text(v):
+        if isinstance(v, dict):
+            for k in ("state", "bias", "regime", "direction", "label", "status", "summary"):
+                if v.get(k) not in (None, ""):
+                    return str(v.get(k))
+        return str(v or "")
+
+    def _alignment(raw):
+        t = _text(raw).upper().replace("-", "_").replace(" ", "_")
+        bull = any(x in t for x in ("BULL", "CALL", "HIGHER", "RISING", "BUY", "UP", "LONG"))
+        bear = any(x in t for x in ("BEAR", "PUT", "LOWER", "FALLING", "SELL", "DOWN", "SHORT"))
+        if bull and not bear:
+            return 1 if wanted == "BULL" else -1
+        if bear and not bull:
+            return 1 if wanted == "BEAR" else -1
+        return 0
+
+    component_defs = [
+        ("Order Flow", _pick("flow_intelligence.flow_bias", "flow_intelligence.bias", "flow_snapshot.bias", "institutional_intelligence.flow_bias")),
+        ("Auction", _pick("auction.acceptance", "auction.auction_state", "auction_intelligence.acceptance", "institutional_intelligence.acceptance")),
+        ("Volume Profile", _pick("volume_profile.poc_migration", "profile.poc_migration", "institutional_intelligence.poc_migration", "market_state.poc_migration")),
+        ("Dealer / Gamma", _pick("dealer_positioning.gamma.regime", "gamma_regime.regime", "institutional_intelligence.dealer_bias", "market_state.gamma_regime")),
+        ("Market Structure", _pick("structure.trend", "structure.bias", "market_state.structure", "market_state.approved_side")),
+        ("Expected Path", _pick("expected_path.direction", "expected_path.bias", "execution_intelligence.expected_path", "institutional_intelligence.institutional_bias")),
+        ("Risk", _pick("risk.state", "risk.risk_level", "risk.approved", "trade_coach.risk")),
+    ]
+
+    components = []
+    aligned = opposed_count = available = 0
+    for name, raw in component_defs:
+        status = _alignment(raw)
+        # Boolean risk approval needs explicit handling.
+        if name == "Risk" and isinstance(raw, bool):
+            status = 1 if raw else -1
+        if raw not in (None, "", [], {}):
+            available += 1
+        if status > 0:
+            aligned += 1
+            verdict = "SUPPORTS"
+        elif status < 0:
+            opposed_count += 1
+            verdict = "OPPOSES"
+        else:
+            verdict = "NEUTRAL" if raw not in (None, "", [], {}) else "UNAVAILABLE"
+        components.append({"name": name, "verdict": verdict, "reading": _text(raw) or "No fresh cached reading"})
+
+    net = aligned - opposed_count
+    health = float(base_health)
+    if available:
+        health += net * 4.0
+    health = max(0.0, min(100.0, round(health)))
+
+    recommendation = str(base_recommendation or "HOLD").upper()
+    priority = "INFO"
+    if recommendation == "EXIT" or opposed_count >= 4:
+        recommendation, priority = "EXIT", "URGENT"
+    elif recommendation == "TAKE_PARTIAL" or opposed_count >= 2:
+        recommendation, priority = "TRIM_50", "WARNING"
+    elif opposed_count == 1 or (available >= 4 and aligned <= 2):
+        recommendation, priority = "PROTECT_PROFIT", "CAUTION"
+    elif aligned >= 4 and opposed_count == 0:
+        recommendation, priority = "HOLD", "INFO"
+
+    confidence = float(base_confidence)
+    if available:
+        consensus = max(aligned, opposed_count) / max(1, available)
+        confidence = 55.0 + consensus * 40.0
+    confidence = max(50.0, min(99.0, round(confidence)))
+
+    move = None
+    if current_price and entry_price:
+        move = current_price - entry_price
+        if str(side).upper() == "PUT":
+            move = -move
+
+    if recommendation == "HOLD":
+        narrative = f"{aligned} of {available or 7} available engines support the {side} thesis. Institutional conditions remain favorable; continue holding while the defined stop and hold structure remain intact."
+    elif recommendation == "PROTECT_PROFIT":
+        narrative = f"The trade remains viable, but {opposed_count} engine is no longer aligned. Protect open profit, avoid adding, and require renewed flow/structure confirmation to keep holding."
+    elif recommendation == "TRIM_50":
+        narrative = f"Cross-engine support has weakened: {opposed_count} components now oppose the {side} thesis. Trim approximately half and manage the remainder against the stop or breakeven level."
+    else:
+        narrative = f"The combined institutional thesis is invalidating: {opposed_count} components oppose the position. Exit protection takes priority over waiting for a recovery."
+
+    return {
+        "version": "PHASE_2",
+        "recommendation": recommendation,
+        "priority": priority,
+        "trade_health": int(health),
+        "confidence": int(confidence),
+        "aligned_components": aligned,
+        "opposing_components": opposed_count,
+        "available_components": available,
+        "components": components,
+        "narrative": narrative,
+        "move_in_favor": round(move, 2) if move is not None else None,
+        "source": "STATE.last_result cache",
+        "advisory_only": True,
+    }
+
+
 def monitor_active_position() -> Dict[str, Any]:
     """
     Checks the currently tracked position against live Flow/GEX.
@@ -4254,6 +4389,19 @@ def monitor_active_position() -> Dict[str, Any]:
     if side == "PUT" and underlying_move is not None:
         underlying_move = round(-underlying_move, 2)
 
+    phase2 = _trade_director_phase2_synthesis(
+        side=side,
+        base_recommendation=recommendation,
+        base_health=health,
+        base_confidence=confidence,
+        current_price=current_price,
+        entry_price=entry,
+    )
+    recommendation = phase2["recommendation"]
+    priority = phase2["priority"]
+    health = phase2["trade_health"]
+    confidence = phase2["confidence"]
+
     result = {
         "status": "MONITORING",
         "position": pos,
@@ -4270,6 +4418,7 @@ def monitor_active_position() -> Dict[str, Any]:
         "recommendation": recommendation,
         "priority": priority,
         "reasons": reasons,
+        "institutional_analysis": phase2,
         "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "flow_snapshot": {
             "bias": flow_item.get("bias"),
