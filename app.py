@@ -175,6 +175,16 @@ except Exception as _td20_err:
     TRADE_DIRECTOR_PHASE20_AVAILABLE = False
     print(f"Trade Director Phase 20 unavailable: {_td20_err}", flush=True)
 
+# APEX Trade Director Phase 21 — integrated institutional trade lifecycle
+try:
+    from engine.trade_director_trade_lifecycle import (
+        build_trade_lifecycle as td21_build_trade_lifecycle,
+    )
+    TRADE_DIRECTOR_PHASE21_AVAILABLE = True
+except Exception as _td21_err:
+    TRADE_DIRECTOR_PHASE21_AVAILABLE = False
+    print(f"Trade Director Phase 21 unavailable: {_td21_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5348,6 +5358,14 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td20_build_err:
             result["institutional_decision_engine"] = {"version": "PHASE_20", "error": str(_td20_build_err)}
 
+    if TRADE_DIRECTOR_PHASE21_AVAILABLE:
+        try:
+            with ACTIVE_POSITION_LOCK:
+                _td21_prior = dict(ACTIVE_POSITION.get("phase21_last_trade_lifecycle") or {})
+            result["trade_lifecycle"] = td21_build_trade_lifecycle(result, _td21_prior)
+        except Exception as _td21_build_err:
+            result["trade_lifecycle"] = {"version": "PHASE_21", "error": str(_td21_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5371,6 +5389,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase19_last_decision_intelligence"] = dict(result["decision_intelligence"])
         if result.get("institutional_decision_engine"):
             ACTIVE_POSITION["phase20_last_decision_engine"] = dict(result["institutional_decision_engine"])
+        if result.get("trade_lifecycle"):
+            ACTIVE_POSITION["phase21_last_trade_lifecycle"] = dict(result["trade_lifecycle"])
 
     return result
 
@@ -7817,6 +7837,26 @@ def api_position_institutional_decision_engine():
             data = dict(ACTIVE_POSITION.get("phase20_last_decision_engine") or {})
     return jsonify({"ok": True, "institutional_decision_engine": data})
 
+
+
+@app.route("/api/position/trade-lifecycle", methods=["GET", "POST"])
+def api_position_trade_lifecycle():
+    """Return or evaluate Phase 21 integrated trade lifecycle management."""
+    if not TRADE_DIRECTOR_PHASE21_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 21 unavailable"}), 503
+    monitor = monitor_active_position()
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        context = dict(monitor)
+        context.update(body.get("context") or body.get("evidence") or {})
+        prior = body.get("prior") or {}
+        data = td21_build_trade_lifecycle(context, prior)
+        return jsonify({"ok": True, "trade_lifecycle": data})
+    data = monitor.get("trade_lifecycle")
+    if not data:
+        with ACTIVE_POSITION_LOCK:
+            data = dict(ACTIVE_POSITION.get("phase21_last_trade_lifecycle") or {})
+    return jsonify({"ok": True, "trade_lifecycle": data})
 
 @app.route("/api/position/strategy-orchestration")
 def api_position_strategy_orchestration():
