@@ -58,6 +58,22 @@ except Exception as _td9_err:
     TRADE_DIRECTOR_PHASE9_AVAILABLE = False
     print(f"Trade Director Phase 9 unavailable: {_td9_err}", flush=True)
 
+# APEX Trade Director Phase 10 — confirmation-gated broker execution control
+try:
+    from engine.trade_director_execution_control import (
+        build_control_status as td10_build_control_status,
+        order_intent_from_readiness as td10_order_intent,
+        create_order_record as td10_create_order_record,
+        validate_confirmation as td10_validate_confirmation,
+        reconcile_position as td10_reconcile_position,
+        execution_mode as td10_execution_mode,
+    )
+    from engine.brokers.etrade_adapter import ETradeAdapter as TD10ETradeAdapter
+    TRADE_DIRECTOR_PHASE10_AVAILABLE = True
+except Exception as _td10_err:
+    TRADE_DIRECTOR_PHASE10_AVAILABLE = False
+    print(f"Trade Director Phase 10 unavailable: {_td10_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5119,6 +5135,11 @@ def monitor_active_position() -> Dict[str, Any]:
         "adaptive_profile": phase7_profile,
         "management_policy": phase8_policy,
         "execution_readiness": phase9_readiness,
+        "execution_control": (td10_build_control_status(
+            phase9_readiness,
+            dict(ACTIVE_POSITION.get("phase9_last_decision") or {}),
+            dict(ACTIVE_POSITION.get("phase10_session") or {}),
+        ) if TRADE_DIRECTOR_PHASE10_AVAILABLE and phase9_readiness else None),
         "recommendation_timeline": timeline,
         "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "flow_snapshot": {
@@ -7279,6 +7300,137 @@ def api_position_execution_readiness_decision():
     })
     return jsonify({"ok": True, "decision": event, "execution_enabled": False,
                     "message": "Preview decision recorded. No broker order was sent."})
+
+
+@app.route("/api/position/execution-control")
+def api_position_execution_control():
+    """Return Phase 10 state without making a broker request."""
+    if not TRADE_DIRECTOR_PHASE10_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 10 execution control unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        readiness = dict(ACTIVE_POSITION.get("phase9_last_readiness") or {})
+        decision = dict(ACTIVE_POSITION.get("phase9_last_decision") or {})
+        session = dict(ACTIVE_POSITION.get("phase10_session") or {})
+        audit = list(ACTIVE_POSITION.get("phase10_audit") or [])[-50:]
+    return jsonify({"ok": True, "control": td10_build_control_status(readiness, decision, session), "audit": audit})
+
+
+@app.route("/api/position/execution-control/prepare", methods=["POST"])
+def api_position_execution_control_prepare():
+    """Request an E*TRADE preview only after explicit user action."""
+    if not TRADE_DIRECTOR_PHASE10_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 10 execution control unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        readiness = dict(ACTIVE_POSITION.get("phase9_last_readiness") or {})
+        decision = dict(ACTIVE_POSITION.get("phase9_last_decision") or {})
+        session = dict(ACTIVE_POSITION.get("phase10_session") or {})
+    control = td10_build_control_status(readiness, decision, session)
+    if control.get("gate") not in {"READY_TO_PREVIEW", "READY_FOR_PAPER_PREVIEW"}:
+        return jsonify({"ok": False, "error": "Execution control is blocked", "control": control}), 409
+    try:
+        intent = td10_order_intent(readiness)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    mode = td10_execution_mode()
+    adapter = TD10ETradeAdapter()
+    status = adapter.status().to_dict()
+    if mode == "PAPER":
+        preview_data = {"preview_id": f"PAPER-{readiness.get('preview_id')}", "paper": True, "estimated_order": intent.to_dict()}
+        broker_quantity_before = int((readiness.get("order_intent") or {}).get("held_quantity") or 0)
+    else:
+        if mode == "DISABLED":
+            return jsonify({"ok": False, "error": "APEX_TD10_MODE is DISABLED"}), 409
+        if not status.get("data", {}).get("configured"):
+            return jsonify({"ok": False, "error": "E*TRADE adapter is not configured", "broker_status": status}), 409
+        if mode == "LIVE_CONFIRMATION" and adapter.mode != "production":
+            return jsonify({"ok": False, "error": "LIVE_CONFIRMATION requires ETRADE_ENV=production"}), 409
+        result = adapter.preview_order(intent)
+        if not result.ok:
+            return jsonify({"ok": False, "error": "Broker preview failed", "broker": result.to_dict()}), 502
+        preview_data = dict(result.data or {})
+        broker_quantity_before = int((readiness.get("order_intent") or {}).get("held_quantity") or 0)
+    record = td10_create_order_record(readiness, preview_data, mode)
+    record["broker_quantity_before"] = broker_quantity_before
+    record["broker_status"] = status
+    event = {"timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"), "kind": "PREPARED", "control_id": record["control_id"], "state": record["state"], "mode": mode, "phase9_preview_id": readiness.get("preview_id")}
+    with ACTIVE_POSITION_LOCK:
+        ACTIVE_POSITION["phase10_session"] = {"active_order": record}
+        audit = list(ACTIVE_POSITION.get("phase10_audit") or [])
+        audit.append(event)
+        ACTIVE_POSITION["phase10_audit"] = audit[-200:]
+    _phase5_record_event({"time": now_et().strftime("%H:%M:%S"), "timestamp": event["timestamp"], "kind": "PHASE10_PREPARED", "recommendation": readiness.get("policy_action"), "summary": "Broker preview prepared; awaiting exact user confirmation.", "snapshot": event})
+    return jsonify({"ok": True, "order": record, "message": "Broker preview prepared. No order has been placed."})
+
+
+@app.route("/api/position/execution-control/confirm", methods=["POST"])
+def api_position_execution_control_confirm():
+    """Place a previously previewed order after exact confirmation; fail closed."""
+    if not TRADE_DIRECTOR_PHASE10_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 10 execution control unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    with ACTIVE_POSITION_LOCK:
+        readiness = dict(ACTIVE_POSITION.get("phase9_last_readiness") or {})
+        session = dict(ACTIVE_POSITION.get("phase10_session") or {})
+        record = dict(session.get("active_order") or {})
+    valid, reason = td10_validate_confirmation(record, readiness, str(body.get("control_id") or ""), str(body.get("confirmation_token") or ""), str(body.get("confirmation_text") or ""))
+    if not valid:
+        return jsonify({"ok": False, "error": reason}), 409
+    mode = str(record.get("mode") or "DISABLED")
+    intent = td10_order_intent(readiness)
+    record["state"] = "SUBMITTING"
+    record["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    if mode == "PAPER":
+        submission = {"ok": True, "mode": "paper", "data": {"order_id": f"PAPER-{record['control_id']}", "status": "FILLED", "filled_quantity": intent.quantity, "fill_price": intent.limit_price}}
+        record["state"] = "FILLED"
+    else:
+        adapter = TD10ETradeAdapter()
+        if mode == "SANDBOX" and adapter.mode != "sandbox":
+            return jsonify({"ok": False, "error": "SANDBOX mode requires ETRADE_ENV=sandbox"}), 409
+        if mode == "LIVE_CONFIRMATION" and not (adapter.mode == "production" and os.getenv("APEX_TD10_ALLOW_LIVE", "false").lower() == "true"):
+            return jsonify({"ok": False, "error": "Live execution is not explicitly armed"}), 409
+        result = adapter.place_order(str(record.get("broker_preview_id") or ""), intent)
+        submission = result.to_dict()
+        record["state"] = "ACCEPTED" if result.ok else "REJECTED"
+    record["submission"] = submission
+    record["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    event = {"timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"), "kind": "SUBMITTED" if submission.get("ok") else "REJECTED", "control_id": record.get("control_id"), "state": record.get("state"), "mode": mode}
+    with ACTIVE_POSITION_LOCK:
+        ACTIVE_POSITION["phase10_session"] = {"active_order": record}
+        audit = list(ACTIVE_POSITION.get("phase10_audit") or [])
+        audit.append(event)
+        ACTIVE_POSITION["phase10_audit"] = audit[-200:]
+    _phase5_record_event({"time": now_et().strftime("%H:%M:%S"), "timestamp": event["timestamp"], "kind": "PHASE10_ORDER_STATE", "recommendation": readiness.get("policy_action"), "summary": f"Phase 10 order state: {record.get('state')}.", "snapshot": event})
+    code = 200 if submission.get("ok") else 502
+    return jsonify({"ok": bool(submission.get("ok")), "order": record, "message": f"Order state: {record.get('state')}"}), code
+
+
+@app.route("/api/position/execution-control/reconcile", methods=["POST"])
+def api_position_execution_control_reconcile():
+    """Read broker positions and compare with the expected post-order quantity."""
+    if not TRADE_DIRECTOR_PHASE10_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 10 execution control unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        session = dict(ACTIVE_POSITION.get("phase10_session") or {})
+        record = dict(session.get("active_order") or {})
+    if not record:
+        return jsonify({"ok": False, "error": "No Phase 10 order to reconcile"}), 409
+    if record.get("mode") == "PAPER":
+        reconciliation = {"status": "MATCHED", "matched": True, "paper": True, "checked_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+    else:
+        adapter = TD10ETradeAdapter()
+        result = adapter.get_positions(adapter.account_id_key)
+        if not result.ok:
+            return jsonify({"ok": False, "error": "Unable to read broker positions", "broker": result.to_dict()}), 502
+        reconciliation = td10_reconcile_position(record, (result.data or {}).get("positions") or [])
+    record["reconciliation"] = reconciliation
+    if not reconciliation.get("matched"):
+        record["state"] = "RECONCILIATION_REQUIRED"
+    elif record.get("state") in {"ACCEPTED", "UNKNOWN", "PARTIALLY_FILLED"}:
+        record["state"] = "FILLED"
+    record["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    with ACTIVE_POSITION_LOCK:
+        ACTIVE_POSITION["phase10_session"] = {"active_order": record}
+    return jsonify({"ok": True, "order": record, "reconciliation": reconciliation})
 
 
 @app.route("/api/position/policy")
