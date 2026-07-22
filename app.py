@@ -4390,6 +4390,255 @@ def _trade_director_phase3_health(
     }
 
 
+
+def _trade_director_phase4_position_intelligence(
+    *,
+    position: Dict[str, Any],
+    phase2: Dict[str, Any],
+    phase3: Dict[str, Any],
+    current_price: float,
+    entry_price: float,
+    stop: float,
+    target1: float,
+    target2: float,
+    option_entry: float,
+    option_current: float,
+    held_qty: int,
+    option_pnl: Optional[float],
+    option_pnl_pct: Optional[float],
+) -> Dict[str, Any]:
+    """Phase 4 — Institutional Position Intelligence.
+
+    Produces exit probability, cached multi-timeframe alignment, an adaptive
+    structure stop, a live risk/reward meter, and an opportunity-cost check.
+    The layer is deterministic and reads only the already-composed IOS cache;
+    it performs no provider calls, starts no workers, and never places orders.
+    """
+    side = str(position.get("side") or "").upper()
+    direction = 1.0 if side == "CALL" else -1.0
+    with STATE_LOCK:
+        snapshot = dict(STATE.get("last_result") or {})
+
+    def pick(*paths, default=None):
+        for path in paths:
+            cur = snapshot
+            ok = True
+            for part in path.split("."):
+                if not isinstance(cur, dict) or part not in cur:
+                    ok = False
+                    break
+                cur = cur.get(part)
+            if ok and cur not in (None, "", [], {}):
+                return cur
+        return default
+
+    def number(*paths):
+        raw = pick(*paths)
+        try:
+            value = float(raw)
+            return value if value == value else None
+        except (TypeError, ValueError):
+            return None
+
+    def directional_read(raw):
+        text = str(raw or "").upper().replace("-", "_").replace(" ", "_")
+        bull = any(x in text for x in ("BULL", "CALL", "HIGHER", "RISING", "BUY", "UP", "LONG"))
+        bear = any(x in text for x in ("BEAR", "PUT", "LOWER", "FALLING", "SELL", "DOWN", "SHORT"))
+        if bull and not bear:
+            return 1 if side == "CALL" else -1
+        if bear and not bull:
+            return 1 if side == "PUT" else -1
+        return 0
+
+    # 1) Exit / continuation probability. Health is the anchor; opposing
+    # engines, health trend, target proximity and P/L modify it conservatively.
+    health = float(phase3.get("score") or phase2.get("trade_health") or 50)
+    aligned = int(phase2.get("aligned_components") or 0)
+    opposed = int(phase2.get("opposing_components") or 0)
+    continuation = 22.0 + health * 0.62 + (aligned - opposed) * 3.0
+    trend = str(phase3.get("trend") or "STABLE").upper()
+    if trend == "IMPROVING":
+        continuation += 5.0
+    elif trend == "DETERIORATING":
+        continuation -= 9.0
+    move_favor = (current_price - entry_price) * direction if current_price > 0 and entry_price > 0 else None
+    risk_points = abs(entry_price - stop) if entry_price > 0 and stop > 0 else 0.0
+    target_distance = abs(target2 - entry_price) if target2 > 0 and entry_price > 0 else abs(target1 - entry_price) if target1 > 0 and entry_price > 0 else 0.0
+    progress = None
+    if move_favor is not None and target_distance > 0:
+        progress = max(-1.0, min(1.5, move_favor / target_distance))
+        if progress >= 1.0:
+            continuation -= 14.0
+        elif progress >= 0.70:
+            continuation -= 7.0
+        elif progress < 0:
+            continuation -= min(12.0, abs(progress) * 12.0)
+    if option_pnl_pct is not None:
+        if option_pnl_pct >= 35:
+            continuation -= 5.0
+        elif option_pnl_pct <= -20:
+            continuation -= 8.0
+    continuation = int(round(max(5.0, min(95.0, continuation))))
+    reversal = 100 - continuation
+    remaining_points = None
+    if current_price > 0:
+        objective = target2 if target2 > 0 else target1
+        if objective > 0:
+            remaining_points = max(0.0, (objective - current_price) * direction)
+    low_remaining = round(max(0.0, (remaining_points or 0.0) * 0.55), 1) if remaining_points is not None else None
+    high_remaining = round(max(0.0, remaining_points or 0.0), 1) if remaining_points is not None else None
+    exit_action = "HOLD"
+    if continuation < 40:
+        exit_action = "EXIT_OR_REDUCE"
+    elif continuation < 55:
+        exit_action = "TRIM_50"
+    elif continuation < 68:
+        exit_action = "PROTECT_PROFIT"
+
+    # 2) Multi-timeframe alignment from cached IOS readings only. Missing
+    # timeframes remain unavailable rather than triggering live bar requests.
+    timeframe_paths = {
+        "1m": ("multi_timeframe.1m", "timeframes.1m", "structure.timeframes.1m", "market_state.timeframes.1m"),
+        "3m": ("multi_timeframe.3m", "timeframes.3m", "structure.timeframes.3m", "market_state.timeframes.3m"),
+        "5m": ("multi_timeframe.5m", "timeframes.5m", "structure.timeframes.5m", "market_state.timeframes.5m"),
+        "15m": ("multi_timeframe.15m", "timeframes.15m", "structure.timeframes.15m", "market_state.timeframes.15m"),
+        "30m": ("multi_timeframe.30m", "timeframes.30m", "structure.timeframes.30m", "market_state.timeframes.30m"),
+    }
+    tf_rows = []
+    tf_support = tf_oppose = 0
+    for label, paths in timeframe_paths.items():
+        raw = pick(*paths)
+        verdict = directional_read(raw)
+        if raw is None:
+            state = "UNAVAILABLE"
+        elif verdict > 0:
+            state = "ALIGNED"; tf_support += 1
+        elif verdict < 0:
+            state = "OPPOSED"; tf_oppose += 1
+        else:
+            state = "NEUTRAL"
+        tf_rows.append({"timeframe": label, "state": state, "reading": str(raw or "No cached reading")})
+    tf_available = sum(1 for row in tf_rows if row["state"] != "UNAVAILABLE")
+    tf_score = int(round((tf_support + 0.5 * max(0, tf_available - tf_support - tf_oppose)) / max(1, tf_available) * 100)) if tf_available else None
+
+    # 3) Adaptive stop. Candidate levels are taken from cached structure/profile
+    # and must tighten the stop without crossing the live price.
+    ema8 = number("structure.ema8", "market_state.ema8", "technical.ema8", "execution_intelligence.ema8")
+    vwap = number("structure.vwap", "market_state.vwap", "technical.vwap", "execution_intelligence.vwap")
+    swing = number("structure.last_higher_low", "structure.last_lower_high", "market_state.last_swing", "execution_intelligence.hold_level")
+    val = number("volume_profile.val", "profile.val", "institutional_intelligence.val", "market_state.val")
+    vah = number("volume_profile.vah", "profile.vah", "institutional_intelligence.vah", "market_state.vah")
+    candidates = []
+    for source, level in (("EMA 8", ema8), ("VWAP", vwap), ("Last structure", swing), ("Value area", val if side == "CALL" else vah)):
+        if level is None or level <= 0 or current_price <= 0:
+            continue
+        valid = level < current_price if side == "CALL" else level > current_price
+        tightens = stop <= 0 or (level > stop if side == "CALL" else level < stop)
+        if valid and tightens:
+            candidates.append((source, level))
+    if candidates:
+        # Closest valid level to current price is the most protective structure stop.
+        stop_source, suggested_stop = min(candidates, key=lambda item: abs(current_price - item[1]))
+    elif option_pnl_pct is not None and option_pnl_pct >= 20 and entry_price > 0:
+        stop_source, suggested_stop = "Breakeven", entry_price
+    else:
+        stop_source, suggested_stop = "Current defined stop", stop if stop > 0 else None
+    stop_action = "KEEP_STOP"
+    if suggested_stop is not None and stop > 0 and abs(suggested_stop - stop) >= 0.05:
+        stop_action = "TIGHTEN_STOP"
+    elif stop <= 0 and suggested_stop is not None:
+        stop_action = "SET_STOP"
+
+    # 4) Live risk meter. Underlying R metrics are exact from user-entered levels;
+    # dollar amounts are option-premium estimates and clearly labeled as such.
+    remaining_risk_points = None
+    reward_remaining_points = None
+    rr = None
+    if current_price > 0 and suggested_stop:
+        remaining_risk_points = max(0.0, (current_price - suggested_stop) * direction)
+    objective = target2 if target2 > 0 else target1
+    if current_price > 0 and objective > 0:
+        reward_remaining_points = max(0.0, (objective - current_price) * direction)
+    if remaining_risk_points and reward_remaining_points is not None:
+        rr = round(reward_remaining_points / remaining_risk_points, 2)
+    premium_value = option_current if option_current > 0 else option_entry
+    position_value = round(premium_value * 100.0 * held_qty, 2) if premium_value > 0 and held_qty > 0 else None
+    estimated_capital_at_risk = None
+    if position_value is not None and risk_points > 0 and current_price > 0 and remaining_risk_points is not None:
+        estimated_capital_at_risk = round(position_value * min(1.0, remaining_risk_points / max(risk_points, 0.01)), 2)
+
+    # 5) Opportunity cost. Scan likely cache collections and compare their score
+    # with this trade. No scan is initiated by this check.
+    current_score = int(round(health))
+    best = None
+    collections = [pick("heatmap", default=[]), pick("scanner.ideas", default=[]), pick("ideas", default=[]), pick("opportunities", default=[])]
+    rows = []
+    for collection in collections:
+        if isinstance(collection, dict):
+            collection = collection.get("rows") or collection.get("ideas") or collection.get("items") or list(collection.values())
+        if isinstance(collection, list):
+            rows.extend(x for x in collection if isinstance(x, dict))
+    for row in rows:
+        ticker = str(row.get("ticker") or row.get("symbol") or "").upper()
+        if not ticker or ticker == str(position.get("ticker") or "").upper():
+            continue
+        score = safe_float(row.get("final_score") or row.get("score") or row.get("confidence") or row.get("trade_health"), 0.0)
+        if score <= 0:
+            continue
+        if best is None or score > best["score"]:
+            best = {"ticker": ticker, "score": int(round(score)), "direction": str(row.get("direction") or row.get("side") or row.get("bias") or "")}
+    opportunity_action = "STAY_WITH_CURRENT_TRADE"
+    if best and best["score"] >= current_score + 12:
+        opportunity_action = "REVIEW_ROTATION"
+    elif best and best["score"] >= current_score + 6:
+        opportunity_action = "WATCH_ALTERNATIVE"
+
+    return {
+        "version": "PHASE_4",
+        "exit_probability": {
+            "continuation_probability": continuation,
+            "reversal_probability": reversal,
+            "estimated_remaining_move_low": low_remaining,
+            "estimated_remaining_move_high": high_remaining,
+            "suggested_action": exit_action,
+        },
+        "multi_timeframe_alignment": {
+            "score": tf_score,
+            "supporting": tf_support,
+            "opposing": tf_oppose,
+            "available": tf_available,
+            "timeframes": tf_rows,
+            "source": "cached IOS only",
+        },
+        "adaptive_stop": {
+            "current_stop": stop or None,
+            "suggested_stop": round(suggested_stop, 2) if suggested_stop is not None else None,
+            "source": stop_source,
+            "action": stop_action,
+            "distance_from_price": round(abs(current_price - suggested_stop), 2) if current_price > 0 and suggested_stop is not None else None,
+        },
+        "risk_meter": {
+            "open_pnl": option_pnl,
+            "open_pnl_pct": option_pnl_pct,
+            "position_value": position_value,
+            "estimated_capital_at_risk": estimated_capital_at_risk,
+            "remaining_risk_points": round(remaining_risk_points, 2) if remaining_risk_points is not None else None,
+            "reward_remaining_points": round(reward_remaining_points, 2) if reward_remaining_points is not None else None,
+            "remaining_risk_reward": rr,
+            "dollar_values_are_estimates": True,
+        },
+        "opportunity_cost": {
+            "current_trade_score": current_score,
+            "best_cached_alternative": best,
+            "suggested_action": opportunity_action,
+            "alternatives_reviewed": len(rows),
+            "source": "existing cached scanner/heatmap results",
+        },
+        "advisory_only": True,
+        "no_broker_orders": True,
+        "updated_at": now_et().strftime("%H:%M:%S"),
+    }
+
 def monitor_active_position() -> Dict[str, Any]:
     """
     Checks the currently tracked position against live Flow/GEX.
@@ -4516,6 +4765,21 @@ def monitor_active_position() -> Dict[str, Any]:
         option_pnl_pct=option_pnl_pct,
     )
     health = phase3["score"]
+    phase4 = _trade_director_phase4_position_intelligence(
+        position=pos,
+        phase2=phase2,
+        phase3=phase3,
+        current_price=current_price,
+        entry_price=entry,
+        stop=stop,
+        target1=t1,
+        target2=t2,
+        option_entry=option_entry,
+        option_current=option_current,
+        held_qty=held_qty,
+        option_pnl=option_pnl,
+        option_pnl_pct=option_pnl_pct,
+    )
     # The Phase 3 health band acts as a safety governor over the Phase 2 action.
     if health < 50 and recommendation != "EXIT":
         recommendation, priority = "EXIT", "URGENT"
@@ -4523,6 +4787,14 @@ def monitor_active_position() -> Dict[str, Any]:
         recommendation, priority = "PROTECT_PROFIT", "CAUTION"
     elif health < 75 and recommendation == "HOLD":
         recommendation, priority = "TRIM_50", "WARNING"
+
+    # Phase 4 exit probability is a second independent guard. It may become
+    # more protective, but it never upgrades a defensive recommendation.
+    _p4_action = str((phase4.get("exit_probability") or {}).get("suggested_action") or "HOLD")
+    _rank = {"HOLD": 0, "PROTECT_PROFIT": 1, "TRIM_50": 2, "EXIT_OR_REDUCE": 3, "EXIT": 3}
+    if _rank.get(_p4_action, 0) > _rank.get(recommendation, 0):
+        recommendation = "EXIT" if _p4_action == "EXIT_OR_REDUCE" else _p4_action
+        priority = "URGENT" if recommendation == "EXIT" else "WARNING" if recommendation == "TRIM_50" else "CAUTION"
 
     result = {
         "status": "MONITORING",
@@ -4542,6 +4814,7 @@ def monitor_active_position() -> Dict[str, Any]:
         "reasons": reasons,
         "institutional_analysis": phase2,
         "health_engine": phase3,
+        "position_intelligence": phase4,
         "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "flow_snapshot": {
             "bias": flow_item.get("bias"),
