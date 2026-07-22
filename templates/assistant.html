@@ -95,6 +95,7 @@
 <div id="marketMemory"></div>
 <div id="crossAssetIntelligence"></div>
 <div id="multiTimeframeIntelligence"></div>
+<div id="institutionalFlowIntelligence"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -297,6 +298,16 @@ function renderStrategyOrchestration(x){
 }
 
 
+function renderInstitutionalFlowIntelligence(x){
+  const el=document.getElementById('institutionalFlowIntelligence'); if(!el)return;
+  const d=x?.flow_intelligence||x; if(!d||d.error){el.innerHTML='';return;}
+  const e=d.event_summary||{}, dealer=d.dealer_hedging||{}, vp=d.volume_profile_confirmation||{};
+  const clusters=(d.flow_clusters||[]).slice(0,6).map((r,i)=>`<div class="phase15-row ${i===0?'best':''}"><strong>${i+1}. ${esc(r.intent||'NEUTRAL')} ${esc(r.side||'')}</strong><span>${esc(r.dominant_type||'--')}</span><span>${r.event_count||0} prints</span><span>$${num((r.premium||0)/1000,0)}K</span></div>`).join('');
+  const conflicts=(d.conflicts||[]).map(v=>`<div class="phase10-check fail">✕ ${esc(v)}</div>`).join('');
+  const gate=d.decision_gate||'DATA_LIMITED';
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 18</div><div class="coach-title">Institutional Flow Intelligence</div><div class="sub">Sweeps · blocks · splits · dealer hedging · liquidity migration</div></div><div><div class="label">Flow Gate</div><div class="phase13-score ${gate==='INSTITUTIONAL_CONFIRMATION'?'good':gate==='FLOW_CONFLICT'||gate==='STAND_DOWN'?'bad':'warn'}">${num(d.institutional_score,1)}</div><div class="sub">${esc(gate.replace(/_/g,' '))} · ${num(d.confidence,1)}% confidence</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Institutional Intent</div><div class="phase15-contract">${esc(d.institutional_bias||'MIXED')}</div><div class="metric-row"><span>Classified premium</span><strong>$${num((d.classified_premium||0)/1000000,2)}M</strong></div><div class="metric-row"><span>Directional imbalance</span><strong>${num(d.imbalance_pct,1)}%</strong></div><div class="metric-row"><span>Sweeps / Blocks / Splits</span><strong>${e.sweeps||0} / ${e.blocks||0} / ${e.splits||0}</strong></div><div class="metric-row"><span>Opening prints</span><strong>${e.opening||0}</strong></div><div class="sub">${esc(d.interpretation||'')}</div></div><div class="phase15-card"><div class="label">Dominant Flow Clusters</div>${clusters||'<div class="sub">No qualified cached flow clusters are available.</div>'}</div><div class="phase15-card"><div class="label">Dealer & Liquidity Context</div><div class="metric-row"><span>Gamma regime</span><strong>${esc((dealer.regime||'UNKNOWN').replace(/_/g,' '))}</strong></div><div class="metric-row"><span>Flow effect</span><strong>${esc(dealer.flow_effect||'UNKNOWN')}</strong></div><div class="metric-row"><span>POC migration</span><strong>${esc(vp.poc_migration||'UNKNOWN')}</strong></div><div class="metric-row"><span>Preferred playbook</span><strong>${esc((d.preferred_playbook||'WAIT').replace(/_/g,' '))}</strong></div><div class="sub">${esc(dealer.interpretation||'')}</div></div><div class="phase15-card"><div class="label">Conflicts & Controls</div>${conflicts||'<div class="phase10-check pass">✓ No material flow conflict detected</div>'}<div class="metric-row"><span>Health adjustment</span><strong>${d.trade_director_effect?.health_adjustment??0}</strong></div><div class="metric-row"><span>Sizing posture</span><strong>${esc(d.trade_director_effect?.sizing_posture||'REDUCED')}</strong></div></div></div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderOptionsIntelligence(x){
   const el=document.getElementById('optionsIntelligence'); if(!el)return;
   const d=x?.options_intelligence||x; if(!d||d.error){el.innerHTML='';return;}
@@ -448,6 +459,7 @@ async function loadDirector(){
     renderMarketMemory(mm);
     renderCrossAssetIntelligence(ca);
     renderMultiTimeframeIntelligence(mt);
+    renderInstitutionalFlowIntelligence(fi);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
