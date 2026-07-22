@@ -3726,7 +3726,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td5"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -4147,10 +4147,24 @@ def set_active_position(ticker: str, side: str, entry_price: float, stop: float,
         "status": "OPEN",
         "last_checked_at": None,
         "last_recommendation": None,
+        "recommendation_timeline": [],
+        "phase5_review": None,
+        "phase5_started_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
     }
     with ACTIVE_POSITION_LOCK:
+        ACTIVE_POSITION.clear()
         ACTIVE_POSITION.update(pos)
-    return pos
+        ACTIVE_POSITION["recommendation_timeline"] = [{
+            "time": now_et().strftime("%H:%M:%S"),
+            "timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+            "kind": "ENTRY",
+            "recommendation": "MONITOR",
+            "trade_health": None,
+            "confidence": None,
+            "summary": f"Manual {side.upper()} position confirmed at {entry_price:.2f}.",
+            "snapshot": {"entry_price": entry_price, "stop": stop, "target1": target1, "target2": target2},
+        }]
+    return dict(pos)
 
 
 
@@ -4639,6 +4653,183 @@ def _trade_director_phase4_position_intelligence(
         "updated_at": now_et().strftime("%H:%M:%S"),
     }
 
+
+def _phase5_record_event(event: Dict[str, Any], *, force: bool = False) -> List[Dict[str, Any]]:
+    """Append a bounded, de-duplicated Phase 5 trade-management event."""
+    with ACTIVE_POSITION_LOCK:
+        timeline = list(ACTIVE_POSITION.get("recommendation_timeline") or [])
+        last = timeline[-1] if timeline else {}
+        same = (
+            last.get("kind") == event.get("kind")
+            and last.get("recommendation") == event.get("recommendation")
+            and last.get("trade_health") == event.get("trade_health")
+            and last.get("summary") == event.get("summary")
+        )
+        if force or not same:
+            timeline.append(event)
+        timeline = timeline[-120:]
+        ACTIVE_POSITION["recommendation_timeline"] = timeline
+        return list(timeline)
+
+
+def _build_phase5_coach(
+    *,
+    position: Dict[str, Any],
+    recommendation: str,
+    confidence: float,
+    reasons: List[str],
+    phase2: Dict[str, Any],
+    phase3: Dict[str, Any],
+    phase4: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Create an evidence-backed natural-language explanation from existing state."""
+    components = list(phase2.get("components") or [])
+    supportive = [c for c in components if str(c.get("verdict") or "").upper() == "SUPPORTS"]
+    opposing = [c for c in components if str(c.get("verdict") or "").upper() == "OPPOSES"]
+    evidence = []
+    for row in supportive[:3]:
+        evidence.append({"tone": "SUPPORT", "source": row.get("name") or "APEX engine", "text": row.get("detail") or row.get("reading") or "Supports the position."})
+    for row in opposing[:2]:
+        evidence.append({"tone": "RISK", "source": row.get("name") or "APEX engine", "text": row.get("detail") or row.get("reading") or "Opposes the position."})
+    for reason in reasons[:2]:
+        if reason and not any(reason == e.get("text") for e in evidence):
+            evidence.append({"tone": "INFO", "source": "Position Monitor", "text": reason})
+
+    exitp = phase4.get("exit_probability") or {}
+    continuation = exitp.get("continuation_probability")
+    reversal = exitp.get("reversal_probability")
+    remaining = {"low_points": exitp.get("estimated_remaining_move_low"), "high_points": exitp.get("estimated_remaining_move_high")}
+    stop_info = phase4.get("adaptive_stop") or {}
+    next_watch = stop_info.get("source") or "the dynamic hold level and opposing flow"
+    health = int(phase3.get("score") or phase2.get("trade_health") or 50)
+    trend = str(phase3.get("trend") or "STABLE").replace("_", " ").title()
+    action = str(recommendation or "HOLD").replace("_", " ")
+
+    if recommendation == "HOLD":
+        narrative = f"Hold while the institutional thesis remains intact. Trade Health is {health}/100 and {trend.lower()}."
+    elif recommendation in ("PROTECT_PROFIT", "TRIM_50", "TAKE_PARTIAL"):
+        narrative = f"Reduce exposure or protect gains because continuation quality has weakened. Trade Health is {health}/100."
+    else:
+        narrative = f"Exit or materially reduce because the active thesis is no longer sufficiently supported. Trade Health is {health}/100."
+
+    low = remaining.get("low_points")
+    high = remaining.get("high_points")
+    expected = None
+    if low is not None and high is not None:
+        expected = f"{low:.1f}–{high:.1f} SPX points"
+
+    return {
+        "version": "PHASE_5",
+        "recommendation": recommendation,
+        "recommendation_label": action,
+        "confidence": int(confidence),
+        "headline": narrative,
+        "evidence": evidence[:6],
+        "continuation_probability": continuation,
+        "reversal_probability": reversal,
+        "expected_continuation": expected,
+        "next_event_to_watch": str(next_watch).replace("_", " "),
+        "health": health,
+        "health_trend": str(phase3.get("trend") or "STABLE"),
+        "supporting_engines": len(supportive),
+        "opposing_engines": len(opposing),
+        "grounding_note": "Generated only from the current APEX position, cached institutional state, and Trade Director outputs.",
+        "advisory_only": True,
+    }
+
+
+def _build_phase5_post_trade_review(position: Dict[str, Any]) -> Dict[str, Any]:
+    timeline = list(position.get("recommendation_timeline") or [])
+    health_values = [int(e.get("trade_health")) for e in timeline if e.get("trade_health") is not None]
+    recommendations = [e for e in timeline if e.get("kind") == "RECOMMENDATION"]
+    entered_iso = position.get("entered_at_iso")
+    duration_minutes = None
+    try:
+        entered = dt.datetime.fromisoformat(str(entered_iso).replace("Z", "+00:00"))
+        duration_minutes = max(0, int((dt.datetime.now(dt.timezone.utc) - entered).total_seconds() // 60))
+    except Exception:
+        pass
+    option_entry = safe_float(position.get("option_entry_price"), 0.0)
+    option_exit = safe_float(position.get("option_current_price"), 0.0)
+    original_qty = max(1, int(position.get("original_quantity") or 1))
+    estimated_realized = round((option_exit - option_entry) * 100.0 * original_qty, 2) if option_entry > 0 and option_exit > 0 else None
+    changes = 0
+    previous = None
+    for e in recommendations:
+        rec = e.get("recommendation")
+        if previous is not None and rec != previous:
+            changes += 1
+        previous = rec
+    accuracy = None
+    if recommendations:
+        # This is a process score, not outcome alpha: confidence, stability and risk escalation.
+        defensive = any(str(e.get("recommendation") or "").upper() in ("EXIT", "TRIM_50", "PROTECT_PROFIT", "TAKE_PARTIAL") for e in recommendations)
+        accuracy = min(99, max(50, int(round(65 + (10 if defensive else 0) + min(15, len(recommendations)) - min(10, changes * 2)))))
+    lessons = []
+    if health_values:
+        if health_values[-1] < health_values[0]: lessons.append("Trade Health deteriorated from entry monitoring into the close; review the first material decline.")
+        else: lessons.append("Trade Health remained stable or improved during management.")
+    if changes >= 3: lessons.append("Recommendations changed several times; inspect whether the position was managed during a choppy regime.")
+    if not lessons: lessons.append("More live snapshots are required before APEX can identify a reliable management pattern.")
+    return {
+        "version": "PHASE_5",
+        "status": "CLOSED_REVIEW",
+        "entry_time": position.get("entered_at"),
+        "exit_time": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "duration_minutes": duration_minutes,
+        "starting_health": health_values[0] if health_values else None,
+        "peak_health": max(health_values) if health_values else None,
+        "closing_health": health_values[-1] if health_values else None,
+        "recommendation_count": len(recommendations),
+        "recommendation_changes": changes,
+        "process_score": accuracy,
+        "estimated_realized_pnl": estimated_realized,
+        "lessons": lessons[:3],
+        "calibration_status": "PROVISIONAL",
+        "calibration_note": "Outcome scoring remains provisional until broker fills and post-exit price paths are synchronized.",
+    }
+
+
+def _answer_phase5_question(question: str, monitor: Dict[str, Any]) -> Dict[str, Any]:
+    q = str(question or "").strip().lower()
+    coach = monitor.get("trade_coach") or {}
+    health = monitor.get("health_engine") or {}
+    intel = monitor.get("position_intelligence") or {}
+    rec = monitor.get("recommendation") or "HOLD"
+    if not q:
+        return {"answer": "Ask about holding, trimming, Trade Health, the biggest risk, or what changed.", "topic": "HELP"}
+    if "hold" in q:
+        answer = f"Current guidance is {str(rec).replace('_',' ')} at {monitor.get('confidence', '--')}% confidence. {coach.get('headline','')}"
+        topic = "HOLD_DECISION"
+    elif "health" in q or "drop" in q or "fell" in q:
+        parts = health.get("breakdown") or []
+        weakest = sorted(parts, key=lambda x: (float(x.get("score") or 0) / max(1.0, float(x.get("max") or 1))))[:2]
+        weak_text = ", ".join(f"{x.get('name')} {x.get('score')}/{x.get('max')}" for x in weakest) or "no component breakdown is available"
+        answer = f"Trade Health is {health.get('score','--')}/100 and {str(health.get('trend','STABLE')).lower()}. The weakest current components are {weak_text}."
+        topic = "TRADE_HEALTH"
+    elif "risk" in q:
+        ep = intel.get("exit_probability") or {}
+        astop = intel.get("adaptive_stop") or {}
+        answer = f"The largest quantified risk is a {ep.get('reversal_probability','--')}% reversal probability. The adaptive stop reference is {astop.get('suggested_stop','--')} based on {astop.get('source') or 'cached structure'}."
+        topic = "BIGGEST_RISK"
+    elif "changed" in q or "last five" in q:
+        hist = health.get("history") or []
+        if len(hist) >= 2:
+            answer = f"Trade Health moved from {hist[0].get('score')} to {hist[-1].get('score')} across the visible history. The latest trend is {str(health.get('trend','STABLE')).lower()}, and guidance is now {str(rec).replace('_',' ')}."
+        else:
+            answer = "APEX does not yet have enough distinct snapshots to explain a five-minute change. Keep the position monitor open as conditions update."
+        topic = "WHAT_CHANGED"
+    elif "trim" in q or "exit" in q or "why" in q:
+        evidence = coach.get("evidence") or []
+        top = "; ".join(str(e.get("text")) for e in evidence[:3])
+        answer = f"APEX recommends {str(rec).replace('_',' ')} because {top or coach.get('headline','the combined position evidence changed')}."
+        topic = "RECOMMENDATION_REASON"
+    else:
+        answer = f"Current guidance is {str(rec).replace('_',' ')}. {coach.get('headline','')} Watch {coach.get('next_event_to_watch','the dynamic hold level and opposing flow')}."
+        topic = "CURRENT_STATE"
+    return {"answer": answer, "topic": topic, "grounded": True, "advisory_only": True}
+
+
 def monitor_active_position() -> Dict[str, Any]:
     """
     Checks the currently tracked position against live Flow/GEX.
@@ -4796,6 +4987,27 @@ def monitor_active_position() -> Dict[str, Any]:
         recommendation = "EXIT" if _p4_action == "EXIT_OR_REDUCE" else _p4_action
         priority = "URGENT" if recommendation == "EXIT" else "WARNING" if recommendation == "TRIM_50" else "CAUTION"
 
+    phase5 = _build_phase5_coach(
+        position=pos, recommendation=recommendation, confidence=confidence, reasons=reasons,
+        phase2=phase2, phase3=phase3, phase4=phase4,
+    )
+    event = {
+        "time": now_et().strftime("%H:%M:%S"),
+        "timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "kind": "RECOMMENDATION",
+        "recommendation": recommendation,
+        "trade_health": int(health),
+        "confidence": int(confidence),
+        "summary": phase5.get("headline"),
+        "snapshot": {
+            "current_price": current_price, "alignment": alignment, "gex_score": gex_score,
+            "continuation_probability": (phase4.get("exit_probability") or {}).get("continuation_probability"),
+            "supporting_engines": phase5.get("supporting_engines"),
+            "opposing_engines": phase5.get("opposing_engines"),
+        },
+    }
+    timeline = _phase5_record_event(event)
+
     result = {
         "status": "MONITORING",
         "position": pos,
@@ -4815,6 +5027,8 @@ def monitor_active_position() -> Dict[str, Any]:
         "institutional_analysis": phase2,
         "health_engine": phase3,
         "position_intelligence": phase4,
+        "trade_coach": phase5,
+        "recommendation_timeline": timeline,
         "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "flow_snapshot": {
             "bias": flow_item.get("bias"),
@@ -6725,8 +6939,9 @@ def api_position():
 def api_position_clear():
     """Clear the active position monitor."""
     with ACTIVE_POSITION_LOCK:
+        review = ACTIVE_POSITION.get("phase5_review")
         ACTIVE_POSITION.clear()
-    return jsonify({"ok": True, "message": "Active position cleared."})
+    return jsonify({"ok": True, "message": "Active position cleared.", "last_review": review})
 
 
 @app.route("/api/position/action", methods=["POST"])
@@ -6768,9 +6983,68 @@ def api_position_action():
             ACTIVE_POSITION["status"] = "CLOSED"
         ACTIVE_POSITION["last_manual_action"] = action
         ACTIVE_POSITION["last_manual_action_at"] = now_et().strftime("%Y-%m-%d %H:%M:%S ET")
+        action_summary = {
+            "TRIM_25": "Trader recorded a 25% trim.", "TRIM_50": "Trader recorded a 50% trim.",
+            "TRIM_75": "Trader recorded a 75% trim.", "MOVE_STOP_BE": "Stop was marked at breakeven.",
+            "UPDATE_PREMIUM": "Live option premium was manually synchronized.", "CLOSE": "Position was marked closed.",
+        }.get(action, action)
+        timeline = list(ACTIVE_POSITION.get("recommendation_timeline") or [])
+        timeline.append({
+            "time": now_et().strftime("%H:%M:%S"), "timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+            "kind": "MANUAL_ACTION", "recommendation": action,
+            "trade_health": (timeline[-1].get("trade_health") if timeline else None),
+            "confidence": None, "summary": action_summary,
+            "snapshot": {"quantity": ACTIVE_POSITION.get("quantity"), "stop": ACTIVE_POSITION.get("stop"), "option_current_price": ACTIVE_POSITION.get("option_current_price")},
+        })
+        ACTIVE_POSITION["recommendation_timeline"] = timeline[-120:]
+        if ACTIVE_POSITION.get("status") == "CLOSED":
+            ACTIVE_POSITION["phase5_review"] = _build_phase5_post_trade_review(dict(ACTIVE_POSITION))
         pos = dict(ACTIVE_POSITION)
     return jsonify({"ok": True, "action": action, "position": pos,
+                    "post_trade_review": pos.get("phase5_review"),
                     "execution_note": "Recorded only; no broker order was sent."})
+
+
+
+@app.route("/api/position/coach")
+def api_position_coach():
+    """Return the current Phase 5 coach, timeline, and closed-trade review."""
+    with ACTIVE_POSITION_LOCK:
+        pos = dict(ACTIVE_POSITION)
+    if not pos:
+        return jsonify({"ok": True, "status": "NO_POSITION", "timeline": [], "coach": None, "review": None})
+    if pos.get("status") == "CLOSED":
+        return jsonify({"ok": True, "status": "CLOSED", "timeline": pos.get("recommendation_timeline") or [], "coach": None, "review": pos.get("phase5_review")})
+    try:
+        monitor = monitor_active_position()
+        return jsonify({"ok": True, "status": monitor.get("status"), "coach": monitor.get("trade_coach"), "timeline": monitor.get("recommendation_timeline") or [], "review": None})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/position/ask", methods=["POST"])
+def api_position_ask():
+    """Answer a trade-specific question using only the current Trade Director state."""
+    body = request.get_json(silent=True) or {}
+    question = str(body.get("question") or "").strip()
+    with ACTIVE_POSITION_LOCK:
+        is_open = bool(ACTIVE_POSITION and ACTIVE_POSITION.get("status") == "OPEN")
+    if not is_open:
+        return jsonify({"ok": False, "error": "no open position to coach"}), 409
+    try:
+        monitor = monitor_active_position()
+        return jsonify({"ok": True, "question": question, **_answer_phase5_question(question, monitor)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/position/review")
+def api_position_review():
+    """Return the post-trade review for the most recently closed manual position."""
+    with ACTIVE_POSITION_LOCK:
+        review = ACTIVE_POSITION.get("phase5_review") if ACTIVE_POSITION else None
+        status = ACTIVE_POSITION.get("status") if ACTIVE_POSITION else None
+    return jsonify({"ok": True, "status": status or "NO_POSITION", "review": review})
 
 
 @app.route("/api/performance")
