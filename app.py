@@ -4288,6 +4288,108 @@ def _trade_director_phase2_synthesis(
     }
 
 
+def _trade_director_phase3_health(
+    *,
+    position: Dict[str, Any],
+    phase2: Dict[str, Any],
+    alignment: float,
+    gex_score: float,
+    current_price: float,
+    entry_price: float,
+    stop: float,
+    target1: float,
+    option_pnl_pct: Optional[float],
+) -> Dict[str, Any]:
+    """Build the Phase 3 primary Trade Health score and trend.
+
+    The score is advisory and uses only data already present in the active-position
+    monitor plus the cached Phase 2 synthesis. No provider calls, worker threads,
+    timers, or broker actions are introduced here.
+    """
+    side = str(position.get("side") or "").upper()
+    consensus_available = max(1, int(phase2.get("available_components") or 0))
+    aligned = int(phase2.get("aligned_components") or 0)
+    opposed = int(phase2.get("opposing_components") or 0)
+
+    consensus_ratio = max(0.0, min(1.0, (aligned + 0.5 * max(0, consensus_available - aligned - opposed)) / consensus_available))
+    institutional = round(consensus_ratio * 35.0, 1)
+    flow = round(max(0.0, min(25.0, (alignment / 100.0) * 25.0)), 1)
+    dealer = round(max(0.0, min(15.0, (gex_score / 100.0) * 15.0)), 1)
+
+    move_in_favor = None
+    if current_price > 0 and entry_price > 0:
+        move_in_favor = current_price - entry_price
+        if side == "PUT":
+            move_in_favor = -move_in_favor
+
+    price_structure = 7.5
+    if move_in_favor is not None:
+        risk_distance = abs(entry_price - stop) if stop > 0 else 0.0
+        reward_distance = abs(target1 - entry_price) if target1 > 0 else 0.0
+        scale = risk_distance or reward_distance or max(abs(entry_price) * 0.001, 1.0)
+        normalized = max(-1.0, min(1.0, move_in_favor / scale))
+        price_structure = 7.5 + normalized * 7.5
+    price_structure = round(max(0.0, min(15.0, price_structure)), 1)
+
+    risk_discipline = 4.0
+    if stop > 0:
+        risk_discipline += 3.0
+    if option_pnl_pct is not None:
+        if option_pnl_pct >= 20 and stop >= entry_price > 0:
+            risk_discipline += 3.0
+        elif option_pnl_pct < -20:
+            risk_discipline -= 2.0
+    risk_discipline = round(max(0.0, min(10.0, risk_discipline)), 1)
+
+    raw_score = institutional + flow + dealer + price_structure + risk_discipline
+    # Blend with Phase 2 to prevent one sparse snapshot from creating a violent jump.
+    score = int(round(max(0.0, min(100.0, raw_score * 0.72 + float(phase2.get("trade_health") or 50) * 0.28))))
+
+    if score >= 95:
+        band, guidance = "PRESS_ADVANTAGE", "Press the advantage"
+    elif score >= 85:
+        band, guidance = "HOLD_CONFIDENTLY", "Hold confidently"
+    elif score >= 70:
+        band, guidance = "MANAGE_CAREFULLY", "Manage carefully"
+    elif score >= 50:
+        band, guidance = "PROTECT_PROFIT", "Protect profit"
+    else:
+        band, guidance = "EXIT_REDUCE", "Exit or reduce"
+
+    now_label = now_et().strftime("%H:%M:%S")
+    with ACTIVE_POSITION_LOCK:
+        history = list(ACTIVE_POSITION.get("health_history") or [])
+        last = history[-1] if history else None
+        if not last or last.get("score") != score or last.get("recommendation") != phase2.get("recommendation"):
+            history.append({"time": now_label, "score": score, "recommendation": phase2.get("recommendation")})
+        history = history[-30:]
+        ACTIVE_POSITION["health_history"] = history
+
+    previous = int(history[-2]["score"]) if len(history) >= 2 else score
+    delta = score - previous
+    trend = "IMPROVING" if delta >= 3 else "DETERIORATING" if delta <= -3 else "STABLE"
+
+    breakdown = [
+        {"name": "Institutional Consensus", "score": institutional, "max": 35},
+        {"name": "Flow / Alignment", "score": flow, "max": 25},
+        {"name": "Dealer / Gamma", "score": dealer, "max": 15},
+        {"name": "Price Structure", "score": price_structure, "max": 15},
+        {"name": "Risk Discipline", "score": risk_discipline, "max": 10},
+    ]
+    return {
+        "version": "PHASE_3",
+        "score": score,
+        "band": band,
+        "guidance": guidance,
+        "trend": trend,
+        "delta": delta,
+        "breakdown": breakdown,
+        "history": history[-12:],
+        "updated_at": now_label,
+        "advisory_only": True,
+    }
+
+
 def monitor_active_position() -> Dict[str, Any]:
     """
     Checks the currently tracked position against live Flow/GEX.
@@ -4402,6 +4504,26 @@ def monitor_active_position() -> Dict[str, Any]:
     health = phase2["trade_health"]
     confidence = phase2["confidence"]
 
+    phase3 = _trade_director_phase3_health(
+        position=pos,
+        phase2=phase2,
+        alignment=alignment,
+        gex_score=gex_score,
+        current_price=current_price,
+        entry_price=entry,
+        stop=stop,
+        target1=t1,
+        option_pnl_pct=option_pnl_pct,
+    )
+    health = phase3["score"]
+    # The Phase 3 health band acts as a safety governor over the Phase 2 action.
+    if health < 50 and recommendation != "EXIT":
+        recommendation, priority = "EXIT", "URGENT"
+    elif health < 65 and recommendation == "HOLD":
+        recommendation, priority = "PROTECT_PROFIT", "CAUTION"
+    elif health < 75 and recommendation == "HOLD":
+        recommendation, priority = "TRIM_50", "WARNING"
+
     result = {
         "status": "MONITORING",
         "position": pos,
@@ -4419,6 +4541,7 @@ def monitor_active_position() -> Dict[str, Any]:
         "priority": priority,
         "reasons": reasons,
         "institutional_analysis": phase2,
+        "health_engine": phase3,
         "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "flow_snapshot": {
             "bias": flow_item.get("bias"),
