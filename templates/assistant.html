@@ -44,6 +44,9 @@
 @media(max-width:760px){.health-head{align-items:flex-start}.health-breakdown{grid-template-columns:repeat(2,minmax(0,1fr))}.health-ring{width:76px;height:76px}.health-ring strong{font-size:22px}.health-guidance{font-size:17px}}
 
 .phase4-panel{margin-top:12px;padding:14px;border:1px solid rgba(34,197,94,.28);border-radius:14px;background:#08151d}.phase4-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.phase4-title{font-size:16px;font-weight:900}.phase4-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}.intel-card{background:#07101c;border:1px solid #22354c;border-radius:11px;padding:11px}.intel-card.wide{grid-column:1/-1}.prob-row{display:flex;justify-content:space-between;gap:12px;margin-top:8px}.prob-big{font-size:28px;font-weight:1000}.dual-track{height:9px;background:#17283b;border-radius:999px;overflow:hidden;margin-top:8px}.dual-track span{display:block;height:100%;background:var(--good)}.tf-list{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;margin-top:8px}.tf-chip{padding:7px 5px;text-align:center;border:1px solid #25384e;border-radius:8px;background:#091827}.tf-chip b{display:block;font-size:12px}.tf-chip span{display:block;font-size:10px;margin-top:3px}.metric-row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid #17283b;font-size:12px}.metric-row:last-child{border-bottom:0}.metric-row strong{font-size:13px}.intel-note{font-size:11px;color:var(--muted);margin-top:7px;line-height:1.4}.opp-box{display:flex;justify-content:space-between;gap:14px;align-items:center;margin-top:8px}.opp-score{font-size:24px;font-weight:1000}@media(max-width:760px){.phase4-grid{grid-template-columns:1fr}.tf-list{grid-template-columns:repeat(3,minmax(0,1fr))}.phase4-head{display:block}}
+
+.phase5-panel{margin-top:12px;padding:14px;border:1px solid rgba(168,85,247,.35);border-radius:14px;background:#110d1d}.phase5-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.coach-title{font-size:18px;font-weight:900}.coach-copy{font-size:14px;line-height:1.55;color:#d8e5f7;margin-top:8px}.coach-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:10px;margin-top:12px}.coach-card{background:#090d18;border:1px solid #2e2541;border-radius:11px;padding:12px}.coach-evidence{margin-top:8px}.coach-ev{padding:7px 0;border-bottom:1px solid #211b30;font-size:12px;line-height:1.45}.coach-ev:last-child{border-bottom:0}.coach-ev .src{color:var(--muted);font-size:10px;text-transform:uppercase}.coach-ev.support{color:#c9f7d7}.coach-ev.risk{color:#ffd1d1}.coach-ask{display:flex;gap:8px;margin-top:10px}.coach-ask input{flex:1;background:#070b13;border:1px solid #34294b;color:var(--text);border-radius:9px;padding:10px}.coach-answer{margin-top:9px;min-height:44px;padding:10px;border-radius:9px;background:#080c15;border:1px solid #241d34;color:#cbd8ea;font-size:12px;line-height:1.5}.phase5-timeline{max-height:250px;overflow:auto;margin-top:8px}.p5-event{padding:8px 0;border-bottom:1px solid #211b30}.p5-event-top{display:flex;justify-content:space-between;gap:8px;font-size:11px}.p5-event-rec{font-weight:900}.p5-event-summary{font-size:11px;color:#b7c7dd;margin-top:4px;line-height:1.4}.review-panel{display:none;margin:12px 0;padding:14px;border:1px solid rgba(245,158,11,.45);border-radius:14px;background:#171208}.review-panel.active{display:block}.review-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}.review-stat{background:#0d0b07;border:1px solid #3b2f15;border-radius:9px;padding:9px}.review-stat strong{display:block;font-size:20px;margin-top:4px}.review-lessons{margin-top:10px;color:#d9c79f;line-height:1.5;font-size:12px}
+@media(max-width:760px){.coach-grid{grid-template-columns:1fr}.phase5-head{display:block}.review-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.coach-ask{display:block}.coach-ask button{margin-top:8px;width:100%}}
 </style></head><body>
 <nav class="apex-nav">
   <a href="/" class="nav-logo">APEX</a>
@@ -79,6 +82,7 @@
 </div>
 <div id="tradeHero" class="trade-hero"></div>
 <div id="positionStrip" class="position-strip"></div>
+<div id="postTradeReview" class="review-panel"></div>
 <div id="app" class="panel">Loading Active Trade Director…</div>
 </div>
 <script>
@@ -92,7 +96,7 @@ async function startTrade(){
   try{const r=await fetch('/api/position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Unable to start trade');status.textContent='Trade confirmed. APEX is now in management mode.';document.getElementById('entryForm').style.display='none';await loadDirector();}catch(e){status.textContent=e.message;}
 }
 async function positionAction(action,extra={}){
-  try{const r=await fetch('/api/position/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Action failed');await loadDirector();}catch(e){alert(e.message);}
+  try{const r=await fetch('/api/position/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...extra})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Action failed');if(j.post_trade_review)renderPostTradeReview(j.post_trade_review);await loadDirector();}catch(e){alert(e.message);}
 }
 async function updatePremium(){const v=Number(document.getElementById('livePremium')?.value||0);if(v<=0){alert('Enter the current option premium.');return;}await positionAction('UPDATE_PREMIUM',{option_current_price:v});}
 
@@ -138,6 +142,31 @@ function renderPositionIntelligence(p4){
   </div></div>`;
 }
 
+
+function renderPostTradeReview(r){
+  const el=document.getElementById('postTradeReview');
+  if(!r){el.className='review-panel';el.innerHTML='';return;}
+  const lessons=(r.lessons||[]).map(x=>`<div>• ${esc(x)}</div>`).join('');
+  el.className='review-panel active';
+  el.innerHTML=`<div class="label">PHASE 5 POST-TRADE REVIEW</div><div class="coach-title">Institutional Trade Coach Review</div><div class="review-grid"><div class="review-stat"><span class="label">Duration</span><strong>${r.duration_minutes==null?'--':r.duration_minutes+'m'}</strong></div><div class="review-stat"><span class="label">Health Start / Peak / Close</span><strong>${r.starting_health??'--'} / ${r.peak_health??'--'} / ${r.closing_health??'--'}</strong></div><div class="review-stat"><span class="label">Process Score</span><strong>${r.process_score==null?'--':r.process_score+'/100'}</strong></div><div class="review-stat"><span class="label">Est. P/L</span><strong>${r.estimated_realized_pnl==null?'--':money(r.estimated_realized_pnl)}</strong></div></div><div class="review-lessons">${lessons}</div><div class="intel-note">${esc(r.calibration_note||'')}</div>`;
+}
+
+async function askApex(){
+  const input=document.getElementById('coachQuestion'), out=document.getElementById('coachAnswer');
+  const q=(input?.value||'').trim(); if(!q){out.textContent='Enter a trade-management question.';return;}
+  out.textContent='Analyzing the current trade…';
+  try{const r=await fetch('/api/position/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Unable to answer');out.textContent=j.answer||'No answer available.';}catch(e){out.textContent=e.message;}
+}
+
+function renderTradeCoach(coach,timeline){
+  if(!coach)return '';
+  const ev=(coach.evidence||[]).map(x=>`<div class="coach-ev ${String(x.tone||'').toLowerCase()}"><div class="src">${esc(x.source||'APEX')}</div>${esc(x.text||'')}</div>`).join('');
+  const tl=(timeline||[]).slice().reverse().slice(0,20).map(x=>`<div class="p5-event"><div class="p5-event-top"><span>${esc(x.time||'')}</span><span class="p5-event-rec ${actionClass(x.recommendation)}">${esc(actionLabel(x.recommendation||x.kind))}</span><span>${x.trade_health==null?'':x.trade_health+'/100'}</span></div><div class="p5-event-summary">${esc(x.summary||'')}</div></div>`).join('');
+  const cp=coach.continuation_probability==null?'--':coach.continuation_probability+'%';
+  const rp=coach.reversal_probability==null?'--':coach.reversal_probability+'%';
+  return `<div class="phase5-panel"><div class="phase5-head"><div><div class="label">TRADE DIRECTOR PHASE 5</div><div class="coach-title">Institutional Trade Coach</div><div class="coach-copy">${esc(coach.headline||'')}</div></div><div><div class="hero-action ${actionClass(coach.recommendation)}">${esc(actionLabel(coach.recommendation))}</div><div class="sub">${coach.confidence||'--'}% confidence</div></div></div><div class="coach-grid"><div class="coach-card"><div class="label">Evidence-backed explanation</div><div class="coach-evidence">${ev||'<div class="intel-note">Waiting for grounded engine evidence.</div>'}</div><div class="metric-row"><span>Continuation / reversal</span><strong>${cp} / ${rp}</strong></div><div class="metric-row"><span>Expected continuation</span><strong>${esc(coach.expected_continuation||'--')}</strong></div><div class="metric-row"><span>Next event to watch</span><strong>${esc(coach.next_event_to_watch||'--')}</strong></div><div class="coach-ask"><input id="coachQuestion" placeholder="Should I hold? Why did health drop?"><button class="btn" onclick="askApex()">Ask APEX</button></div><div id="coachAnswer" class="coach-answer">Answers are limited to the current trade and APEX state.</div></div><div class="coach-card"><div class="label">Recommendation Timeline</div><div class="phase5-timeline">${tl||'<div class="intel-note">No recommendation changes recorded yet.</div>'}</div></div></div><div class="intel-note">${esc(coach.grounding_note||'')} Advisory only; no broker order is sent.</div></div>`;
+}
+
 function renderTradeHero(m){
   const el=document.getElementById('tradeHero');
   if(!m||m.status!=='MONITORING'||!m.position){el.className='trade-hero';el.innerHTML='';return;}
@@ -153,6 +182,7 @@ function renderTradeHero(m){
   </div>
   ${renderHealthEngine(m.health_engine)}
   ${renderPositionIntelligence(m.position_intelligence)}
+  ${renderTradeCoach(m.trade_coach,m.recommendation_timeline)}
   <div class="reason-list"><div class="label">WHY APEX IS SAYING ${esc(actionLabel(m.recommendation))}</div>${reasons||'<div>Waiting for live confirmation.</div>'}</div>
   ${renderInstitutionalAnalysis(m.institutional_analysis)}
   <div class="premium-update"><span class="label">Update live option premium</span><input id="livePremium" type="number" step="0.01" value="${m.option_current_price||''}" placeholder="e.g. 14.10"><button class="btn" onclick="updatePremium()">Update P/L</button><span class="sub">Manual sync only; no broker order is sent.</span></div>`;
