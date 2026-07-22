@@ -96,6 +96,7 @@
 <div id="crossAssetIntelligence"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
+<div id="executionDesk"></div>
 <div id="tradeHero" class="trade-hero"></div>
 <div id="positionStrip" class="position-strip"></div>
 <div id="postTradeReview" class="review-panel"></div>
@@ -296,6 +297,13 @@ function renderOptionsIntelligence(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 15</div><div class="coach-title">Options Intelligence Center</div><div class="sub">Contract compatibility · Greeks · liquidity · expected-move alignment</div></div><div><div class="label">Decision Gate</div><div class="phase15-contract ${d.decision_gate==='CONTRACT_CANDIDATE_SELECTED'?'good':d.decision_gate==='STAND_DOWN'?'bad':'warn'}">${esc((d.decision_gate||'CHAIN_REQUIRED').replace(/_/g,' '))}</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Best Verified Candidate</div><div class="phase15-contract">${esc(bestTitle)}</div><div><span class="phase15-tag">${esc(d.strategy||'STAND_DOWN')}</span><span class="phase15-tag">${esc(g.structure||'GUIDANCE_ONLY')}</span><span class="phase15-tag">${best.score==null?'No score':'Score '+num(best.score,1)}</span></div><div class="metric-row"><span>Expiration</span><strong>${esc(best.expiration||g.expiration_guidance||'--')}</strong></div><div class="metric-row"><span>Strike</span><strong>${best.strike||'--'}</strong></div><div class="metric-row"><span>Delta / Gamma</span><strong>${best.delta==null?'--':num(best.delta,2)} / ${best.gamma==null?'--':num(best.gamma,4)}</strong></div><div class="metric-row"><span>Theta / Vega</span><strong>${best.theta==null?'--':num(best.theta,3)} / ${best.vega==null?'--':num(best.vega,3)}</strong></div><div class="metric-row"><span>Bid / Ask</span><strong>${best.bid==null?'--':num(best.bid,2)} / ${best.ask==null?'--':num(best.ask,2)}</strong></div><div class="metric-row"><span>Expected-move fit</span><strong>${esc((best.expected_move_position||'UNAVAILABLE').replace(/_/g,' '))}</strong></div></div><div class="phase15-card"><div class="label">Contract Ranking</div>${ranked||'<div class="sub">No cached option chain is available. APEX is showing contract characteristics only and is not inventing a strike or symbol.</div>'}${alts?`<div class="label" style="margin-top:10px">Alternatives</div>${alts}`:''}<div class="sub" style="margin-top:8px">${cs.contract_count||0} contracts inspected · ${cs.eligible_count||0} eligible · Spot ${cs.spot==null?'--':num(cs.spot,2)}</div></div></div><div class="phase15-guard"><strong>Contract guidance:</strong> ${esc(g.required_side||'BOTH')} · delta ${g.preferred_abs_delta?num(g.preferred_abs_delta.minimum,2)+'–'+num(g.preferred_abs_delta.maximum,2):'--'} · ${esc(g.strike_guidance||'--')} · ${esc(g.expiration_guidance||'--')}<br>${esc(d.reason||'')}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+function renderExecutionDesk(x){
+  const el=document.getElementById('executionDesk'); if(!el)return;
+  const d=(x&&x.execution_desk)||x||{}, p=d.order_plan||{}, q=d.market_quality||{}, c=d.contract||{};
+  const blockers=(d.blockers||[]).map(v=>`<div class="phase10-check fail">✕ ${esc(v)}</div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 16</div><div class="coach-title">Institutional Execution Desk</div><div class="sub">Limit-price intelligence · slippage guard · partial-fill control</div></div><div><div class="label">Execution Gate</div><div class="phase15-contract ${d.decision_gate==='READY_FOR_PHASE10_PREVIEW'?'good':'bad'}">${esc((d.decision_gate||'BLOCKED').replace(/_/g,' '))}</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Order Plan</div><div class="phase15-contract">${esc(c.symbol||'No verified contract')}</div><div class="metric-row"><span>Action / Quantity</span><strong>${esc(p.action||'--')} · ${p.quantity||'--'}</strong></div><div class="metric-row"><span>Recommended limit</span><strong>${p.limit_price==null?'--':num(p.limit_price,2)}</strong></div><div class="metric-row"><span>Patient / Balanced</span><strong>${p.patient_price==null?'--':num(p.patient_price,2)} / ${p.balanced_price==null?'--':num(p.balanced_price,2)}</strong></div><div class="metric-row"><span>Assertive ceiling</span><strong>${p.max_acceptable_price==null?'--':num(p.max_acceptable_price,2)}</strong></div><div class="metric-row"><span>Urgency</span><strong>${esc(p.urgency||'--')}</strong></div></div><div class="phase15-card"><div class="label">Market Quality</div><div class="metric-row"><span>Bid / Ask</span><strong>${q.bid==null?'--':num(q.bid,2)} / ${q.ask==null?'--':num(q.ask,2)}</strong></div><div class="metric-row"><span>Spread</span><strong>${q.spread_pct==null?'--':num(q.spread_pct,1)+'%'}</strong></div><div class="metric-row"><span>Quality</span><strong>${esc(q.quality||'--')}</strong></div><div class="metric-row"><span>Plan ID</span><strong>${esc(d.plan_id||'--')}</strong></div>${blockers||'<div class="phase10-check pass">✓ Ready for Phase 10 broker preview and confirmation</div>'}</div></div><div class="phase15-guard"><strong>Slippage policy:</strong> No market orders, no chasing, one price-improvement step followed by reassessment.</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderExecutionControl(c){
   if(!c)return '';
   const checks=(c.checks||[]).map(x=>`<div class="phase10-check ${x.passed?'pass':'fail'}">${x.passed?'✓':'✕'} <strong>${esc(x.name||'Check')}</strong> — ${esc(x.detail||'')}</div>`).join('');
@@ -412,7 +420,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, so, oi] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -420,7 +428,8 @@ async function loadDirector(){
       fetch('/api/position/market-memory',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/cross-asset-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
+      fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
     ]);
     const d=dr||{}; const fa=d.flow_acceleration||{}; const pos=d.position||{}; const conf=d.conflict||{};
     const timeline=(tlr&&tlr.timeline)||[];
@@ -429,6 +438,7 @@ async function loadDirector(){
     renderCrossAssetIntelligence(ca);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
+    renderExecutionDesk(ed);
     renderTradeHero(pm);
     renderPositionStrip(pos);
 
