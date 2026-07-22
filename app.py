@@ -74,6 +74,14 @@ except Exception as _td10_err:
     TRADE_DIRECTOR_PHASE10_AVAILABLE = False
     print(f"Trade Director Phase 10 unavailable: {_td10_err}", flush=True)
 
+# APEX Trade Director Phase 11 — institutional portfolio and session intelligence
+try:
+    from engine.trade_director_session_intelligence import build_session_intelligence as td11_build_session_intelligence
+    TRADE_DIRECTOR_PHASE11_AVAILABLE = True
+except Exception as _td11_err:
+    TRADE_DIRECTOR_PHASE11_AVAILABLE = False
+    print(f"Trade Director Phase 11 unavailable: {_td11_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -3783,7 +3791,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td8"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td11"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -5150,9 +5158,18 @@ def monitor_active_position() -> Dict[str, Any]:
         },
     }
 
+    if TRADE_DIRECTOR_PHASE11_AVAILABLE:
+        try:
+            _td11_history = td6_trade_history(250) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
+            result["session_intelligence"] = td11_build_session_intelligence(pos, result, _td11_history, now_et().replace(tzinfo=None))
+        except Exception as _td11_build_err:
+            result["session_intelligence"] = {"version": "PHASE_11", "error": str(_td11_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
+        if result.get("session_intelligence"):
+            ACTIVE_POSITION["phase11_last_session"] = dict(result["session_intelligence"])
 
     return result
 
@@ -7431,6 +7448,23 @@ def api_position_execution_control_reconcile():
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["phase10_session"] = {"active_order": record}
     return jsonify({"ok": True, "order": record, "reconciliation": reconciliation})
+
+
+@app.route("/api/position/session-intelligence")
+def api_position_session_intelligence():
+    """Return Phase 11 session-level risk, sizing, and performance intelligence."""
+    if not TRADE_DIRECTOR_PHASE11_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 11 session intelligence unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        pos = dict(ACTIVE_POSITION)
+        cached = dict(ACTIVE_POSITION.get("phase11_last_session") or {})
+    monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
+    if monitor.get("session_intelligence"):
+        session = monitor["session_intelligence"]
+    else:
+        history = td6_trade_history(250) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
+        session = td11_build_session_intelligence(pos, monitor, history, now_et().replace(tzinfo=None))
+    return jsonify({"ok": True, "session_intelligence": session or cached})
 
 
 @app.route("/api/position/policy")
