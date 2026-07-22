@@ -98,6 +98,7 @@
 <div id="institutionalFlowIntelligence"></div>
 <div id="institutionalDecisionIntelligence"></div>
 <div id="institutionalDecisionEngine"></div>
+<div id="tradeLifecycle"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -365,6 +366,19 @@ async function phase10Prepare(){const out=document.getElementById('phase10Result
 async function phase10Confirm(controlId,token){const out=document.getElementById('phase10Result');const text=(document.getElementById('phase10ConfirmText')?.value||'').trim();out.textContent='Validating confirmation…';try{const r=await fetch('/api/position/execution-control/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({control_id:controlId,confirmation_token:token,confirmation_text:text})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Submission failed');out.textContent=j.message||'Order submitted.';setTimeout(refresh,400);}catch(e){out.textContent=e.message;}}
 async function phase10Reconcile(){const out=document.getElementById('phase10Result');out.textContent='Reconciling broker position…';try{const r=await fetch('/api/position/execution-control/reconcile',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Reconciliation failed');out.textContent=`Reconciliation: ${j.reconciliation?.status||'complete'}`;setTimeout(refresh,400);}catch(e){out.textContent=e.message;}}
 
+function renderTradeLifecycle(x){
+  const el=document.getElementById('tradeLifecycle'); if(!el)return;
+  const d=x?.trade_lifecycle||x; if(!d||d.error){el.innerHTML='';return;}
+  const p=d.management_plan||{}, ps=d.position_snapshot||{}, th=d.thesis||{};
+  const state=String(d.lifecycle_state||'DECISION_AUTHORIZED');
+  const action=String(d.management_action||'WAIT_FOR_ENTRY');
+  const support=(th.support||[]).map(v=>`<div class="phase10-check pass">✓ ${esc(v)}</div>`).join('');
+  const conflicts=(th.conflicts||[]).map(v=>`<div class="phase10-check fail">✕ ${esc(v)}</div>`).join('');
+  const blockers=(d.hard_blockers||[]).map(v=>`<div class="phase10-check fail">✕ ${esc(v)}</div>`).join('');
+  const provenance=(d.provenance||[]).map(v=>`<div class="metric-row"><span>${esc(v.engine||'ENGINE')} · ${esc((v.role||'evidence').replace(/_/g,' '))}</span><strong>${esc((v.value||'UNKNOWN').replace(/_/g,' '))}</strong></div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 21</div><div class="coach-title">Institutional Trade Lifecycle Engine</div><div class="sub">One coordinated lifecycle · thesis-aware management · governed protection · no autonomous execution</div></div><div><div class="label">Lifecycle State</div><div class="phase15-contract ${state==='EXIT'||state==='DECISION_BLOCKED'?'bad':state==='POSITION_ACTIVE'||state==='RUNNER'?'good':'warn'}">${esc(state.replace(/_/g,' '))}</div><div class="sub">${esc(d.lifecycle_id||'--')}</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Unified Management Action</div><div class="phase15-contract">${esc(action.replace(/_/g,' '))}</div><div class="metric-row"><span>Direction</span><strong>${esc(d.direction||'NEUTRAL')}</strong></div><div class="metric-row"><span>Urgency</span><strong>${esc(p.urgency||'NORMAL')}</strong></div><div class="metric-row"><span>Reduce position</span><strong>${p.reduce_position_pct||0}%</strong></div><div class="metric-row"><span>Recommended stop</span><strong>${p.recommended_stop==null?'--':num(p.recommended_stop,2)}</strong></div><div class="metric-row"><span>Remaining quantity</span><strong>${p.remaining_quantity_estimate??'--'}</strong></div><div class="sub">${esc(d.reason||'')}</div></div><div class="phase15-card"><div class="label">Position State</div><div class="metric-row"><span>Quantity</span><strong>${ps.quantity??0}</strong></div><div class="metric-row"><span>Entry / Current</span><strong>${ps.entry_price==null?'--':num(ps.entry_price,2)} / ${ps.current_price==null?'--':num(ps.current_price,2)}</strong></div><div class="metric-row"><span>Open P/L</span><strong>${money(ps.unrealized_pnl||0)} · ${num(ps.pnl_pct||0,1)}%</strong></div><div class="metric-row"><span>Trade health</span><strong>${num(ps.trade_health_score||0,1)}</strong></div><div class="metric-row"><span>Momentum</span><strong>${esc(ps.momentum_state||'--')}</strong></div><div class="metric-row"><span>Held</span><strong>${num(ps.minutes_held||0,1)} min</strong></div></div><div class="phase15-card"><div class="label">Original Thesis Check</div>${blockers||conflicts||support||'<div class="sub">No supporting lifecycle evidence is available yet.</div>'}<div class="metric-row"><span>Thesis intact</span><strong>${th.intact?'YES':'NO'}</strong></div><div class="metric-row"><span>Stability</span><strong>${esc(d.stability?.state||'STABLE')}</strong></div></div><div class="phase15-card"><div class="label">Integrated Provenance</div>${provenance}<div class="metric-row"><span>Phase 10 confirmation</span><strong>${p.requires_phase10_exact_confirmation?'REQUIRED':'NOT TRIGGERED'}</strong></div><div class="metric-row"><span>Broker called</span><strong>${p.broker_called?'YES':'NO'}</strong></div><div class="metric-row"><span>Order submitted</span><strong>${p.order_submitted?'YES':'NO'}</strong></div></div></div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderTradeHero(m){
   const el=document.getElementById('tradeHero');
   if(!m||m.status!=='MONITORING'||!m.position){el.className='trade-hero';el.innerHTML='';return;}
@@ -467,7 +481,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -478,6 +492,7 @@ async function loadDirector(){
       fetch('/api/position/institutional-flow-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/institutional-decision-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/institutional-decision-engine',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/trade-lifecycle',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -491,6 +506,7 @@ async function loadDirector(){
     renderInstitutionalFlowIntelligence(fi);
     renderInstitutionalDecisionIntelligence(di);
     renderInstitutionalDecisionEngine(de);
+    renderTradeLifecycle(tl);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
