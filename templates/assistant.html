@@ -94,6 +94,7 @@
 <div id="missionControl"></div>
 <div id="marketMemory"></div>
 <div id="crossAssetIntelligence"></div>
+<div id="multiTimeframeIntelligence"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -276,6 +277,15 @@ function renderCrossAssetIntelligence(x){
   el.innerHTML=`<div class="phase13-panel"><div class="phase11-head"><div><div class="label">TRADE DIRECTOR PHASE 13</div><div class="coach-title">Cross-Asset Intelligence & Lead-Lag Engine</div><div class="sub">Cached-only confirmation · divergence detection · regime and transmission intelligence</div></div><div><div class="label">SPX Confirmation</div><div class="phase13-score ${Number(d.spx_confirmation_score||50)>=58?'good':Number(d.spx_confirmation_score||50)<=42?'bad':'warn'}">${num(d.spx_confirmation_score,1)}</div><div class="sub">${esc(d.cross_asset_bias||'NEUTRAL')} · ${num(d.confidence,1)}% confidence</div></div></div><div class="phase13-grid"><div class="phase13-card"><div class="label">Cross-Asset Regime</div><div class="phase12-hero">${esc((d.regime||'DATA_LIMITED').replace(/_/g,' '))}</div><div class="metric-row"><span>Leading market</span><strong>${esc(ll.leader||'--')}</strong></div><div class="metric-row"><span>Lagging / divergent</span><strong>${esc(ll.laggard||'--')}</strong></div><div class="metric-row"><span>Coverage</span><strong>${num(d.coverage_pct,1)}%</strong></div><div class="metric-row"><span>Sizing posture</span><strong>${esc(effect.sizing_posture||'REDUCED')}</strong></div></div><div class="phase13-card"><div class="label">Market Transmission Map</div><div class="phase13-chain">${chain}</div><div class="sub" style="margin-top:8px">${esc(tm.status||'DATA_LIMITED')} · ${num(tm.coverage_pct,1)}% chain coverage</div><div class="metric-row"><span>Trade Health adjustment</span><strong>${effect.health_adjustment??0}</strong></div></div><div class="phase13-card"><div class="label">Active Divergences</div>${divs||'<div class="sub">No material cached cross-asset divergence detected.</div>'}</div><div class="phase13-card"><div class="label">Historical Cross-Asset Memory</div>${memory||'<div class="sub">Cross-asset comparables will form as Phase 12 archives richer snapshots.</div>'}<div class="sub" style="margin-top:7px">${d.historical_cross_asset_memory?.sample_count||0} comparable sessions · ${esc(d.historical_cross_asset_memory?.status||'LEARNING')}</div></div></div><div class="phase13-card" style="margin-top:10px"><div class="label">Signal Matrix</div><div class="phase13-matrix">${matrix}</div></div><div class="phase7-note">${esc(d.safety_note||'')} ${esc(effect.execution_note||'')}</div></div>`;
 }
 
+function renderMultiTimeframeIntelligence(x){
+  const el=document.getElementById('multiTimeframeIntelligence'); if(!el)return;
+  const d=x?.multi_timeframe_intelligence||x; if(!d||d.error){el.innerHTML='';return;}
+  const matrix=(d.timeframe_matrix||[]).map(r=>{const cls=!r.available?'muted':r.direction==='BULLISH'?'good':r.direction==='BEARISH'?'bad':'warn';return `<div class="phase13-asset ${cls}"><strong>${esc(r.timeframe||'--')}</strong><div>${esc(r.direction||'UNAVAILABLE')}</div><div class="sub">${r.strength==null?'cached data absent':num(r.strength,0)+'/100'}</div></div>`}).join('');
+  const conflicts=(d.conflicts||[]).map(c=>`<div class="phase13-div"><strong class="${c.severity==='HIGH'?'bad':'warn'}">${esc(c.timeframe||'--')}</strong>${esc(c.direction||'')} conflict · ${esc(c.severity||'')}</div>`).join('');
+  const gate=d.decision_gate||'DATA_LIMITED';
+  el.innerHTML=`<div class="phase13-panel"><div class="phase11-head"><div><div class="label">TRADE DIRECTOR PHASE 17</div><div class="coach-title">Multi-Timeframe Intelligence</div><div class="sub">Higher-timeframe thesis · execution alignment · conflict and timing control</div></div><div><div class="label">Alignment</div><div class="phase13-score ${gate==='ALIGNED'?'good':gate==='TIMEFRAME_CONFLICT'||gate==='STAND_DOWN'?'bad':'warn'}">${num(d.alignment_score,1)}</div><div class="sub">${esc((gate||'').replace(/_/g,' '))} · ${num(d.confidence,1)}% confidence</div></div></div><div class="phase13-grid"><div class="phase13-card"><div class="label">Timeframe Hierarchy</div><div class="phase13-grid">${matrix}</div></div><div class="phase13-card"><div class="label">Institutional Thesis</div><div class="phase12-hero">${esc(d.dominant_direction||'NEUTRAL')}</div><div class="metric-row"><span>Higher timeframe</span><strong>${esc(d.higher_timeframe_bias||'--')}</strong></div><div class="metric-row"><span>Execution timeframe</span><strong>${esc(d.execution_timeframe_bias||'--')}</strong></div><div class="metric-row"><span>Entry timing</span><strong>${esc((d.entry_timing||'').replace(/_/g,' '))}</strong></div><div class="metric-row"><span>Coverage</span><strong>${num(d.coverage_pct,1)}%</strong></div><div class="sub">${esc(d.thesis?.statement||'')}</div></div><div class="phase13-card"><div class="label">Active Conflicts</div>${conflicts||'<div class="sub">No material timeframe conflict detected.</div>'}</div><div class="phase13-card"><div class="label">Trade Director Effect</div><div class="metric-row"><span>Health adjustment</span><strong>${d.trade_director_effect?.health_adjustment??0}</strong></div><div class="metric-row"><span>Sizing posture</span><strong>${esc(d.trade_director_effect?.sizing_posture||'REDUCED')}</strong></div><div class="sub">${esc(d.thesis?.invalidation||'')}</div></div></div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderStrategyOrchestration(x){
   const el=document.getElementById('strategyOrchestration'); if(!el)return;
   const d=x?.strategy_orchestration||x; if(!d||d.error){el.innerHTML='';return;}
@@ -420,13 +430,14 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
       fetch('/api/position/session-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/market-memory',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/cross-asset-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/multi-timeframe-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -436,6 +447,7 @@ async function loadDirector(){
     renderSessionIntelligence(sm);
     renderMarketMemory(mm);
     renderCrossAssetIntelligence(ca);
+    renderMultiTimeframeIntelligence(mt);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
