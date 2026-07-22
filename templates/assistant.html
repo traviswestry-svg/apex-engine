@@ -96,6 +96,7 @@
 <div id="crossAssetIntelligence"></div>
 <div id="multiTimeframeIntelligence"></div>
 <div id="institutionalFlowIntelligence"></div>
+<div id="institutionalDecisionIntelligence"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -308,6 +309,19 @@ function renderInstitutionalFlowIntelligence(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 18</div><div class="coach-title">Institutional Flow Intelligence</div><div class="sub">Sweeps · blocks · splits · dealer hedging · liquidity migration</div></div><div><div class="label">Flow Gate</div><div class="phase13-score ${gate==='INSTITUTIONAL_CONFIRMATION'?'good':gate==='FLOW_CONFLICT'||gate==='STAND_DOWN'?'bad':'warn'}">${num(d.institutional_score,1)}</div><div class="sub">${esc(gate.replace(/_/g,' '))} · ${num(d.confidence,1)}% confidence</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Institutional Intent</div><div class="phase15-contract">${esc(d.institutional_bias||'MIXED')}</div><div class="metric-row"><span>Classified premium</span><strong>$${num((d.classified_premium||0)/1000000,2)}M</strong></div><div class="metric-row"><span>Directional imbalance</span><strong>${num(d.imbalance_pct,1)}%</strong></div><div class="metric-row"><span>Sweeps / Blocks / Splits</span><strong>${e.sweeps||0} / ${e.blocks||0} / ${e.splits||0}</strong></div><div class="metric-row"><span>Opening prints</span><strong>${e.opening||0}</strong></div><div class="sub">${esc(d.interpretation||'')}</div></div><div class="phase15-card"><div class="label">Dominant Flow Clusters</div>${clusters||'<div class="sub">No qualified cached flow clusters are available.</div>'}</div><div class="phase15-card"><div class="label">Dealer & Liquidity Context</div><div class="metric-row"><span>Gamma regime</span><strong>${esc((dealer.regime||'UNKNOWN').replace(/_/g,' '))}</strong></div><div class="metric-row"><span>Flow effect</span><strong>${esc(dealer.flow_effect||'UNKNOWN')}</strong></div><div class="metric-row"><span>POC migration</span><strong>${esc(vp.poc_migration||'UNKNOWN')}</strong></div><div class="metric-row"><span>Preferred playbook</span><strong>${esc((d.preferred_playbook||'WAIT').replace(/_/g,' '))}</strong></div><div class="sub">${esc(dealer.interpretation||'')}</div></div><div class="phase15-card"><div class="label">Conflicts & Controls</div>${conflicts||'<div class="phase10-check pass">✓ No material flow conflict detected</div>'}<div class="metric-row"><span>Health adjustment</span><strong>${d.trade_director_effect?.health_adjustment??0}</strong></div><div class="metric-row"><span>Sizing posture</span><strong>${esc(d.trade_director_effect?.sizing_posture||'REDUCED')}</strong></div></div></div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+
+function renderInstitutionalDecisionIntelligence(x){
+  const el=document.getElementById('institutionalDecisionIntelligence'); if(!el)return;
+  const d=x?.decision_intelligence||x; if(!d||d.error){el.innerHTML='';return;}
+  const probs=d.scenario_probabilities||{}, votes=d.engine_votes||[], checks=d.institutional_checklist||[];
+  const voteHtml=votes.map(v=>`<div class="phase13-div"><strong>${esc(v.engine||'Engine')}</strong><span class="${v.direction==='BULLISH'?'good':v.direction==='BEARISH'?'bad':'warn'}">${esc(v.direction||'NEUTRAL')}</span><span>${num(v.confidence,1)}%</span><span>${esc((v.gate||'').replace(/_/g,' '))}</span></div>`).join('');
+  const checkHtml=checks.map(v=>`<div class="phase10-check ${v.passed?'pass':'fail'}">${v.passed?'✓':'✕'} ${esc(v.name||'Condition')}</div>`).join('');
+  const conflicts=(d.conflicts||[]).map(v=>`<div class="phase13-div"><strong class="warn">CONFLICT</strong>${esc(v)}</div>`).join('');
+  const blockers=(d.hard_blockers||[]).map(v=>`<div class="phase13-div"><strong class="bad">BLOCKED</strong>${esc(v)}</div>`).join('');
+  const state=String(d.decision_state||'WATCH');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 19</div><div class="coach-title">Institutional Decision Center</div><div class="sub">Evidence fusion · conflict resolution · scenario probabilities · calibrated decision narrative</div></div><div><div class="label">Consensus</div><div class="phase13-score ${state==='STRONG_BUY'||state==='BUY'?'good':state==='STAND_DOWN'||state==='EXIT'?'bad':'warn'}">${num(d.consensus_score,1)}</div><div class="sub">${esc(state.replace(/_/g,' '))} · ${num(d.confidence,1)}% confidence</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Committee Decision</div><div class="phase15-contract">${esc((d.recommended_action||state).replace(/_/g,' '))}</div><div class="metric-row"><span>Dominant direction</span><strong>${esc(d.dominant_direction||'NEUTRAL')}</strong></div><div class="metric-row"><span>Evidence coverage</span><strong>${num(d.evidence_coverage_pct,1)}%</strong></div><div class="metric-row"><span>Checklist</span><strong>${d.checklist_passed||0} / ${d.checklist_total||0}</strong></div><div class="sub">${esc(d.decision_narrative||'')}</div></div><div class="phase15-card"><div class="label">Scenario Analysis</div><div class="metric-row"><span>Bullish</span><strong>${num(probs.bullish,1)}%</strong></div><div class="phase12-bar"><span style="width:${Math.max(0,Math.min(100,Number(probs.bullish||0)))}%"></span></div><div class="metric-row"><span>Bearish</span><strong>${num(probs.bearish,1)}%</strong></div><div class="phase12-bar"><span style="width:${Math.max(0,Math.min(100,Number(probs.bearish||0)))}%"></span></div><div class="metric-row"><span>Neutral</span><strong>${num(probs.neutral,1)}%</strong></div></div><div class="phase15-card"><div class="label">Institutional Checklist</div>${checkHtml||'<div class="sub">No checklist evidence available.</div>'}</div><div class="phase15-card"><div class="label">Conflicts & Authority</div>${blockers}${conflicts||(!blockers?'<div class="phase10-check pass">✓ No material committee conflict detected</div>':'')}<div class="metric-row"><span>Sizing posture</span><strong>${esc(d.trade_director_effect?.sizing_posture||'REDUCED')}</strong></div></div></div><div class="phase15-card" style="margin-top:10px"><div class="label">Engine Voting Committee</div>${voteHtml}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderOptionsIntelligence(x){
   const el=document.getElementById('optionsIntelligence'); if(!el)return;
   const d=x?.options_intelligence||x; if(!d||d.error){el.innerHTML='';return;}
@@ -441,7 +455,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -449,6 +463,8 @@ async function loadDirector(){
       fetch('/api/position/market-memory',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/cross-asset-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/multi-timeframe-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/institutional-flow-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/institutional-decision-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -460,6 +476,7 @@ async function loadDirector(){
     renderCrossAssetIntelligence(ca);
     renderMultiTimeframeIntelligence(mt);
     renderInstitutionalFlowIntelligence(fi);
+    renderInstitutionalDecisionIntelligence(di);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
