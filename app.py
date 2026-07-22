@@ -29,6 +29,17 @@ except Exception as _td6_err:
     TRADE_DIRECTOR_PHASE6_AVAILABLE = False
     print(f"Trade Director Phase 6 unavailable: {_td6_err}", flush=True)
 
+# APEX Trade Director Phase 7 — adaptive, user-specific management guidance
+try:
+    from engine.trade_director_adaptive import (
+        build_adaptive_profile as td7_build_profile,
+        adaptive_guidance as td7_adaptive_guidance,
+    )
+    TRADE_DIRECTOR_PHASE7_AVAILABLE = True
+except Exception as _td7_err:
+    TRADE_DIRECTOR_PHASE7_AVAILABLE = False
+    print(f"Trade Director Phase 7 unavailable: {_td7_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -3738,7 +3749,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td6"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td7"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -5006,6 +5017,15 @@ def monitor_active_position() -> Dict[str, Any]:
         position=pos, recommendation=recommendation, confidence=confidence, reasons=reasons,
         phase2=phase2, phase3=phase3, phase4=phase4,
     )
+    phase7_profile = None
+    phase7_guidance = None
+    if TRADE_DIRECTOR_PHASE6_AVAILABLE and TRADE_DIRECTOR_PHASE7_AVAILABLE:
+        try:
+            phase7_profile = td7_build_profile(td6_trade_history(250))
+            phase7_guidance = td7_adaptive_guidance(recommendation, health, confidence, phase7_profile)
+        except Exception:
+            phase7_profile = None
+            phase7_guidance = None
     event = {
         "time": now_et().strftime("%H:%M:%S"),
         "timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
@@ -5043,6 +5063,8 @@ def monitor_active_position() -> Dict[str, Any]:
         "health_engine": phase3,
         "position_intelligence": phase4,
         "trade_coach": phase5,
+        "adaptive_intelligence": phase7_guidance,
+        "adaptive_profile": phase7_profile,
         "recommendation_timeline": timeline,
         "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "flow_snapshot": {
@@ -7126,6 +7148,24 @@ def api_position_learning_scorecard():
         return jsonify({"ok": False, "error": "Phase 6 learning module unavailable"}), 503
     try:
         return jsonify({"ok": True, "scorecard": td6_scorecard()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/position/learning/adaptive-profile")
+def api_position_learning_adaptive_profile():
+    """Return the Phase 7 personalized management profile and current advisory."""
+    if not TRADE_DIRECTOR_PHASE6_AVAILABLE or not TRADE_DIRECTOR_PHASE7_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 7 adaptive intelligence unavailable"}), 503
+    try:
+        profile = td7_build_profile(td6_trade_history(250))
+        with ACTIVE_POSITION_LOCK:
+            is_open = bool(ACTIVE_POSITION and ACTIVE_POSITION.get("status") == "OPEN")
+        guidance = None
+        if is_open:
+            monitor = monitor_active_position()
+            guidance = monitor.get("adaptive_intelligence")
+        return jsonify({"ok": True, "profile": profile, "guidance": guidance})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
