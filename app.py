@@ -4140,6 +4140,7 @@ def set_active_position(ticker: str, side: str, entry_price: float, stop: float,
         "closed_quantity": 0,
         "option_symbol": str(option_symbol or "").strip().upper(),
         "option_entry_price": safe_float(option_entry_price, 0.0),
+        "option_current_price": safe_float(option_entry_price, 0.0),
         "notes": str(notes or "").strip(),
         "entered_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "entered_at_iso": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -4227,10 +4228,42 @@ def monitor_active_position() -> Dict[str, Any]:
     if not reasons:
         reasons.append("Flow/GEX remains aligned. Institutional support intact. Hold.")
 
+    # Phase 1 management metrics. These are intentionally deterministic and
+    # lightweight so the web worker does not gain another background workload.
+    health = 50.0 + (alignment - 50.0) * 0.55 + (gex_score - 50.0) * 0.25
+    if approved_side == side:
+        health += 12.0
+    elif approved_side in ("CALL", "PUT"):
+        health -= 22.0
+    if recommendation == "TAKE_PARTIAL":
+        health -= 10.0
+    elif recommendation == "EXIT":
+        health -= 28.0
+    health = round(max(0.0, min(100.0, health)), 0)
+    confidence = round(max(50.0, min(99.0, 55.0 + abs(health - 50.0) * 0.75)), 0)
+
+    option_entry = safe_float(pos.get("option_entry_price"), 0.0)
+    option_current = safe_float(pos.get("option_current_price"), option_entry)
+    held_qty = max(0, int(pos.get("quantity") or 0))
+    option_pnl = None
+    option_pnl_pct = None
+    if option_entry > 0 and option_current > 0:
+        option_pnl = round((option_current - option_entry) * 100.0 * held_qty, 2)
+        option_pnl_pct = round(((option_current / option_entry) - 1.0) * 100.0, 1)
+    underlying_move = round(current_price - entry, 2) if current_price > 0 and entry > 0 else None
+    if side == "PUT" and underlying_move is not None:
+        underlying_move = round(-underlying_move, 2)
+
     result = {
         "status": "MONITORING",
         "position": pos,
         "current_price": current_price,
+        "option_current_price": option_current or None,
+        "unrealized_pnl": option_pnl,
+        "unrealized_pnl_pct": option_pnl_pct,
+        "underlying_move_in_favor": underlying_move,
+        "trade_health": int(health),
+        "confidence": int(confidence),
         "approved_side": approved_side,
         "alignment": alignment,
         "gex_score": gex_score,
@@ -6155,13 +6188,13 @@ def api_position_clear():
 def api_position_action():
     """Record a manual management action without placing a broker order.
 
-    Supported actions: TRIM_25, TRIM_50, TRIM_75, MOVE_STOP_BE, CLOSE.
+    Supported actions: TRIM_25, TRIM_50, TRIM_75, MOVE_STOP_BE, UPDATE_PREMIUM, CLOSE.
     This keeps the Director's position truth synchronized with actions taken in
     Power E*TRADE while execution remains confirmation-gated and external.
     """
     body = request.get_json(silent=True) or {}
     action = str(body.get("action", "") or "").upper().strip()
-    allowed = {"TRIM_25", "TRIM_50", "TRIM_75", "MOVE_STOP_BE", "CLOSE"}
+    allowed = {"TRIM_25", "TRIM_50", "TRIM_75", "MOVE_STOP_BE", "UPDATE_PREMIUM", "CLOSE"}
     if action not in allowed:
         return jsonify({"ok": False, "error": "unsupported action"}), 400
     with ACTIVE_POSITION_LOCK:
@@ -6179,6 +6212,11 @@ def api_position_action():
                 ACTIVE_POSITION["status"] = "CLOSED"
         elif action == "MOVE_STOP_BE":
             ACTIVE_POSITION["stop"] = safe_float(ACTIVE_POSITION.get("entry_price"), 0.0)
+        elif action == "UPDATE_PREMIUM":
+            premium = safe_float(body.get("option_current_price"), 0.0)
+            if premium <= 0:
+                return jsonify({"ok": False, "error": "option_current_price must be greater than zero"}), 400
+            ACTIVE_POSITION["option_current_price"] = premium
         elif action == "CLOSE":
             ACTIVE_POSITION["closed_quantity"] = original
             ACTIVE_POSITION["quantity"] = 0
