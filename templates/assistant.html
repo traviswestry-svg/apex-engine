@@ -26,6 +26,18 @@
 @keyframes pulseRed{0%,100%{box-shadow:0 0 0 rgba(239,68,68,0)}50%{box-shadow:0 0 34px rgba(239,68,68,.55)}}
 .entry-panel{margin-bottom:14px;background:#0b1422;border:1px solid #2b405d;border-radius:16px;padding:15px}.entry-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}.entry-title{font-size:17px;font-weight:900}.entry-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px}.field label{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:5px}.field input,.field select{width:100%;background:#07101c;color:var(--text);border:1px solid #2b405d;border-radius:9px;padding:9px}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px}.btn.goodbtn{color:#b8ffd0;border-color:rgba(34,197,94,.6)}.btn.warnbtn{color:#ffd58a;border-color:rgba(245,158,11,.6)}.btn.badbtn{color:#ffb4b4;border-color:rgba(239,68,68,.6)}.position-strip{display:none;margin-bottom:12px;border:1px solid rgba(34,197,94,.5);background:rgba(34,197,94,.05);border-radius:13px;padding:11px 13px}.position-strip.active{display:block}.position-meta{color:#c7d8eb;font-size:13px;line-height:1.5}.status-msg{font-size:12px;color:var(--muted);margin-top:8px}.manage-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}.trade-hero{display:none;margin:0 0 14px;background:linear-gradient(135deg,#0a1726,#10243a);border:1px solid rgba(110,231,249,.35);border-radius:18px;padding:16px}.trade-hero.active{display:block}.hero-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.hero-symbol{font-size:25px;font-weight:1000}.hero-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-top:13px}.hero-card{background:#07101c;border:1px solid #26384f;border-radius:12px;padding:11px}.hero-card .big{font-size:24px;font-weight:1000;margin-top:5px}.hero-action{font-size:31px;font-weight:1000;margin-top:4px}.health-track{height:9px;background:#07101c;border-radius:999px;overflow:hidden;margin-top:8px}.health-track span{display:block;height:100%;background:linear-gradient(90deg,var(--bad),var(--warn),var(--good))}.reason-list{margin-top:12px;color:#cfe0f5;line-height:1.55}.premium-update{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:9px}.premium-update input{width:105px;background:#07101c;color:var(--text);border:1px solid #2b405d;border-radius:9px;padding:8px}
 @media(max-width:820px){.planner{grid-template-columns:1fr}.state{font-size:34px}.entry-head{align-items:flex-start;flex-direction:column}}
+
+.analysis-panel{margin-top:12px;padding:14px;border:1px solid #213b58;border-radius:12px;background:#071322}
+.analysis-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px}
+.analysis-title{font-size:15px;font-weight:800;color:#eaf4ff}
+.analysis-summary{font-size:13px;line-height:1.45;color:#c9d8e8;margin-top:4px}
+.engine-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px}
+.engine-card{padding:10px;border:1px solid #1c3149;border-radius:9px;background:#091827;min-height:70px}
+.engine-name{font-size:10px;color:#7890aa;text-transform:uppercase;letter-spacing:.07em}
+.engine-verdict{font-size:12px;font-weight:800;margin-top:4px}.engine-reading{font-size:11px;color:#9eb1c6;margin-top:4px;overflow-wrap:anywhere}
+.supports{color:var(--good)}.opposes{color:var(--bad)}.neutral{color:var(--warn)}.unavailable{color:#6f8298}
+.consensus-line{font-size:11px;color:#8fa5bb;margin-top:8px}
+@media(max-width:760px){.engine-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.analysis-head{display:block}}
 </style></head><body>
 <nav class="apex-nav">
   <a href="/" class="nav-logo">APEX</a>
@@ -83,8 +95,14 @@ async function clearPosition(){
   await fetch('/api/position/clear',{method:'POST'}); await loadDirector();
 }
 
-function actionClass(a){a=(a||'').toUpperCase();if(a==='EXIT')return'bad';if(a==='TAKE_PARTIAL')return'warn';return'good';}
-function actionLabel(a){a=(a||'HOLD').toUpperCase();return a==='TAKE_PARTIAL'?'TRIM / PROTECT':a;}
+function actionClass(a){a=(a||'').toUpperCase();if(a==='EXIT')return'bad';if(['TAKE_PARTIAL','TRIM_50','PROTECT_PROFIT'].includes(a))return'warn';return'good';}
+function actionLabel(a){a=(a||'HOLD').toUpperCase();if(a==='TAKE_PARTIAL'||a==='TRIM_50')return'TRIM 50%';if(a==='PROTECT_PROFIT')return'PROTECT PROFIT';return a;}
+function renderInstitutionalAnalysis(a){
+  if(!a||!Array.isArray(a.components))return '';
+  const cards=a.components.map(c=>{const cls=String(c.verdict||'neutral').toLowerCase();return `<div class="engine-card"><div class="engine-name">${esc(c.name)}</div><div class="engine-verdict ${cls}">${esc(c.verdict)}</div><div class="engine-reading">${esc(c.reading)}</div></div>`}).join('');
+  return `<div class="analysis-panel"><div class="analysis-head"><div><div class="analysis-title">Institutional Analysis</div><div class="analysis-summary">${esc(a.narrative||'')}</div></div><div class="sub">Cross-engine confidence ${num(a.confidence,0)}%</div></div><div class="engine-grid">${cards}</div><div class="consensus-line">${a.aligned_components||0} supporting · ${a.opposing_components||0} opposing · ${a.available_components||0} available · advisory only</div></div>`;
+}
+
 function renderTradeHero(m){
   const el=document.getElementById('tradeHero');
   if(!m||m.status!=='MONITORING'||!m.position){el.className='trade-hero';el.innerHTML='';return;}
@@ -99,6 +117,7 @@ function renderTradeHero(m){
     <div class="hero-card"><div class="label">SPX Move in Favor</div><div class="big ${Number(m.underlying_move_in_favor||0)>=0?'good':'bad'}">${m.underlying_move_in_favor==null?'--':(Number(m.underlying_move_in_favor)>=0?'+':'')+num(m.underlying_move_in_favor)}</div><div class="sub">Alignment ${num(m.alignment,0)} · GEX ${num(m.gex_score,0)}</div></div>
   </div>
   <div class="reason-list"><div class="label">WHY APEX IS SAYING ${esc(actionLabel(m.recommendation))}</div>${reasons||'<div>Waiting for live confirmation.</div>'}</div>
+  ${renderInstitutionalAnalysis(m.institutional_analysis)}
   <div class="premium-update"><span class="label">Update live option premium</span><input id="livePremium" type="number" step="0.01" value="${m.option_current_price||''}" placeholder="e.g. 14.10"><button class="btn" onclick="updatePremium()">Update P/L</button><span class="sub">Manual sync only; no broker order is sent.</span></div>`;
 }
 
