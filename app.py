@@ -48,6 +48,16 @@ except Exception as _td8_err:
     TRADE_DIRECTOR_PHASE8_AVAILABLE = False
     print(f"Trade Director Phase 8 unavailable: {_td8_err}", flush=True)
 
+# APEX Trade Director Phase 9 — execution readiness and risk guardrails
+try:
+    from engine.trade_director_execution_readiness import (
+        build_execution_readiness as td9_build_execution_readiness,
+    )
+    TRADE_DIRECTOR_PHASE9_AVAILABLE = True
+except Exception as _td9_err:
+    TRADE_DIRECTOR_PHASE9_AVAILABLE = False
+    print(f"Trade Director Phase 9 unavailable: {_td9_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5047,6 +5057,27 @@ def monitor_active_position() -> Dict[str, Any]:
                 ACTIVE_POSITION["phase8_last_policy"] = {k:v for k,v in phase8_policy.items() if k != "state"}
         except Exception:
             phase8_policy = None
+    phase9_readiness = None
+    if TRADE_DIRECTOR_PHASE9_AVAILABLE:
+        try:
+            with ACTIVE_POSITION_LOCK:
+                _phase9_session = dict(ACTIVE_POSITION.get("phase9_session") or {})
+            _phase9_position = dict(pos)
+            _phase9_position["option_current_price"] = option_current or option_entry
+            phase9_readiness = td9_build_execution_readiness(
+                _phase9_position, phase8_policy, phase3, phase4,
+                {
+                    "max_contracts": os.getenv("APEX_MAX_CONTRACTS", "3"),
+                    "max_trade_risk": os.getenv("APEX_MAX_TRADE_RISK", "2000"),
+                    "max_daily_loss": os.getenv("APEX_MAX_DAILY_LOSS", "1000"),
+                    "max_daily_trades": os.getenv("APEX_MAX_DAILY_TRADES", "3"),
+                },
+                _phase9_session,
+            )
+            with ACTIVE_POSITION_LOCK:
+                ACTIVE_POSITION["phase9_last_readiness"] = dict(phase9_readiness)
+        except Exception:
+            phase9_readiness = None
     event = {
         "time": now_et().strftime("%H:%M:%S"),
         "timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
@@ -5087,6 +5118,7 @@ def monitor_active_position() -> Dict[str, Any]:
         "adaptive_intelligence": phase7_guidance,
         "adaptive_profile": phase7_profile,
         "management_policy": phase8_policy,
+        "execution_readiness": phase9_readiness,
         "recommendation_timeline": timeline,
         "checked_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "flow_snapshot": {
@@ -7190,6 +7222,63 @@ def api_position_learning_adaptive_profile():
         return jsonify({"ok": True, "profile": profile, "guidance": guidance})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/position/execution-readiness")
+def api_position_execution_readiness():
+    """Return the Phase 9 broker-neutral preview and risk gate."""
+    if not TRADE_DIRECTOR_PHASE9_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 9 execution readiness unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        is_open = bool(ACTIVE_POSITION and ACTIVE_POSITION.get("status") == "OPEN")
+        cached = dict(ACTIVE_POSITION.get("phase9_last_readiness") or {})
+        audit = list(ACTIVE_POSITION.get("phase9_readiness_audit") or [])[-25:]
+    if is_open:
+        monitor = monitor_active_position()
+        cached = monitor.get("execution_readiness") or cached
+    return jsonify({"ok": True, "readiness": cached or None, "audit": audit})
+
+
+@app.route("/api/position/execution-readiness/decision", methods=["POST"])
+def api_position_execution_readiness_decision():
+    """Audit preview acknowledgement/cancellation. Never transmit an order."""
+    if not TRADE_DIRECTOR_PHASE9_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 9 execution readiness unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    decision = str(body.get("decision") or "").upper().strip()
+    if decision not in {"ACKNOWLEDGE_PREVIEW", "CANCEL_PREVIEW", "REJECT_PREVIEW"}:
+        return jsonify({"ok": False, "error": "decision must be ACKNOWLEDGE_PREVIEW, CANCEL_PREVIEW, or REJECT_PREVIEW"}), 400
+    preview_id = str(body.get("preview_id") or "").strip()
+    reason = str(body.get("reason") or "").strip()[:500]
+    with ACTIVE_POSITION_LOCK:
+        readiness = dict(ACTIVE_POSITION.get("phase9_last_readiness") or {})
+        current_id = str(readiness.get("preview_id") or "")
+        if not current_id:
+            return jsonify({"ok": False, "error": "No active Phase 9 preview"}), 409
+        if preview_id and preview_id != current_id:
+            return jsonify({"ok": False, "error": "Preview is stale; refresh before acknowledging"}), 409
+        event = {
+            "timestamp": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+            "decision": decision, "preview_id": current_id,
+            "policy_action": readiness.get("policy_action"),
+            "gate": readiness.get("gate"), "reason": reason,
+            "execution_sent": False,
+        }
+        audit = list(ACTIVE_POSITION.get("phase9_readiness_audit") or [])
+        audit.append(event)
+        ACTIVE_POSITION["phase9_readiness_audit"] = audit[-100:]
+        ACTIVE_POSITION["phase9_last_decision"] = event
+    _phase5_record_event({
+        "time": now_et().strftime("%H:%M:%S"),
+        "timestamp": event["timestamp"], "kind": "PHASE9_PREVIEW_DECISION",
+        "recommendation": readiness.get("policy_action"),
+        "trade_health": readiness.get("risk", {}).get("trade_health"),
+        "confidence": None,
+        "summary": f"{decision.replace('_', ' ').title()} for preview {current_id}; no broker order sent.",
+        "snapshot": event,
+    })
+    return jsonify({"ok": True, "decision": event, "execution_enabled": False,
+                    "message": "Preview decision recorded. No broker order was sent."})
 
 
 @app.route("/api/position/policy")
