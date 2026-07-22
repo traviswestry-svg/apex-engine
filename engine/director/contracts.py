@@ -136,6 +136,8 @@ class PositionView:
     quantity:        int   = 0
     held_qty:        int   = 0
     entry_price:     Optional[float] = None
+    option_entry_price: Optional[float] = None
+    option_symbol:   str   = ""
     stop:            Optional[float] = None
     target1:         Optional[float] = None
     target2:         Optional[float] = None

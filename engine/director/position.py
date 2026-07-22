@@ -163,16 +163,18 @@ def detect_position(
                 return PositionView(
                     active=True, source="MANUAL", confidence="MANUAL",
                     side=str(m.get("side")).upper(), symbol=str(m.get("ticker", symbol)).upper(),
-                    quantity=int(_f(m.get("quantity"), 1.0) or 1.0),
+                    quantity=int(_f(m.get("original_quantity"), _f(m.get("quantity"), 1.0)) or 1.0),
                     held_qty=int(_f(m.get("quantity"), 1.0) or 1.0),
                     entry_price=_f(m.get("entry_price")),
+                    option_entry_price=_f(m.get("option_entry_price")),
+                    option_symbol=str(m.get("option_symbol") or ""),
                     stop=_f(m.get("stop")),
                     target1=_f(m.get("target1")),
                     target2=_f(m.get("target2")),
                     opened_at=m.get("entered_at_iso") or m.get("entered_at"),
                     time_in_trade_s=_age_seconds(m.get("entered_at_iso") or m.get("entered_at")),
                     order_stage="POSITION_ACTIVE",
-                    notes=["Trader-confirmed manual position."],
+                    notes=["Trader-confirmed manual position."] + ([str(m.get("notes"))] if m.get("notes") else []),
                 )
     except Exception:
         pass
