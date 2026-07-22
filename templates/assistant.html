@@ -97,6 +97,7 @@
 <div id="multiTimeframeIntelligence"></div>
 <div id="institutionalFlowIntelligence"></div>
 <div id="institutionalDecisionIntelligence"></div>
+<div id="institutionalDecisionEngine"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -322,6 +323,17 @@ function renderInstitutionalDecisionIntelligence(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 19</div><div class="coach-title">Institutional Decision Center</div><div class="sub">Evidence fusion · conflict resolution · scenario probabilities · calibrated decision narrative</div></div><div><div class="label">Consensus</div><div class="phase13-score ${state==='STRONG_BUY'||state==='BUY'?'good':state==='STAND_DOWN'||state==='EXIT'?'bad':'warn'}">${num(d.consensus_score,1)}</div><div class="sub">${esc(state.replace(/_/g,' '))} · ${num(d.confidence,1)}% confidence</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Committee Decision</div><div class="phase15-contract">${esc((d.recommended_action||state).replace(/_/g,' '))}</div><div class="metric-row"><span>Dominant direction</span><strong>${esc(d.dominant_direction||'NEUTRAL')}</strong></div><div class="metric-row"><span>Evidence coverage</span><strong>${num(d.evidence_coverage_pct,1)}%</strong></div><div class="metric-row"><span>Checklist</span><strong>${d.checklist_passed||0} / ${d.checklist_total||0}</strong></div><div class="sub">${esc(d.decision_narrative||'')}</div></div><div class="phase15-card"><div class="label">Scenario Analysis</div><div class="metric-row"><span>Bullish</span><strong>${num(probs.bullish,1)}%</strong></div><div class="phase12-bar"><span style="width:${Math.max(0,Math.min(100,Number(probs.bullish||0)))}%"></span></div><div class="metric-row"><span>Bearish</span><strong>${num(probs.bearish,1)}%</strong></div><div class="phase12-bar"><span style="width:${Math.max(0,Math.min(100,Number(probs.bearish||0)))}%"></span></div><div class="metric-row"><span>Neutral</span><strong>${num(probs.neutral,1)}%</strong></div></div><div class="phase15-card"><div class="label">Institutional Checklist</div>${checkHtml||'<div class="sub">No checklist evidence available.</div>'}</div><div class="phase15-card"><div class="label">Conflicts & Authority</div>${blockers}${conflicts||(!blockers?'<div class="phase10-check pass">✓ No material committee conflict detected</div>':'')}<div class="metric-row"><span>Sizing posture</span><strong>${esc(d.trade_director_effect?.sizing_posture||'REDUCED')}</strong></div></div></div><div class="phase15-card" style="margin-top:10px"><div class="label">Engine Voting Committee</div>${voteHtml}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+function renderInstitutionalDecisionEngine(x){
+  const el=document.getElementById('institutionalDecisionEngine'); if(!el)return;
+  const d=x?.institutional_decision_engine||x; if(!d||d.error){el.innerHTML='';return;}
+  const a=d.authorization||{}, checks=d.authorization_checklist||[];
+  const checkHtml=checks.map(v=>`<div class="phase10-check ${v.passed?'pass':'fail'}">${v.passed?'✓':'✕'} ${esc(v.name||'Condition')}</div>`).join('');
+  const blockers=(d.hard_blockers||[]).map(v=>`<div class="phase13-div"><strong class="bad">BLOCKED</strong>${esc(v)}</div>`).join('');
+  const invalid=(d.invalidation_rules||[]).map(v=>`<div class="phase13-div"><strong class="warn">INVALIDATE</strong>${esc(v)}</div>`).join('');
+  const state=String(d.authorization_state||'OBSERVE');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 20</div><div class="coach-title">Institutional Decision Engine</div><div class="sub">Authorization lifecycle · entry validation · invalidation · accountability</div></div><div><div class="label">Authorization</div><div class="phase15-contract ${state==='AUTHORIZED_FOR_PREVIEW'?'good':state==='DECISION_BLOCKED'?'bad':'warn'}">${esc(state.replace(/_/g,' '))}</div><div class="sub">${esc(d.decision_id||'--')}</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Governed Decision</div><div class="phase15-contract">${esc((d.recommended_action||'OBSERVE').replace(/_/g,' '))}</div><div class="metric-row"><span>Direction</span><strong>${esc(d.dominant_direction||'NEUTRAL')}</strong></div><div class="metric-row"><span>Consensus / Confidence</span><strong>${num(d.consensus_score,1)} / ${num(d.confidence,1)}%</strong></div><div class="metric-row"><span>Authorized action</span><strong>${esc((a.authorized_action||'NONE').replace(/_/g,' '))}</strong></div><div class="metric-row"><span>Contract / Quantity</span><strong>${esc(a.contract_symbol||'--')} / ${a.quantity||'--'}</strong></div><div class="metric-row"><span>Limit price</span><strong>${a.limit_price==null?'--':num(a.limit_price,2)}</strong></div><div class="sub">${esc(d.decision_narrative||'')}</div></div><div class="phase15-card"><div class="label">Authorization Checklist</div>${checkHtml}</div><div class="phase15-card"><div class="label">Invalidation Rules</div>${invalid}</div><div class="phase15-card"><div class="label">Authority & Stability</div>${blockers||'<div class="phase10-check pass">✓ No hard authority blocker</div>'}<div class="metric-row"><span>Stability state</span><strong>${esc(d.stability?.state||'STABLE')}</strong></div><div class="metric-row"><span>Exact confirmation</span><strong>${a.requires_phase10_exact_confirmation?'REQUIRED':'--'}</strong></div><div class="metric-row"><span>Broker execution</span><strong>${a.broker_execution_enabled?'ENABLED':'DISABLED'}</strong></div></div></div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderOptionsIntelligence(x){
   const el=document.getElementById('optionsIntelligence'); if(!el)return;
   const d=x?.options_intelligence||x; if(!d||d.error){el.innerHTML='';return;}
@@ -455,7 +467,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -465,6 +477,7 @@ async function loadDirector(){
       fetch('/api/position/multi-timeframe-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/institutional-flow-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/institutional-decision-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/institutional-decision-engine',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -477,6 +490,7 @@ async function loadDirector(){
     renderMultiTimeframeIntelligence(mt);
     renderInstitutionalFlowIntelligence(fi);
     renderInstitutionalDecisionIntelligence(di);
+    renderInstitutionalDecisionEngine(de);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
