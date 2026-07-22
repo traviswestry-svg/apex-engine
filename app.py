@@ -108,6 +108,14 @@ except Exception as _td13_err:
     TRADE_DIRECTOR_PHASE13_AVAILABLE = False
     print(f"Trade Director Phase 13 unavailable: {_td13_err}", flush=True)
 
+# APEX Trade Director Phase 14 — strategy orchestration and opportunity ranking
+try:
+    from engine.trade_director_strategy_orchestration import build_strategy_orchestration as td14_build_orchestration
+    TRADE_DIRECTOR_PHASE14_AVAILABLE = True
+except Exception as _td14_err:
+    TRADE_DIRECTOR_PHASE14_AVAILABLE = False
+    print(f"Trade Director Phase 14 unavailable: {_td14_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5209,6 +5217,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td13_build_err:
             result["cross_asset_intelligence"] = {"version": "PHASE_13", "error": str(_td13_build_err)}
 
+    if TRADE_DIRECTOR_PHASE14_AVAILABLE:
+        try:
+            _td14_history = td6_trade_history(500) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
+            result["strategy_orchestration"] = td14_build_orchestration(result, _td14_history)
+        except Exception as _td14_build_err:
+            result["strategy_orchestration"] = {"version": "PHASE_14", "error": str(_td14_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5218,6 +5233,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase12_last_intelligence"] = dict(result["market_memory"])
         if result.get("cross_asset_intelligence"):
             ACTIVE_POSITION["phase13_last_intelligence"] = dict(result["cross_asset_intelligence"])
+        if result.get("strategy_orchestration"):
+            ACTIVE_POSITION["phase14_last_orchestration"] = dict(result["strategy_orchestration"])
 
     return result
 
@@ -7552,6 +7569,29 @@ def api_position_cross_asset_intelligence():
         history = td12_memory_sessions(500) if TRADE_DIRECTOR_PHASE12_AVAILABLE else []
         intelligence = td13_build_intelligence(snapshot, monitor, history)
     return jsonify({"ok": True, "cross_asset_intelligence": intelligence or cached_result})
+
+
+@app.route("/api/position/strategy-orchestration")
+def api_position_strategy_orchestration():
+    """Return Phase 14 advisory strategy selection and ranked opportunity queue."""
+    if not TRADE_DIRECTOR_PHASE14_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 14 strategy orchestration unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        pos = dict(ACTIVE_POSITION)
+        cached = dict(ACTIVE_POSITION.get("phase14_last_orchestration") or {})
+    monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
+    if monitor.get("strategy_orchestration"):
+        orchestration = monitor["strategy_orchestration"]
+    else:
+        if TRADE_DIRECTOR_PHASE13_AVAILABLE:
+            with STATE_LOCK:
+                cached_market = dict(STATE.get("last_result") or {})
+            snapshot = td13_build_snapshot(cached_market, monitor)
+            history_sessions = td12_memory_sessions(500) if TRADE_DIRECTOR_PHASE12_AVAILABLE else []
+            monitor["cross_asset_intelligence"] = td13_build_intelligence(snapshot, monitor, history_sessions)
+        trade_history = td6_trade_history(500) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
+        orchestration = td14_build_orchestration(monitor, trade_history)
+    return jsonify({"ok": True, "strategy_orchestration": orchestration or cached})
 
 
 @app.route("/api/position/market-memory/archive", methods=["POST"])
