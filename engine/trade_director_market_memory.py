@@ -77,7 +77,10 @@ def build_market_snapshot(active: Optional[Dict[str,Any]], monitor: Optional[Dic
       'session_mode': str(session_data.get('mode') or 'OBSERVATION').upper(),
       'realized_pnl': _f(session_data.get('realized_pnl')), 'net_pnl': _f(session_data.get('net_pnl')),
       'recommendation': str(m.get('recommendation') or 'HOLD').upper(),
-      'features_version':'12.0'
+      'cross_asset_regime': str(_nested(m,'cross_asset_intelligence.regime',default='UNKNOWN')).upper(),
+      'spx_confirmation_score': _f(_nested(m,'cross_asset_intelligence.spx_confirmation_score',default=50),50),
+      'cross_asset_bias': str(_nested(m,'cross_asset_intelligence.cross_asset_bias',default='NEUTRAL')).upper(),
+      'features_version':'13.0' if m.get('cross_asset_intelligence') else '12.0'
     }
 
 def archive_session(snapshot: Dict[str,Any], outcome: Optional[Dict[str,Any]]=None, source: str='MANUAL')->Dict[str,Any]:
