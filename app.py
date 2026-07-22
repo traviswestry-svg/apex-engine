@@ -4124,7 +4124,9 @@ def build_daily_gameplan(tickers: Optional[List[str]] = None) -> Dict[str, Any]:
 # After entry, monitors the open position against live flow and GEX.
 # ---------------------------------------------------------------------------
 
-def set_active_position(ticker: str, side: str, entry_price: float, stop: float, target1: float, target2: float) -> Dict[str, Any]:
+def set_active_position(ticker: str, side: str, entry_price: float, stop: float, target1: float, target2: float,
+                        quantity: int = 1, option_symbol: str = "", notes: str = "",
+                        option_entry_price: float = 0.0) -> Dict[str, Any]:
     """Record an open position for monitoring."""
     pos = {
         "ticker": ticker.upper(),
@@ -4133,6 +4135,12 @@ def set_active_position(ticker: str, side: str, entry_price: float, stop: float,
         "stop": stop,
         "target1": target1,
         "target2": target2,
+        "quantity": max(1, int(quantity or 1)),
+        "original_quantity": max(1, int(quantity or 1)),
+        "closed_quantity": 0,
+        "option_symbol": str(option_symbol or "").strip().upper(),
+        "option_entry_price": safe_float(option_entry_price, 0.0),
+        "notes": str(notes or "").strip(),
         "entered_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
         "entered_at_iso": dt.datetime.now(dt.timezone.utc).isoformat(),
         "status": "OPEN",
@@ -6109,7 +6117,8 @@ def api_position():
     """
     GET  — monitor the current active position.
     POST — set a new active position to monitor.
-         JSON body: {ticker, side, entry_price, stop, target1, target2}
+         JSON body: {ticker, side, entry_price, stop, target1, target2,
+                    quantity, option_symbol, option_entry_price, notes}
     """
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
@@ -6119,9 +6128,13 @@ def api_position():
         stop = safe_float(body.get("stop"), 0.0)
         t1 = safe_float(body.get("target1"), 0.0)
         t2 = safe_float(body.get("target2"), 0.0)
+        quantity = max(1, int(safe_float(body.get("quantity"), 1.0) or 1))
+        option_symbol = str(body.get("option_symbol", "") or "").strip()
+        option_entry_price = safe_float(body.get("option_entry_price"), 0.0)
+        notes = str(body.get("notes", "") or "").strip()
         if not ticker or side not in ("CALL", "PUT"):
             return jsonify({"ok": False, "error": "side must be CALL or PUT"}), 400
-        pos = set_active_position(ticker, side, entry, stop, t1, t2)
+        pos = set_active_position(ticker, side, entry, stop, t1, t2, quantity, option_symbol, notes, option_entry_price)
         return jsonify({"ok": True, "position": pos})
     try:
         result = monitor_active_position()
@@ -6136,6 +6149,45 @@ def api_position_clear():
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION.clear()
     return jsonify({"ok": True, "message": "Active position cleared."})
+
+
+@app.route("/api/position/action", methods=["POST"])
+def api_position_action():
+    """Record a manual management action without placing a broker order.
+
+    Supported actions: TRIM_25, TRIM_50, TRIM_75, MOVE_STOP_BE, CLOSE.
+    This keeps the Director's position truth synchronized with actions taken in
+    Power E*TRADE while execution remains confirmation-gated and external.
+    """
+    body = request.get_json(silent=True) or {}
+    action = str(body.get("action", "") or "").upper().strip()
+    allowed = {"TRIM_25", "TRIM_50", "TRIM_75", "MOVE_STOP_BE", "CLOSE"}
+    if action not in allowed:
+        return jsonify({"ok": False, "error": "unsupported action"}), 400
+    with ACTIVE_POSITION_LOCK:
+        if not ACTIVE_POSITION or ACTIVE_POSITION.get("status") != "OPEN":
+            return jsonify({"ok": False, "error": "no open manual position"}), 409
+        qty = max(1, int(ACTIVE_POSITION.get("quantity") or 1))
+        original = max(qty, int(ACTIVE_POSITION.get("original_quantity") or qty))
+        if action.startswith("TRIM_"):
+            pct = int(action.split("_")[1])
+            close_qty = max(1, round(original * pct / 100.0))
+            close_qty = min(qty, close_qty)
+            ACTIVE_POSITION["quantity"] = max(0, qty - close_qty)
+            ACTIVE_POSITION["closed_quantity"] = int(ACTIVE_POSITION.get("closed_quantity") or 0) + close_qty
+            if ACTIVE_POSITION["quantity"] == 0:
+                ACTIVE_POSITION["status"] = "CLOSED"
+        elif action == "MOVE_STOP_BE":
+            ACTIVE_POSITION["stop"] = safe_float(ACTIVE_POSITION.get("entry_price"), 0.0)
+        elif action == "CLOSE":
+            ACTIVE_POSITION["closed_quantity"] = original
+            ACTIVE_POSITION["quantity"] = 0
+            ACTIVE_POSITION["status"] = "CLOSED"
+        ACTIVE_POSITION["last_manual_action"] = action
+        ACTIVE_POSITION["last_manual_action_at"] = now_et().strftime("%Y-%m-%d %H:%M:%S ET")
+        pos = dict(ACTIVE_POSITION)
+    return jsonify({"ok": True, "action": action, "position": pos,
+                    "execution_note": "Recorded only; no broker order was sent."})
 
 
 @app.route("/api/performance")
