@@ -124,6 +124,17 @@ except Exception as _td15_err:
     TRADE_DIRECTOR_PHASE15_AVAILABLE = False
     print(f"Trade Director Phase 15 unavailable: {_td15_err}", flush=True)
 
+# APEX Trade Director Phase 16 — institutional execution desk
+try:
+    from engine.trade_director_execution_desk import (
+        build_execution_plan as td16_build_execution_plan,
+        assess_order_update as td16_assess_order_update,
+    )
+    TRADE_DIRECTOR_PHASE16_AVAILABLE = True
+except Exception as _td16_err:
+    TRADE_DIRECTOR_PHASE16_AVAILABLE = False
+    print(f"Trade Director Phase 16 unavailable: {_td16_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5254,6 +5265,12 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td15_build_err:
             result["options_intelligence"] = {"version": "PHASE_15", "error": str(_td15_build_err)}
 
+    if TRADE_DIRECTOR_PHASE16_AVAILABLE:
+        try:
+            result["execution_desk"] = td16_build_execution_plan(result)
+        except Exception as _td16_build_err:
+            result["execution_desk"] = {"version": "PHASE_16", "error": str(_td16_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5267,6 +5284,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase14_last_orchestration"] = dict(result["strategy_orchestration"])
         if result.get("options_intelligence"):
             ACTIVE_POSITION["phase15_last_intelligence"] = dict(result["options_intelligence"])
+        if result.get("execution_desk"):
+            ACTIVE_POSITION["phase16_last_execution_desk"] = dict(result["execution_desk"])
 
     return result
 
@@ -7620,6 +7639,26 @@ def api_position_options_intelligence():
         with ACTIVE_POSITION_LOCK:
             data = dict(ACTIVE_POSITION.get("phase15_last_intelligence") or {})
     return jsonify({"ok": True, "options_intelligence": data})
+
+
+@app.route("/api/position/execution-desk", methods=["GET", "POST"])
+def api_position_execution_desk():
+    """Return or evaluate the Phase 16 broker-neutral execution plan."""
+    if not TRADE_DIRECTOR_PHASE16_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 16 unavailable"}), 503
+    monitor = monitor_active_position()
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        plan = td16_build_execution_plan(monitor, body.get("quote") or {})
+        if body.get("order_update") is not None:
+            assessment = td16_assess_order_update(plan, body.get("order_update") or {})
+            return jsonify({"ok": True, "execution_desk": plan, "order_assessment": assessment})
+        return jsonify({"ok": True, "execution_desk": plan})
+    data = monitor.get("execution_desk")
+    if not data:
+        with ACTIVE_POSITION_LOCK:
+            data = dict(ACTIVE_POSITION.get("phase16_last_execution_desk") or {})
+    return jsonify({"ok": True, "execution_desk": data})
 
 @app.route("/api/position/strategy-orchestration")
 def api_position_strategy_orchestration():
