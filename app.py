@@ -145,6 +145,16 @@ except Exception as _td17_err:
     TRADE_DIRECTOR_PHASE17_AVAILABLE = False
     print(f"Trade Director Phase 17 unavailable: {_td17_err}", flush=True)
 
+# APEX Trade Director Phase 18 — institutional flow intelligence
+try:
+    from engine.trade_director_flow_intelligence import (
+        build_flow_intelligence as td18_build_flow_intelligence,
+    )
+    TRADE_DIRECTOR_PHASE18_AVAILABLE = True
+except Exception as _td18_err:
+    TRADE_DIRECTOR_PHASE18_AVAILABLE = False
+    print(f"Trade Director Phase 18 unavailable: {_td18_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5292,6 +5302,17 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td17_build_err:
             result["multi_timeframe_intelligence"] = {"version": "PHASE_17", "error": str(_td17_build_err)}
 
+    if TRADE_DIRECTOR_PHASE18_AVAILABLE:
+        try:
+            # Phase 18 recursively inspects cached flow evidence only; no provider fan-out.
+            with STATE_LOCK:
+                _td18_cached = dict(STATE.get("last_result") or {})
+            _td18_context = dict(result)
+            _td18_context["cached_market"] = _td18_cached
+            result["flow_intelligence"] = td18_build_flow_intelligence(_td18_context)
+        except Exception as _td18_build_err:
+            result["flow_intelligence"] = {"version": "PHASE_18", "error": str(_td18_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5309,6 +5330,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase16_last_execution_desk"] = dict(result["execution_desk"])
         if result.get("multi_timeframe_intelligence"):
             ACTIVE_POSITION["phase17_last_multi_timeframe"] = dict(result["multi_timeframe_intelligence"])
+        if result.get("flow_intelligence"):
+            ACTIVE_POSITION["phase18_last_flow_intelligence"] = dict(result["flow_intelligence"])
 
     return result
 
@@ -7699,6 +7722,23 @@ def api_position_multi_timeframe_intelligence():
             data = dict(ACTIVE_POSITION.get("phase17_last_multi_timeframe") or {})
     return jsonify({"ok": True, "multi_timeframe_intelligence": data})
 
+
+
+@app.route("/api/position/institutional-flow-intelligence", methods=["GET", "POST"])
+def api_position_institutional_flow_intelligence():
+    """Return or evaluate Phase 18 cached-only institutional flow interpretation."""
+    if not TRADE_DIRECTOR_PHASE18_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 18 unavailable"}), 503
+    monitor = monitor_active_position()
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        data = td18_build_flow_intelligence(monitor, body.get("flow") or body.get("events") or body.get("flow_data") or [])
+        return jsonify({"ok": True, "flow_intelligence": data})
+    data = monitor.get("flow_intelligence")
+    if not data:
+        with ACTIVE_POSITION_LOCK:
+            data = dict(ACTIVE_POSITION.get("phase18_last_flow_intelligence") or {})
+    return jsonify({"ok": True, "flow_intelligence": data})
 
 @app.route("/api/position/strategy-orchestration")
 def api_position_strategy_orchestration():
