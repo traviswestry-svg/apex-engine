@@ -24,7 +24,8 @@
 .suppressed-h{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 8px}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 30px rgba(34,197,94,.45)}}
 @keyframes pulseRed{0%,100%{box-shadow:0 0 0 rgba(239,68,68,0)}50%{box-shadow:0 0 34px rgba(239,68,68,.55)}}
-@media(max-width:820px){.planner{grid-template-columns:1fr}.state{font-size:34px}}
+.entry-panel{margin-bottom:14px;background:#0b1422;border:1px solid #2b405d;border-radius:16px;padding:15px}.entry-head{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}.entry-title{font-size:17px;font-weight:900}.entry-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px}.field label{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:5px}.field input,.field select{width:100%;background:#07101c;color:var(--text);border:1px solid #2b405d;border-radius:9px;padding:9px}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:11px}.btn.goodbtn{color:#b8ffd0;border-color:rgba(34,197,94,.6)}.btn.warnbtn{color:#ffd58a;border-color:rgba(245,158,11,.6)}.btn.badbtn{color:#ffb4b4;border-color:rgba(239,68,68,.6)}.position-strip{display:none;margin-bottom:12px;border:1px solid rgba(34,197,94,.5);background:rgba(34,197,94,.05);border-radius:13px;padding:11px 13px}.position-strip.active{display:block}.position-meta{color:#c7d8eb;font-size:13px;line-height:1.5}.status-msg{font-size:12px;color:var(--muted);margin-top:8px}.manage-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+@media(max-width:820px){.planner{grid-template-columns:1fr}.state{font-size:34px}.entry-head{align-items:flex-start;flex-direction:column}}
 </style></head><body>
 <nav class="apex-nav">
   <a href="/" class="nav-logo">APEX</a>
@@ -41,10 +42,50 @@
   <div class="sub">Continuous state-aware directive · flow acceleration · dynamic hold levels · thesis tracking</div></div>
   <div><button class="btn" onclick="loadDirector()">Refresh</button></div>
 </div>
+<div class="entry-panel">
+  <div class="entry-head"><div><div class="entry-title">Manual Trade Confirmation</div><div class="sub">Tell APEX when your Power E*TRADE order fills. This does not place or modify broker orders.</div></div><button class="btn goodbtn" onclick="toggleEntryForm()">I'M IN</button></div>
+  <div id="entryForm" style="display:none">
+    <div class="entry-grid">
+      <div class="field"><label>Ticker</label><input id="pTicker" value="SPX"></div>
+      <div class="field"><label>Direction</label><select id="pSide"><option value="CALL">CALL</option><option value="PUT">PUT</option></select></div>
+      <div class="field"><label>Contracts</label><input id="pQty" type="number" min="1" value="1"></div>
+      <div class="field"><label>SPX Entry Level</label><input id="pEntry" type="number" step="0.01" placeholder="e.g. 6350.25"></div>
+      <div class="field"><label>SPX Stop Level</label><input id="pStop" type="number" step="0.01" placeholder="optional"></div>
+      <div class="field"><label>SPX Target 1</label><input id="pT1" type="number" step="0.01" placeholder="optional"></div>
+      <div class="field"><label>SPX Target 2</label><input id="pT2" type="number" step="0.01" placeholder="optional"></div>
+      <div class="field"><label>Option Premium</label><input id="pOptionEntry" type="number" step="0.01" placeholder="e.g. 12.45"></div><div class="field"><label>Option Symbol</label><input id="pOption" placeholder="optional OSI / description"></div>
+    </div>
+    <div class="actions"><button class="btn goodbtn" onclick="startTrade()">Start Trade Director</button><button class="btn" onclick="toggleEntryForm()">Cancel</button></div>
+    <div id="entryStatus" class="status-msg"></div>
+  </div>
+</div>
+<div id="positionStrip" class="position-strip"></div>
 <div id="app" class="panel">Loading Active Trade Director…</div>
 </div>
 <script>
 const TICKER = new URLSearchParams(location.search).get('ticker') || 'SPX';
+
+function toggleEntryForm(){const f=document.getElementById('entryForm');f.style.display=f.style.display==='none'?'block':'none';}
+function fieldNum(id){const v=document.getElementById(id).value;return v===''?0:Number(v);}
+async function startTrade(){
+  const status=document.getElementById('entryStatus'); status.textContent='Starting management mode…';
+  const body={ticker:document.getElementById('pTicker').value||TICKER,side:document.getElementById('pSide').value,quantity:Number(document.getElementById('pQty').value||1),entry_price:fieldNum('pEntry'),stop:fieldNum('pStop'),target1:fieldNum('pT1'),target2:fieldNum('pT2'),option_symbol:document.getElementById('pOption').value,option_entry_price:fieldNum('pOptionEntry')};
+  try{const r=await fetch('/api/position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Unable to start trade');status.textContent='Trade confirmed. APEX is now in management mode.';document.getElementById('entryForm').style.display='none';await loadDirector();}catch(e){status.textContent=e.message;}
+}
+async function positionAction(action){
+  try{const r=await fetch('/api/position/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Action failed');await loadDirector();}catch(e){alert(e.message);}
+}
+async function clearPosition(){
+  if(!confirm('Clear the active trade from APEX? This does not send a broker order.'))return;
+  await fetch('/api/position/clear',{method:'POST'}); await loadDirector();
+}
+function renderPositionStrip(pos){
+  const el=document.getElementById('positionStrip');
+  if(!pos||!pos.active){el.className='position-strip';el.innerHTML='';return;}
+  const qty=pos.held_qty||pos.quantity||0;
+  el.className='position-strip active';
+  el.innerHTML=`<div><b>ACTIVE MANAGED TRADE:</b> ${esc(pos.symbol||TICKER)} ${esc(pos.side||'')} · ${qty} contract${qty===1?'':'s'} · SPX entry ${num(pos.entry_price)}${pos.option_entry_price?` · premium ${num(pos.option_entry_price)}`:''} · source ${esc(pos.source||'')}</div><div class="position-meta">Time in trade: ${Math.floor(Number(pos.time_in_trade_s||0)/60)}m · Stop ${num(pos.stop)} · Targets ${num(pos.target1)} / ${num(pos.target2)}</div><div class="manage-actions"><button class="btn warnbtn" onclick="positionAction('TRIM_25')">Trim 25%</button><button class="btn warnbtn" onclick="positionAction('TRIM_50')">Trim 50%</button><button class="btn" onclick="positionAction('MOVE_STOP_BE')">Stop to BE</button><button class="btn badbtn" onclick="positionAction('CLOSE')">Mark Closed</button><button class="btn" onclick="clearPosition()">Clear</button></div>`;
+}
 
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 function yes(v){return v?'✅':'❌';}
@@ -121,6 +162,7 @@ async function loadDirector(){
     ]);
     const d=dr||{}; const fa=d.flow_acceleration||{}; const pos=d.position||{}; const conf=d.conflict||{};
     const timeline=(tlr&&tlr.timeline)||[];
+    renderPositionStrip(pos);
 
     // banner reflects market/data state
     let bLevel='YELLOW', bTitle='SESSION', bMsg='';
