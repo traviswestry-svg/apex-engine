@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+
+[tool.apex.architecture]
+web_entrypoint = "wsgi:app"
+application_factory = "engine.application_composition:create_app"
+worker_entrypoint = "scanner_worker:main"
