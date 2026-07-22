@@ -17,6 +17,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from flask import Flask, jsonify, render_template, request, redirect
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 
+# APEX Trade Director Phase 6 — lazy trade learning/replay persistence
+try:
+    from engine.trade_director_learning import (
+        new_trade_id as td6_new_trade_id, archive_trade as td6_archive_trade,
+        record_outcome as td6_record_outcome, get_trade as td6_get_trade,
+        trade_history as td6_trade_history, calibration_scorecard as td6_scorecard,
+    )
+    TRADE_DIRECTOR_PHASE6_AVAILABLE = True
+except Exception as _td6_err:
+    TRADE_DIRECTOR_PHASE6_AVAILABLE = False
+    print(f"Trade Director Phase 6 unavailable: {_td6_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -3726,7 +3738,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td5"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td6"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -4129,6 +4141,7 @@ def set_active_position(ticker: str, side: str, entry_price: float, stop: float,
                         option_entry_price: float = 0.0) -> Dict[str, Any]:
     """Record an open position for monitoring."""
     pos = {
+        "trade_id": td6_new_trade_id() if TRADE_DIRECTOR_PHASE6_AVAILABLE else f"ATD-{int(time.time())}",
         "ticker": ticker.upper(),
         "side": side.upper(),
         "entry_price": entry_price,
@@ -4150,6 +4163,8 @@ def set_active_position(ticker: str, side: str, entry_price: float, stop: float,
         "recommendation_timeline": [],
         "phase5_review": None,
         "phase5_started_at": now_et().strftime("%Y-%m-%d %H:%M:%S ET"),
+        "phase6_archive_id": None,
+        "phase6_outcome": None,
     }
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION.clear()
@@ -6998,7 +7013,13 @@ def api_position_action():
         })
         ACTIVE_POSITION["recommendation_timeline"] = timeline[-120:]
         if ACTIVE_POSITION.get("status") == "CLOSED":
+            ACTIVE_POSITION["closed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             ACTIVE_POSITION["phase5_review"] = _build_phase5_post_trade_review(dict(ACTIVE_POSITION))
+            if TRADE_DIRECTOR_PHASE6_AVAILABLE:
+                try:
+                    ACTIVE_POSITION["phase6_archive_id"] = td6_archive_trade(dict(ACTIVE_POSITION), ACTIVE_POSITION.get("phase5_review"))
+                except Exception as _td6_archive_err:
+                    ACTIVE_POSITION["phase6_archive_error"] = str(_td6_archive_err)
         pos = dict(ACTIVE_POSITION)
     return jsonify({"ok": True, "action": action, "position": pos,
                     "post_trade_review": pos.get("phase5_review"),
@@ -7045,6 +7066,68 @@ def api_position_review():
         review = ACTIVE_POSITION.get("phase5_review") if ACTIVE_POSITION else None
         status = ACTIVE_POSITION.get("status") if ACTIVE_POSITION else None
     return jsonify({"ok": True, "status": status or "NO_POSITION", "review": review})
+
+
+@app.route("/api/position/outcome", methods=["POST"])
+def api_position_outcome():
+    """Attach a user-confirmed outcome and score the archived recommendations."""
+    if not TRADE_DIRECTOR_PHASE6_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 6 learning module unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    trade_id = str(body.get("trade_id") or "").strip()
+    with ACTIVE_POSITION_LOCK:
+        if not trade_id:
+            trade_id = str(ACTIVE_POSITION.get("phase6_archive_id") or ACTIVE_POSITION.get("trade_id") or "")
+        pos = dict(ACTIVE_POSITION)
+    if not trade_id:
+        return jsonify({"ok": False, "error": "trade_id is required"}), 400
+    if td6_get_trade(trade_id) is None and pos:
+        try:
+            td6_archive_trade(pos, pos.get("phase5_review"))
+        except Exception:
+            pass
+    try:
+        result = td6_record_outcome(trade_id, body)
+        with ACTIVE_POSITION_LOCK:
+            if str(ACTIVE_POSITION.get("trade_id") or "") == trade_id:
+                ACTIVE_POSITION["phase6_outcome"] = result
+        return jsonify({"ok": True, **result})
+    except KeyError:
+        return jsonify({"ok": False, "error": "archived trade not found"}), 404
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/position/replay")
+def api_position_replay():
+    if not TRADE_DIRECTOR_PHASE6_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 6 learning module unavailable"}), 503
+    trade_id = str(request.args.get("trade_id") or "").strip()
+    if not trade_id:
+        with ACTIVE_POSITION_LOCK:
+            trade_id = str(ACTIVE_POSITION.get("phase6_archive_id") or ACTIVE_POSITION.get("trade_id") or "")
+    trade = td6_get_trade(trade_id) if trade_id else None
+    if not trade:
+        return jsonify({"ok": False, "error": "trade replay not found"}), 404
+    return jsonify({"ok": True, "replay": trade})
+
+
+@app.route("/api/position/history")
+def api_position_history():
+    if not TRADE_DIRECTOR_PHASE6_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 6 learning module unavailable"}), 503
+    limit = max(1, min(100, int(safe_float(request.args.get("limit"), 20))))
+    return jsonify({"ok": True, "trades": td6_trade_history(limit)})
+
+
+@app.route("/api/position/learning/scorecard")
+def api_position_learning_scorecard():
+    if not TRADE_DIRECTOR_PHASE6_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 6 learning module unavailable"}), 503
+    try:
+        return jsonify({"ok": True, "scorecard": td6_scorecard()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/performance")
