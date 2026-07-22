@@ -135,6 +135,16 @@ except Exception as _td16_err:
     TRADE_DIRECTOR_PHASE16_AVAILABLE = False
     print(f"Trade Director Phase 16 unavailable: {_td16_err}", flush=True)
 
+# APEX Trade Director Phase 17 — multi-timeframe intelligence
+try:
+    from engine.trade_director_multi_timeframe import (
+        build_multi_timeframe_intelligence as td17_build_multi_timeframe_intelligence,
+    )
+    TRADE_DIRECTOR_PHASE17_AVAILABLE = True
+except Exception as _td17_err:
+    TRADE_DIRECTOR_PHASE17_AVAILABLE = False
+    print(f"Trade Director Phase 17 unavailable: {_td17_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5271,6 +5281,17 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td16_build_err:
             result["execution_desk"] = {"version": "PHASE_16", "error": str(_td16_build_err)}
 
+    if TRADE_DIRECTOR_PHASE17_AVAILABLE:
+        try:
+            # Phase 17 recursively inspects cached APEX state only; it never fetches data.
+            with STATE_LOCK:
+                _td17_cached = dict(STATE.get("last_result") or {})
+            _td17_context = dict(result)
+            _td17_context["cached_market"] = _td17_cached
+            result["multi_timeframe_intelligence"] = td17_build_multi_timeframe_intelligence(_td17_context)
+        except Exception as _td17_build_err:
+            result["multi_timeframe_intelligence"] = {"version": "PHASE_17", "error": str(_td17_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5286,6 +5307,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase15_last_intelligence"] = dict(result["options_intelligence"])
         if result.get("execution_desk"):
             ACTIVE_POSITION["phase16_last_execution_desk"] = dict(result["execution_desk"])
+        if result.get("multi_timeframe_intelligence"):
+            ACTIVE_POSITION["phase17_last_multi_timeframe"] = dict(result["multi_timeframe_intelligence"])
 
     return result
 
@@ -7659,6 +7682,23 @@ def api_position_execution_desk():
         with ACTIVE_POSITION_LOCK:
             data = dict(ACTIVE_POSITION.get("phase16_last_execution_desk") or {})
     return jsonify({"ok": True, "execution_desk": data})
+
+@app.route("/api/position/multi-timeframe-intelligence", methods=["GET", "POST"])
+def api_position_multi_timeframe_intelligence():
+    """Return or evaluate Phase 17 cached-only timeframe alignment."""
+    if not TRADE_DIRECTOR_PHASE17_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 17 unavailable"}), 503
+    monitor = monitor_active_position()
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        data = td17_build_multi_timeframe_intelligence(monitor, body.get("timeframes") or body.get("timeframe_data") or {})
+        return jsonify({"ok": True, "multi_timeframe_intelligence": data})
+    data = monitor.get("multi_timeframe_intelligence")
+    if not data:
+        with ACTIVE_POSITION_LOCK:
+            data = dict(ACTIVE_POSITION.get("phase17_last_multi_timeframe") or {})
+    return jsonify({"ok": True, "multi_timeframe_intelligence": data})
+
 
 @app.route("/api/position/strategy-orchestration")
 def api_position_strategy_orchestration():
