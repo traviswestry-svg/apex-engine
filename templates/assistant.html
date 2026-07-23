@@ -58,6 +58,7 @@
 .phase14-panel{margin:0 0 14px;border:1px solid rgba(14,165,233,.5);background:linear-gradient(135deg,#071725,#0b101c);border-radius:16px;padding:15px}.phase14-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.phase14-selected{font-size:27px;font-weight:950;margin-top:5px}.phase14-grid{display:grid;grid-template-columns:1.05fr 1.95fr;gap:10px;margin-top:12px}.phase14-card{background:#080f19;border:1px solid #20364c;border-radius:12px;padding:11px}.phase14-queue{display:grid;gap:7px;margin-top:8px}.phase14-row{display:grid;grid-template-columns:1.2fr .55fr .65fr;gap:8px;align-items:center;padding:8px;border:1px solid #22364b;border-radius:9px;font-size:11px}.phase14-row.preferred{border-color:#15803d;background:rgba(34,197,94,.05)}.phase14-score{font-size:18px;font-weight:900;text-align:right}.phase14-reasons{margin:8px 0 0;padding-left:18px;color:#c5d5e8;font-size:12px;line-height:1.5}.phase14-tag{display:inline-block;padding:3px 7px;border-radius:99px;border:1px solid #2d465f;font-size:10px}.phase14-guard{margin-top:10px;padding:9px;border:1px dashed #35516d;border-radius:10px;color:#9fb4ca;font-size:11px}@media(max-width:760px){.phase14-grid{grid-template-columns:1fr}.phase14-head{display:block}.phase14-row{grid-template-columns:1fr .5fr}.phase14-row span:last-child{grid-column:1/-1}}
 .phase11-panel{margin:0 0 14px;border:1px solid rgba(139,92,246,.48);background:linear-gradient(135deg,#120b22,#09121f);border-radius:16px;padding:15px}.phase11-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.phase11-mode{font-size:30px;font-weight:1000;margin-top:5px}.phase11-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:12px}.phase11-card{background:#0a0d18;border:1px solid #3b2d5f;border-radius:12px;padding:11px}.phase11-big{font-size:25px;font-weight:900;margin-top:5px}.phase11-budget{height:8px;background:#191329;border-radius:999px;overflow:hidden;margin-top:8px}.phase11-budget span{display:block;height:100%;background:linear-gradient(90deg,#8b5cf6,#6ee7f9)}.phase11-score-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.phase11-score{padding:8px;background:#080b13;border:1px solid #2e2449;border-radius:9px;text-align:center}.phase11-score strong{display:block;font-size:19px}.phase11-strategies{margin-top:10px}.phase11-strategy{display:grid;grid-template-columns:1.4fr repeat(4,.7fr);gap:7px;padding:6px 0;border-bottom:1px solid #2b2142;font-size:11px}@media(max-width:760px){.phase11-head{display:block}.phase11-score-grid{grid-template-columns:repeat(2,1fr)}.phase11-strategy{grid-template-columns:1fr 1fr}}
 .phase15-panel{margin:0 0 14px;border:1px solid rgba(168,85,247,.55);background:linear-gradient(135deg,#140d21,#090f19);border-radius:16px;padding:15px}.phase15-head{display:flex;justify-content:space-between;gap:12px}.phase15-grid{display:grid;grid-template-columns:1.1fr 1.9fr;gap:10px;margin-top:12px}.phase15-card{background:#080f19;border:1px solid #3c2a50;border-radius:12px;padding:11px}.phase15-contract{font-size:22px;font-weight:950;margin-top:5px}.phase15-row{display:grid;grid-template-columns:1.3fr .65fr .55fr .55fr;gap:7px;padding:8px;border:1px solid #342747;border-radius:9px;margin-top:7px;font-size:11px;align-items:center}.phase15-row.best{border-color:#7e22ce;background:rgba(168,85,247,.08)}.phase15-tag{display:inline-block;border:1px solid #55376e;border-radius:99px;padding:3px 7px;font-size:10px;margin:3px 3px 0 0}.phase15-guard{margin-top:10px;padding:9px;border:1px dashed #60427c;border-radius:10px;color:#bfa9d4;font-size:11px}@media(max-width:760px){.phase15-grid{grid-template-columns:1fr}.phase15-head{display:block}.phase15-row{grid-template-columns:1fr .5fr}.phase15-row span:nth-child(n+3){grid-column:auto}}
+.session-allocation-panel{margin:14px 0;background:#0b1422;border:1px solid #2b405d;border-radius:16px;padding:15px}.allocation-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.allocation-title{font-size:17px;font-weight:900}.allocation-seq{color:var(--cyan);font-weight:900}.allocation-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-top:12px}.allocation-card{background:#07101c;border:1px solid #26384f;border-radius:12px;padding:11px}.allocation-big{font-size:24px;font-weight:1000;margin-top:5px}.allocation-note{color:#b7c7dd;font-size:12px;line-height:1.5;margin-top:10px}
 </style>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/trader_workflow.css') }}?v={{ asset_version or version }}"></head><body>
 <nav class="apex-nav">
@@ -69,7 +70,9 @@
   <div class="nav-sep"></div>
   <a href="/api/active_trade_director" target="_blank">API</a>
 </nav>
-<div class="wrap"><div class="assistant-workflow-note"><strong>Trader Workflow:</strong> current directive and position controls remain primary. Phase numbers are hidden from the live interface; all underlying governance and evidence remain active.</div>
+<div class="wrap"><div id="app" class="panel">Loading Active Trade Director…</div>
+<div id="sessionAllocation" class="session-allocation-panel"></div>
+<div class="assistant-workflow-note"><strong>Trader Workflow:</strong> current directive and position controls remain primary. Phase numbers are hidden from the live interface; all underlying governance and evidence remain active.</div>
 <div class="sub-header">
   <div><div class="brand">APEX Active Trade Director</div>
   <div class="sub">Continuous state-aware directive · flow acceleration · dynamic hold levels · thesis tracking</div></div>
@@ -117,7 +120,6 @@
 <div id="tradeHero" class="trade-hero"></div>
 <div id="positionStrip" class="position-strip"></div>
 <div id="postTradeReview" class="review-panel"></div>
-<div id="app" class="panel">Loading Active Trade Director…</div>
 </div>
 <script>
 const TICKER = new URLSearchParams(location.search).get('ticker') || 'SPX';
@@ -737,8 +739,16 @@ async function loadDirector(){
       cards+metrics+planner;
   }catch(e){el.innerHTML='<div class="banner RED"><div class="banner-title">ERROR</div><div class="banner-msg">'+esc(e.message)+'</div></div>';}
 }
-loadDirector();
-setInterval(loadDirector, 5000);
+async function loadSessionAllocation(){
+  const el=document.getElementById('sessionAllocation'); if(!el)return;
+  try{const r=await fetch('/api/session-allocation',{cache:'no-store'});const j=await r.json();const d=j.session_allocation||{};
+    const seq=(d.sequence||[]).join(' → '); const notes=(d.reasons||[]).map(x=>'• '+esc(x)).join('<br>')||'Allocation remains advisory and confirmation-gated.';
+    el.innerHTML=`<div class="allocation-head"><div><div class="allocation-title">Session Allocation & Risk Plan</div><div class="sub">Up to ${d.max_trades||5} trades · governed progression <span class="allocation-seq">${seq||'1 → 3 → 4 → 3 → adaptive'}</span></div></div><span class="pill ${d.allocation_gate==='ELIGIBLE'?'conviction':'scalp'}">${esc(d.allocation_gate||'ADVISORY')}</span></div>
+    <div class="allocation-grid"><div class="allocation-card"><div class="label">Trades Today</div><div class="allocation-big">${d.trades_taken||0} / ${d.max_trades||5}</div></div><div class="allocation-card"><div class="label">Next Trade</div><div class="allocation-big">${d.next_trade_number||'—'}</div></div><div class="allocation-card"><div class="label">Planned Contracts</div><div class="allocation-big">${d.planned_contracts||0}</div></div><div class="allocation-card"><div class="label">Recommended Now</div><div class="allocation-big">${d.recommended_contracts||0}</div></div><div class="allocation-card"><div class="label">Risk Remaining</div><div class="allocation-big">$${Number(d.remaining_risk_budget||0).toFixed(0)}</div></div></div><div class="allocation-note">${notes}<br><b>Advisory only:</b> this panel never places, modifies, or authorizes an order.</div>`;
+  }catch(e){el.innerHTML='<div class="allocation-title">Session Allocation unavailable</div><div class="sub">'+esc(e.message)+'</div>';}
+}
+loadDirector(); loadSessionAllocation();
+setInterval(loadDirector, 5000); setInterval(loadSessionAllocation, 15000);
 </script>
 <script src="{{ url_for('static', filename='js/trader_workflow.js') }}?v={{ asset_version or version }}"></script>
 </body></html>
