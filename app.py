@@ -332,6 +332,18 @@ except Exception as _td32_err:
     TRADE_DIRECTOR_PHASE32_AVAILABLE = False
     print(f"Trade Director Phase 32 unavailable: {_td32_err}", flush=True)
 
+# APEX Trade Director Phase 34 — governed session allocation
+try:
+    from engine.trade_director_session_allocation import (
+        build_session_allocation as td34_build_session_allocation,
+        record_confirmed_trade as td34_record_confirmed_trade,
+        reset_session as td34_reset_session,
+    )
+    TRADE_DIRECTOR_PHASE34_AVAILABLE = True
+except Exception as _td34_err:
+    TRADE_DIRECTOR_PHASE34_AVAILABLE = False
+    print(f"Trade Director Phase 34 unavailable: {_td34_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -7523,7 +7535,17 @@ def api_position():
         if not ticker or side not in ("CALL", "PUT"):
             return jsonify({"ok": False, "error": "side must be CALL or PUT"}), 400
         pos = set_active_position(ticker, side, entry, stop, t1, t2, quantity, option_symbol, notes, option_entry_price)
-        return jsonify({"ok": True, "position": pos})
+        allocation_record = None
+        if TRADE_DIRECTOR_PHASE34_AVAILABLE:
+            try:
+                allocation_record = td34_record_confirmed_trade(
+                    ticker=ticker, side=side, quantity=quantity,
+                    risk_dollars=safe_float(body.get("risk_dollars"), 0.0),
+                    environment_quality=str(body.get("environment_quality") or "UNKNOWN"),
+                )
+            except Exception as _td34_record_err:
+                allocation_record = {"ok": False, "recorded": False, "error": str(_td34_record_err)}
+        return jsonify({"ok": True, "position": pos, "session_allocation_record": allocation_record})
     try:
         result = monitor_active_position()
         return jsonify({"ok": True, "version": VERSION_45, **result})
@@ -8643,6 +8665,26 @@ def api_performance_calibration_ledger():
     return jsonify({"ok": True, "ledger": td32_decision_ledger(
         limit=request.args.get("limit", 100, type=int),
         direction=request.args.get("direction"), grade=request.args.get("grade"))})
+
+
+@app.route("/api/session-allocation", methods=["GET"])
+def api_session_allocation():
+    if not TRADE_DIRECTOR_PHASE34_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 34 unavailable"}), 503
+    return jsonify({"ok": True, "session_allocation": td34_build_session_allocation(
+        environment_quality=request.args.get("environment_quality", "UNKNOWN"),
+        daily_risk_budget=request.args.get("daily_risk_budget", 2000.0, type=float),
+        remaining_risk_budget=request.args.get("remaining_risk_budget", type=float),
+        estimated_risk_per_contract=request.args.get("risk_per_contract", 0.0, type=float),
+        consecutive_losses=request.args.get("consecutive_losses", 0, type=int),
+    )})
+
+
+@app.route("/api/session-allocation/reset", methods=["POST"])
+def api_session_allocation_reset():
+    if not TRADE_DIRECTOR_PHASE34_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 34 unavailable"}), 503
+    return jsonify(td34_reset_session())
 
 
 @app.route("/api/position/strategy-orchestration")
