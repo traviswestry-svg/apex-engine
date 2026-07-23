@@ -366,6 +366,18 @@ except Exception as _td36_err:
     TRADE_DIRECTOR_PHASE36_AVAILABLE = False
     print(f"Trade Director Phase 36 unavailable: {_td36_err}", flush=True)
 
+# APEX Trade Director Phase 37 — mobile momentum intelligence and Telegram alerting
+try:
+    from engine.trade_director_mobile_momentum_alerts import (
+        classify_alert_stage as td37_classify_alert_stage,
+        dispatch_mobile_alert as td37_dispatch_mobile_alert,
+        mobile_alert_status as td37_mobile_alert_status,
+    )
+    TRADE_DIRECTOR_PHASE37_AVAILABLE = True
+except Exception as _td37_err:
+    TRADE_DIRECTOR_PHASE37_AVAILABLE = False
+    print(f"Trade Director Phase 37 unavailable: {_td37_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -7401,6 +7413,54 @@ def api_institutional_os():
                         with SENT_ALERTS_LOCK:
                             SENT_ALERTS.discard(_enter_key)
 
+            # Phase 37 — advisory mobile Momentum Burst state machine.
+            # It may notify Telegram, but it never places, modifies, or closes an order.
+            if TRADE_DIRECTOR_PHASE37_AVAILABLE:
+                try:
+                    _router = result.get("trade_function_router") or {}
+                    if not _router and TRADE_DIRECTOR_PHASE35_AVAILABLE:
+                        _evidence = {
+                            "gamma_regime": result.get("gamma_regime") or result.get("dealer_gamma_regime"),
+                            "auction_state": result.get("auction_state"),
+                            "flow_state": result.get("flow_acceleration") or result.get("flow_state"),
+                            "volatility_regime": result.get("volatility_regime") or result.get("regime"),
+                            "trend_persistence": result.get("trend_persistence") or result.get("trend_state"),
+                            "liquidity_state": result.get("liquidity_state") or "NORMAL",
+                            "structure_score": result.get("structure_score"),
+                            "flow_score": result.get("flow_score"),
+                            "dealer_score": result.get("dealer_score"),
+                        }
+                        _router = td35_build_trade_function_router(_evidence)
+                    with ACTIVE_POSITION_LOCK:
+                        _phase37_position = dict(ACTIVE_POSITION)
+                    _lifecycle = {}
+                    if TRADE_DIRECTOR_PHASE36_AVAILABLE and _phase37_position.get("status") == "OPEN":
+                        _lifecycle = td36_build_momentum_lifecycle(
+                            position=_phase37_position,
+                            current_premium=_phase37_position.get("option_current_price"),
+                            entry_quality=_phase37_position.get("entry_quality"),
+                        )
+                    _entry_quality = result.get("entry_quality") or _phase37_position.get("entry_quality") or {}
+                    _selected = (_router or {}).get("selected_function") or {}
+                    _snapshot = {
+                        "market_open": bool(result.get("market_open", True)),
+                        "data_fresh": not bool(result.get("stale", False)),
+                        "risk_eligible": not bool(result.get("risk", {}).get("locked_out", False)),
+                        "spread_ok": result.get("option_liquidity_state", "OK") not in {"POOR", "WIDE", "UNAVAILABLE"},
+                        "direction": result.get("direction") or result.get("bias") or result.get("consensus_label"),
+                        "confidence": result.get("confidence") or result.get("ici") or result.get("institutional_confidence"),
+                        "trigger_state": result.get("trigger_state") or ("CONFIRMED" if "ENTER" in str(result.get("recommendation", "")) else "WAITING"),
+                        "trigger_level": result.get("entry_trigger") or result.get("trigger_level") or result.get("risk", {}).get("entry_zone"),
+                        "suggested_contracts": result.get("recommended_contracts") or result.get("risk", {}).get("recommended_contracts"),
+                        "trade_function_router": _router,
+                        "entry_quality": _entry_quality,
+                        "momentum_lifecycle": _lifecycle,
+                        "assistant_url": os.getenv("APEX_ASSISTANT_URL", request.host_url.rstrip("/") + "/assistant"),
+                    }
+                    result["mobile_momentum_alert"] = td37_dispatch_mobile_alert(_snapshot, send_telegram)
+                except Exception as _td37_scan_err:
+                    print(f"Phase 37 mobile alert error (non-fatal): {_td37_scan_err}", flush=True)
+
             _record_confidence_timeline_point(ticker, result)
             # APEX 7.6.0 Premium Strategy — dispatch on the composition cycle
             # (not the polled GET). Logs the structure and fires Telegram only
@@ -8805,6 +8865,39 @@ def api_entry_quality():
         return jsonify({"ok": False, "error": "Phase 36 unavailable"}), 503
     body = request.get_json(silent=True) or {}
     return jsonify({"ok": True, "entry_quality": td36_compute_entry_quality(body.get("evidence") or body)})
+
+
+@app.route("/api/mobile-momentum-alerts/status", methods=["GET"])
+def api_mobile_momentum_alerts_status():
+    if not TRADE_DIRECTOR_PHASE37_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 37 unavailable"}), 503
+    return jsonify({"ok": True, "mobile_momentum_alerts": td37_mobile_alert_status(request.args.get("limit", 25, type=int))})
+
+
+@app.route("/api/mobile-momentum-alerts/evaluate", methods=["POST"])
+def api_mobile_momentum_alerts_evaluate():
+    if not TRADE_DIRECTOR_PHASE37_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 37 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    force = bool(body.pop("force", False))
+    result = td37_dispatch_mobile_alert(body, send_telegram, force=force)
+    return jsonify(result), (200 if result.get("ok") or result.get("suppressed") else 502)
+
+
+@app.route("/api/mobile-momentum-alerts/test", methods=["POST"])
+def api_mobile_momentum_alerts_test():
+    if not TRADE_DIRECTOR_PHASE37_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 37 unavailable"}), 503
+    payload = {
+        "market_open": True, "data_fresh": True, "risk_eligible": True, "spread_ok": True,
+        "direction": "CALL", "confidence": 90, "trigger_state": "WAITING",
+        "entry_quality": {"entry_quality_score": 95, "entry_quality_grade": "A+"},
+        "trade_function_router": {"selected_function": {"function": "MOMENTUM_BURST"}},
+        "trigger_level": "TEST ONLY", "assistant_url": request.host_url.rstrip("/") + "/assistant",
+    }
+    result = td37_dispatch_mobile_alert(payload, send_telegram, force=True)
+    result["test_only"] = True
+    return jsonify(result), (200 if result.get("ok") else 502)
 
 
 @app.route("/api/position/strategy-orchestration")
