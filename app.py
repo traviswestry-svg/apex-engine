@@ -232,6 +232,18 @@ except Exception as _td25_err:
     TRADE_DIRECTOR_PHASE25_AVAILABLE = False
     print(f"Trade Director Phase 25 unavailable: {_td25_err}", flush=True)
 
+# APEX Trade Director Phase 26 — institutional performance and intelligence command center
+try:
+    from engine.trade_director_command_center import (
+        build_command_center as td26_build_command_center,
+        build_performance_scorecards as td26_build_performance_scorecards,
+        build_drift_detection as td26_build_drift_detection,
+    )
+    TRADE_DIRECTOR_PHASE26_AVAILABLE = True
+except Exception as _td26_err:
+    TRADE_DIRECTOR_PHASE26_AVAILABLE = False
+    print(f"Trade Director Phase 26 unavailable: {_td26_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5441,6 +5453,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td25_build_err:
             result["shadow_validation"] = {"version": "PHASE_25", "error": str(_td25_build_err)}
 
+    if TRADE_DIRECTOR_PHASE26_AVAILABLE:
+        try:
+            # Phase 26 observes the coordinated stack; it cannot mutate any upstream phase.
+            result["institutional_command_center"] = td26_build_command_center(result)
+        except Exception as _td26_build_err:
+            result["institutional_command_center"] = {"version": "PHASE_26", "error": str(_td26_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5474,6 +5493,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase24_last_policy_governance"] = dict(result["policy_governance"])
         if result.get("shadow_validation"):
             ACTIVE_POSITION["phase25_last_shadow_validation"] = dict(result["shadow_validation"])
+        if result.get("institutional_command_center"):
+            ACTIVE_POSITION["phase26_last_command_center"] = dict(result["institutional_command_center"])
 
     return result
 
@@ -8057,6 +8078,42 @@ def api_position_shadow_validation():
     with ACTIVE_POSITION_LOCK:
         cached = dict(ACTIVE_POSITION.get("phase25_last_shadow_validation") or {})
     return jsonify({"ok": True, "shadow_validation": cached or td25_build_shadow_validation({})})
+
+
+@app.route("/api/command-center/system-health")
+def api_command_center_system_health():
+    if not TRADE_DIRECTOR_PHASE26_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 26 unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        cached = dict(ACTIVE_POSITION.get("phase26_last_command_center") or {})
+    center = cached or td26_build_command_center({})
+    return jsonify({"ok": True, "system_health": center.get("system_health"), "system_confidence_index": center.get("system_confidence_index"), "system_state": center.get("system_state")})
+
+
+@app.route("/api/command-center/performance")
+def api_command_center_performance():
+    if not TRADE_DIRECTOR_PHASE26_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 26 unavailable"}), 503
+    return jsonify({"ok": True, "performance": td26_build_performance_scorecards()})
+
+
+@app.route("/api/command-center/scorecards")
+def api_command_center_scorecards():
+    if not TRADE_DIRECTOR_PHASE26_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 26 unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        cached = dict(ACTIVE_POSITION.get("phase26_last_command_center") or {})
+    return jsonify({"ok": True, "command_center": cached or td26_build_command_center({})})
+
+
+@app.route("/api/command-center/diagnostics", methods=["POST"])
+def api_command_center_diagnostics():
+    if not TRADE_DIRECTOR_PHASE26_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 26 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    context = body.get("context") or {}
+    records = body.get("records")
+    return jsonify({"ok": True, "command_center": td26_build_command_center(context, records)})
 
 
 @app.route("/api/position/strategy-orchestration")
