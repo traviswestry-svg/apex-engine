@@ -221,6 +221,17 @@ except Exception as _td24_err:
     TRADE_DIRECTOR_PHASE24_AVAILABLE = False
     print(f"Trade Director Phase 24 unavailable: {_td24_err}", flush=True)
 
+# APEX Trade Director Phase 25 — institutional shadow validation and promotion pipeline
+try:
+    from engine.trade_director_shadow_validation import (
+        build_shadow_validation as td25_build_shadow_validation,
+        evaluate_shadow_trial as td25_evaluate_shadow_trial,
+    )
+    TRADE_DIRECTOR_PHASE25_AVAILABLE = True
+except Exception as _td25_err:
+    TRADE_DIRECTOR_PHASE25_AVAILABLE = False
+    print(f"Trade Director Phase 25 unavailable: {_td25_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5423,6 +5434,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td24_build_err:
             result["policy_governance"] = {"version": "PHASE_24", "error": str(_td24_build_err)}
 
+    if TRADE_DIRECTOR_PHASE25_AVAILABLE:
+        try:
+            # Phase 25 tests Phase 24 proposals against archived outcomes in shadow only.
+            result["shadow_validation"] = td25_build_shadow_validation(result)
+        except Exception as _td25_build_err:
+            result["shadow_validation"] = {"version": "PHASE_25", "error": str(_td25_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5454,6 +5472,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase23_last_replay_lab"] = dict(result["replay_laboratory"])
         if result.get("policy_governance"):
             ACTIVE_POSITION["phase24_last_policy_governance"] = dict(result["policy_governance"])
+        if result.get("shadow_validation"):
+            ACTIVE_POSITION["phase25_last_shadow_validation"] = dict(result["shadow_validation"])
 
     return result
 
@@ -8015,6 +8035,28 @@ def api_position_policy_governance():
     if cached:
         return jsonify({"ok": True, "policy_governance": cached})
     return jsonify({"ok": True, "policy_governance": td24_build_policy_governance({})})
+
+
+@app.route("/api/position/shadow-validation", methods=["GET", "POST"])
+def api_position_shadow_validation():
+    """Return Phase 25 shadow-validation results or evaluate a supplied trial."""
+    if not TRADE_DIRECTOR_PHASE25_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 25 unavailable"}), 503
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        if str(body.get("action") or "EVALUATE_TRIAL").upper() != "EVALUATE_TRIAL":
+            return jsonify({"ok": False, "error": "Unsupported Phase 25 action"}), 400
+        proposal = body.get("proposal") or {}
+        if not proposal:
+            return jsonify({"ok": False, "error": "proposal is required"}), 400
+        try: minimum_cases = int(body.get("minimum_cases") or 20)
+        except (TypeError, ValueError): minimum_cases = 20
+        records = body.get("records")
+        trial = td25_evaluate_shadow_trial(proposal, records, minimum_cases=minimum_cases)
+        return jsonify({"ok": True, "shadow_trial": trial})
+    with ACTIVE_POSITION_LOCK:
+        cached = dict(ACTIVE_POSITION.get("phase25_last_shadow_validation") or {})
+    return jsonify({"ok": True, "shadow_validation": cached or td25_build_shadow_validation({})})
 
 
 @app.route("/api/position/strategy-orchestration")
