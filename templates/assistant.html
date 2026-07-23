@@ -105,6 +105,7 @@
 <div id="shadowValidation"></div>
 <div id="institutionalCommandCenter"></div>
 <div id="dataLineage"></div>
+<div id="portfolioAllocation"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -425,6 +426,16 @@ function renderDataLineage(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 28</div><div class="coach-title">Institutional Data Integrity & Lineage Explorer</div><div class="sub">Provenance · immutable audit chain · source ancestry · tamper detection</div></div><div><div class="label">Integrity State</div><div class="phase15-contract ${integ.status==='VERIFIED'?'good':integ.status==='TAMPER_DETECTED'?'bad':'warn'}">${esc((integ.status||d.lineage_state||'--').replace(/_/g,' '))}</div><div class="sub">${num(integ.integrity_score,1)} integrity score</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Lineage Coverage</div><div class="metric-row"><span>Coverage</span><strong>${num(d.lineage_coverage_pct,1)}%</strong></div><div class="metric-row"><span>Phases with evidence</span><strong>${d.phases_with_evidence||0} / ${d.phases_expected||0}</strong></div><div class="metric-row"><span>Total lineage events</span><strong>${d.total_lineage_events||0}</strong></div><div class="metric-row"><span>Relationships</span><strong>${integ.relationship_count||0}</strong></div></div><div class="phase15-card"><div class="label">Integrity Verification</div><div class="metric-row"><span>Critical</span><strong>${integ.critical_count||0}</strong></div><div class="metric-row"><span>Errors</span><strong>${integ.error_count||0}</strong></div><div class="metric-row"><span>Warnings</span><strong>${integ.warning_count||0}</strong></div><div class="metric-row"><span>Events checked</span><strong>${integ.event_count||0}</strong></div></div><div class="phase15-card"><div class="label">Engine Versions</div>${versions||'<div class="sub">Version evidence initializes with the first coordinated scan.</div>'}</div><div class="phase15-card"><div class="label">Controls</div><div class="metric-row"><span>Append only</span><strong>YES</strong></div><div class="metric-row"><span>Immutable events</span><strong>YES</strong></div><div class="metric-row"><span>Broker access</span><strong>NO</strong></div><div class="metric-row"><span>Risk mutation</span><strong>NO</strong></div></div></div><div class="phase15-card"><div class="label">Latest Lineage Events</div>${events||'<div class="sub">Lineage events will appear after the next coordinated Trade Director evaluation.</div>'}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+
+function renderPortfolioAllocation(x){
+  const el=document.getElementById('portfolioAllocation'); if(!el)return;
+  const d=(x&&x.portfolio_allocation)||x||{}; if(!d||d.error){el.innerHTML='';return;}
+  const p=d.portfolio_summary||{}, c=d.concentration||{}, a=d.candidate_allocation||{}, g=d.aggregate_greeks||{};
+  const issues=[...(d.blockers||[]),...(d.warnings||[])].slice(0,6).map(v=>`<div class="phase10-check ${String(v).includes('EXHAUSTED')||String(v).includes('LIMIT')?'fail':'pass'}">${esc(String(v).replace(/_/g,' '))}</div>`).join('');
+  const symbols=Object.entries(c.symbol_risk||{}).slice(0,5).map(([k,v])=>`<div class="metric-row"><span>${esc(k)}</span><strong>${money(v)}</strong></div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 29</div><div class="coach-title">Institutional Portfolio & Capital Allocation Intelligence</div><div class="sub">Aggregate exposure · concentration · capital budget · bounded allocation</div></div><div><div class="label">Allocation State</div><div class="phase15-contract ${d.allocation_state==='ALLOCATABLE'?'good':d.allocation_state==='BLOCKED'?'bad':'warn'}">${esc((d.allocation_state||'--').replace(/_/g,' '))}</div><div class="sub">Score ${num(d.allocation_score,1)} / 100</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Portfolio Risk</div><div class="metric-row"><span>Open positions</span><strong>${p.open_positions||0}</strong></div><div class="metric-row"><span>Total risk</span><strong>${money(p.total_risk_dollars||0)}</strong></div><div class="metric-row"><span>Risk utilization</span><strong>${num(p.risk_utilization_pct,1)}%</strong></div><div class="metric-row"><span>Remaining budget</span><strong>${money(p.remaining_portfolio_risk||0)}</strong></div></div><div class="phase15-card"><div class="label">Candidate Allocation</div><div class="metric-row"><span>Strategy</span><strong>${esc(a.strategy||'--')}</strong></div><div class="metric-row"><span>Requested risk</span><strong>${money(a.requested_risk_dollars||0)}</strong></div><div class="metric-row"><span>Recommended risk</span><strong>${money(a.recommended_risk_dollars||0)}</strong></div><div class="metric-row"><span>Allocation factor</span><strong>${num((a.allocation_factor||0)*100,1)}%</strong></div></div><div class="phase15-card"><div class="label">Aggregate Greeks</div><div class="metric-row"><span>Delta</span><strong>${money(g.delta_dollars||0)}</strong></div><div class="metric-row"><span>Gamma</span><strong>${money(g.gamma_dollars||0)}</strong></div><div class="metric-row"><span>Vega</span><strong>${money(g.vega_dollars||0)}</strong></div><div class="metric-row"><span>Theta</span><strong>${money(g.theta_dollars||0)}</strong></div></div><div class="phase15-card"><div class="label">Symbol Concentration</div>${symbols||'<div class="sub">No open portfolio positions.</div>'}</div></div><div class="phase15-card"><div class="label">Allocation Controls</div>${issues||'<div class="phase10-check pass">No portfolio allocation blockers detected.</div>'}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderShadowValidation(x){
   const el=document.getElementById('shadowValidation'); if(!el)return;
   const d=(x&&x.shadow_validation)||x||{}; const trials=d.trials||[];
@@ -541,7 +552,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, pa, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -558,6 +569,7 @@ async function loadDirector(){
       fetch('/api/position/policy-governance',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/shadow-validation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/command-center/scorecards',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/portfolio/allocation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -578,6 +590,7 @@ async function loadDirector(){
     renderShadowValidation(sv);
     renderInstitutionalCommandCenter(cc);
     renderDataLineage(cc);
+    renderPortfolioAllocation(pa);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
