@@ -244,6 +244,22 @@ except Exception as _td26_err:
     TRADE_DIRECTOR_PHASE26_AVAILABLE = False
     print(f"Trade Director Phase 26 unavailable: {_td26_err}", flush=True)
 
+# APEX Trade Director Phase 27 — institutional change control
+try:
+    from engine.trade_director_change_control import (
+        build_change_control as td27_build_change_control,
+        change_history as td27_change_history,
+        get_change as td27_get_change,
+        propose_change as td27_propose_change,
+        review_change as td27_review_change,
+        validate_change as td27_validate_change,
+        verify_change_integrity as td27_verify_change_integrity,
+    )
+    TRADE_DIRECTOR_PHASE27_AVAILABLE = True
+except Exception as _td27_err:
+    TRADE_DIRECTOR_PHASE27_AVAILABLE = False
+    print(f"Trade Director Phase 27 unavailable: {_td27_err}", flush=True)
+
 # APEX Trade Director Phase 28 — institutional data integrity and lineage
 try:
     from engine.trade_director_data_lineage import (
@@ -285,6 +301,22 @@ try:
 except Exception as _td30_err:
     TRADE_DIRECTOR_PHASE30_AVAILABLE = False
     print(f"Trade Director Phase 30 unavailable: {_td30_err}", flush=True)
+
+# APEX Trade Director Phase 31 — institutional evidence and outcome validation
+try:
+    from engine.trade_director_institutional_evidence import (
+        build_institutional_evidence as td31_build_institutional_evidence,
+        capture_decision as td31_capture_decision,
+        grade_decision as td31_grade_decision,
+        get_decision as td31_get_decision,
+        list_decisions as td31_list_decisions,
+        calibration_summary as td31_calibration_summary,
+        verify_evidence_integrity as td31_verify_evidence_integrity,
+    )
+    TRADE_DIRECTOR_PHASE31_AVAILABLE = True
+except Exception as _td31_err:
+    TRADE_DIRECTOR_PHASE31_AVAILABLE = False
+    print(f"Trade Director Phase 31 unavailable: {_td31_err}", flush=True)
 
 # APEX Institutional OS 6.0.1 modular engines
 try:
@@ -5502,6 +5534,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td26_build_err:
             result["institutional_command_center"] = {"version": "PHASE_26", "error": str(_td26_build_err)}
 
+    if TRADE_DIRECTOR_PHASE27_AVAILABLE:
+        try:
+            # Phase 27 observes release evidence and records no automatic runtime changes.
+            result["change_control"] = td27_build_change_control(result)
+        except Exception as _td27_build_err:
+            result["change_control"] = {"version": "PHASE_27", "error": str(_td27_build_err)}
+
     if TRADE_DIRECTOR_PHASE28_AVAILABLE:
         try:
             # Phase 28 records append-only provenance after the coordinated stack is complete.
@@ -5522,6 +5561,13 @@ def monitor_active_position() -> Dict[str, Any]:
             result["execution_certification"] = td30_build_execution_certification(result)
         except Exception as _td30_build_err:
             result["execution_certification"] = {"version": "PHASE_30", "error": str(_td30_build_err)}
+
+    if TRADE_DIRECTOR_PHASE31_AVAILABLE:
+        try:
+            # Phase 31 captures only actionable decisions and grades none without supplied market bars.
+            result["institutional_evidence"] = td31_build_institutional_evidence(result, auto_capture=True)
+        except Exception as _td31_build_err:
+            result["institutional_evidence"] = {"version": "PHASE_31", "error": str(_td31_build_err)}
 
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
@@ -5558,12 +5604,16 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase25_last_shadow_validation"] = dict(result["shadow_validation"])
         if result.get("institutional_command_center"):
             ACTIVE_POSITION["phase26_last_command_center"] = dict(result["institutional_command_center"])
+        if result.get("change_control"):
+            ACTIVE_POSITION["phase27_last_change_control"] = dict(result["change_control"])
         if result.get("data_lineage"):
             ACTIVE_POSITION["phase28_last_data_lineage"] = dict(result["data_lineage"])
         if result.get("portfolio_allocation"):
             ACTIVE_POSITION["phase29_last_portfolio_allocation"] = dict(result["portfolio_allocation"])
         if result.get("execution_certification"):
             ACTIVE_POSITION["phase30_last_execution_certification"] = dict(result["execution_certification"])
+        if result.get("institutional_evidence"):
+            ACTIVE_POSITION["phase31_last_institutional_evidence"] = dict(result["institutional_evidence"])
 
     return result
 
@@ -8185,6 +8235,85 @@ def api_command_center_diagnostics():
     return jsonify({"ok": True, "command_center": td26_build_command_center(context, records)})
 
 
+@app.route("/api/change-control/status")
+def api_change_control_status():
+    if not TRADE_DIRECTOR_PHASE27_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 27 unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        cached = dict(ACTIVE_POSITION.get("phase27_last_change_control") or {})
+        context = dict(ACTIVE_POSITION)
+    return jsonify({"ok": True, "change_control": cached or td27_build_change_control(context)})
+
+
+@app.route("/api/change-control/history")
+def api_change_control_history():
+    if not TRADE_DIRECTOR_PHASE27_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 27 unavailable"}), 503
+    try:
+        limit = int(request.args.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    status = str(request.args.get("status") or "").strip() or None
+    return jsonify({"ok": True, "changes": td27_change_history(limit, status)})
+
+
+@app.route("/api/change-control/change/<change_id>")
+def api_change_control_change(change_id):
+    if not TRADE_DIRECTOR_PHASE27_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 27 unavailable"}), 503
+    item = td27_get_change(change_id)
+    return jsonify({"ok": bool(item), "change": item}), (200 if item else 404)
+
+
+@app.route("/api/change-control/propose", methods=["POST"])
+def api_change_control_propose():
+    if not TRADE_DIRECTOR_PHASE27_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 27 unavailable"}), 503
+    try:
+        item = td27_propose_change(request.get_json(silent=True) or {})
+        return jsonify({"ok": True, "change": item}), 201
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/change-control/validate", methods=["POST"])
+def api_change_control_validate():
+    if not TRADE_DIRECTOR_PHASE27_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 27 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    try:
+        item = td27_validate_change(str(body.get("change_id") or ""), body.get("evidence") or {}, str(body.get("actor") or ""))
+        return jsonify({"ok": True, "change": item})
+    except KeyError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/change-control/review", methods=["POST"])
+def api_change_control_review():
+    if not TRADE_DIRECTOR_PHASE27_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 27 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    try:
+        item = td27_review_change(str(body.get("change_id") or ""), str(body.get("decision") or ""),
+                                  str(body.get("reviewer") or ""), str(body.get("reason") or ""))
+        return jsonify({"ok": True, "change": item})
+    except KeyError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 409
+
+
+@app.route("/api/change-control/integrity", methods=["GET", "POST"])
+def api_change_control_integrity():
+    if not TRADE_DIRECTOR_PHASE27_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 27 unavailable"}), 503
+    body = request.get_json(silent=True) or {} if request.method == "POST" else {}
+    change_id = str(body.get("change_id") or request.args.get("change_id") or "").strip() or None
+    return jsonify({"ok": True, "integrity": td27_verify_change_integrity(change_id)})
+
+
 @app.route("/api/lineage/event/<lineage_id>")
 def api_lineage_event(lineage_id):
     if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
@@ -8382,6 +8511,78 @@ def api_execution_certification_kill_switch():
         return jsonify({"ok": False, "error": "active boolean is required"}), 400
     switch = td30_set_kill_switch(bool(body.get("active")), str(body.get("reason") or "MANUAL"), str(body.get("scope") or "GLOBAL"))
     return jsonify({"ok": True, "kill_switch": switch})
+
+
+@app.route("/api/evidence/status", methods=["GET"])
+def api_evidence_status():
+    if not TRADE_DIRECTOR_PHASE31_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 31 unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        cached = dict(ACTIVE_POSITION.get("phase31_last_institutional_evidence") or {})
+        context = dict(ACTIVE_POSITION)
+    return jsonify({"ok": True, "institutional_evidence": cached or td31_build_institutional_evidence(context, auto_capture=False)})
+
+
+@app.route("/api/evidence/decisions", methods=["GET"])
+def api_evidence_decisions():
+    if not TRADE_DIRECTOR_PHASE31_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 31 unavailable"}), 503
+    try:
+        limit = int(request.args.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    return jsonify({"ok": True, "decisions": td31_list_decisions(limit)})
+
+
+@app.route("/api/evidence/decision/<decision_id>", methods=["GET"])
+def api_evidence_decision(decision_id):
+    if not TRADE_DIRECTOR_PHASE31_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 31 unavailable"}), 503
+    item = td31_get_decision(decision_id)
+    return jsonify({"ok": bool(item), "decision": item}), (200 if item else 404)
+
+
+@app.route("/api/evidence/capture", methods=["POST"])
+def api_evidence_capture():
+    if not TRADE_DIRECTOR_PHASE31_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 31 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    context = body.get("context") if isinstance(body.get("context"), dict) else body
+    result = td31_capture_decision(context, force=bool(body.get("force", False)))
+    return jsonify(result), (201 if result.get("captured") else 409)
+
+
+@app.route("/api/evidence/grade", methods=["POST"])
+def api_evidence_grade():
+    if not TRADE_DIRECTOR_PHASE31_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 31 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    decision_id = str(body.get("decision_id") or "").strip()
+    bars = body.get("bars")
+    if not decision_id or not isinstance(bars, list):
+        return jsonify({"ok": False, "error": "decision_id and bars[] are required"}), 400
+    try:
+        result = td31_grade_decision(decision_id, bars, method=str(body.get("method") or "SPX_BARS"))
+    except KeyError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    return jsonify(result)
+
+
+@app.route("/api/evidence/calibration", methods=["GET"])
+def api_evidence_calibration():
+    if not TRADE_DIRECTOR_PHASE31_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 31 unavailable"}), 503
+    return jsonify({"ok": True, "calibration": td31_calibration_summary()})
+
+
+@app.route("/api/evidence/integrity", methods=["GET"])
+def api_evidence_integrity():
+    if not TRADE_DIRECTOR_PHASE31_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 31 unavailable"}), 503
+    integrity = td31_verify_evidence_integrity()
+    return jsonify({"ok": integrity.get("status") == "VERIFIED", "integrity": integrity})
 
 
 @app.route("/api/position/strategy-orchestration")
