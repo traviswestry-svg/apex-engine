@@ -24,8 +24,9 @@ def full_intraday_evidence(**overrides):
 def test_router_ranks_multiple_functions_and_is_style_relative():
     from engine.trade_director_trade_function_router import build_trade_function_router
     d = build_trade_function_router(full_intraday_evidence())
-    assert len(d["rankings"]) == 6
-    assert d["best_fit_function"]["function"] in {"QUICK_SCALP", "SCALP_15M", "SCALP_30M", "INTRADAY"}
+    assert len(d["rankings"]) == 7
+    assert any(x["function"] == "MOMENTUM_BURST" for x in d["rankings"])
+    assert d["best_fit_function"]["function"] in {"MOMENTUM_BURST", "QUICK_SCALP", "SCALP_15M", "SCALP_30M", "INTRADAY"}
     assert d["selected_function"]["style_fit_grade"] in {"A+", "A", "B+", "B", "C", "D"}
     assert d["empirical_status"] == "HEURISTIC_PRIOR_PENDING_CALIBRATION"
 
