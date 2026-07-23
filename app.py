@@ -271,6 +271,21 @@ except Exception as _td29_err:
     TRADE_DIRECTOR_PHASE29_AVAILABLE = False
     print(f"Trade Director Phase 29 unavailable: {_td29_err}", flush=True)
 
+# APEX Trade Director Phase 30 — execution certification and production readiness
+try:
+    from engine.trade_director_execution_certification import (
+        build_execution_certification as td30_build_execution_certification,
+        preview_order as td30_preview_order,
+        confirm_preview as td30_confirm_preview,
+        cancel_preview as td30_cancel_preview,
+        reconcile_execution as td30_reconcile_execution,
+        set_kill_switch as td30_set_kill_switch,
+    )
+    TRADE_DIRECTOR_PHASE30_AVAILABLE = True
+except Exception as _td30_err:
+    TRADE_DIRECTOR_PHASE30_AVAILABLE = False
+    print(f"Trade Director Phase 30 unavailable: {_td30_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5501,6 +5516,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td29_build_err:
             result["portfolio_allocation"] = {"version": "PHASE_29", "error": str(_td29_build_err)}
 
+    if TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        try:
+            # Phase 30 certifies readiness only; it has no live broker submission path.
+            result["execution_certification"] = td30_build_execution_certification(result)
+        except Exception as _td30_build_err:
+            result["execution_certification"] = {"version": "PHASE_30", "error": str(_td30_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5540,6 +5562,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase28_last_data_lineage"] = dict(result["data_lineage"])
         if result.get("portfolio_allocation"):
             ACTIVE_POSITION["phase29_last_portfolio_allocation"] = dict(result["portfolio_allocation"])
+        if result.get("execution_certification"):
+            ACTIVE_POSITION["phase30_last_execution_certification"] = dict(result["execution_certification"])
 
     return result
 
@@ -8260,6 +8284,104 @@ def api_portfolio_stress_test():
     context = body.get("context") if isinstance(body.get("context"), dict) else body
     shocks = body.get("shocks") if isinstance(body.get("shocks"), list) else None
     return jsonify({"ok": True, "stress_test": td29_build_portfolio_stress_test(context, shocks)})
+
+
+@app.route("/api/execution-certification/status", methods=["GET"])
+def api_execution_certification_status():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        cached = dict(ACTIVE_POSITION.get("phase30_last_execution_certification") or {})
+        context = dict(ACTIVE_POSITION)
+    return jsonify({"ok": True, "execution_certification": cached or td30_build_execution_certification(context)})
+
+
+@app.route("/api/execution-certification/checks", methods=["GET"])
+def api_execution_certification_checks():
+    response = api_execution_certification_status()
+    return response
+
+
+@app.route("/api/execution-certification/broker-health", methods=["GET"])
+def api_execution_certification_broker_health():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        context = dict(ACTIVE_POSITION)
+    cert = td30_build_execution_certification(context)
+    return jsonify({"ok": True, "broker_health": cert.get("broker_health")})
+
+
+@app.route("/api/execution-certification/reconciliation", methods=["GET"])
+def api_execution_certification_reconciliation():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    with ACTIVE_POSITION_LOCK:
+        context = dict(ACTIVE_POSITION)
+    cert = td30_build_execution_certification(context)
+    return jsonify({"ok": True, "reconciliation": cert.get("reconciliation")})
+
+
+@app.route("/api/execution-certification/readiness", methods=["GET"])
+def api_execution_certification_readiness():
+    return api_execution_certification_status()
+
+
+@app.route("/api/execution-certification/run", methods=["POST"])
+def api_execution_certification_run():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    context = body.get("context") if isinstance(body.get("context"), dict) else body
+    return jsonify({"ok": True, "execution_certification": td30_build_execution_certification(context)})
+
+
+@app.route("/api/execution-certification/preview", methods=["POST"])
+def api_execution_certification_preview():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    context = body.get("context") if isinstance(body.get("context"), dict) else body
+    result = td30_preview_order(context)
+    return jsonify(result), (200 if result.get("ok") else 409)
+
+
+@app.route("/api/execution-certification/confirm", methods=["POST"])
+def api_execution_certification_confirm():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    result = td30_confirm_preview(str(body.get("preview_id") or ""), str(body.get("confirmation_text") or ""))
+    return jsonify(result), (200 if result.get("ok") else 409)
+
+
+@app.route("/api/execution-certification/cancel", methods=["POST"])
+def api_execution_certification_cancel():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    result = td30_cancel_preview(str(body.get("preview_id") or ""))
+    return jsonify(result), (200 if result.get("ok") else 404)
+
+
+@app.route("/api/execution-certification/reconcile", methods=["POST"])
+def api_execution_certification_reconcile():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    context = body.get("context") if isinstance(body.get("context"), dict) else body
+    return jsonify({"ok": True, "reconciliation": td30_reconcile_execution(context)})
+
+
+@app.route("/api/execution-certification/kill-switch", methods=["POST"])
+def api_execution_certification_kill_switch():
+    if not TRADE_DIRECTOR_PHASE30_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 30 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    if "active" not in body:
+        return jsonify({"ok": False, "error": "active boolean is required"}), 400
+    switch = td30_set_kill_switch(bool(body.get("active")), str(body.get("reason") or "MANUAL"), str(body.get("scope") or "GLOBAL"))
+    return jsonify({"ok": True, "kill_switch": switch})
 
 
 @app.route("/api/position/strategy-orchestration")
