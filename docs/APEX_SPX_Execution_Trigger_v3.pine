@@ -1,0 +1,282 @@
+//@version=6
+indicator(
+     title="APEX SPX Execution Trigger v3",
+     shorttitle="APEXv3",
+     overlay=true,
+     max_labels_count=200,
+     max_lines_count=100)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+groupSignal = "Signal Engine"
+fastLen = input.int(8, "Fast EMA", minval=1, group=groupSignal)
+slowLen = input.int(21, "Slow EMA", minval=2, group=groupSignal)
+trendLen = input.int(50, "Trend EMA", minval=5, group=groupSignal)
+rsiLen = input.int(14, "RSI Length", minval=2, group=groupSignal)
+atrLen = input.int(14, "ATR Length", minval=2, group=groupSignal)
+volumeLen = input.int(20, "Relative Volume Lookback", minval=2, group=groupSignal)
+minRelVolume = input.float(1.00, "Minimum Relative Volume", minval=0.10, step=0.05, group=groupSignal)
+minScore = input.int(70, "Minimum Score", minval=50, maxval=100, group=groupSignal)
+
+groupSession = "Session"
+rthSession = input.session("0930-1600", "Regular Session", group=groupSession)
+entryStartHour = input.int(9, "Entry Start Hour ET", minval=0, maxval=23, group=groupSession)
+entryStartMinute = input.int(35, "Entry Start Minute ET", minval=0, maxval=59, group=groupSession)
+lastEntryHour = input.int(11, "Last Entry Hour ET", minval=0, maxval=23, group=groupSession)
+lastEntryMinute = input.int(30, "Last Entry Minute ET", minval=0, maxval=59, group=groupSession)
+orbMinutes = input.int(15, "Opening Range Minutes", minval=5, maxval=60, group=groupSession)
+cooldownBars = input.int(3, "Cooldown Bars", minval=0, maxval=50, group=groupSession)
+maxSignals = input.int(0, "Maximum Signals Per Session (0 = Unlimited)", minval=0, maxval=50, group=groupSession)
+
+groupFilters = "Filters"
+requireTrend = input.bool(true, "Require EMA Trend Stack", group=groupFilters)
+requireVWAP = input.bool(true, "Require VWAP Alignment", group=groupFilters)
+requireORB = input.bool(true, "Require Opening Range Break", group=groupFilters)
+requireVolume = input.bool(false, "Require Relative Volume", group=groupFilters)
+useRSI = input.bool(true, "Require RSI Confirmation", group=groupFilters)
+blockLargeCandle = input.bool(true, "Block Oversized Chase Candle", group=groupFilters)
+maxCandleATR = input.float(1.80, "Maximum Candle Range in ATR", minval=0.50, step=0.10, group=groupFilters)
+useHTF = input.bool(true, "Use 15-Minute Trend Confirmation", group=groupFilters)
+
+groupWebhook = "Webhook"
+webhookSecret = input.string("REPLACE_WITH_NEW_SECRET", "Webhook Secret", group=groupWebhook)
+strategyId = input.string("SPX_EXECUTION_TRIGGER_V3", "Strategy ID", group=groupWebhook)
+
+groupDisplay = "Display"
+showORB = input.bool(true, "Show Opening Range", group=groupDisplay)
+showLabels = input.bool(true, "Show Signal Labels", group=groupDisplay)
+showTable = input.bool(true, "Show Status Table", group=groupDisplay)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION STATE
+// ─────────────────────────────────────────────────────────────────────────────
+inRTH = not na(time(timeframe.period, rthSession, "America/New_York"))
+newRTH = inRTH and not inRTH[1]
+
+etHour = hour(time, "America/New_York")
+etMinute = minute(time, "America/New_York")
+etMinutes = etHour * 60 + etMinute
+
+entryStart = entryStartHour * 60 + entryStartMinute
+entryEnd = lastEntryHour * 60 + lastEntryMinute
+entryWindowOpen = inRTH and etMinutes >= entryStart and etMinutes <= entryEnd
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPENING RANGE
+// ─────────────────────────────────────────────────────────────────────────────
+var float orbHigh = na
+var float orbLow = na
+var int rthStartMinutes = na
+var bool orbReady = false
+
+if newRTH
+    orbHigh := high
+    orbLow := low
+    rthStartMinutes := etMinutes
+    orbReady := false
+
+if inRTH and not na(rthStartMinutes)
+    elapsedMinutes = etMinutes - rthStartMinutes
+
+    if elapsedMinutes < orbMinutes
+        orbHigh := math.max(nz(orbHigh, high), high)
+        orbLow := math.min(nz(orbLow, low), low)
+    else
+        orbReady := true
+
+orbBreakUp = orbReady and close > orbHigh
+orbBreakDown = orbReady and close < orbLow
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INDICATORS
+// ─────────────────────────────────────────────────────────────────────────────
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+emaTrend = ta.ema(close, trendLen)
+vwapValue = ta.vwap(hlc3)
+rsiValue = ta.rsi(close, rsiLen)
+atrValue = ta.atr(atrLen)
+
+avgVolume = ta.sma(volume, volumeLen)
+relativeVolume = avgVolume > 0 ? volume / avgVolume : 0.0
+
+bullTrend = emaFast > emaSlow and emaSlow > emaTrend
+bearTrend = emaFast < emaSlow and emaSlow < emaTrend
+
+aboveVWAP = close > vwapValue
+belowVWAP = close < vwapValue
+
+bullRSI = rsiValue >= 52
+bearRSI = rsiValue <= 48
+
+bullMomentum = close > open and close > high[1]
+bearMomentum = close < open and close < low[1]
+
+volumeOK = relativeVolume >= minRelVolume
+candleRange = high - low
+candleOK = atrValue > 0 and candleRange <= atrValue * maxCandleATR
+
+// 15-minute higher-timeframe confirmation
+htfFast = request.security(syminfo.tickerid, "15", ta.ema(close, fastLen))
+htfSlow = request.security(syminfo.tickerid, "15", ta.ema(close, slowLen))
+htfBull = htfFast > htfSlow
+htfBear = htfFast < htfSlow
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCORING
+// ─────────────────────────────────────────────────────────────────────────────
+callScore =
+     (bullTrend ? 25 : 0) +
+     (aboveVWAP ? 20 : 0) +
+     (orbBreakUp ? 20 : 0) +
+     (bullMomentum ? 15 : 0) +
+     (bullRSI ? 10 : 0) +
+     (volumeOK ? 10 : 0)
+
+putScore =
+     (bearTrend ? 25 : 0) +
+     (belowVWAP ? 20 : 0) +
+     (orbBreakDown ? 20 : 0) +
+     (bearMomentum ? 15 : 0) +
+     (bearRSI ? 10 : 0) +
+     (volumeOK ? 10 : 0)
+
+callFilters =
+     (not requireTrend or bullTrend) and
+     (not requireVWAP or aboveVWAP) and
+     (not requireORB or orbBreakUp) and
+     (not requireVolume or volumeOK) and
+     (not useRSI or bullRSI) and
+     (not blockLargeCandle or candleOK) and
+     (not useHTF or htfBull)
+
+putFilters =
+     (not requireTrend or bearTrend) and
+     (not requireVWAP or belowVWAP) and
+     (not requireORB or orbBreakDown) and
+     (not requireVolume or volumeOK) and
+     (not useRSI or bearRSI) and
+     (not blockLargeCandle or candleOK) and
+     (not useHTF or htfBear)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIGNAL LIMITS
+// ─────────────────────────────────────────────────────────────────────────────
+var int lastSignalBar = na
+var int signalsToday = 0
+
+if newRTH
+    lastSignalBar := na
+    signalsToday := 0
+
+cooldownOK = na(lastSignalBar) or (bar_index - lastSignalBar > cooldownBars)
+signalLimitOK = maxSignals == 0 or signalsToday < maxSignals
+
+rawCall = entryWindowOpen and callFilters and callScore >= minScore
+rawPut = entryWindowOpen and putFilters and putScore >= minScore
+
+callSignal = barstate.isconfirmed and rawCall and not rawCall[1] and cooldownOK and signalLimitOK
+putSignal = barstate.isconfirmed and rawPut and not rawPut[1] and cooldownOK and signalLimitOK
+
+if callSignal or putSignal
+    lastSignalBar := bar_index
+    signalsToday += 1
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WEBHOOK JSON
+// ─────────────────────────────────────────────────────────────────────────────
+buildPayload(side, score, reason) =>
+    string payload = "{"
+    payload += '"secret":"' + webhookSecret + '"'
+    payload += ',"source":"TRADINGVIEW_PINE"'
+    payload += ',"strategy_id":"' + strategyId + '"'
+    payload += ',"ticker":"' + syminfo.ticker + '"'
+    payload += ',"symbol":"' + syminfo.tickerid + '"'
+    payload += ',"timeframe":"' + timeframe.period + '"'
+    payload += ',"side":"' + side + '"'
+    payload += ',"action":"' + (side == "CALL" ? "ENTER_CALL" : "ENTER_PUT") + '"'
+    payload += ',"price":' + str.tostring(close, "#.00")
+    payload += ',"score":' + str.tostring(score)
+    payload += ',"confidence":' + str.tostring(score)
+    payload += ',"reason":"' + reason + '"'
+    payload += ',"ema_fast":' + str.tostring(emaFast, "#.00")
+    payload += ',"ema_slow":' + str.tostring(emaSlow, "#.00")
+    payload += ',"ema_trend":' + str.tostring(emaTrend, "#.00")
+    payload += ',"vwap":' + str.tostring(vwapValue, "#.00")
+    payload += ',"rsi":' + str.tostring(rsiValue, "#.0")
+    payload += ',"atr":' + str.tostring(atrValue, "#.00")
+    payload += ',"relative_volume":' + str.tostring(relativeVolume, "#.00")
+    payload += ',"orb_high":' + str.tostring(nz(orbHigh, 0), "#.00")
+    payload += ',"orb_low":' + str.tostring(nz(orbLow, 0), "#.00")
+    payload += ',"bar_time":"' + str.format_time(time, "yyyy-MM-dd HH:mm:ss", "America/New_York") + '"'
+    payload += "}"
+    payload
+
+if callSignal
+    alert(buildPayload("CALL", callScore, "EMA_VWAP_ORB_MOMENTUM"), alert.freq_once_per_bar_close)
+
+if putSignal
+    alert(buildPayload("PUT", putScore, "EMA_VWAP_ORB_MOMENTUM"), alert.freq_once_per_bar_close)
+
+alertcondition(callSignal, "APEX ENTER CALL", "APEX ENTER CALL")
+alertcondition(putSignal, "APEX ENTER PUT", "APEX ENTER PUT")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTS
+// ─────────────────────────────────────────────────────────────────────────────
+plot(emaFast, "Fast EMA")
+plot(emaSlow, "Slow EMA")
+plot(emaTrend, "Trend EMA")
+plot(vwapValue, "VWAP", linewidth=2)
+
+plot(showORB and orbReady ? orbHigh : na, "ORB High", style=plot.style_linebr)
+plot(showORB and orbReady ? orbLow : na, "ORB Low", style=plot.style_linebr)
+
+plotshape(callSignal, title="CALL Trigger", style=shape.triangleup, location=location.belowbar, size=size.small)
+plotshape(putSignal, title="PUT Trigger", style=shape.triangledown, location=location.abovebar, size=size.small)
+
+if showLabels and callSignal
+    label.new(
+         bar_index,
+         low - atrValue * 0.35,
+         "ENTER CALL\nScore " + str.tostring(callScore),
+         style=label.style_label_up,
+         textcolor=color.white,
+         color=color.new(color.green, 0))
+
+if showLabels and putSignal
+    label.new(
+         bar_index,
+         high + atrValue * 0.35,
+         "ENTER PUT\nScore " + str.tostring(putScore),
+         style=label.style_label_down,
+         textcolor=color.white,
+         color=color.new(color.red, 0))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATUS TABLE
+// ─────────────────────────────────────────────────────────────────────────────
+var table status = table.new(position.top_right, 2, 10)
+
+if showTable and barstate.islast
+    table.cell(status, 0, 0, "APEX")
+    table.cell(status, 1, 0, "v3")
+    table.cell(status, 0, 1, "Session")
+    table.cell(status, 1, 1, inRTH ? "RTH" : "CLOSED")
+    table.cell(status, 0, 2, "Entry")
+    table.cell(status, 1, 2, entryWindowOpen ? "OPEN" : "CLOSED")
+    table.cell(status, 0, 3, "ORB")
+    table.cell(status, 1, 3, orbReady ? "READY" : "BUILDING")
+    table.cell(status, 0, 4, "Call Score")
+    table.cell(status, 1, 4, str.tostring(callScore))
+    table.cell(status, 0, 5, "Put Score")
+    table.cell(status, 1, 5, str.tostring(putScore))
+    table.cell(status, 0, 6, "HTF")
+    table.cell(status, 1, 6, htfBull ? "BULL" : htfBear ? "BEAR" : "MIXED")
+    table.cell(status, 0, 7, "Rel Vol")
+    table.cell(status, 1, 7, str.tostring(relativeVolume, "#.00"))
+    table.cell(status, 0, 8, "Cooldown")
+    table.cell(status, 1, 8, cooldownOK ? "READY" : "WAIT")
+    table.cell(status, 0, 9, "Signals")
+    table.cell(status, 1, 9, maxSignals == 0 ? str.tostring(signalsToday) + "/∞" : str.tostring(signalsToday) + "/" + str.tostring(maxSignals))
