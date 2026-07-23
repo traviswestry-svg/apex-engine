@@ -104,6 +104,7 @@
 <div id="policyGovernance"></div>
 <div id="shadowValidation"></div>
 <div id="institutionalCommandCenter"></div>
+<div id="changeControl"></div>
 <div id="dataLineage"></div>
 <div id="portfolioAllocation"></div>
 <div id="executionCertification"></div>
@@ -418,6 +419,14 @@ function renderInstitutionalCommandCenter(x){
 }
 
 
+function renderChangeControl(x){
+  const el=document.getElementById('changeControl'); if(!el)return;
+  const d=(x&&x.change_control)||x||{}; if(!d||d.error){el.innerHTML='';return;}
+  const c=d.status_counts||{}, integ=d.integrity||{};
+  const changes=(d.latest_changes||[]).slice(0,6).map(v=>`<div class="phase15-row"><strong>${esc(v.title||'Untitled change')}</strong><span>${esc((v.status||'DRAFT').replace(/_/g,' '))}</span><span>${esc(v.risk_level||'--')}</span><span>${esc(v.target_version||v.phase||'--')}</span></div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 27</div><div class="coach-title">Institutional Change Control</div><div class="sub">Release governance · independent review · validation evidence · immutable audit trail</div></div><div><div class="label">Release State</div><div class="phase15-contract ${d.change_control_state==='APPROVED_CHANGES_AVAILABLE'?'good':d.change_control_state==='INTEGRITY_BLOCKED'?'bad':'warn'}">${esc((d.change_control_state||'HOLD').replace(/_/g,' '))}</div><div class="sub">${d.pending_count||0} pending · ${d.proposal_count||0} total</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Proposal Pipeline</div><div class="metric-row"><span>Draft</span><strong>${c.DRAFT||0}</strong></div><div class="metric-row"><span>Validation failed</span><strong>${c.VALIDATION_FAILED||0}</strong></div><div class="metric-row"><span>Awaiting approval</span><strong>${c.AWAITING_APPROVAL||0}</strong></div><div class="metric-row"><span>Approved</span><strong>${c.APPROVED||0}</strong></div><div class="metric-row"><span>Rejected</span><strong>${c.REJECTED||0}</strong></div></div><div class="phase15-card"><div class="label">Audit Integrity</div><div class="phase15-contract ${integ.status==='VERIFIED'?'good':'bad'}">${esc((integ.status||'UNKNOWN').replace(/_/g,' '))}</div><div class="metric-row"><span>Integrity score</span><strong>${num(integ.score,1)}</strong></div><div class="metric-row"><span>Events checked</span><strong>${integ.event_count||0}</strong></div><div class="metric-row"><span>Findings</span><strong>${integ.finding_count||0}</strong></div></div><div class="phase15-card"><div class="label">Governance Controls</div><div class="metric-row"><span>Independent reviewer</span><strong>REQUIRED</strong></div><div class="metric-row"><span>Validation before approval</span><strong>REQUIRED</strong></div><div class="metric-row"><span>Automatic deployment</span><strong>DISABLED</strong></div><div class="metric-row"><span>Runtime mutation</span><strong>DISABLED</strong></div></div><div class="phase15-card"><div class="label">Observed System</div><div class="metric-row"><span>Command center state</span><strong>${esc(d.system_state_observed||'UNKNOWN')}</strong></div><div class="metric-row"><span>Broker access</span><strong>NO</strong></div><div class="metric-row"><span>Autonomous execution</span><strong>OFF</strong></div></div></div><div class="phase15-card"><div class="label">Latest Changes</div>${changes||'<div class="sub">No governed changes have been proposed.</div>'}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderDataLineage(x){
   const el=document.getElementById('dataLineage'); if(!el)return;
   const d=(x&&x.data_lineage)||x||{}; if(!d||d.error){el.innerHTML='';return;}
@@ -563,7 +572,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, pa, ec, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, chg, pa, ec, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -580,6 +589,7 @@ async function loadDirector(){
       fetch('/api/position/policy-governance',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/shadow-validation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/command-center/scorecards',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/change-control/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/portfolio/allocation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/execution-certification/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
@@ -601,7 +611,8 @@ async function loadDirector(){
     renderPolicyGovernance(pg);
     renderShadowValidation(sv);
     renderInstitutionalCommandCenter(cc);
-    renderDataLineage(cc);
+    renderChangeControl(chg);
+    renderDataLineage(dr);
     renderPortfolioAllocation(pa);
     renderExecutionCertification(ec);
     renderStrategyOrchestration(so);
