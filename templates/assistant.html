@@ -129,7 +129,7 @@ function toggleEntryForm(){const f=document.getElementById('entryForm');f.style.
 function fieldNum(id){const v=document.getElementById(id).value;return v===''?0:Number(v);}
 async function startTrade(){
   const status=document.getElementById('entryStatus'); status.textContent='Starting management mode…';
-  const body={ticker:document.getElementById('pTicker').value||TICKER,side:document.getElementById('pSide').value,quantity:Number(document.getElementById('pQty').value||1),entry_price:fieldNum('pEntry'),stop:fieldNum('pStop'),target1:fieldNum('pT1'),target2:fieldNum('pT2'),option_symbol:document.getElementById('pOption').value,option_entry_price:fieldNum('pOptionEntry'),trade_function:CURRENT_STYLE?.function||'UNSPECIFIED',style_fit_grade:CURRENT_STYLE?.style_fit_grade||'UNRATED',style_fit_score:Number(CURRENT_STYLE?.style_fit_score||0)};
+  const body={ticker:document.getElementById('pTicker').value||TICKER,side:document.getElementById('pSide').value,quantity:Number(document.getElementById('pQty').value||1),entry_price:fieldNum('pEntry'),stop:fieldNum('pStop'),target1:fieldNum('pT1'),target2:fieldNum('pT2'),option_symbol:document.getElementById('pOption').value,option_entry_price:fieldNum('pOptionEntry'),premium_profit_target:2.0,premium_adverse_exit:2.5,trade_function:CURRENT_STYLE?.function||'MOMENTUM_BURST',entry_quality_evidence:styleEvidence(CURRENT_DIRECTOR),style_fit_grade:CURRENT_STYLE?.style_fit_grade||'UNRATED',style_fit_score:Number(CURRENT_STYLE?.style_fit_score||0)};
   try{const r=await fetch('/api/position',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Unable to start trade');status.textContent='Trade confirmed. APEX is now in management mode.';document.getElementById('entryForm').style.display='none';await loadDirector();}catch(e){status.textContent=e.message;}
 }
 async function positionAction(action,extra={}){
@@ -495,6 +495,12 @@ function renderPolicyGovernance(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 24</div><div class="coach-title">Institutional Policy Governance Laboratory</div><div class="sub">Evidence gates · shadow validation · human approval · rollback discipline</div></div><div><div class="label">Governance State</div><div class="phase15-contract ${d.shadow_ready_count?'good':'warn'}">${esc((d.governance_state||'COLLECTING_EVIDENCE').replace(/_/g,' '))}</div><div class="sub">${d.proposal_count||0} proposals · ${d.shadow_ready_count||0} shadow ready</div></div></div><div class="phase15-grid">${rows||'<div class="phase15-card"><div class="sub">No policy proposal has enough evidence yet. Phase 24 will continue collecting learning and replay cases.</div></div>'}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+function renderMomentumLifecycle(x){
+  const d=(x&&x.momentum_lifecycle)||x||{}; if(!d||!d.lifecycle_state)return '';
+  const rec=d.recommendation||'OBSERVE'; const cls=rec==='TAKE_PROFIT'?'good':rec==='EXIT_NOW'?'bad':rec==='PROTECT'||rec==='PROTECT_PROFIT'?'warn':'info';
+  return `<div class="momentum-lifecycle"><div class="allocation-head"><div><div class="allocation-title">Precision Entry & Momentum Lifecycle</div><div class="sub">Entry first · premium and structure before the clock · advisory only</div></div><span class="pill ${cls}">${esc(rec.replace(/_/g,' '))}</span></div><div class="allocation-grid"><div class="allocation-card"><div class="label">Entry Quality</div><div class="allocation-big">${esc(d.entry_quality?.entry_quality_grade||'—')}</div></div><div class="allocation-card"><div class="label">Entry Premium</div><div class="allocation-big">${num(d.entry_premium)}</div></div><div class="allocation-card"><div class="label">Current Premium</div><div class="allocation-big">${num(d.current_premium)}</div></div><div class="allocation-card"><div class="label">Premium Change</div><div class="allocation-big ${Number(d.premium_change||0)>=0?'good':'bad'}">${d.premium_change==null?'—':(Number(d.premium_change)>=0?'+':'')+Number(d.premium_change).toFixed(2)}</div></div><div class="allocation-card"><div class="label">Profit Trigger</div><div class="allocation-big">${num(d.profit_trigger_premium)}</div></div><div class="allocation-card"><div class="label">Adverse Trigger</div><div class="allocation-big">${num(d.adverse_trigger_premium)}</div></div></div><div class="allocation-note"><b>${esc((d.lifecycle_state||'').replace(/_/g,' '))}:</b> ${esc(d.reason||'')}<br>${esc(d.execution_note||'')}</div></div>`;
+}
+
 function renderTradeHero(m){
   const el=document.getElementById('tradeHero');
   if(!m||m.status!=='MONITORING'||!m.position){el.className='trade-hero';el.innerHTML='';return;}
@@ -508,6 +514,7 @@ function renderTradeHero(m){
     <div class="hero-card"><div class="label">Trade Health</div><div class="big ${health>=85?'good':health>=65?'warn':'bad'}">${health}/100</div><div class="health-track"><span style="width:${Math.max(0,Math.min(100,health))}%"></span></div></div>
     <div class="hero-card"><div class="label">SPX Move in Favor</div><div class="big ${Number(m.underlying_move_in_favor||0)>=0?'good':'bad'}">${m.underlying_move_in_favor==null?'--':(Number(m.underlying_move_in_favor)>=0?'+':'')+num(m.underlying_move_in_favor)}</div><div class="sub">Alignment ${num(m.alignment,0)} · GEX ${num(m.gex_score,0)}</div></div>
   </div>
+  <div id="momentumLifecycleInline"></div>
   ${renderHealthEngine(m.health_engine)}
   ${renderPositionIntelligence(m.position_intelligence)}
   ${renderTradeCoach(m.trade_coach,m.recommendation_timeline)}
@@ -518,6 +525,7 @@ function renderTradeHero(m){
   <div class="reason-list"><div class="label">WHY APEX IS SAYING ${esc(actionLabel(m.recommendation))}</div>${reasons||'<div>Waiting for live confirmation.</div>'}</div>
   ${renderInstitutionalAnalysis(m.institutional_analysis)}
   <div class="premium-update"><span class="label">Update live option premium</span><input id="livePremium" type="number" step="0.01" value="${m.option_current_price||''}" placeholder="e.g. 14.10"><button class="btn" onclick="updatePremium()">Update P/L</button><span class="sub">Manual sync only; no broker order is sent.</span></div>`;
+  fetch('/api/position/momentum-lifecycle',{cache:'no-store'}).then(r=>r.json()).then(j=>{const x=document.getElementById('momentumLifecycleInline');if(x)x.innerHTML=renderMomentumLifecycle(j.momentum_lifecycle);}).catch(()=>{});
 }
 
 function renderPositionStrip(pos){
@@ -771,7 +779,7 @@ async function loadSessionAllocation(d=CURRENT_DIRECTOR||{}){
     const q=new URLSearchParams({selected_function:style.function||'QUICK_SCALP',style_fit_grade:style.style_fit_grade||'UNRATED',style_fit_score:String(style.style_fit_score||0)});
     const r=await fetch('/api/session-allocation?'+q.toString(),{cache:'no-store'});const j=await r.json();const a=j.session_allocation||{};
     const seq=(a.sequence||[]).join(' → '); const notes=(a.reasons||[]).map(x=>'• '+esc(x)).join('<br>')||'Allocation remains advisory and confirmation-gated.';
-    const options=[['AUTO','Auto — Best Fit'],['QUICK_SCALP','Quick Scalp <5m'],['SCALP_15M','15-Minute Scalp'],['SCALP_30M','30-Minute Scalp'],['INTRADAY','Intraday'],['SWING','Swing'],['LEAP','LEAP']].map(x=>`<option value="${x[0]}" ${SELECTED_FUNCTION===x[0]?'selected':''}>${x[1]}</option>`).join('');
+    const options=[['AUTO','Auto — Best Fit'],['MOMENTUM_BURST','Momentum Burst'],['QUICK_SCALP','Quick Scalp <5m'],['SCALP_15M','15-Minute Scalp'],['SCALP_30M','30-Minute Scalp'],['INTRADAY','Intraday'],['SWING','Swing'],['LEAP','LEAP']].map(x=>`<option value="${x[0]}" ${SELECTED_FUNCTION===x[0]?'selected':''}>${x[1]}</option>`).join('');
     const ranks=(router.rankings||[]).map(x=>`<div class="function-card ${x.function===style.function?'selected':''}"><div class="label">${esc(x.label||x.function)}</div><div class="function-grade">${esc(x.style_fit_grade||'—')} · ${Number(x.style_fit_score||0).toFixed(0)}</div><div class="function-meta">${esc((x.hold_window||'').replace(/_/g,' '))}</div></div>`).join('');
     el.innerHTML=`<div class="allocation-head"><div><div class="allocation-title">Trade Function Router & Session Allocation</div><div class="sub">Session Allocation & Risk Plan</div><div class="sub">One institutional brain · style-relative opportunity · up to ${a.max_trades||5} trades · <span class="allocation-seq">${seq||'1 → 3 → 4 → 3 → adaptive'}</span></div></div><span class="pill ${a.allocation_gate==='ELIGIBLE'?'conviction':'scalp'}">${esc(a.allocation_gate||'ADVISORY')}</span></div>
     <div class="function-router"><div class="function-toolbar"><label class="label">Selected Function</label><select onchange="selectTradeFunction(this.value)">${options}</select><strong>${esc(style.label||style.function||'Awaiting evidence')}</strong><span class="sub">${esc(style.hold_window||'')}</span></div><div class="function-ranking">${ranks}</div></div>
