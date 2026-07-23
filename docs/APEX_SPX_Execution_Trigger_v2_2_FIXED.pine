@@ -1,0 +1,299 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © APEX Institutional OS
+// Version: APEX_PINE_EXECUTION_TRIGGER_v2.2
+//
+// PURPOSE
+// - Generates independent SPX CALL/PUT execution triggers from live chart data.
+// - Sends JSON only when a confirmed trade signal occurs.
+// - Does NOT require manually entered APEX decision/auction inputs.
+//
+// IMPORTANT
+// TradingView controls the webhook URL in the Alert dialog.
+// Suggested URL:
+// https://apex-engine-dashboard.onrender.com/tv_signal
+
+//@version=6
+indicator(
+     title="APEX SPX Execution Trigger v2.2",
+     shorttitle="APEX Trigger v2.2",
+     overlay=true,
+     max_labels_count=200,
+     max_lines_count=100)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+var string G_SIGNAL = "Signal Engine"
+i_fast_ema          = input.int(8, "Fast EMA", minval=1, group=G_SIGNAL)
+i_slow_ema          = input.int(21, "Slow EMA", minval=2, group=G_SIGNAL)
+i_trend_ema         = input.int(50, "Trend EMA", minval=5, group=G_SIGNAL)
+i_rsi_len           = input.int(14, "RSI length", minval=2, group=G_SIGNAL)
+i_atr_len           = input.int(14, "ATR length", minval=2, group=G_SIGNAL)
+i_volume_len        = input.int(20, "Relative-volume lookback", minval=2, group=G_SIGNAL)
+i_min_rel_volume    = input.float(1.10, "Minimum relative volume", minval=0.1, step=0.05, group=G_SIGNAL)
+i_min_score         = input.int(70, "Minimum signal score", minval=50, maxval=100, group=G_SIGNAL)
+
+var string G_SESSION = "Session Controls"
+i_session            = input.session("0930-1600", "Regular session", group=G_SESSION)
+i_entry_start_hour   = input.int(9, "Entry start hour ET", minval=0, maxval=23, group=G_SESSION)
+i_entry_start_minute = input.int(35, "Entry start minute ET", minval=0, maxval=59, group=G_SESSION)
+i_last_entry_hour    = input.int(11, "Last entry hour ET", minval=0, maxval=23, group=G_SESSION)
+i_last_entry_minute  = input.int(30, "Last entry minute ET", minval=0, maxval=59, group=G_SESSION)
+i_orb_minutes        = input.int(15, "Opening-range minutes", minval=5, maxval=60, group=G_SESSION)
+i_cooldown_bars      = input.int(3, "Cooldown bars", minval=0, maxval=50, group=G_SESSION)
+i_max_signals        = input.int(0, "Maximum signals per session (0 = unlimited)", minval=0, maxval=50, group=G_SESSION)
+
+var string G_FILTER = "Filters"
+i_require_orb        = input.bool(true, "Require opening-range break", group=G_FILTER)
+i_require_vwap       = input.bool(true, "Require VWAP alignment", group=G_FILTER)
+i_require_trend      = input.bool(true, "Require EMA trend stack", group=G_FILTER)
+i_require_volume     = input.bool(true, "Require relative-volume expansion", group=G_FILTER)
+i_use_rsi            = input.bool(true, "Use RSI confirmation", group=G_FILTER)
+i_block_large_chase  = input.bool(true, "Block oversized chase candles", group=G_FILTER)
+i_max_candle_atr     = input.float(1.80, "Maximum candle range in ATR", minval=0.5, step=0.1, group=G_FILTER)
+
+var string G_WEBHOOK = "Webhook"
+i_secret             = input.string("REPLACE_WITH_NEW_SECRET", "Webhook secret", group=G_WEBHOOK)
+i_system             = input.string("APEX", "System name", group=G_WEBHOOK)
+i_strategy_id        = input.string("SPX_EXECUTION_TRIGGER_V2", "Strategy ID", group=G_WEBHOOK)
+
+var string G_DISPLAY = "Display"
+i_show_orb           = input.bool(true, "Show opening range", group=G_DISPLAY)
+i_show_labels        = input.bool(true, "Show signal labels", group=G_DISPLAY)
+i_show_dashboard     = input.bool(true, "Show status table", group=G_DISPLAY)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+f_et_minutes(_time) =>
+    hour(_time, "America/New_York") * 60 + minute(_time, "America/New_York")
+
+f_bool_json(_value) =>
+    _value ? "true" : "false"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION
+// ─────────────────────────────────────────────────────────────────────────────
+inRth = not na(time(timeframe.period, i_session, "America/New_York"))
+etMinutes = f_et_minutes(time)
+entryStart = i_entry_start_hour * 60 + i_entry_start_minute
+entryEnd   = i_last_entry_hour * 60 + i_last_entry_minute
+canEnter   = inRth and etMinutes >= entryStart and etMinutes <= entryEnd
+
+newSession = inRth and not inRth[1]
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPENING RANGE
+// ─────────────────────────────────────────────────────────────────────────────
+var float orbHigh = na
+var float orbLow = na
+var int sessionOpenMinutes = na
+var bool orbComplete = false
+
+if newSession
+    orbHigh := high
+    orbLow := low
+    sessionOpenMinutes := etMinutes
+    orbComplete := false
+
+if inRth and not na(sessionOpenMinutes)
+    minutesFromOpen = etMinutes - sessionOpenMinutes
+
+    if minutesFromOpen < i_orb_minutes
+        orbHigh := na(orbHigh) ? high : math.max(orbHigh, high)
+        orbLow := na(orbLow) ? low : math.min(orbLow, low)
+    else
+        orbComplete := true
+
+orbBull = orbComplete and close > orbHigh
+orbBear = orbComplete and close < orbLow
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INDICATORS
+// ─────────────────────────────────────────────────────────────────────────────
+ema8 = ta.ema(close, i_fast_ema)
+ema21 = ta.ema(close, i_slow_ema)
+ema50 = ta.ema(close, i_trend_ema)
+vwapValue = ta.vwap(hlc3)
+rsiValue = ta.rsi(close, i_rsi_len)
+atrValue = ta.atr(i_atr_len)
+
+avgVolume = ta.sma(volume, i_volume_len)
+relativeVolume = avgVolume > 0 ? volume / avgVolume : 0.0
+
+bullTrend = ema8 > ema21 and ema21 > ema50
+bearTrend = ema8 < ema21 and ema21 < ema50
+bullMomentum = close > open and close > high[1]
+bearMomentum = close < open and close < low[1]
+bullRsi = rsiValue >= 52
+bearRsi = rsiValue <= 48
+aboveVwap = close > vwapValue
+belowVwap = close < vwapValue
+volumeOk = relativeVolume >= i_min_rel_volume
+candleRange = high - low
+notChasing = atrValue > 0 and candleRange <= atrValue * i_max_candle_atr
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WEBHOOK PAYLOAD
+// Defined after indicators and ORB variables so all identifiers exist.
+// ─────────────────────────────────────────────────────────────────────────────
+f_payload(_side, _score, _reason) =>
+    string payload = "{"
+    payload += '"secret":"' + i_secret + '"'
+    payload += ',"system":"' + i_system + '"'
+    payload += ',"strategy_id":"' + i_strategy_id + '"'
+    payload += ',"source":"TRADINGVIEW_PINE"'
+    payload += ',"ticker":"' + syminfo.ticker + '"'
+    payload += ',"symbol":"' + syminfo.tickerid + '"'
+    payload += ',"timeframe":"' + timeframe.period + '"'
+    payload += ',"side":"' + _side + '"'
+    payload += ',"action":"' + (_side == "CALL" ? "ENTER_CALL" : "ENTER_PUT") + '"'
+    payload += ',"price":' + str.tostring(close, "#.00")
+    payload += ',"score":' + str.tostring(_score)
+    payload += ',"confidence":' + str.tostring(_score)
+    payload += ',"reason":"' + _reason + '"'
+    payload += ',"ema8":' + str.tostring(ema8, "#.00")
+    payload += ',"ema21":' + str.tostring(ema21, "#.00")
+    payload += ',"ema50":' + str.tostring(ema50, "#.00")
+    payload += ',"vwap":' + str.tostring(vwapValue, "#.00")
+    payload += ',"rsi":' + str.tostring(rsiValue, "#.0")
+    payload += ',"atr":' + str.tostring(atrValue, "#.00")
+    payload += ',"relative_volume":' + str.tostring(relativeVolume, "#.00")
+    payload += ',"orb_high":' + str.tostring(nz(orbHigh, 0), "#.00")
+    payload += ',"orb_low":' + str.tostring(nz(orbLow, 0), "#.00")
+    payload += ',"bar_confirmed":' + f_bool_json(barstate.isconfirmed)
+    payload += ',"bar_time":"' + str.format_time(time, "yyyy-MM-dd HH:mm:ss", "America/New_York") + '"'
+    payload += "}"
+    payload
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCORING
+// Each satisfied component contributes to a 100-point score.
+// ─────────────────────────────────────────────────────────────────────────────
+callScore =
+     (bullTrend ? 25 : 0) +
+     (aboveVwap ? 20 : 0) +
+     (orbBull ? 20 : 0) +
+     (bullMomentum ? 15 : 0) +
+     (bullRsi ? 10 : 0) +
+     (volumeOk ? 10 : 0)
+
+putScore =
+     (bearTrend ? 25 : 0) +
+     (belowVwap ? 20 : 0) +
+     (orbBear ? 20 : 0) +
+     (bearMomentum ? 15 : 0) +
+     (bearRsi ? 10 : 0) +
+     (volumeOk ? 10 : 0)
+
+// Required gates can be relaxed from Inputs without changing the script.
+callGates =
+     (not i_require_trend or bullTrend) and
+     (not i_require_vwap or aboveVwap) and
+     (not i_require_orb or orbBull) and
+     (not i_require_volume or volumeOk) and
+     (not i_use_rsi or bullRsi) and
+     (not i_block_large_chase or notChasing)
+
+putGates =
+     (not i_require_trend or bearTrend) and
+     (not i_require_vwap or belowVwap) and
+     (not i_require_orb or orbBear) and
+     (not i_require_volume or volumeOk) and
+     (not i_use_rsi or bearRsi) and
+     (not i_block_large_chase or notChasing)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COOLDOWN / LIMITS
+// ─────────────────────────────────────────────────────────────────────────────
+var int lastSignalBar = na
+var int signalsToday = 0
+
+if newSession
+    lastSignalBar := na
+    signalsToday := 0
+
+cooldownOk = na(lastSignalBar) or bar_index - lastSignalBar > i_cooldown_bars
+sessionLimitOk = i_max_signals == 0 or signalsToday < i_max_signals
+
+rawCall = canEnter and callGates and callScore >= i_min_score
+rawPut = canEnter and putGates and putScore >= i_min_score
+
+// Fire only on the first confirmed bar where the setup becomes true.
+// This prevents repeating the same alert on every aligned candle.
+callSignal = barstate.isconfirmed and rawCall and not rawCall[1] and cooldownOk and sessionLimitOk
+putSignal = barstate.isconfirmed and rawPut and not rawPut[1] and cooldownOk and sessionLimitOk
+
+if callSignal or putSignal
+    lastSignalBar := bar_index
+    signalsToday += 1
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ALERTS
+// Create one TradingView alert using:
+// Condition: APEX SPX Execution Trigger v2.2 → Any alert() function call
+// Webhook URL: https://apex-engine-dashboard.onrender.com/tv_signal
+// ─────────────────────────────────────────────────────────────────────────────
+if callSignal
+    alert(f_payload("CALL", callScore, "ORB_BREAKOUT_EMA_VWAP_VOLUME"), alert.freq_once_per_bar_close)
+
+if putSignal
+    alert(f_payload("PUT", putScore, "ORB_BREAKDOWN_EMA_VWAP_VOLUME"), alert.freq_once_per_bar_close)
+
+alertcondition(callSignal, "APEX ENTER CALL", "APEX ENTER CALL")
+alertcondition(putSignal, "APEX ENTER PUT", "APEX ENTER PUT")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DISPLAY
+// ─────────────────────────────────────────────────────────────────────────────
+plot(ema8, "EMA 8")
+plot(ema21, "EMA 21")
+plot(ema50, "EMA 50")
+plot(vwapValue, "VWAP", linewidth=2)
+
+plot(i_show_orb and orbComplete ? orbHigh : na, "ORB High", style=plot.style_linebr)
+plot(i_show_orb and orbComplete ? orbLow : na, "ORB Low", style=plot.style_linebr)
+
+plotshape(callSignal, title="CALL trigger", style=shape.triangleup, location=location.belowbar, size=size.small)
+plotshape(putSignal, title="PUT trigger", style=shape.triangledown, location=location.abovebar, size=size.small)
+
+if i_show_labels and callSignal
+    label.new(
+         bar_index,
+         low - atrValue * 0.35,
+         "ENTER CALL\nScore " + str.tostring(callScore),
+         style=label.style_label_up,
+         textcolor=color.white,
+         color=color.new(color.green, 0))
+
+if i_show_labels and putSignal
+    label.new(
+         bar_index,
+         high + atrValue * 0.35,
+         "ENTER PUT\nScore " + str.tostring(putScore),
+         style=label.style_label_down,
+         textcolor=color.white,
+         color=color.new(color.red, 0))
+
+var table statusTable = table.new(position.top_right, 2, 9)
+
+if i_show_dashboard and barstate.islast
+    table.cell(statusTable, 0, 0, "APEX TRIGGER")
+    table.cell(statusTable, 1, 0, "v2.2")
+    table.cell(statusTable, 0, 1, "Session")
+    table.cell(statusTable, 1, 1, inRth ? "RTH" : "CLOSED")
+    table.cell(statusTable, 0, 2, "Entry window")
+    table.cell(statusTable, 1, 2, canEnter ? "OPEN" : "CLOSED")
+    table.cell(statusTable, 0, 3, "Call score")
+    table.cell(statusTable, 1, 3, str.tostring(callScore))
+    table.cell(statusTable, 0, 4, "Put score")
+    table.cell(statusTable, 1, 4, str.tostring(putScore))
+    table.cell(statusTable, 0, 5, "Rel volume")
+    table.cell(statusTable, 1, 5, str.tostring(relativeVolume, "#.00"))
+    table.cell(statusTable, 0, 6, "ORB")
+    table.cell(statusTable, 1, 6, orbComplete ? "READY" : "BUILDING")
+    table.cell(statusTable, 0, 7, "Cooldown")
+    table.cell(statusTable, 1, 7, cooldownOk ? "READY" : "WAIT")
+    table.cell(statusTable, 0, 8, "Signals")
+    table.cell(statusTable, 1, 8, i_max_signals == 0 ? str.tostring(signalsToday) + "/∞" : str.tostring(signalsToday) + "/" + str.tostring(i_max_signals))
