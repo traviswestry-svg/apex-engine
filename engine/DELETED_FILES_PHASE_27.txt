@@ -1,0 +1,3 @@
+test_trade_director_phase23.py
+
+Reason: exact duplicate of tests/test_trade_director_phase23.py and prohibited by the repository architecture guard.
