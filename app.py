@@ -260,6 +260,17 @@ except Exception as _td28_err:
     TRADE_DIRECTOR_PHASE28_AVAILABLE = False
     print(f"Trade Director Phase 28 unavailable: {_td28_err}", flush=True)
 
+# APEX Trade Director Phase 29 — institutional portfolio and capital allocation intelligence
+try:
+    from engine.trade_director_portfolio_allocation import (
+        build_portfolio_allocation as td29_build_portfolio_allocation,
+        build_portfolio_stress_test as td29_build_portfolio_stress_test,
+    )
+    TRADE_DIRECTOR_PHASE29_AVAILABLE = True
+except Exception as _td29_err:
+    TRADE_DIRECTOR_PHASE29_AVAILABLE = False
+    print(f"Trade Director Phase 29 unavailable: {_td29_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5483,6 +5494,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td28_build_err:
             result["data_lineage"] = {"version": "PHASE_28", "error": str(_td28_build_err)}
 
+    if TRADE_DIRECTOR_PHASE29_AVAILABLE:
+        try:
+            # Phase 29 aggregates portfolio exposure and recommends bounded advisory allocation.
+            result["portfolio_allocation"] = td29_build_portfolio_allocation(result)
+        except Exception as _td29_build_err:
+            result["portfolio_allocation"] = {"version": "PHASE_29", "error": str(_td29_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5520,6 +5538,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase26_last_command_center"] = dict(result["institutional_command_center"])
         if result.get("data_lineage"):
             ACTIVE_POSITION["phase28_last_data_lineage"] = dict(result["data_lineage"])
+        if result.get("portfolio_allocation"):
+            ACTIVE_POSITION["phase29_last_portfolio_allocation"] = dict(result["portfolio_allocation"])
 
     return result
 
@@ -8214,6 +8234,32 @@ def api_lineage_register():
         engine_version=str(body.get("engine_version") or ""), source_system=str(body.get("source_system") or "APEX"),
         dataset_version=str(body.get("dataset_version") or ""), parent_ids=body.get("parent_ids") or [])
     return jsonify({"ok": True, "event": event}), 201
+
+
+@app.route("/api/portfolio/allocation", methods=["GET", "POST"])
+def api_portfolio_allocation():
+    if not TRADE_DIRECTOR_PHASE29_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 29 unavailable"}), 503
+    body = request.get_json(silent=True) or {} if request.method == "POST" else {}
+    if request.method == "GET":
+        with ACTIVE_POSITION_LOCK:
+            cached = dict(ACTIVE_POSITION.get("phase29_last_portfolio_allocation") or {})
+            context = dict(ACTIVE_POSITION)
+        allocation = cached or td29_build_portfolio_allocation(context)
+    else:
+        context = body.get("context") if isinstance(body.get("context"), dict) else body
+        allocation = td29_build_portfolio_allocation(context)
+    return jsonify({"ok": True, "portfolio_allocation": allocation})
+
+
+@app.route("/api/portfolio/stress-test", methods=["POST"])
+def api_portfolio_stress_test():
+    if not TRADE_DIRECTOR_PHASE29_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 29 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    context = body.get("context") if isinstance(body.get("context"), dict) else body
+    shocks = body.get("shocks") if isinstance(body.get("shocks"), list) else None
+    return jsonify({"ok": True, "stress_test": td29_build_portfolio_stress_test(context, shocks)})
 
 
 @app.route("/api/position/strategy-orchestration")
