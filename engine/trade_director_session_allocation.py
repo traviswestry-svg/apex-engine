@@ -2,8 +2,9 @@
 
 Tracks confirmed trades and recommends, but never executes, contract allocation.
 The user's baseline progression is 1 -> 3 -> 4 -> 3 with up to five trades/day.
-The fifth trade is adaptive and capped at three contracts. All recommendations
-remain bounded by environment quality and remaining daily risk.
+The fifth trade is adaptive and capped at three contracts. Recommendations are
+bounded by selected trade-function fit and remaining daily risk; there is no
+universal good/bad market classification.
 """
 from __future__ import annotations
 
@@ -37,9 +38,18 @@ def _connect() -> sqlite3.Connection:
         quantity INTEGER NOT NULL,
         risk_dollars REAL NOT NULL DEFAULT 0,
         environment_quality TEXT NOT NULL DEFAULT 'UNKNOWN',
+        trade_function TEXT NOT NULL DEFAULT 'UNSPECIFIED',
+        style_fit_grade TEXT NOT NULL DEFAULT 'UNRATED',
+        style_fit_score REAL NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'CONFIRMED',
         UNIQUE(session_date, created_at, ticker, side)
     )""")
+    existing = {r[1] for r in conn.execute("PRAGMA table_info(session_allocation_trades)").fetchall()}
+    for name, ddl in (("trade_function", "TEXT NOT NULL DEFAULT 'UNSPECIFIED'"),
+                      ("style_fit_grade", "TEXT NOT NULL DEFAULT 'UNRATED'"),
+                      ("style_fit_score", "REAL NOT NULL DEFAULT 0")):
+        if name not in existing:
+            conn.execute(f"ALTER TABLE session_allocation_trades ADD COLUMN {name} {ddl}")
     conn.commit()
     return conn
 
@@ -59,6 +69,9 @@ def _quality(value: Any) -> str:
 def record_confirmed_trade(*, ticker: str, side: str, quantity: int,
                            risk_dollars: float = 0.0,
                            environment_quality: str = "UNKNOWN",
+                           trade_function: str = "UNSPECIFIED",
+                           style_fit_grade: str = "UNRATED",
+                           style_fit_score: float = 0.0,
                            created_at: Optional[str] = None,
                            session_date: Optional[str] = None) -> Dict[str, Any]:
     ts = created_at or datetime.now(ET).isoformat()
@@ -68,10 +81,12 @@ def record_confirmed_trade(*, ticker: str, side: str, quantity: int,
         if count >= MAX_TRADES:
             return {"ok": False, "recorded": False, "reason": "DAILY_TRADE_LIMIT_REACHED", "session_date": day}
         cur = conn.execute("""INSERT OR IGNORE INTO session_allocation_trades
-            (session_date, created_at, ticker, side, quantity, risk_dollars, environment_quality)
-            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (session_date, created_at, ticker, side, quantity, risk_dollars, environment_quality, trade_function, style_fit_grade, style_fit_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (day, ts, str(ticker).upper(), str(side).upper(), max(1, int(quantity)),
-             max(0.0, float(risk_dollars or 0)), _quality(environment_quality)))
+             max(0.0, float(risk_dollars or 0)), _quality(environment_quality),
+             str(trade_function or "UNSPECIFIED").upper(), str(style_fit_grade or "UNRATED").upper(),
+             max(0.0, min(100.0, float(style_fit_score or 0)))))
         conn.commit()
         return {"ok": True, "recorded": cur.rowcount == 1, "session_date": day,
                 "trade_number": count + 1 if cur.rowcount == 1 else count}
@@ -86,6 +101,9 @@ def reset_session(session_date: Optional[str] = None) -> Dict[str, Any]:
 
 
 def build_session_allocation(*, environment_quality: str = "UNKNOWN",
+                             trade_function: str = "QUICK_SCALP",
+                             style_fit_grade: Optional[str] = None,
+                             style_fit_score: Optional[float] = None,
                              daily_risk_budget: float = DEFAULT_DAILY_RISK,
                              remaining_risk_budget: Optional[float] = None,
                              estimated_risk_per_contract: float = 0.0,
@@ -99,7 +117,11 @@ def build_session_allocation(*, environment_quality: str = "UNKNOWN",
     remaining_slots = max(0, MAX_TRADES - trades_taken)
     next_trade = trades_taken + 1 if remaining_slots else None
     baseline = BASE_SEQUENCE[trades_taken] if remaining_slots else 0
-    quality = _quality(environment_quality)
+    quality = _quality(environment_quality)  # backward-compatible display only
+    function = str(trade_function or "QUICK_SCALP").strip().upper()
+    style_mode = style_fit_grade is not None or style_fit_score is not None
+    fit_grade = str(style_fit_grade or "UNRATED").strip().upper()
+    fit_score = max(0.0, min(100.0, float(style_fit_score or 0)))
     used_risk = sum(float(r.get("risk_dollars") or 0) for r in rows)
     remaining = max(0.0, float(remaining_risk_budget if remaining_risk_budget is not None else daily_risk_budget - used_risk))
     risk_cap = baseline
@@ -115,6 +137,16 @@ def build_session_allocation(*, environment_quality: str = "UNKNOWN",
     elif consecutive_losses >= 2:
         recommendation, gate = 0, "LOSS_LOCKOUT"
         reasons.append("Two consecutive losses require a session lockout or explicit human override.")
+    elif style_mode and (fit_grade in {"INSUFFICIENT_DATA", "UNRATED", "D", "F"} or fit_score < 55):
+        recommendation, gate = min(1, recommendation), "STYLE_FIT_REDUCED"
+        reasons.append(f"{function} does not have sufficient validated style fit; allocation is reduced to discovery size.")
+    elif style_mode and baseline >= 4 and fit_grade != "A+":
+        recommendation, gate = min(3, recommendation), "STYLE_FIT_REDUCED"
+        reasons.append("Four contracts are reserved for an A+ fit in the selected trade function.")
+    elif style_mode and fit_grade == "A+":
+        reasons.append(f"A+ {function} fit supports the planned allocation, subject to risk budget and confirmation.")
+    elif style_mode:
+        reasons.append(f"{fit_grade} {function} fit supports the planned allocation up to the governed cap.")
     elif quality in {"POOR", "UNTRADEABLE", "CLOSED", "UNKNOWN"}:
         recommendation, gate = min(1, recommendation), "REDUCED"
         reasons.append("Environment is not confirmed favorable; allocation is reduced to discovery size.")
@@ -127,11 +159,12 @@ def build_session_allocation(*, environment_quality: str = "UNKNOWN",
         reasons.append("Remaining risk budget reduced the planned allocation.")
 
     return {
-        "version": "PHASE_34", "advisory_only": True, "confirmation_gated": True,
+        "version": "PHASE_35", "advisory_only": True, "confirmation_gated": True,
         "session_date": day, "max_trades": MAX_TRADES, "sequence": list(BASE_SEQUENCE),
         "trades_taken": trades_taken, "remaining_trade_slots": remaining_slots,
         "next_trade_number": next_trade, "planned_contracts": baseline,
         "recommended_contracts": recommendation, "environment_quality": quality,
+        "trade_function": function, "style_fit_grade": fit_grade, "style_fit_score": fit_score,
         "allocation_gate": gate, "daily_risk_budget": float(daily_risk_budget),
         "used_risk_budget": round(used_risk, 2), "remaining_risk_budget": round(remaining, 2),
         "consecutive_losses": int(consecutive_losses), "reasons": reasons,
