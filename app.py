@@ -244,6 +244,22 @@ except Exception as _td26_err:
     TRADE_DIRECTOR_PHASE26_AVAILABLE = False
     print(f"Trade Director Phase 26 unavailable: {_td26_err}", flush=True)
 
+# APEX Trade Director Phase 28 — institutional data integrity and lineage
+try:
+    from engine.trade_director_data_lineage import (
+        build_data_lineage as td28_build_data_lineage,
+        export_lineage as td28_export_lineage,
+        get_lineage_event as td28_get_lineage_event,
+        lineage_history as td28_lineage_history,
+        lineage_tree as td28_lineage_tree,
+        record_lineage_event as td28_record_lineage_event,
+        verify_integrity as td28_verify_integrity,
+    )
+    TRADE_DIRECTOR_PHASE28_AVAILABLE = True
+except Exception as _td28_err:
+    TRADE_DIRECTOR_PHASE28_AVAILABLE = False
+    print(f"Trade Director Phase 28 unavailable: {_td28_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5460,6 +5476,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td26_build_err:
             result["institutional_command_center"] = {"version": "PHASE_26", "error": str(_td26_build_err)}
 
+    if TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        try:
+            # Phase 28 records append-only provenance after the coordinated stack is complete.
+            result["data_lineage"] = td28_build_data_lineage(result, persist=True)
+        except Exception as _td28_build_err:
+            result["data_lineage"] = {"version": "PHASE_28", "error": str(_td28_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5495,6 +5518,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase25_last_shadow_validation"] = dict(result["shadow_validation"])
         if result.get("institutional_command_center"):
             ACTIVE_POSITION["phase26_last_command_center"] = dict(result["institutional_command_center"])
+        if result.get("data_lineage"):
+            ACTIVE_POSITION["phase28_last_data_lineage"] = dict(result["data_lineage"])
 
     return result
 
@@ -8114,6 +8139,81 @@ def api_command_center_diagnostics():
     context = body.get("context") or {}
     records = body.get("records")
     return jsonify({"ok": True, "command_center": td26_build_command_center(context, records)})
+
+
+@app.route("/api/lineage/event/<lineage_id>")
+def api_lineage_event(lineage_id):
+    if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 28 unavailable"}), 503
+    event = td28_get_lineage_event(lineage_id)
+    return jsonify({"ok": bool(event), "event": event}), (200 if event else 404)
+
+
+@app.route("/api/lineage/decision/<trade_id>")
+def api_lineage_decision(trade_id):
+    if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 28 unavailable"}), 503
+    events = td28_lineage_history(1000, trade_id)
+    return jsonify({"ok": True, "trade_id": trade_id, "events": events, "event_count": len(events)})
+
+
+@app.route("/api/lineage/tree/<trade_id>")
+def api_lineage_tree(trade_id):
+    if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 28 unavailable"}), 503
+    return jsonify({"ok": True, "lineage_tree": td28_lineage_tree(trade_id)})
+
+
+@app.route("/api/lineage/integrity")
+def api_lineage_integrity():
+    if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 28 unavailable"}), 503
+    return jsonify({"ok": True, "integrity": td28_verify_integrity("API")})
+
+
+@app.route("/api/lineage/history")
+def api_lineage_history():
+    if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 28 unavailable"}), 503
+    try:
+        limit = int(request.args.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    trade_id = str(request.args.get("trade_id") or "").strip() or None
+    return jsonify({"ok": True, "events": td28_lineage_history(limit, trade_id)})
+
+
+@app.route("/api/lineage/verify", methods=["POST"])
+def api_lineage_verify():
+    if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 28 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    return jsonify({"ok": True, "integrity": td28_verify_integrity(str(body.get("scope") or "API"))})
+
+
+@app.route("/api/lineage/export", methods=["POST"])
+def api_lineage_export():
+    if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 28 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    trade_id = str(body.get("trade_id") or "").strip() or None
+    return jsonify({"ok": True, "lineage_export": td28_export_lineage(trade_id)})
+
+
+@app.route("/api/lineage/register", methods=["POST"])
+def api_lineage_register():
+    if not TRADE_DIRECTOR_PHASE28_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 28 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    payload = body.get("payload")
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "payload object is required"}), 400
+    event = td28_record_lineage_event(payload, event_type=str(body.get("event_type") or "MANUAL_AUDIT_EVENT"),
+        entity_type=str(body.get("entity_type") or "AUDIT_EVENT"), entity_id=body.get("entity_id"),
+        trade_id=body.get("trade_id"), phase=str(body.get("phase") or ""), engine_name=str(body.get("engine_name") or ""),
+        engine_version=str(body.get("engine_version") or ""), source_system=str(body.get("source_system") or "APEX"),
+        dataset_version=str(body.get("dataset_version") or ""), parent_ids=body.get("parent_ids") or [])
+    return jsonify({"ok": True, "event": event}), 201
 
 
 @app.route("/api/position/strategy-orchestration")
