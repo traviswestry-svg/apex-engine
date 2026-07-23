@@ -198,6 +198,18 @@ except Exception as _td22_err:
     TRADE_DIRECTOR_PHASE22_AVAILABLE = False
     print(f"Trade Director Phase 22 unavailable: {_td22_err}", flush=True)
 
+# APEX Trade Director Phase 23 — institutional replay and decision laboratory
+try:
+    from engine.trade_director_replay_lab import (
+        build_replay_case as td23_build_replay_case,
+        build_replay_lab as td23_build_replay_lab,
+        replay_library as td23_replay_library,
+    )
+    TRADE_DIRECTOR_PHASE23_AVAILABLE = True
+except Exception as _td23_err:
+    TRADE_DIRECTOR_PHASE23_AVAILABLE = False
+    print(f"Trade Director Phase 23 unavailable: {_td23_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5386,6 +5398,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td22_build_err:
             result["institutional_learning"] = {"version": "PHASE_22", "error": str(_td22_build_err)}
 
+    if TRADE_DIRECTOR_PHASE23_AVAILABLE:
+        try:
+            # Phase 23 replays only archived Phase 22 cases; it does not inspect future/live provider data.
+            result["replay_laboratory"] = td23_build_replay_lab(limit=25)
+        except Exception as _td23_build_err:
+            result["replay_laboratory"] = {"version": "PHASE_23", "error": str(_td23_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5413,6 +5432,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase21_last_trade_lifecycle"] = dict(result["trade_lifecycle"])
         if result.get("institutional_learning"):
             ACTIVE_POSITION["phase22_last_learning"] = dict(result["institutional_learning"])
+        if result.get("replay_laboratory"):
+            ACTIVE_POSITION["phase23_last_replay_lab"] = dict(result["replay_laboratory"])
 
     return result
 
@@ -7921,6 +7942,34 @@ def api_position_institutional_learning_history():
     except (TypeError, ValueError):
         limit = 100
     return jsonify({"ok": True, "trades": td22_learning_history(limit)})
+
+
+@app.route("/api/position/replay-laboratory", methods=["GET", "POST"])
+def api_position_replay_laboratory():
+    """Return Phase 23 replay laboratory or reconstruct a selected archived case."""
+    if not TRADE_DIRECTOR_PHASE23_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 23 unavailable"}), 503
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        trade_id = str(body.get("trade_id") or "").strip()
+        record = body.get("record")
+        if not trade_id and not record:
+            return jsonify({"ok": False, "error": "trade_id or archived record is required"}), 400
+        case = td23_build_replay_case(trade_id or None, record=record)
+        return jsonify({"ok": bool(case.get("ok")), "replay_case": case}), (200 if case.get("ok") else 404)
+    trade_id = str(request.args.get("trade_id") or "").strip() or None
+    return jsonify({"ok": True, "replay_laboratory": td23_build_replay_lab(trade_id)})
+
+
+@app.route("/api/position/replay-laboratory/library")
+def api_position_replay_laboratory_library():
+    if not TRADE_DIRECTOR_PHASE23_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 23 unavailable"}), 503
+    try:
+        limit = int(request.args.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    return jsonify({"ok": True, "cases": td23_replay_library(limit)})
 
 
 @app.route("/api/position/strategy-orchestration")
