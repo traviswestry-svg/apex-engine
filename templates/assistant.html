@@ -99,6 +99,7 @@
 <div id="institutionalDecisionIntelligence"></div>
 <div id="institutionalDecisionEngine"></div>
 <div id="tradeLifecycle"></div>
+<div id="institutionalLearning"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -379,6 +380,17 @@ function renderTradeLifecycle(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 21</div><div class="coach-title">Institutional Trade Lifecycle Engine</div><div class="sub">One coordinated lifecycle · thesis-aware management · governed protection · no autonomous execution</div></div><div><div class="label">Lifecycle State</div><div class="phase15-contract ${state==='EXIT'||state==='DECISION_BLOCKED'?'bad':state==='POSITION_ACTIVE'||state==='RUNNER'?'good':'warn'}">${esc(state.replace(/_/g,' '))}</div><div class="sub">${esc(d.lifecycle_id||'--')}</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Unified Management Action</div><div class="phase15-contract">${esc(action.replace(/_/g,' '))}</div><div class="metric-row"><span>Direction</span><strong>${esc(d.direction||'NEUTRAL')}</strong></div><div class="metric-row"><span>Urgency</span><strong>${esc(p.urgency||'NORMAL')}</strong></div><div class="metric-row"><span>Reduce position</span><strong>${p.reduce_position_pct||0}%</strong></div><div class="metric-row"><span>Recommended stop</span><strong>${p.recommended_stop==null?'--':num(p.recommended_stop,2)}</strong></div><div class="metric-row"><span>Remaining quantity</span><strong>${p.remaining_quantity_estimate??'--'}</strong></div><div class="sub">${esc(d.reason||'')}</div></div><div class="phase15-card"><div class="label">Position State</div><div class="metric-row"><span>Quantity</span><strong>${ps.quantity??0}</strong></div><div class="metric-row"><span>Entry / Current</span><strong>${ps.entry_price==null?'--':num(ps.entry_price,2)} / ${ps.current_price==null?'--':num(ps.current_price,2)}</strong></div><div class="metric-row"><span>Open P/L</span><strong>${money(ps.unrealized_pnl||0)} · ${num(ps.pnl_pct||0,1)}%</strong></div><div class="metric-row"><span>Trade health</span><strong>${num(ps.trade_health_score||0,1)}</strong></div><div class="metric-row"><span>Momentum</span><strong>${esc(ps.momentum_state||'--')}</strong></div><div class="metric-row"><span>Held</span><strong>${num(ps.minutes_held||0,1)} min</strong></div></div><div class="phase15-card"><div class="label">Original Thesis Check</div>${blockers||conflicts||support||'<div class="sub">No supporting lifecycle evidence is available yet.</div>'}<div class="metric-row"><span>Thesis intact</span><strong>${th.intact?'YES':'NO'}</strong></div><div class="metric-row"><span>Stability</span><strong>${esc(d.stability?.state||'STABLE')}</strong></div></div><div class="phase15-card"><div class="label">Integrated Provenance</div>${provenance}<div class="metric-row"><span>Phase 10 confirmation</span><strong>${p.requires_phase10_exact_confirmation?'REQUIRED':'NOT TRIGGERED'}</strong></div><div class="metric-row"><span>Broker called</span><strong>${p.broker_called?'YES':'NO'}</strong></div><div class="metric-row"><span>Order submitted</span><strong>${p.order_submitted?'YES':'NO'}</strong></div></div></div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+function renderInstitutionalLearning(x){
+  const el=document.getElementById('institutionalLearning'); if(!el)return;
+  const d=x?.institutional_learning||x; if(!d||d.error){el.innerHTML='';return;}
+  const s=d.summary||{}, cal=d.confidence_calibration||{}, sc=(d.strategy_scorecards||[]).slice(0,5);
+  const attrs=(d.engine_attribution||[]).slice(0,5).map(r=>`<div class="phase15-row"><strong>${esc(r.engine||'--')}</strong><span>${r.samples||0} trades</span><span>${r.win_rate==null?'--':num(r.win_rate,1)+'%'}</span><span>${r.average_r==null?'--':num(r.average_r,2)+'R'}</span></div>`).join('');
+  const strategies=sc.map(r=>`<div class="phase15-row"><strong>${esc((r.strategy||'UNCLASSIFIED').replace(/_/g,' '))}</strong><span>${r.samples||0}</span><span>${r.win_rate==null?'--':num(r.win_rate,1)+'%'}</span><span>${r.expectancy_r==null?'--':num(r.expectancy_r,2)+'R'}</span></div>`).join('');
+  const similar=(d.similar_trades||[]).map(r=>`<div class="phase13-div"><strong>${num(r.similarity,1)}% similar</strong>${esc(r.strategy||'--')} · ${r.win?'WIN':'LOSS'} · ${r.r_multiple==null?'--':num(r.r_multiple,2)+'R'}</div>`).join('');
+  const recs=(d.adaptive_recommendations||[]).map(r=>`<div class="phase13-div"><strong class="warn">ADVISORY</strong>${esc(r)}</div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 22</div><div class="coach-title">Institutional Learning Center</div><div class="sub">Outcome intelligence · calibration · attribution · similarity · advisory feedback</div></div><div><div class="label">Learning State</div><div class="phase15-contract ${d.learning_state==='ESTABLISHED'?'good':'warn'}">${esc(d.learning_state||'COLLECTING')}</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Learning Ledger</div><div class="metric-row"><span>Trades learned</span><strong>${s.trades_learned||0}</strong></div><div class="metric-row"><span>Win rate</span><strong>${s.win_rate==null?'--':num(s.win_rate,1)+'%'}</strong></div><div class="metric-row"><span>Expectancy</span><strong>${s.expectancy_r==null?'--':num(s.expectancy_r,2)+'R'}</strong></div><div class="metric-row"><span>Decision quality</span><strong>${s.average_decision_quality==null?'--':num(s.average_decision_quality,1)}</strong></div><div class="metric-row"><span>Calibration error</span><strong>${cal.mean_absolute_calibration_error==null?'--':num(cal.mean_absolute_calibration_error,1)+' pts'}</strong></div></div><div class="phase15-card"><div class="label">Engine Attribution</div>${attrs||'<div class="sub">Waiting for completed trades.</div>'}</div><div class="phase15-card"><div class="label">Strategy Scorecards</div>${strategies||'<div class="sub">No strategy cohort is available yet.</div>'}</div><div class="phase15-card"><div class="label">Similar Historical Trades</div>${similar||'<div class="sub">Similarity requires archived completed trades.</div>'}</div></div>${recs?`<div class="phase15-card"><div class="label">Adaptive Recommendations</div>${recs}</div>`:''}<div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderTradeHero(m){
   const el=document.getElementById('tradeHero');
   if(!m||m.status!=='MONITORING'||!m.position){el.className='trade-hero';el.innerHTML='';return;}
@@ -481,7 +493,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -493,6 +505,7 @@ async function loadDirector(){
       fetch('/api/position/institutional-decision-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/institutional-decision-engine',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/trade-lifecycle',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/institutional-learning',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -507,6 +520,7 @@ async function loadDirector(){
     renderInstitutionalDecisionIntelligence(di);
     renderInstitutionalDecisionEngine(de);
     renderTradeLifecycle(tl);
+    renderInstitutionalLearning(il);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
