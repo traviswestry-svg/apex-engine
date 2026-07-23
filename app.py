@@ -210,6 +210,17 @@ except Exception as _td23_err:
     TRADE_DIRECTOR_PHASE23_AVAILABLE = False
     print(f"Trade Director Phase 23 unavailable: {_td23_err}", flush=True)
 
+# APEX Trade Director Phase 24 — institutional policy governance laboratory
+try:
+    from engine.trade_director_policy_governance import (
+        build_policy_governance as td24_build_policy_governance,
+        evaluate_policy_proposal as td24_evaluate_policy_proposal,
+    )
+    TRADE_DIRECTOR_PHASE24_AVAILABLE = True
+except Exception as _td24_err:
+    TRADE_DIRECTOR_PHASE24_AVAILABLE = False
+    print(f"Trade Director Phase 24 unavailable: {_td24_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5405,6 +5416,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td23_build_err:
             result["replay_laboratory"] = {"version": "PHASE_23", "error": str(_td23_build_err)}
 
+    if TRADE_DIRECTOR_PHASE24_AVAILABLE:
+        try:
+            # Phase 24 derives review-only policy proposals from learning and replay evidence.
+            result["policy_governance"] = td24_build_policy_governance(result)
+        except Exception as _td24_build_err:
+            result["policy_governance"] = {"version": "PHASE_24", "error": str(_td24_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5434,6 +5452,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase22_last_learning"] = dict(result["institutional_learning"])
         if result.get("replay_laboratory"):
             ACTIVE_POSITION["phase23_last_replay_lab"] = dict(result["replay_laboratory"])
+        if result.get("policy_governance"):
+            ACTIVE_POSITION["phase24_last_policy_governance"] = dict(result["policy_governance"])
 
     return result
 
@@ -7970,6 +7990,31 @@ def api_position_replay_laboratory_library():
     except (TypeError, ValueError):
         limit = 100
     return jsonify({"ok": True, "cases": td23_replay_library(limit)})
+
+
+@app.route("/api/position/policy-governance", methods=["GET", "POST"])
+def api_position_policy_governance():
+    """Return Phase 24 policy governance or evaluate one review-only proposal."""
+    if not TRADE_DIRECTOR_PHASE24_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 24 unavailable"}), 503
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        action = str(body.get("action") or "EVALUATE_PROPOSAL").upper()
+        if action != "EVALUATE_PROPOSAL":
+            return jsonify({"ok": False, "error": "Unsupported Phase 24 action"}), 400
+        proposal = body.get("proposal") or {}
+        if not proposal:
+            return jsonify({"ok": False, "error": "proposal is required"}), 400
+        try:
+            minimum_samples = int(body.get("minimum_samples") or 20)
+        except (TypeError, ValueError):
+            minimum_samples = 20
+        return jsonify({"ok": True, "proposal": td24_evaluate_policy_proposal(proposal, minimum_samples=minimum_samples)})
+    with ACTIVE_POSITION_LOCK:
+        cached = dict(ACTIVE_POSITION.get("phase24_last_policy_governance") or {})
+    if cached:
+        return jsonify({"ok": True, "policy_governance": cached})
+    return jsonify({"ok": True, "policy_governance": td24_build_policy_governance({})})
 
 
 @app.route("/api/position/strategy-orchestration")
