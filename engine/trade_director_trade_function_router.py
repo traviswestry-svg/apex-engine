@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 FUNCTIONS = (
+    "MOMENTUM_BURST",
     "QUICK_SCALP",
     "SCALP_15M",
     "SCALP_30M",
@@ -20,6 +21,13 @@ FUNCTIONS = (
 )
 
 FUNCTION_META: Dict[str, Dict[str, Any]] = {
+    "MOMENTUM_BURST": {
+        "label": "Momentum Burst",
+        "hold_window": "SECONDS_TO_2_MIN_TYPICAL",
+        "max_hold_minutes": 5,
+        "entry_style": "Precision entry at a defined level with immediate premium expansion",
+        "risk_posture": "ENTRY_FIRST_PREMIUM_PROTECTED",
+    },
     "QUICK_SCALP": {
         "label": "Quick Scalp",
         "hold_window": "UNDER_5_MIN",
@@ -131,7 +139,14 @@ def _score_style(style: str, e: Mapping[str, Any]) -> tuple[float, list[str], li
             score -= 8
             blockers.append("Event risk reduces long-horizon entry quality until repricing stabilizes.")
 
-    if style == "QUICK_SCALP":
+    if style == "MOMENTUM_BURST":
+        score += (structure - 50) * 0.25 + (flow_score - 50) * 0.23 + (dealer_score - 50) * 0.10
+        if volatility in {"EXPANDING", "ELEVATED"}: score += 14; why.append("Expanding volatility supports rapid option-premium expansion.")
+        if trend in {"STRONG", "PERSISTENT"}: score += 8; why.append("Immediate trend persistence supports a momentum burst.")
+        if auction in {"BREAKOUT", "VALUE_EXPANSION", "LEAVING_VALUE", "REJECTION"}: score += 10; why.append("A defined auction event supports precision timing.")
+        if flow in {"BULLISH", "BEARISH", "ACCELERATING"}: score += 9; why.append("Directional institutional flow supports immediate follow-through.")
+        if liquidity in {"POOR", "THIN", "UNAVAILABLE"}: blockers.append("Momentum Burst requires executable option liquidity and a controlled spread.")
+    elif style == "QUICK_SCALP":
         score += (structure - 50) * 0.22 + (flow_score - 50) * 0.18
         if volatility in {"EXPANDING", "ELEVATED"}: score += 13; why.append("Expanding volatility supports rapid price discovery.")
         if volatility in {"COMPRESSED", "LOW"}: score += 6; why.append("Compressed conditions can support quick range-edge mean reversion.")
