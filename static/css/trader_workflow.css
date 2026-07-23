@@ -1,0 +1,12 @@
+/* APEX Trade Director Phase 33 — Trader Workflow Interface */
+.trader-cockpit{border:1px solid var(--bdr);border-radius:var(--radius);background:linear-gradient(145deg,var(--surf),var(--surf2));padding:18px;margin:0 0 14px}
+.tc-top{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap}.tc-eyebrow{font:700 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.tc-decision{font:900 clamp(30px,5vw,54px) var(--sans);line-height:1;margin-top:7px}.tc-summary{color:var(--muted);margin-top:8px;max-width:760px;line-height:1.45}
+.tc-score{text-align:right}.tc-score strong{display:block;font:900 38px var(--mono)}.tc-score span{font-size:11px;color:var(--muted);text-transform:uppercase}
+.tc-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:16px}.tc-cell{border:1px solid var(--bdr);border-radius:10px;padding:11px 12px;background:var(--bg)}
+.tc-cell span{display:block;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}.tc-cell strong{display:block;margin-top:5px;font:800 18px var(--mono);overflow-wrap:anywhere}
+.tc-evidence{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}.tc-chip{border:1px solid var(--bdr);border-radius:999px;padding:7px 10px;font-size:11px;text-align:center}.tc-chip.good{color:var(--green)}.tc-chip.bad{color:var(--red)}.tc-chip.neutral{color:var(--amber)}
+.workflow-details{margin:0 0 14px;border:1px solid var(--bdr);border-radius:var(--radius);background:var(--panel)}.workflow-details>summary{cursor:pointer;padding:12px 14px;font-weight:800;color:var(--muted);list-style:none}.workflow-details>summary::-webkit-details-marker{display:none}.workflow-details>summary:after{content:'+';float:right}.workflow-details[open]>summary:after{content:'–'}.workflow-details-body{padding:0 12px 12px}
+.phase-label-hidden{display:none!important}.assistant-workflow-note{font-size:12px;color:var(--muted);margin:0 0 12px;padding:10px 12px;border-left:3px solid var(--blue);background:var(--panel)}
+@media(max-width:900px){.tc-grid{grid-template-columns:repeat(2,1fr)}.tc-evidence{grid-template-columns:1fr}.tc-score{text-align:left}}
+@media(max-width:560px){.tc-grid{grid-template-columns:1fr}}
