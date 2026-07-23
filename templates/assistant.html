@@ -106,6 +106,7 @@
 <div id="institutionalCommandCenter"></div>
 <div id="dataLineage"></div>
 <div id="portfolioAllocation"></div>
+<div id="executionCertification"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -436,6 +437,16 @@ function renderPortfolioAllocation(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 29</div><div class="coach-title">Institutional Portfolio & Capital Allocation Intelligence</div><div class="sub">Aggregate exposure · concentration · capital budget · bounded allocation</div></div><div><div class="label">Allocation State</div><div class="phase15-contract ${d.allocation_state==='ALLOCATABLE'?'good':d.allocation_state==='BLOCKED'?'bad':'warn'}">${esc((d.allocation_state||'--').replace(/_/g,' '))}</div><div class="sub">Score ${num(d.allocation_score,1)} / 100</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Portfolio Risk</div><div class="metric-row"><span>Open positions</span><strong>${p.open_positions||0}</strong></div><div class="metric-row"><span>Total risk</span><strong>${money(p.total_risk_dollars||0)}</strong></div><div class="metric-row"><span>Risk utilization</span><strong>${num(p.risk_utilization_pct,1)}%</strong></div><div class="metric-row"><span>Remaining budget</span><strong>${money(p.remaining_portfolio_risk||0)}</strong></div></div><div class="phase15-card"><div class="label">Candidate Allocation</div><div class="metric-row"><span>Strategy</span><strong>${esc(a.strategy||'--')}</strong></div><div class="metric-row"><span>Requested risk</span><strong>${money(a.requested_risk_dollars||0)}</strong></div><div class="metric-row"><span>Recommended risk</span><strong>${money(a.recommended_risk_dollars||0)}</strong></div><div class="metric-row"><span>Allocation factor</span><strong>${num((a.allocation_factor||0)*100,1)}%</strong></div></div><div class="phase15-card"><div class="label">Aggregate Greeks</div><div class="metric-row"><span>Delta</span><strong>${money(g.delta_dollars||0)}</strong></div><div class="metric-row"><span>Gamma</span><strong>${money(g.gamma_dollars||0)}</strong></div><div class="metric-row"><span>Vega</span><strong>${money(g.vega_dollars||0)}</strong></div><div class="metric-row"><span>Theta</span><strong>${money(g.theta_dollars||0)}</strong></div></div><div class="phase15-card"><div class="label">Symbol Concentration</div>${symbols||'<div class="sub">No open portfolio positions.</div>'}</div></div><div class="phase15-card"><div class="label">Allocation Controls</div>${issues||'<div class="phase10-check pass">No portfolio allocation blockers detected.</div>'}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+
+function renderExecutionCertification(x){
+  const el=document.getElementById('executionCertification'); if(!el)return;
+  const d=(x&&x.execution_certification)||x||{}; if(!d||d.error){el.innerHTML='';return;}
+  const b=d.broker_health||{}, r=d.reconciliation||{}, k=d.kill_switch||{}, m=d.metrics||{};
+  const blockers=(d.blockers||[]).slice(0,7).map(v=>`<div class="phase10-check fail">${esc(String(v).replace(/_/g,' '))}</div>`).join('');
+  const checks=Object.entries(d.certification_checks||{}).map(([name,val])=>`<div class="metric-row"><span>${esc(name.replace(/_/g,' '))}</span><strong>${num(val,1)}</strong></div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 30</div><div class="coach-title">Execution Certification & Production Readiness</div><div class="sub">Broker certification · preview gates · reconciliation · kill switch · live execution locked</div></div><div><div class="label">Readiness</div><div class="phase15-contract ${d.readiness_state==='LIVE_REVIEW_REQUIRED'||d.readiness_state==='PAPER_CERTIFIED'?'good':d.readiness_state==='NOT_READY'?'bad':'warn'}">${esc((d.readiness_state||'--').replace(/_/g,' '))}</div><div class="sub">${num(d.readiness_score,1)} / 100</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Broker Health</div><div class="metric-row"><span>Broker</span><strong>${esc(b.broker||'--')}</strong></div><div class="metric-row"><span>Environment</span><strong>${esc(b.environment||'--')}</strong></div><div class="metric-row"><span>Status</span><strong>${esc(b.status||'--')}</strong></div><div class="metric-row"><span>Score</span><strong>${num(b.score,1)}</strong></div></div><div class="phase15-card"><div class="label">Reconciliation</div><div class="phase15-contract ${r.status==='MATCHED'?'good':r.status==='CRITICAL_MISMATCH'?'bad':'warn'}">${esc((r.status||'PENDING').replace(/_/g,' '))}</div><div class="metric-row"><span>Mismatches</span><strong>${(r.mismatches||[]).length}</strong></div><div class="metric-row"><span>New submissions blocked</span><strong>${r.new_submissions_blocked?'YES':'NO'}</strong></div></div><div class="phase15-card"><div class="label">Safety Controls</div><div class="metric-row"><span>Kill switch</span><strong>${k.active?'ACTIVE':'READY'}</strong></div><div class="metric-row"><span>Human confirmation</span><strong>REQUIRED</strong></div><div class="metric-row"><span>Live submission</span><strong>LOCKED</strong></div><div class="metric-row"><span>Autonomous execution</span><strong>OFF</strong></div></div><div class="phase15-card"><div class="label">Certification Metrics</div><div class="metric-row"><span>Preview attempts</span><strong>${m.preview_attempts||0}</strong></div><div class="metric-row"><span>Preview success</span><strong>${num(m.preview_success_rate_pct,1)}%</strong></div><div class="metric-row"><span>Paper trades</span><strong>${m.paper_trades||0}</strong></div><div class="metric-row"><span>Duplicates prevented</span><strong>${m.duplicate_orders||0}</strong></div></div></div><div class="phase15-card"><div class="label">Readiness Components</div>${checks}</div>${blockers?`<div class="phase15-card"><div class="label">Required Actions</div>${blockers}</div>`:''}<div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderShadowValidation(x){
   const el=document.getElementById('shadowValidation'); if(!el)return;
   const d=(x&&x.shadow_validation)||x||{}; const trials=d.trials||[];
@@ -552,7 +563,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, pa, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, pa, ec, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -570,6 +581,7 @@ async function loadDirector(){
       fetch('/api/position/shadow-validation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/command-center/scorecards',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/portfolio/allocation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/execution-certification/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -591,6 +603,7 @@ async function loadDirector(){
     renderInstitutionalCommandCenter(cc);
     renderDataLineage(cc);
     renderPortfolioAllocation(pa);
+    renderExecutionCertification(ec);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
