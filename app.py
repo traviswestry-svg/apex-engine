@@ -185,6 +185,19 @@ except Exception as _td21_err:
     TRADE_DIRECTOR_PHASE21_AVAILABLE = False
     print(f"Trade Director Phase 21 unavailable: {_td21_err}", flush=True)
 
+# APEX Trade Director Phase 22 — institutional learning and adaptive intelligence
+try:
+    from engine.trade_director_institutional_learning import (
+        archive_learning_record as td22_archive_learning_record,
+        build_learning_intelligence as td22_build_learning_intelligence,
+        get_learning_record as td22_get_learning_record,
+        learning_history as td22_learning_history,
+    )
+    TRADE_DIRECTOR_PHASE22_AVAILABLE = True
+except Exception as _td22_err:
+    TRADE_DIRECTOR_PHASE22_AVAILABLE = False
+    print(f"Trade Director Phase 22 unavailable: {_td22_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5366,6 +5379,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td21_build_err:
             result["trade_lifecycle"] = {"version": "PHASE_21", "error": str(_td21_build_err)}
 
+    if TRADE_DIRECTOR_PHASE22_AVAILABLE:
+        try:
+            # Phase 22 reads only the local learning ledger and current coordinated context.
+            result["institutional_learning"] = td22_build_learning_intelligence(result)
+        except Exception as _td22_build_err:
+            result["institutional_learning"] = {"version": "PHASE_22", "error": str(_td22_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5391,6 +5411,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase20_last_decision_engine"] = dict(result["institutional_decision_engine"])
         if result.get("trade_lifecycle"):
             ACTIVE_POSITION["phase21_last_trade_lifecycle"] = dict(result["trade_lifecycle"])
+        if result.get("institutional_learning"):
+            ACTIVE_POSITION["phase22_last_learning"] = dict(result["institutional_learning"])
 
     return result
 
@@ -7857,6 +7879,49 @@ def api_position_trade_lifecycle():
         with ACTIVE_POSITION_LOCK:
             data = dict(ACTIVE_POSITION.get("phase21_last_trade_lifecycle") or {})
     return jsonify({"ok": True, "trade_lifecycle": data})
+
+@app.route("/api/position/institutional-learning", methods=["GET", "POST"])
+def api_position_institutional_learning():
+    """Return Phase 22 learning intelligence or archive a confirmed outcome."""
+    if not TRADE_DIRECTOR_PHASE22_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 22 unavailable"}), 503
+    monitor = monitor_active_position()
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        action = str(body.get("action") or "ARCHIVE_OUTCOME").upper()
+        if action == "ARCHIVE_OUTCOME":
+            context = dict(monitor)
+            context.update(body.get("context") or body.get("evidence") or {})
+            outcome = body.get("outcome") or {}
+            if not outcome:
+                return jsonify({"ok": False, "error": "A user-confirmed outcome is required"}), 400
+            archived = td22_archive_learning_record(context, outcome)
+            intelligence = td22_build_learning_intelligence(context)
+            return jsonify({"ok": True, "archived": archived, "institutional_learning": intelligence})
+        if action == "EVALUATE":
+            context = dict(monitor)
+            context.update(body.get("context") or body.get("evidence") or {})
+            return jsonify({"ok": True, "institutional_learning": td22_build_learning_intelligence(context)})
+        return jsonify({"ok": False, "error": "Unsupported Phase 22 action"}), 400
+    data = monitor.get("institutional_learning")
+    if not data:
+        with ACTIVE_POSITION_LOCK:
+            data = dict(ACTIVE_POSITION.get("phase22_last_learning") or {})
+    if not data:
+        data = td22_build_learning_intelligence(monitor)
+    return jsonify({"ok": True, "institutional_learning": data})
+
+
+@app.route("/api/position/institutional-learning/history")
+def api_position_institutional_learning_history():
+    if not TRADE_DIRECTOR_PHASE22_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 22 unavailable"}), 503
+    try:
+        limit = int(request.args.get("limit") or 100)
+    except (TypeError, ValueError):
+        limit = 100
+    return jsonify({"ok": True, "trades": td22_learning_history(limit)})
+
 
 @app.route("/api/position/strategy-orchestration")
 def api_position_strategy_orchestration():
