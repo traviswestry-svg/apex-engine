@@ -354,6 +354,18 @@ except Exception as _td35_err:
     TRADE_DIRECTOR_PHASE35_AVAILABLE = False
     print(f"Trade Director Phase 35 unavailable: {_td35_err}", flush=True)
 
+
+# APEX Trade Director Phase 36 — precision entry and momentum lifecycle
+try:
+    from engine.trade_director_momentum_lifecycle import (
+        build_momentum_lifecycle as td36_build_momentum_lifecycle,
+        compute_entry_quality as td36_compute_entry_quality,
+    )
+    TRADE_DIRECTOR_PHASE36_AVAILABLE = True
+except Exception as _td36_err:
+    TRADE_DIRECTOR_PHASE36_AVAILABLE = False
+    print(f"Trade Director Phase 36 unavailable: {_td36_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -7545,6 +7557,15 @@ def api_position():
         if not ticker or side not in ("CALL", "PUT"):
             return jsonify({"ok": False, "error": "side must be CALL or PUT"}), 400
         pos = set_active_position(ticker, side, entry, stop, t1, t2, quantity, option_symbol, notes, option_entry_price)
+        if TRADE_DIRECTOR_PHASE36_AVAILABLE:
+            entry_evidence = body.get("entry_quality_evidence") or {}
+            entry_quality = td36_compute_entry_quality(entry_evidence)
+            with ACTIVE_POSITION_LOCK:
+                ACTIVE_POSITION["trade_function"] = str(body.get("trade_function") or "MOMENTUM_BURST").upper()
+                ACTIVE_POSITION["entry_quality"] = entry_quality
+                ACTIVE_POSITION["premium_profit_target"] = max(0.01, safe_float(body.get("premium_profit_target"), 2.0))
+                ACTIVE_POSITION["premium_adverse_exit"] = max(2.0, min(3.0, safe_float(body.get("premium_adverse_exit"), 2.5)))
+                pos = dict(ACTIVE_POSITION)
         allocation_record = None
         if TRADE_DIRECTOR_PHASE34_AVAILABLE:
             try:
@@ -7637,7 +7658,17 @@ def api_position_action():
                 except Exception as _td6_archive_err:
                     ACTIVE_POSITION["phase6_archive_error"] = str(_td6_archive_err)
         pos = dict(ACTIVE_POSITION)
+    momentum_lifecycle = None
+    if TRADE_DIRECTOR_PHASE36_AVAILABLE:
+        momentum_lifecycle = td36_build_momentum_lifecycle(
+            position=pos, current_premium=pos.get("option_current_price"),
+            profit_expansion_target=pos.get("premium_profit_target", 2.0),
+            adverse_exit_threshold=pos.get("premium_adverse_exit", 2.5),
+            momentum_state=str(body.get("momentum_state") or "UNKNOWN"),
+            entry_quality=pos.get("entry_quality"),
+        )
     return jsonify({"ok": True, "action": action, "position": pos,
+                    "momentum_lifecycle": momentum_lifecycle,
                     "post_trade_review": pos.get("phase5_review"),
                     "execution_note": "Recorded only; no broker order was sent."})
 
@@ -8748,6 +8779,32 @@ def api_session_allocation_reset():
     if not TRADE_DIRECTOR_PHASE34_AVAILABLE:
         return jsonify({"ok": False, "error": "Phase 34 unavailable"}), 503
     return jsonify(td34_reset_session())
+
+
+@app.route("/api/position/momentum-lifecycle", methods=["GET", "POST"])
+def api_position_momentum_lifecycle():
+    if not TRADE_DIRECTOR_PHASE36_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 36 unavailable"}), 503
+    body = request.get_json(silent=True) or {} if request.method == "POST" else {}
+    with ACTIVE_POSITION_LOCK:
+        position = dict(ACTIVE_POSITION)
+    current = body.get("current_premium", position.get("option_current_price"))
+    result = td36_build_momentum_lifecycle(
+        position=position, current_premium=current,
+        profit_expansion_target=body.get("profit_expansion_target", position.get("premium_profit_target", 2.0)),
+        adverse_exit_threshold=body.get("adverse_exit_threshold", position.get("premium_adverse_exit", 2.5)),
+        momentum_state=str(body.get("momentum_state") or "UNKNOWN"),
+        entry_quality=position.get("entry_quality"),
+    )
+    return jsonify({"ok": True, "momentum_lifecycle": result})
+
+
+@app.route("/api/entry-quality", methods=["POST"])
+def api_entry_quality():
+    if not TRADE_DIRECTOR_PHASE36_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 36 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    return jsonify({"ok": True, "entry_quality": td36_compute_entry_quality(body.get("evidence") or body)})
 
 
 @app.route("/api/position/strategy-orchestration")
