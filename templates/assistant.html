@@ -108,6 +108,7 @@
 <div id="dataLineage"></div>
 <div id="portfolioAllocation"></div>
 <div id="executionCertification"></div>
+<div id="institutionalEvidence"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -456,6 +457,16 @@ function renderExecutionCertification(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 30</div><div class="coach-title">Execution Certification & Production Readiness</div><div class="sub">Broker certification · preview gates · reconciliation · kill switch · live execution locked</div></div><div><div class="label">Readiness</div><div class="phase15-contract ${d.readiness_state==='LIVE_REVIEW_REQUIRED'||d.readiness_state==='PAPER_CERTIFIED'?'good':d.readiness_state==='NOT_READY'?'bad':'warn'}">${esc((d.readiness_state||'--').replace(/_/g,' '))}</div><div class="sub">${num(d.readiness_score,1)} / 100</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Broker Health</div><div class="metric-row"><span>Broker</span><strong>${esc(b.broker||'--')}</strong></div><div class="metric-row"><span>Environment</span><strong>${esc(b.environment||'--')}</strong></div><div class="metric-row"><span>Status</span><strong>${esc(b.status||'--')}</strong></div><div class="metric-row"><span>Score</span><strong>${num(b.score,1)}</strong></div></div><div class="phase15-card"><div class="label">Reconciliation</div><div class="phase15-contract ${r.status==='MATCHED'?'good':r.status==='CRITICAL_MISMATCH'?'bad':'warn'}">${esc((r.status||'PENDING').replace(/_/g,' '))}</div><div class="metric-row"><span>Mismatches</span><strong>${(r.mismatches||[]).length}</strong></div><div class="metric-row"><span>New submissions blocked</span><strong>${r.new_submissions_blocked?'YES':'NO'}</strong></div></div><div class="phase15-card"><div class="label">Safety Controls</div><div class="metric-row"><span>Kill switch</span><strong>${k.active?'ACTIVE':'READY'}</strong></div><div class="metric-row"><span>Human confirmation</span><strong>REQUIRED</strong></div><div class="metric-row"><span>Live submission</span><strong>LOCKED</strong></div><div class="metric-row"><span>Autonomous execution</span><strong>OFF</strong></div></div><div class="phase15-card"><div class="label">Certification Metrics</div><div class="metric-row"><span>Preview attempts</span><strong>${m.preview_attempts||0}</strong></div><div class="metric-row"><span>Preview success</span><strong>${num(m.preview_success_rate_pct,1)}%</strong></div><div class="metric-row"><span>Paper trades</span><strong>${m.paper_trades||0}</strong></div><div class="metric-row"><span>Duplicates prevented</span><strong>${m.duplicate_orders||0}</strong></div></div></div><div class="phase15-card"><div class="label">Readiness Components</div>${checks}</div>${blockers?`<div class="phase15-card"><div class="label">Required Actions</div>${blockers}</div>`:''}<div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+function renderInstitutionalEvidence(x){
+  const el=document.getElementById('institutionalEvidence'); if(!el)return;
+  const d=(x&&x.institutional_evidence)||x||{}; if(!d||d.error){el.innerHTML='';return;}
+  const cal=d.calibration||{}, integ=d.integrity||{};
+  const bands=(cal.bands||[]).map(b=>`<div class="metric-row"><span>ICI ${esc(b.band||'--')} · ${b.count||0} graded</span><strong>${b.win_rate_pct==null?'--':num(b.win_rate_pct,1)+'%'}</strong></div>`).join('');
+  const latest=(d.latest_decisions||[]).slice(0,6).map(v=>`<div class="phase15-row"><strong>${esc(v.direction||'--')} · ${num(v.confidence,1)}</strong><span>${esc((v.decision_state||'--').replace(/_/g,' '))}</span><span>${esc(v.grade||'UNGRADED')}</span><span>${v.realized_points==null?'--':num(v.realized_points,2)+' pts'}</span></div>`).join('');
+  const blockers=(d.blockers||[]).map(v=>`<div class="phase10-check ${String(v).includes('NO_DECISIONS')?'fail':'pass'}">${esc(String(v).replace(/_/g,' '))}</div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 31</div><div class="coach-title">Institutional Evidence & Outcome Validation</div><div class="sub">Immutable decision capture · SPX-bar grading · confidence calibration · no policy mutation</div></div><div><div class="label">Evidence State</div><div class="phase15-contract ${d.graded_count>=100?'good':d.decision_count?'warn':'bad'}">${esc((d.evidence_state||'CAPTURE REQUIRED').replace(/_/g,' '))}</div><div class="sub">${d.graded_count||0} graded / ${d.decision_count||0} captured</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Capture Coverage</div><div class="metric-row"><span>Captured decisions</span><strong>${d.decision_count||0}</strong></div><div class="metric-row"><span>Graded outcomes</span><strong>${d.graded_count||0}</strong></div><div class="metric-row"><span>Awaiting grade</span><strong>${d.ungraded_count||0}</strong></div><div class="metric-row"><span>Coverage</span><strong>${num(d.coverage_pct,1)}%</strong></div></div><div class="phase15-card"><div class="label">Confidence Calibration</div>${bands||'<div class="sub">No graded decisions yet. Bands remain unvalidated.</div>'}</div><div class="phase15-card"><div class="label">Integrity</div><div class="phase15-contract ${integ.status==='VERIFIED'?'good':'bad'}">${esc((integ.status||'--').replace(/_/g,' '))}</div><div class="metric-row"><span>Snapshots</span><strong>${integ.decision_count||0}</strong></div><div class="metric-row"><span>Audit events</span><strong>${integ.event_count||0}</strong></div><div class="metric-row"><span>Errors</span><strong>${(integ.errors||[]).length}</strong></div></div><div class="phase15-card"><div class="label">Controls</div><div class="metric-row"><span>Immutable snapshots</span><strong>YES</strong></div><div class="metric-row"><span>Automatic weight updates</span><strong>OFF</strong></div><div class="metric-row"><span>Policy mutation</span><strong>OFF</strong></div><div class="metric-row"><span>Evidence threshold</span><strong>100 graded</strong></div></div></div><div class="phase15-card"><div class="label">Latest Decisions</div>${latest||'<div class="sub">The first ARMED or EXECUTE decision will be captured automatically.</div>'}</div>${blockers?`<div class="phase15-card"><div class="label">Evidence Gates</div>${blockers}</div>`:''}<div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderShadowValidation(x){
   const el=document.getElementById('shadowValidation'); if(!el)return;
   const d=(x&&x.shadow_validation)||x||{}; const trials=d.trials||[];
@@ -572,7 +583,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, chg, pa, ec, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, chg, pa, ec, ie, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -592,6 +603,7 @@ async function loadDirector(){
       fetch('/api/change-control/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/portfolio/allocation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/execution-certification/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/evidence/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -615,6 +627,7 @@ async function loadDirector(){
     renderDataLineage(dr);
     renderPortfolioAllocation(pa);
     renderExecutionCertification(ec);
+    renderInstitutionalEvidence(ie);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
