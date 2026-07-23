@@ -100,6 +100,7 @@
 <div id="institutionalDecisionEngine"></div>
 <div id="tradeLifecycle"></div>
 <div id="institutionalLearning"></div>
+<div id="replayLaboratory"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -391,6 +392,16 @@ function renderInstitutionalLearning(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 22</div><div class="coach-title">Institutional Learning Center</div><div class="sub">Outcome intelligence · calibration · attribution · similarity · advisory feedback</div></div><div><div class="label">Learning State</div><div class="phase15-contract ${d.learning_state==='ESTABLISHED'?'good':'warn'}">${esc(d.learning_state||'COLLECTING')}</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Learning Ledger</div><div class="metric-row"><span>Trades learned</span><strong>${s.trades_learned||0}</strong></div><div class="metric-row"><span>Win rate</span><strong>${s.win_rate==null?'--':num(s.win_rate,1)+'%'}</strong></div><div class="metric-row"><span>Expectancy</span><strong>${s.expectancy_r==null?'--':num(s.expectancy_r,2)+'R'}</strong></div><div class="metric-row"><span>Decision quality</span><strong>${s.average_decision_quality==null?'--':num(s.average_decision_quality,1)}</strong></div><div class="metric-row"><span>Calibration error</span><strong>${cal.mean_absolute_calibration_error==null?'--':num(cal.mean_absolute_calibration_error,1)+' pts'}</strong></div></div><div class="phase15-card"><div class="label">Engine Attribution</div>${attrs||'<div class="sub">Waiting for completed trades.</div>'}</div><div class="phase15-card"><div class="label">Strategy Scorecards</div>${strategies||'<div class="sub">No strategy cohort is available yet.</div>'}</div><div class="phase15-card"><div class="label">Similar Historical Trades</div>${similar||'<div class="sub">Similarity requires archived completed trades.</div>'}</div></div>${recs?`<div class="phase15-card"><div class="label">Adaptive Recommendations</div>${recs}</div>`:''}<div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+function renderReplayLaboratory(x){
+  const el=document.getElementById('replayLaboratory'); if(!el)return;
+  const d=(x&&x.replay_laboratory)||x||{}, c=d.replay_case||{}, sc=c.decision_scorecard||{};
+  const events=(c.decision_timeline||[]).slice(0,10).map(e=>`<div class="metric-row"><span>${esc((e.engine||'').replace(/_/g,' '))} · ${esc(e.event||'')}</span><strong>${esc(e.value==null?'--':e.value)}</strong></div>`).join('');
+  const cf=(c.counterfactuals||[]).map(v=>`<div class="metric-row"><span>${esc((v.scenario||'').replace(/_/g,' '))}</span><strong>${v.estimated_r==null?'--':num(v.estimated_r,2)+'R'}</strong></div>`).join('');
+  const strategies=(c.strategy_comparison||[]).map(v=>`<div class="metric-row"><span>${esc((v.strategy||'').replace(/_/g,' '))}${v.simulation_only?' (sim)':''}</span><strong>${num(v.estimated_r,2)}R</strong></div>`).join('');
+  const lessons=(c.lessons_learned||[]).map(v=>`<div class="phase10-check pass">• ${esc(v)}</div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 23</div><div class="coach-title">Replay & Decision Laboratory</div><div class="sub">Read-only reconstruction · decision timeline · counterfactual audit</div></div><div><div class="label">Cases</div><div class="phase15-contract ${c.ok?'good':'warn'}">${d.case_count||0}</div></div></div>${c.ok?`<div class="phase15-grid"><div class="phase15-card"><div class="label">Selected Case</div><div class="phase15-contract">${esc(c.trade_id||'--')}</div><div class="metric-row"><span>Strategy</span><strong>${esc(c.strategy||'--')}</strong></div><div class="metric-row"><span>Actual outcome</span><strong>${c.actual_outcome?.r_multiple==null?'--':num(c.actual_outcome.r_multiple,2)+'R'}</strong></div><div class="metric-row"><span>Institutional score</span><strong>${num(sc.overall_institutional_score,1)} · ${esc(sc.grade||'--')}</strong></div></div><div class="phase15-card"><div class="label">Decision Timeline</div>${events}</div><div class="phase15-card"><div class="label">Counterfactuals</div>${cf}</div><div class="phase15-card"><div class="label">Strategy Comparison</div>${strategies}</div></div>${lessons?`<div class="phase15-card"><div class="label">Lessons Learned</div>${lessons}</div>`:''}`:'<div class="phase15-card"><div class="sub">Archive a completed Phase 22 trade to create the first replay case.</div></div>'}<div class="phase7-note">${esc(d.safety_note||c.safety_note||'')}</div></div>`;
+}
+
 function renderTradeHero(m){
   const el=document.getElementById('tradeHero');
   if(!m||m.status!=='MONITORING'||!m.position){el.className='trade-hero';el.innerHTML='';return;}
@@ -493,7 +504,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -506,6 +517,7 @@ async function loadDirector(){
       fetch('/api/position/institutional-decision-engine',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/trade-lifecycle',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/institutional-learning',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/replay-laboratory',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -521,6 +533,7 @@ async function loadDirector(){
     renderInstitutionalDecisionEngine(de);
     renderTradeLifecycle(tl);
     renderInstitutionalLearning(il);
+    renderReplayLaboratory(rl);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
