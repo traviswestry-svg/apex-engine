@@ -109,6 +109,7 @@
 <div id="portfolioAllocation"></div>
 <div id="executionCertification"></div>
 <div id="institutionalEvidence"></div>
+<div id="performanceCalibration"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -467,6 +468,16 @@ function renderInstitutionalEvidence(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 31</div><div class="coach-title">Institutional Evidence & Outcome Validation</div><div class="sub">Immutable decision capture · SPX-bar grading · confidence calibration · no policy mutation</div></div><div><div class="label">Evidence State</div><div class="phase15-contract ${d.graded_count>=100?'good':d.decision_count?'warn':'bad'}">${esc((d.evidence_state||'CAPTURE REQUIRED').replace(/_/g,' '))}</div><div class="sub">${d.graded_count||0} graded / ${d.decision_count||0} captured</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Capture Coverage</div><div class="metric-row"><span>Captured decisions</span><strong>${d.decision_count||0}</strong></div><div class="metric-row"><span>Graded outcomes</span><strong>${d.graded_count||0}</strong></div><div class="metric-row"><span>Awaiting grade</span><strong>${d.ungraded_count||0}</strong></div><div class="metric-row"><span>Coverage</span><strong>${num(d.coverage_pct,1)}%</strong></div></div><div class="phase15-card"><div class="label">Confidence Calibration</div>${bands||'<div class="sub">No graded decisions yet. Bands remain unvalidated.</div>'}</div><div class="phase15-card"><div class="label">Integrity</div><div class="phase15-contract ${integ.status==='VERIFIED'?'good':'bad'}">${esc((integ.status||'--').replace(/_/g,' '))}</div><div class="metric-row"><span>Snapshots</span><strong>${integ.decision_count||0}</strong></div><div class="metric-row"><span>Audit events</span><strong>${integ.event_count||0}</strong></div><div class="metric-row"><span>Errors</span><strong>${(integ.errors||[]).length}</strong></div></div><div class="phase15-card"><div class="label">Controls</div><div class="metric-row"><span>Immutable snapshots</span><strong>YES</strong></div><div class="metric-row"><span>Automatic weight updates</span><strong>OFF</strong></div><div class="metric-row"><span>Policy mutation</span><strong>OFF</strong></div><div class="metric-row"><span>Evidence threshold</span><strong>100 graded</strong></div></div></div><div class="phase15-card"><div class="label">Latest Decisions</div>${latest||'<div class="sub">The first ARMED or EXECUTE decision will be captured automatically.</div>'}</div>${blockers?`<div class="phase15-card"><div class="label">Evidence Gates</div>${blockers}</div>`:''}<div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+function renderPerformanceCalibration(x){
+  const el=document.getElementById('performanceCalibration'); if(!el)return;
+  const d=(x&&x.performance_calibration)||x||{}; if(!d||d.error){el.innerHTML='';return;}
+  const p=(d.performance||{}).overall||{}, cal=d.calibration||{}, attr=d.engine_attribution||{};
+  const bands=(cal.bands||[]).slice(-5).map(b=>`<div class="metric-row"><span>${esc(b.band)} · ${b.count} samples</span><strong>${num(b.actual_win_pct,1)}% / ${num(b.predicted_win_pct,1)}%</strong></div>`).join('');
+  const engines=(attr.engines||[]).slice(0,6).map(e=>`<div class="phase15-row"><strong>${esc(e.engine)}</strong><span>${e.samples} samples</span><span>${e.expectancy_lift_points==null?'--':num(e.expectancy_lift_points,3)+' pts lift'}</span><span>${esc((e.evidence_state||'').replace(/_/g,' '))}</span></div>`).join('');
+  const blockers=(d.blockers||[]).map(v=>`<div class="phase10-check warn">${esc(String(v).replace(/_/g,' '))}</div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 32</div><div class="coach-title">Performance & Calibration Center</div><div class="sub">Empirical expectancy · confidence reliability · engine attribution · immutable evidence only</div></div><div><div class="label">Analytics State</div><div class="phase15-contract ${d.analytics_state==='REVIEW_READY'?'good':'warn'}">${esc((d.analytics_state||'COLLECTING_EVIDENCE').replace(/_/g,' '))}</div><div class="sub">${p.scored_count||0} graded decisions</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Realized Performance</div><div class="metric-row"><span>Win rate</span><strong>${p.win_rate_pct==null?'--':num(p.win_rate_pct,1)+'%'}</strong></div><div class="metric-row"><span>Expectancy</span><strong>${p.expectancy_points==null?'--':num(p.expectancy_points,3)+' pts'}</strong></div><div class="metric-row"><span>Average MFE</span><strong>${p.avg_mfe_points==null?'--':num(p.avg_mfe_points,3)}</strong></div><div class="metric-row"><span>Average MAE</span><strong>${p.avg_mae_points==null?'--':num(p.avg_mae_points,3)}</strong></div></div><div class="phase15-card"><div class="label">Calibration Quality</div><div class="metric-row"><span>Brier score</span><strong>${cal.brier_score==null?'--':num(cal.brier_score,4)}</strong></div><div class="metric-row"><span>Calibration error</span><strong>${cal.expected_calibration_error==null?'--':num(cal.expected_calibration_error*100,2)+'%'}</strong></div><div class="metric-row"><span>Monotonic confidence</span><strong>${cal.confidence_monotonic==null?'UNPROVEN':cal.confidence_monotonic?'YES':'NO'}</strong></div><div class="metric-row"><span>Review threshold</span><strong>100</strong></div></div><div class="phase15-card"><div class="label">Confidence Reliability</div>${bands||'<div class="sub">No graded confidence bands yet.</div>'}</div><div class="phase15-card"><div class="label">Governance Boundary</div><div class="metric-row"><span>Read only</span><strong>YES</strong></div><div class="metric-row"><span>Weight updates</span><strong>OFF</strong></div><div class="metric-row"><span>Threshold changes</span><strong>OFF</strong></div><div class="metric-row"><span>Broker access</span><strong>NONE</strong></div></div></div><div class="phase15-card"><div class="label">Engine Attribution</div>${engines||'<div class="sub">Engine contribution snapshots have not accumulated enough evidence.</div>'}</div>${blockers?`<div class="phase15-card"><div class="label">Analytics Gates</div>${blockers}</div>`:''}<div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderShadowValidation(x){
   const el=document.getElementById('shadowValidation'); if(!el)return;
   const d=(x&&x.shadow_validation)||x||{}; const trials=d.trials||[];
@@ -583,7 +594,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, chg, pa, ec, ie, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, chg, pa, ec, ie, pc, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -604,6 +615,7 @@ async function loadDirector(){
       fetch('/api/portfolio/allocation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/execution-certification/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/evidence/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/performance-calibration/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -628,6 +640,7 @@ async function loadDirector(){
     renderPortfolioAllocation(pa);
     renderExecutionCertification(ec);
     renderInstitutionalEvidence(ie);
+    renderPerformanceCalibration(pc);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
