@@ -59,6 +59,7 @@
 .phase11-panel{margin:0 0 14px;border:1px solid rgba(139,92,246,.48);background:linear-gradient(135deg,#120b22,#09121f);border-radius:16px;padding:15px}.phase11-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.phase11-mode{font-size:30px;font-weight:1000;margin-top:5px}.phase11-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:12px}.phase11-card{background:#0a0d18;border:1px solid #3b2d5f;border-radius:12px;padding:11px}.phase11-big{font-size:25px;font-weight:900;margin-top:5px}.phase11-budget{height:8px;background:#191329;border-radius:999px;overflow:hidden;margin-top:8px}.phase11-budget span{display:block;height:100%;background:linear-gradient(90deg,#8b5cf6,#6ee7f9)}.phase11-score-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-top:10px}.phase11-score{padding:8px;background:#080b13;border:1px solid #2e2449;border-radius:9px;text-align:center}.phase11-score strong{display:block;font-size:19px}.phase11-strategies{margin-top:10px}.phase11-strategy{display:grid;grid-template-columns:1.4fr repeat(4,.7fr);gap:7px;padding:6px 0;border-bottom:1px solid #2b2142;font-size:11px}@media(max-width:760px){.phase11-head{display:block}.phase11-score-grid{grid-template-columns:repeat(2,1fr)}.phase11-strategy{grid-template-columns:1fr 1fr}}
 .phase15-panel{margin:0 0 14px;border:1px solid rgba(168,85,247,.55);background:linear-gradient(135deg,#140d21,#090f19);border-radius:16px;padding:15px}.phase15-head{display:flex;justify-content:space-between;gap:12px}.phase15-grid{display:grid;grid-template-columns:1.1fr 1.9fr;gap:10px;margin-top:12px}.phase15-card{background:#080f19;border:1px solid #3c2a50;border-radius:12px;padding:11px}.phase15-contract{font-size:22px;font-weight:950;margin-top:5px}.phase15-row{display:grid;grid-template-columns:1.3fr .65fr .55fr .55fr;gap:7px;padding:8px;border:1px solid #342747;border-radius:9px;margin-top:7px;font-size:11px;align-items:center}.phase15-row.best{border-color:#7e22ce;background:rgba(168,85,247,.08)}.phase15-tag{display:inline-block;border:1px solid #55376e;border-radius:99px;padding:3px 7px;font-size:10px;margin:3px 3px 0 0}.phase15-guard{margin-top:10px;padding:9px;border:1px dashed #60427c;border-radius:10px;color:#bfa9d4;font-size:11px}@media(max-width:760px){.phase15-grid{grid-template-columns:1fr}.phase15-head{display:block}.phase15-row{grid-template-columns:1fr .5fr}.phase15-row span:nth-child(n+3){grid-column:auto}}
 .session-allocation-panel{margin:14px 0;background:#0b1422;border:1px solid #2b405d;border-radius:16px;padding:15px}.allocation-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.allocation-title{font-size:17px;font-weight:900}.allocation-seq{color:var(--cyan);font-weight:900}.allocation-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-top:12px}.allocation-card{background:#07101c;border:1px solid #26384f;border-radius:12px;padding:11px}.allocation-big{font-size:24px;font-weight:1000;margin-top:5px}.allocation-note{color:#b7c7dd;font-size:12px;line-height:1.5;margin-top:10px}.function-router{margin-top:12px;border-top:1px solid #26384f;padding-top:12px}.function-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.function-toolbar select{background:#07101c;color:#eaf3ff;border:1px solid #36516f;border-radius:8px;padding:8px}.function-ranking{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px}.function-card{background:#07101c;border:1px solid #26384f;border-radius:10px;padding:9px}.function-card.selected{border-color:#22d3ee}.function-grade{font-size:20px;font-weight:1000}.function-meta{font-size:10px;color:#91a6bf;margin-top:4px}
+.mobile-alert-panel{margin:14px 0;background:linear-gradient(135deg,#07151b,#0b1020);border:1px solid rgba(34,211,238,.45);border-radius:16px;padding:15px}.mobile-alert-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.mobile-alert-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-top:12px}.mobile-alert-card{background:#07101c;border:1px solid #26384f;border-radius:12px;padding:11px}.mobile-alert-big{font-size:22px;font-weight:1000;margin-top:5px}.mobile-alert-history{margin-top:10px;display:grid;gap:6px}.mobile-alert-row{display:grid;grid-template-columns:1fr .7fr .6fr;gap:8px;padding:8px;border:1px solid #20364c;border-radius:9px;font-size:11px}.mobile-alert-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}@media(max-width:760px){.mobile-alert-head{display:block}.mobile-alert-row{grid-template-columns:1fr 1fr}.mobile-alert-row span:last-child{grid-column:1/-1}}
 </style>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/trader_workflow.css') }}?v={{ asset_version or version }}"></head><body>
 <nav class="apex-nav">
@@ -72,6 +73,7 @@
 </nav>
 <div class="wrap"><div id="app" class="panel">Loading Active Trade Director…</div>
 <div id="sessionAllocation" class="session-allocation-panel"></div>
+<div id="mobileMomentumAlerts" class="mobile-alert-panel"></div>
 <div class="assistant-workflow-note"><strong>Trader Workflow:</strong> current directive and position controls remain primary. Phase numbers are hidden from the live interface; all underlying governance and evidence remain active.</div>
 <div class="sub-header">
   <div><div class="brand">APEX Active Trade Director</div>
@@ -749,6 +751,19 @@ async function loadDirector(){
     loadSessionAllocation(d);
   }catch(e){el.innerHTML='<div class="banner RED"><div class="banner-title">ERROR</div><div class="banner-msg">'+esc(e.message)+'</div></div>';}
 }
+
+async function loadMobileMomentumAlerts(){
+  const el=document.getElementById('mobileMomentumAlerts'); if(!el)return;
+  try{
+    const r=await fetch('/api/mobile-momentum-alerts/status?limit=8',{cache:'no-store'}); const j=await r.json();
+    const d=j.mobile_momentum_alerts||{}; const last=d.last_alert||{};
+    const rows=(d.history||[]).map(x=>`<div class="mobile-alert-row"><strong>${esc((x.stage||'').replace(/_/g,' '))}</strong><span>${esc(x.direction||'--')} · ${esc(x.trade_function||'--')}</span><span class="${x.delivered?'good':'bad'}">${x.delivered?'DELIVERED':'FAILED'}</span></div>`).join('');
+    el.innerHTML=`<div class="mobile-alert-head"><div><div class="label">MOBILE OPERATIONS</div><div class="allocation-title">Momentum Telegram Intelligence</div><div class="sub">Watch → Primed → Entry Window → Take Profit / Exit Now · advisory only</div></div><span class="pill ${d.telegram_configured?'good':'warn'}">${d.telegram_configured?'TELEGRAM READY':'CONFIGURATION REQUIRED'}</span></div><div class="mobile-alert-grid"><div class="mobile-alert-card"><div class="label">Last Stage</div><div class="mobile-alert-big">${esc((last.stage||'NONE').replace(/_/g,' '))}</div></div><div class="mobile-alert-card"><div class="label">Delivered</div><div class="mobile-alert-big">${d.delivery_count||0}</div></div><div class="mobile-alert-card"><div class="label">Failures</div><div class="mobile-alert-big ${d.failure_count?'bad':'good'}">${d.failure_count||0}</div></div><div class="mobile-alert-card"><div class="label">Cooldown</div><div class="mobile-alert-big">${Math.round(Number(d.cooldown_seconds||0)/60)}m</div></div></div><div class="mobile-alert-actions"><button class="btn" onclick="testMobileTelegram()">Send Test Telegram</button><button class="btn" onclick="loadMobileMomentumAlerts()">Refresh Status</button></div><div class="mobile-alert-history">${rows||'<div class="sub">No Phase 37 alerts recorded yet.</div>'}</div><div class="allocation-note">${esc(d.execution_note||'Alerts never place, modify, or close broker orders.')}</div>`;
+  }catch(e){el.innerHTML='<div class="allocation-title">Mobile Momentum Alerts unavailable</div><div class="sub">'+esc(e.message)+'</div>';}
+}
+async function testMobileTelegram(){
+  try{const r=await fetch('/api/mobile-momentum-alerts/test',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Telegram test failed');alert('Test Telegram delivered.');loadMobileMomentumAlerts();}catch(e){alert(e.message);}
+}
 function selectTradeFunction(value){SELECTED_FUNCTION=value||'AUTO';loadSessionAllocation(CURRENT_DIRECTOR);}
 function styleEvidence(d={}){
   const ia=d.institutional_analysis||{}, m=d.metrics||{}, p=d.position||{};
@@ -788,8 +803,8 @@ async function loadSessionAllocation(d=CURRENT_DIRECTOR||{}){
   }catch(e){el.innerHTML='<div class="allocation-title">Trade Function Router unavailable</div><div class="sub">'+esc(e.message)+'</div>';}
 }
 
-loadDirector(); loadSessionAllocation();
-setInterval(loadDirector, 5000); setInterval(loadSessionAllocation, 15000);
+loadDirector(); loadSessionAllocation(); loadMobileMomentumAlerts();
+setInterval(loadDirector, 5000); setInterval(loadSessionAllocation, 15000); setInterval(loadMobileMomentumAlerts, 30000);
 </script>
 <script src="{{ url_for('static', filename='js/trader_workflow.js') }}?v={{ asset_version or version }}"></script>
 </body></html>
