@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/apex_os.css') }}?v={{ asset_version or version }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/trader_workflow.css') }}?v={{ asset_version or version }}">
 <style>
   .apex-nav a.nav-trade{color:#38bdf8;font-weight:700}
   .apex-nav a.nav-trade:hover{color:#7dd3fc}
@@ -67,6 +68,14 @@
     {% endif %}
   </div>
 
+  <!-- Phase 33 Trader Workflow Cockpit -->
+  <section id="traderCockpit" class="trader-cockpit" aria-label="Trader decision cockpit">
+    <div class="tc-top"><div><div class="tc-eyebrow">Live Decision</div><div id="tcDecision" class="tc-decision">OBSERVE</div><div id="tcSummary" class="tc-summary">Waiting for a complete institutional decision.</div></div><div class="tc-score"><strong id="tcConfidence">—</strong><span>Confidence</span></div></div>
+    <div class="tc-grid"><div class="tc-cell"><span>Entry</span><strong id="tcEntry">—</strong></div><div class="tc-cell"><span>Invalidation / Stop</span><strong id="tcStop">—</strong></div><div class="tc-cell"><span>First Target</span><strong id="tcTarget">—</strong></div><div class="tc-cell"><span>Readiness / Size</span><strong id="tcSize">—</strong></div></div>
+    <div class="tc-grid"><div class="tc-cell"><span>Bias</span><strong id="tcBias">NEUTRAL</strong></div><div class="tc-cell"><span>Structure</span><strong id="tcStrategy">NO TRADE</strong></div><div class="tc-cell"><span>Risk Gate</span><strong>CONFIRMATION GATED</strong></div><div class="tc-cell"><span>Broker</span><strong>LOCKED</strong></div></div>
+    <div class="tc-evidence"><div id="tcDealer" class="tc-chip neutral">Dealer: —</div><div id="tcFlow" class="tc-chip neutral">Flow: —</div><div id="tcAuction" class="tc-chip neutral">Auction: —</div></div>
+  </section>
+
   <!-- APEX 21 Institutional Decision Banner -->
   <section id="iwBanner" class="iw-banner NEUTRAL">
     <div><div class="iw-k">Institutional Decision</div><div id="iwDecision" class="iw-v">WARMING</div><div id="iwHeadline" class="iw-headline">Institutional workspace loading…</div></div>
@@ -76,12 +85,14 @@
     <div><div class="iw-k">Strategy</div><div id="iwStrategy" class="iw-v">—</div></div>
     <div><div class="iw-k">Readiness</div><div id="iwReadiness" class="iw-v">—</div></div>
   </section>
+  <details class="workflow-details"><summary>Supporting intelligence and system context</summary><div class="workflow-details-body">
   <div class="iw-suite">
     <section class="iw-card"><div class="iw-title">Volume Profile Intelligence</div><div class="iw-metrics"><div><span>Active</span><strong id="iwGreen" class="iw-heat GREEN">—</strong></div><div><span>Stalled</span><strong id="iwRed" class="iw-heat RED">—</strong></div><div><span>Heat</span><strong id="iwHeat">—</strong></div></div><div class="iw-links"><a href="/api/institutional-volume-profile/diagnostics" target="_blank">Profile diagnostics</a> · <a href="/api/institutional-volume-profile/levels" target="_blank">Ranked levels</a></div></section>
     <section class="iw-card"><div class="iw-title">Execution Workspace</div><div class="iw-metrics"><div><span>Entry</span><strong id="iwEntry">—</strong></div><div><span>Stop</span><strong id="iwStop">—</strong></div><div><span>TP1</span><strong id="iwTp1">—</strong></div></div><div class="iw-links"><a href="/api/institutional-workspace/status" target="_blank">Full workspace</a> · <a href="/api/institutional-workspace/layout" target="_blank">Context layout</a></div></section>
     <section class="iw-card"><div class="iw-title">Mission Control 2.0</div><div class="iw-metrics"><div><span>State</span><strong id="iwMcState">—</strong></div><div><span>Execution</span><strong id="iwMcExec">—</strong></div><div><span>Broker</span><strong id="iwMcBroker">LOCKED</strong></div></div><div class="iw-links"><a href="/api/mission-control-v2/diagnostics" target="_blank">Grouped diagnostics</a></div></section>
     <section class="iw-card"><div class="iw-title">Market Memory</div><div class="iw-metrics"><div><span>State</span><strong id="mmState">DORMANT</strong></div><div><span>Sessions</span><strong id="mmSessions">0</strong></div><div><span>Learning</span><strong id="mmLearning">LOCKED</strong></div></div><div class="iw-links"><a href="/api/market-memory/diagnostics" target="_blank">Memory diagnostics</a><a href="/api/market-memory/similar" target="_blank">Similar sessions</a></div></section>
   </div>
+  </div></details>
 
   <!-- Institutional Ribbon -->
   <div id="ribbon" class="ribbon sec-mb"></div>
@@ -1509,5 +1520,6 @@ fetch('/api/market-memory/status',{cache:'no-store'}).then(r=>r.json()).then(x=>
  if(a)a.textContent=x.state||'DORMANT'; if(b)b.textContent=String(x.sessions||0); if(c)c.textContent=x.learning_ready?'READY':'LOCKED';
 }).catch(()=>{});
 </script>
+<script src="{{ url_for('static', filename='js/trader_workflow.js') }}?v={{ asset_version or version }}"></script>
 </body>
 </html>
