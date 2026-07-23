@@ -101,6 +101,7 @@
 <div id="tradeLifecycle"></div>
 <div id="institutionalLearning"></div>
 <div id="replayLaboratory"></div>
+<div id="policyGovernance"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -402,6 +403,13 @@ function renderReplayLaboratory(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 23</div><div class="coach-title">Replay & Decision Laboratory</div><div class="sub">Read-only reconstruction · decision timeline · counterfactual audit</div></div><div><div class="label">Cases</div><div class="phase15-contract ${c.ok?'good':'warn'}">${d.case_count||0}</div></div></div>${c.ok?`<div class="phase15-grid"><div class="phase15-card"><div class="label">Selected Case</div><div class="phase15-contract">${esc(c.trade_id||'--')}</div><div class="metric-row"><span>Strategy</span><strong>${esc(c.strategy||'--')}</strong></div><div class="metric-row"><span>Actual outcome</span><strong>${c.actual_outcome?.r_multiple==null?'--':num(c.actual_outcome.r_multiple,2)+'R'}</strong></div><div class="metric-row"><span>Institutional score</span><strong>${num(sc.overall_institutional_score,1)} · ${esc(sc.grade||'--')}</strong></div></div><div class="phase15-card"><div class="label">Decision Timeline</div>${events}</div><div class="phase15-card"><div class="label">Counterfactuals</div>${cf}</div><div class="phase15-card"><div class="label">Strategy Comparison</div>${strategies}</div></div>${lessons?`<div class="phase15-card"><div class="label">Lessons Learned</div>${lessons}</div>`:''}`:'<div class="phase15-card"><div class="sub">Archive a completed Phase 22 trade to create the first replay case.</div></div>'}<div class="phase7-note">${esc(d.safety_note||c.safety_note||'')}</div></div>`;
 }
 
+function renderPolicyGovernance(x){
+  const el=document.getElementById('policyGovernance'); if(!el)return;
+  const d=(x&&x.policy_governance)||x||{}; if(!d||d.error){el.innerHTML='';return;}
+  const rows=(d.proposals||[]).slice(0,8).map(p=>`<div class="phase15-card"><div class="label">${esc((p.target_phase||'--')+' · '+(p.policy_area||'').replace(/_/g,' '))}</div><div class="phase15-contract ${p.status==='SHADOW_READY'?'good':'warn'}">${esc((p.status||'DRAFT').replace(/_/g,' '))}</div><div class="metric-row"><span>Evidence</span><strong>${p.evidence_samples||0} samples</strong></div><div class="metric-row"><span>Risk</span><strong>${esc(p.implementation_risk||'--')}</strong></div><div class="sub">${esc(p.proposed_policy||'')}</div><div class="phase7-note">${esc(p.rationale||'')}</div></div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 24</div><div class="coach-title">Institutional Policy Governance Laboratory</div><div class="sub">Evidence gates · shadow validation · human approval · rollback discipline</div></div><div><div class="label">Governance State</div><div class="phase15-contract ${d.shadow_ready_count?'good':'warn'}">${esc((d.governance_state||'COLLECTING_EVIDENCE').replace(/_/g,' '))}</div><div class="sub">${d.proposal_count||0} proposals · ${d.shadow_ready_count||0} shadow ready</div></div></div><div class="phase15-grid">${rows||'<div class="phase15-card"><div class="sub">No policy proposal has enough evidence yet. Phase 24 will continue collecting learning and replay cases.</div></div>'}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderTradeHero(m){
   const el=document.getElementById('tradeHero');
   if(!m||m.status!=='MONITORING'||!m.position){el.className='trade-hero';el.innerHTML='';return;}
@@ -504,7 +512,7 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, so, oi, ed] = await Promise.all([
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, so, oi, ed] = await Promise.all([
       fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
       fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
       fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
@@ -518,6 +526,7 @@ async function loadDirector(){
       fetch('/api/position/trade-lifecycle',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/institutional-learning',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/replay-laboratory',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/position/policy-governance',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
@@ -534,6 +543,7 @@ async function loadDirector(){
     renderTradeLifecycle(tl);
     renderInstitutionalLearning(il);
     renderReplayLaboratory(rl);
+    renderPolicyGovernance(pg);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
