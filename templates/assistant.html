@@ -104,6 +104,7 @@
 <div id="policyGovernance"></div>
 <div id="shadowValidation"></div>
 <div id="institutionalCommandCenter"></div>
+<div id="dataLineage"></div>
 <div id="strategyOrchestration"></div>
 <div id="optionsIntelligence"></div>
 <div id="executionDesk"></div>
@@ -414,6 +415,16 @@ function renderInstitutionalCommandCenter(x){
   el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 26</div><div class="coach-title">Institutional Performance & Intelligence Command Center</div><div class="sub">System health · SCI · performance · drift · engine ranking</div></div><div><div class="label">System Confidence Index</div><div class="phase15-contract ${sci.status==='GREEN'?'good':sci.status==='RED'?'bad':'warn'}">${num(sci.score,1)} · ${esc(sci.status||'--')}</div><div class="sub">${esc((d.system_state||'--').replace(/_/g,' '))}</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">System Health</div><div class="metric-row"><span>Average health</span><strong>${num(health.average_score,1)}</strong></div><div class="metric-row"><span>Green / Yellow / Red</span><strong>${health.green||0} / ${health.yellow||0} / ${health.red||0}</strong></div><div class="metric-row"><span>Trades learned</span><strong>${perf.sample_size||0}</strong></div></div><div class="phase15-card"><div class="label">Institutional Scorecard</div><div class="metric-row"><span>Win rate</span><strong>${perf.win_rate_pct==null?'--':num(perf.win_rate_pct,1)+'%'}</strong></div><div class="metric-row"><span>Expectancy</span><strong>${perf.expectancy_r==null?'--':num(perf.expectancy_r,3)+'R'}</strong></div><div class="metric-row"><span>Profit factor</span><strong>${perf.profit_factor==null?'--':num(perf.profit_factor,2)}</strong></div><div class="metric-row"><span>Max drawdown</span><strong>${money(perf.maximum_drawdown||0)}</strong></div></div><div class="phase15-card"><div class="label">Drift Detection</div><div class="phase15-contract ${drift.state==='STABLE'?'good':drift.state==='DRIFT_DETECTED'?'bad':'warn'}">${esc((drift.state||'--').replace(/_/g,' '))}</div>${alerts||'<div class="sub">No material drift detected.</div>'}</div><div class="phase15-card"><div class="label">Engine Ranking</div>${ranks||'<div class="sub">Engine evidence is still initializing.</div>'}</div></div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
 }
 
+
+function renderDataLineage(x){
+  const el=document.getElementById('dataLineage'); if(!el)return;
+  const d=(x&&x.data_lineage)||x||{}; if(!d||d.error){el.innerHTML='';return;}
+  const integ=d.integrity||{};
+  const events=(d.latest_events||[]).slice(0,8).map(e=>`<div class="phase15-row"><strong>Phase ${esc(e.phase||'--')} · ${esc(e.engine_name||e.event_type||'--')}</strong><span>${esc(e.validation_status||'--')}</span><span>${e.confidence==null?'--':num(e.confidence,1)}</span><span>${esc((e.payload_hash||'').slice(0,10))}</span></div>`).join('');
+  const versions=(d.engine_versions||[]).slice(0,6).map(v=>`<div class="metric-row"><span>${esc(v.engine_name||'--')}</span><strong>${esc(v.engine_version||'--')}</strong></div>`).join('');
+  el.innerHTML=`<div class="phase15-panel"><div class="phase15-head"><div><div class="label">TRADE DIRECTOR PHASE 28</div><div class="coach-title">Institutional Data Integrity & Lineage Explorer</div><div class="sub">Provenance · immutable audit chain · source ancestry · tamper detection</div></div><div><div class="label">Integrity State</div><div class="phase15-contract ${integ.status==='VERIFIED'?'good':integ.status==='TAMPER_DETECTED'?'bad':'warn'}">${esc((integ.status||d.lineage_state||'--').replace(/_/g,' '))}</div><div class="sub">${num(integ.integrity_score,1)} integrity score</div></div></div><div class="phase15-grid"><div class="phase15-card"><div class="label">Lineage Coverage</div><div class="metric-row"><span>Coverage</span><strong>${num(d.lineage_coverage_pct,1)}%</strong></div><div class="metric-row"><span>Phases with evidence</span><strong>${d.phases_with_evidence||0} / ${d.phases_expected||0}</strong></div><div class="metric-row"><span>Total lineage events</span><strong>${d.total_lineage_events||0}</strong></div><div class="metric-row"><span>Relationships</span><strong>${integ.relationship_count||0}</strong></div></div><div class="phase15-card"><div class="label">Integrity Verification</div><div class="metric-row"><span>Critical</span><strong>${integ.critical_count||0}</strong></div><div class="metric-row"><span>Errors</span><strong>${integ.error_count||0}</strong></div><div class="metric-row"><span>Warnings</span><strong>${integ.warning_count||0}</strong></div><div class="metric-row"><span>Events checked</span><strong>${integ.event_count||0}</strong></div></div><div class="phase15-card"><div class="label">Engine Versions</div>${versions||'<div class="sub">Version evidence initializes with the first coordinated scan.</div>'}</div><div class="phase15-card"><div class="label">Controls</div><div class="metric-row"><span>Append only</span><strong>YES</strong></div><div class="metric-row"><span>Immutable events</span><strong>YES</strong></div><div class="metric-row"><span>Broker access</span><strong>NO</strong></div><div class="metric-row"><span>Risk mutation</span><strong>NO</strong></div></div></div><div class="phase15-card"><div class="label">Latest Lineage Events</div>${events||'<div class="sub">Lineage events will appear after the next coordinated Trade Director evaluation.</div>'}</div><div class="phase7-note">${esc(d.safety_note||'')}</div></div>`;
+}
+
 function renderShadowValidation(x){
   const el=document.getElementById('shadowValidation'); if(!el)return;
   const d=(x&&x.shadow_validation)||x||{}; const trials=d.trials||[];
@@ -566,6 +577,7 @@ async function loadDirector(){
     renderPolicyGovernance(pg);
     renderShadowValidation(sv);
     renderInstitutionalCommandCenter(cc);
+    renderDataLineage(cc);
     renderStrategyOrchestration(so);
     renderOptionsIntelligence(oi);
     renderExecutionDesk(ed);
