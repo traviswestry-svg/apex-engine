@@ -344,6 +344,16 @@ except Exception as _td34_err:
     TRADE_DIRECTOR_PHASE34_AVAILABLE = False
     print(f"Trade Director Phase 34 unavailable: {_td34_err}", flush=True)
 
+# APEX Trade Director Phase 35 — multi-horizon trade-function router
+try:
+    from engine.trade_director_trade_function_router import (
+        build_trade_function_router as td35_build_trade_function_router,
+    )
+    TRADE_DIRECTOR_PHASE35_AVAILABLE = True
+except Exception as _td35_err:
+    TRADE_DIRECTOR_PHASE35_AVAILABLE = False
+    print(f"Trade Director Phase 35 unavailable: {_td35_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -7542,6 +7552,9 @@ def api_position():
                     ticker=ticker, side=side, quantity=quantity,
                     risk_dollars=safe_float(body.get("risk_dollars"), 0.0),
                     environment_quality=str(body.get("environment_quality") or "UNKNOWN"),
+                    trade_function=str(body.get("trade_function") or "UNSPECIFIED"),
+                    style_fit_grade=str(body.get("style_fit_grade") or "UNRATED"),
+                    style_fit_score=safe_float(body.get("style_fit_score"), 0.0),
                 )
             except Exception as _td34_record_err:
                 allocation_record = {"ok": False, "recorded": False, "error": str(_td34_record_err)}
@@ -8667,17 +8680,67 @@ def api_performance_calibration_ledger():
         direction=request.args.get("direction"), grade=request.args.get("grade"))})
 
 
+@app.route("/api/trade-function-router", methods=["GET", "POST"])
+def api_trade_function_router():
+    if not TRADE_DIRECTOR_PHASE35_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 35 unavailable"}), 503
+    body = request.get_json(silent=True) or {} if request.method == "POST" else {}
+    evidence = body.get("evidence") or {
+        "gamma_regime": request.args.get("gamma_regime"),
+        "auction_state": request.args.get("auction_state"),
+        "flow_state": request.args.get("flow_state"),
+        "volatility_regime": request.args.get("volatility_regime"),
+        "trend_persistence": request.args.get("trend_persistence"),
+        "liquidity_state": request.args.get("liquidity_state"),
+        "event_risk": request.args.get("event_risk"),
+        "structure_score": request.args.get("structure_score", type=float),
+        "flow_score": request.args.get("flow_score", type=float),
+        "dealer_score": request.args.get("dealer_score", type=float),
+        "higher_timeframe_score": request.args.get("higher_timeframe_score", type=float),
+        "fundamental_score": request.args.get("fundamental_score", type=float),
+        "daily_confirmation": request.args.get("daily_confirmation", "false").lower() == "true",
+        "catalyst_context_available": request.args.get("catalyst_context_available", "false").lower() == "true",
+        "secular_thesis_available": request.args.get("secular_thesis_available", "false").lower() == "true",
+        "valuation_context_available": request.args.get("valuation_context_available", "false").lower() == "true",
+    }
+    selected = body.get("selected_function") or request.args.get("selected_function")
+    return jsonify({"ok": True, "trade_function_router": td35_build_trade_function_router(evidence, selected)})
+
+
 @app.route("/api/session-allocation", methods=["GET"])
 def api_session_allocation():
     if not TRADE_DIRECTOR_PHASE34_AVAILABLE:
         return jsonify({"ok": False, "error": "Phase 34 unavailable"}), 503
-    return jsonify({"ok": True, "session_allocation": td34_build_session_allocation(
+    router = None
+    if TRADE_DIRECTOR_PHASE35_AVAILABLE:
+        evidence = {
+            "gamma_regime": request.args.get("gamma_regime"),
+            "auction_state": request.args.get("auction_state"),
+            "flow_state": request.args.get("flow_state"),
+            "volatility_regime": request.args.get("volatility_regime"),
+            "trend_persistence": request.args.get("trend_persistence"),
+            "liquidity_state": request.args.get("liquidity_state"),
+            "structure_score": request.args.get("structure_score", type=float),
+            "flow_score": request.args.get("flow_score", type=float),
+            "dealer_score": request.args.get("dealer_score", type=float),
+            "higher_timeframe_score": request.args.get("higher_timeframe_score", type=float),
+            "fundamental_score": request.args.get("fundamental_score", type=float),
+        }
+        router = td35_build_trade_function_router(evidence, request.args.get("selected_function"))
+    selected = (router or {}).get("selected_function") or {}
+    explicit_grade = request.args.get("style_fit_grade")
+    explicit_score = request.args.get("style_fit_score", type=float)
+    allocation = td34_build_session_allocation(
         environment_quality=request.args.get("environment_quality", "UNKNOWN"),
+        trade_function=request.args.get("selected_function") or selected.get("function") or "QUICK_SCALP",
+        style_fit_grade=explicit_grade or selected.get("style_fit_grade") or "UNRATED",
+        style_fit_score=explicit_score if explicit_score is not None else (selected.get("style_fit_score") or 0.0),
         daily_risk_budget=request.args.get("daily_risk_budget", 2000.0, type=float),
         remaining_risk_budget=request.args.get("remaining_risk_budget", type=float),
         estimated_risk_per_contract=request.args.get("risk_per_contract", 0.0, type=float),
         consecutive_losses=request.args.get("consecutive_losses", 0, type=int),
-    )})
+    )
+    return jsonify({"ok": True, "session_allocation": allocation, "trade_function_router": router})
 
 
 @app.route("/api/session-allocation/reset", methods=["POST"])
