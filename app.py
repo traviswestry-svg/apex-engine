@@ -318,6 +318,20 @@ except Exception as _td31_err:
     TRADE_DIRECTOR_PHASE31_AVAILABLE = False
     print(f"Trade Director Phase 31 unavailable: {_td31_err}", flush=True)
 
+# APEX Trade Director Phase 32 — performance and calibration center
+try:
+    from engine.trade_director_performance_calibration import (
+        build_performance_calibration_center as td32_build_performance_calibration_center,
+        performance_summary as td32_performance_summary,
+        confidence_reliability as td32_confidence_reliability,
+        engine_attribution as td32_engine_attribution,
+        decision_ledger as td32_decision_ledger,
+    )
+    TRADE_DIRECTOR_PHASE32_AVAILABLE = True
+except Exception as _td32_err:
+    TRADE_DIRECTOR_PHASE32_AVAILABLE = False
+    print(f"Trade Director Phase 32 unavailable: {_td32_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -5569,6 +5583,13 @@ def monitor_active_position() -> Dict[str, Any]:
         except Exception as _td31_build_err:
             result["institutional_evidence"] = {"version": "PHASE_31", "error": str(_td31_build_err)}
 
+    if TRADE_DIRECTOR_PHASE32_AVAILABLE:
+        try:
+            # Phase 32 is read-only analytics over immutable Phase 31 evidence.
+            result["performance_calibration"] = td32_build_performance_calibration_center()
+        except Exception as _td32_build_err:
+            result["performance_calibration"] = {"version": "PHASE_32", "error": str(_td32_build_err)}
+
     with ACTIVE_POSITION_LOCK:
         ACTIVE_POSITION["last_checked_at"] = result["checked_at"]
         ACTIVE_POSITION["last_recommendation"] = recommendation
@@ -5614,6 +5635,8 @@ def monitor_active_position() -> Dict[str, Any]:
             ACTIVE_POSITION["phase30_last_execution_certification"] = dict(result["execution_certification"])
         if result.get("institutional_evidence"):
             ACTIVE_POSITION["phase31_last_institutional_evidence"] = dict(result["institutional_evidence"])
+        if result.get("performance_calibration"):
+            ACTIVE_POSITION["phase32_last_performance_calibration"] = dict(result["performance_calibration"])
 
     return result
 
@@ -8583,6 +8606,43 @@ def api_evidence_integrity():
         return jsonify({"ok": False, "error": "Phase 31 unavailable"}), 503
     integrity = td31_verify_evidence_integrity()
     return jsonify({"ok": integrity.get("status") == "VERIFIED", "integrity": integrity})
+
+
+@app.route("/api/performance-calibration/status", methods=["GET"])
+def api_performance_calibration_status():
+    if not TRADE_DIRECTOR_PHASE32_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 32 unavailable"}), 503
+    return jsonify({"ok": True, "performance_calibration": td32_build_performance_calibration_center()})
+
+
+@app.route("/api/performance-calibration/performance", methods=["GET"])
+def api_performance_calibration_performance():
+    if not TRADE_DIRECTOR_PHASE32_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 32 unavailable"}), 503
+    return jsonify({"ok": True, "performance": td32_performance_summary()})
+
+
+@app.route("/api/performance-calibration/calibration", methods=["GET"])
+def api_performance_calibration_calibration():
+    if not TRADE_DIRECTOR_PHASE32_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 32 unavailable"}), 503
+    return jsonify({"ok": True, "calibration": td32_confidence_reliability()})
+
+
+@app.route("/api/performance-calibration/attribution", methods=["GET"])
+def api_performance_calibration_attribution():
+    if not TRADE_DIRECTOR_PHASE32_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 32 unavailable"}), 503
+    return jsonify({"ok": True, "engine_attribution": td32_engine_attribution()})
+
+
+@app.route("/api/performance-calibration/ledger", methods=["GET"])
+def api_performance_calibration_ledger():
+    if not TRADE_DIRECTOR_PHASE32_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 32 unavailable"}), 503
+    return jsonify({"ok": True, "ledger": td32_decision_ledger(
+        limit=request.args.get("limit", 100, type=int),
+        direction=request.args.get("direction"), grade=request.args.get("grade"))})
 
 
 @app.route("/api/position/strategy-orchestration")
