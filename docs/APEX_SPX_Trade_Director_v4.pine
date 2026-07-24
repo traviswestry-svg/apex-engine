@@ -1,0 +1,334 @@
+//@version=6
+indicator("APEX SPX Trade Director v4", shorttitle="APEXv4", overlay=true, max_labels_count=300, max_lines_count=200)
+
+// INPUTS
+g1 = "Signal Engine"
+fastLen = input.int(8, "Fast EMA", minval=1, group=g1)
+slowLen = input.int(21, "Slow EMA", minval=2, group=g1)
+trendLen = input.int(50, "Trend EMA", minval=5, group=g1)
+rsiLen = input.int(14, "RSI Length", minval=2, group=g1)
+atrLen = input.int(14, "ATR Length", minval=2, group=g1)
+volLen = input.int(20, "Relative Volume Lookback", minval=2, group=g1)
+minRelVol = input.float(1.0, "Minimum Relative Volume", step=0.05, group=g1)
+minEntryScore = input.int(70, "Minimum Entry Score", minval=50, maxval=100, group=g1)
+minAddScore = input.int(75, "Minimum Add Score", minval=50, maxval=100, group=g1)
+
+g2 = "Session"
+rth = input.session("0930-1600", "Regular Session", group=g2)
+entryStartHour = input.int(9, "Entry Start Hour ET", group=g2)
+entryStartMinute = input.int(35, "Entry Start Minute ET", group=g2)
+lastEntryHour = input.int(11, "Last Entry Hour ET", group=g2)
+lastEntryMinute = input.int(30, "Last Entry Minute ET", group=g2)
+forceExitHour = input.int(11, "Force Exit Hour ET", group=g2)
+forceExitMinute = input.int(55, "Force Exit Minute ET", group=g2)
+orbMinutes = input.int(15, "Opening Range Minutes", minval=5, maxval=60, group=g2)
+cooldownBars = input.int(3, "Entry Cooldown Bars", minval=0, group=g2)
+maxTrades = input.int(3, "Maximum Trades Per Session (0 = Unlimited)", minval=0, maxval=20, group=g2)
+
+g3 = "Trade Management"
+initialStopATR = input.float(1.0, "Initial Stop ATR", step=0.05, group=g3)
+breakevenATR = input.float(0.8, "Move Stop to Breakeven at ATR", step=0.05, group=g3)
+tp1ATR = input.float(1.0, "TP1 ATR", step=0.05, group=g3)
+tp2ATR = input.float(1.75, "TP2 ATR", step=0.05, group=g3)
+tp3ATR = input.float(2.5, "TP3 ATR", step=0.05, group=g3)
+trailATR = input.float(0.8, "Trailing Stop ATR after TP1", step=0.05, group=g3)
+maxAdds = input.int(1, "Maximum Adds Per Trade", minval=0, maxval=3, group=g3)
+
+g4 = "Filters"
+requireTrend = input.bool(true, "Require EMA Trend Stack", group=g4)
+requireVWAP = input.bool(true, "Require VWAP Alignment", group=g4)
+requireORB = input.bool(true, "Require Opening Range Break", group=g4)
+requireVolume = input.bool(false, "Require Relative Volume", group=g4)
+useRSI = input.bool(true, "Require RSI Confirmation", group=g4)
+useHTF = input.bool(true, "Use 15-Minute Trend Confirmation", group=g4)
+
+g5 = "Webhook"
+secret = input.string("REPLACE_WITH_NEW_SECRET", "Webhook Secret", group=g5)
+strategyId = input.string("SPX_TRADE_DIRECTOR_V4", "Strategy ID", group=g5)
+
+g6 = "Display"
+showORB = input.bool(true, "Show Opening Range", group=g6)
+showLevels = input.bool(true, "Show Trade Levels", group=g6)
+showLabels = input.bool(true, "Show Directive Labels", group=g6)
+showTable = input.bool(true, "Show Status Table", group=g6)
+
+// SESSION
+inRTH = not na(time(timeframe.period, rth, "America/New_York"))
+newRTH = inRTH and not inRTH[1]
+etMinutes = hour(time, "America/New_York") * 60 + minute(time, "America/New_York")
+entryStart = entryStartHour * 60 + entryStartMinute
+entryEnd = lastEntryHour * 60 + lastEntryMinute
+forceExitAt = forceExitHour * 60 + forceExitMinute
+entryWindow = inRTH and etMinutes >= entryStart and etMinutes <= entryEnd
+forceExitNow = inRTH and etMinutes >= forceExitAt
+
+// OPENING RANGE
+var float orbHigh = na
+var float orbLow = na
+var int openMinutes = na
+var bool orbReady = false
+
+if newRTH
+    orbHigh := high
+    orbLow := low
+    openMinutes := etMinutes
+    orbReady := false
+
+if inRTH and not na(openMinutes)
+    elapsed = etMinutes - openMinutes
+    if elapsed < orbMinutes
+        orbHigh := math.max(nz(orbHigh, high), high)
+        orbLow := math.min(nz(orbLow, low), low)
+    else
+        orbReady := true
+
+orbUp = orbReady and close > orbHigh
+orbDown = orbReady and close < orbLow
+
+// INDICATORS
+emaFast = ta.ema(close, fastLen)
+emaSlow = ta.ema(close, slowLen)
+emaTrend = ta.ema(close, trendLen)
+vwapValue = ta.vwap(hlc3)
+rsiValue = ta.rsi(close, rsiLen)
+atrValue = ta.atr(atrLen)
+avgVol = ta.sma(volume, volLen)
+relVol = avgVol > 0 ? volume / avgVol : 0.0
+
+bullTrend = emaFast > emaSlow and emaSlow > emaTrend
+bearTrend = emaFast < emaSlow and emaSlow < emaTrend
+aboveVWAP = close > vwapValue
+belowVWAP = close < vwapValue
+bullRSI = rsiValue >= 52
+bearRSI = rsiValue <= 48
+bullMomentum = close > open and close > high[1]
+bearMomentum = close < open and close < low[1]
+volumeOK = relVol >= minRelVol
+
+htfFast = request.security(syminfo.tickerid, "15", ta.ema(close, fastLen))
+htfSlow = request.security(syminfo.tickerid, "15", ta.ema(close, slowLen))
+htfBull = htfFast > htfSlow
+htfBear = htfFast < htfSlow
+
+callScore = (bullTrend ? 25 : 0) + (aboveVWAP ? 20 : 0) + (orbUp ? 20 : 0) + (bullMomentum ? 15 : 0) + (bullRSI ? 10 : 0) + (volumeOK ? 10 : 0)
+putScore = (bearTrend ? 25 : 0) + (belowVWAP ? 20 : 0) + (orbDown ? 20 : 0) + (bearMomentum ? 15 : 0) + (bearRSI ? 10 : 0) + (volumeOK ? 10 : 0)
+
+callFilters = (not requireTrend or bullTrend) and (not requireVWAP or aboveVWAP) and (not requireORB or orbUp) and (not requireVolume or volumeOK) and (not useRSI or bullRSI) and (not useHTF or htfBull)
+putFilters = (not requireTrend or bearTrend) and (not requireVWAP or belowVWAP) and (not requireORB or orbDown) and (not requireVolume or volumeOK) and (not useRSI or bearRSI) and (not useHTF or htfBear)
+
+// STATE
+var int pos = 0
+var float entryPrice = na
+var float stopPrice = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var float bestPrice = na
+var int entryBar = na
+var int lastEntryBar = na
+var int tradesToday = 0
+var int adds = 0
+var bool beSent = false
+var bool tp1Sent = false
+var bool tp2Sent = false
+var bool tp3Sent = false
+var string directive = "FLAT"
+
+if newRTH
+    pos := 0
+    entryPrice := na
+    stopPrice := na
+    tp1 := na
+    tp2 := na
+    tp3 := na
+    bestPrice := na
+    entryBar := na
+    lastEntryBar := na
+    tradesToday := 0
+    adds := 0
+    beSent := false
+    tp1Sent := false
+    tp2Sent := false
+    tp3Sent := false
+    directive := "FLAT"
+
+cooldownOK = na(lastEntryBar) or bar_index - lastEntryBar > cooldownBars
+tradeLimitOK = maxTrades == 0 or tradesToday < maxTrades
+freshCall = entryWindow and callFilters and callScore >= minEntryScore
+freshPut = entryWindow and putFilters and putScore >= minEntryScore
+enterCall = barstate.isconfirmed and pos == 0 and freshCall and not freshCall[1] and cooldownOK and tradeLimitOK
+enterPut = barstate.isconfirmed and pos == 0 and freshPut and not freshPut[1] and cooldownOK and tradeLimitOK
+
+payload(action, side, score, reason) =>
+    string p = "{"
+    p += '"secret":"' + secret + '"'
+    p += ',"source":"TRADINGVIEW_PINE"'
+    p += ',"strategy_id":"' + strategyId + '"'
+    p += ',"ticker":"' + syminfo.ticker + '"'
+    p += ',"symbol":"' + syminfo.tickerid + '"'
+    p += ',"timeframe":"' + timeframe.period + '"'
+    p += ',"action":"' + action + '"'
+    p += ',"side":"' + side + '"'
+    p += ',"price":' + str.tostring(close, "#.00")
+    p += ',"score":' + str.tostring(score)
+    p += ',"reason":"' + reason + '"'
+    p += ',"entry_price":' + str.tostring(nz(entryPrice, 0), "#.00")
+    p += ',"stop_price":' + str.tostring(nz(stopPrice, 0), "#.00")
+    p += ',"tp1":' + str.tostring(nz(tp1, 0), "#.00")
+    p += ',"tp2":' + str.tostring(nz(tp2, 0), "#.00")
+    p += ',"tp3":' + str.tostring(nz(tp3, 0), "#.00")
+    p += ',"bar_time":"' + str.format_time(time, "yyyy-MM-dd HH:mm:ss", "America/New_York") + '"'
+    p += "}"
+    p
+
+send(action, side, score, reason) =>
+    alert(payload(action, side, score, reason), alert.freq_once_per_bar_close)
+
+if enterCall
+    pos := 1
+    entryPrice := close
+    stopPrice := close - atrValue * initialStopATR
+    tp1 := close + atrValue * tp1ATR
+    tp2 := close + atrValue * tp2ATR
+    tp3 := close + atrValue * tp3ATR
+    bestPrice := high
+    entryBar := bar_index
+    lastEntryBar := bar_index
+    tradesToday += 1
+    adds := 0
+    beSent := false
+    tp1Sent := false
+    tp2Sent := false
+    tp3Sent := false
+    directive := "ENTER_CALL"
+    send("ENTER_CALL", "CALL", callScore, "ENTRY_SETUP_CONFIRMED")
+
+if enterPut
+    pos := -1
+    entryPrice := close
+    stopPrice := close + atrValue * initialStopATR
+    tp1 := close - atrValue * tp1ATR
+    tp2 := close - atrValue * tp2ATR
+    tp3 := close - atrValue * tp3ATR
+    bestPrice := low
+    entryBar := bar_index
+    lastEntryBar := bar_index
+    tradesToday += 1
+    adds := 0
+    beSent := false
+    tp1Sent := false
+    tp2Sent := false
+    tp3Sent := false
+    directive := "ENTER_PUT"
+    send("ENTER_PUT", "PUT", putScore, "ENTRY_SETUP_CONFIRMED")
+
+if pos == 1
+    bestPrice := math.max(nz(bestPrice, high), high)
+    profitATR = atrValue > 0 ? (close - entryPrice) / atrValue : 0.0
+    addSignal = barstate.isconfirmed and adds < maxAdds and low <= emaFast and close > emaFast and callFilters and callScore >= minAddScore and bar_index > entryBar
+    if addSignal
+        adds += 1
+        directive := "ADD_CALL"
+        send("ADD", "CALL", callScore, "CONTROLLED_PULLBACK_ADD")
+    if not beSent and profitATR >= breakevenATR
+        beSent := true
+        stopPrice := entryPrice
+        directive := "MOVE_STOP_BREAKEVEN"
+        send("MOVE_STOP_BREAKEVEN", "CALL", callScore, "PROFIT_THRESHOLD")
+    if not tp1Sent and high >= tp1
+        tp1Sent := true
+        directive := "TAKE_PROFIT_1"
+        send("TAKE_PROFIT_1", "CALL", callScore, "TP1_REACHED")
+    if not tp2Sent and high >= tp2
+        tp2Sent := true
+        directive := "TAKE_PROFIT_2"
+        send("TAKE_PROFIT_2", "CALL", callScore, "TP2_REACHED")
+    if not tp3Sent and high >= tp3
+        tp3Sent := true
+        directive := "TAKE_PROFIT_3"
+        send("TAKE_PROFIT_3", "CALL", callScore, "TP3_REACHED")
+    if tp1Sent
+        stopPrice := math.max(stopPrice, bestPrice - atrValue * trailATR)
+    exitNow = barstate.isconfirmed and (low <= stopPrice or (close < emaSlow and close < vwapValue) or forceExitNow or tp3Sent)
+    if exitNow
+        reason = forceExitNow ? "TIME_EXIT" : tp3Sent ? "FINAL_TARGET" : low <= stopPrice ? "STOP_HIT" : "TREND_INVALIDATED"
+        directive := "EXIT_CALL"
+        send("EXIT", "CALL", callScore, reason)
+        pos := 0
+
+if pos == -1
+    bestPrice := math.min(nz(bestPrice, low), low)
+    profitATR = atrValue > 0 ? (entryPrice - close) / atrValue : 0.0
+    addSignal = barstate.isconfirmed and adds < maxAdds and high >= emaFast and close < emaFast and putFilters and putScore >= minAddScore and bar_index > entryBar
+    if addSignal
+        adds += 1
+        directive := "ADD_PUT"
+        send("ADD", "PUT", putScore, "CONTROLLED_PULLBACK_ADD")
+    if not beSent and profitATR >= breakevenATR
+        beSent := true
+        stopPrice := entryPrice
+        directive := "MOVE_STOP_BREAKEVEN"
+        send("MOVE_STOP_BREAKEVEN", "PUT", putScore, "PROFIT_THRESHOLD")
+    if not tp1Sent and low <= tp1
+        tp1Sent := true
+        directive := "TAKE_PROFIT_1"
+        send("TAKE_PROFIT_1", "PUT", putScore, "TP1_REACHED")
+    if not tp2Sent and low <= tp2
+        tp2Sent := true
+        directive := "TAKE_PROFIT_2"
+        send("TAKE_PROFIT_2", "PUT", putScore, "TP2_REACHED")
+    if not tp3Sent and low <= tp3
+        tp3Sent := true
+        directive := "TAKE_PROFIT_3"
+        send("TAKE_PROFIT_3", "PUT", putScore, "TP3_REACHED")
+    if tp1Sent
+        stopPrice := math.min(stopPrice, bestPrice + atrValue * trailATR)
+    exitNow = barstate.isconfirmed and (high >= stopPrice or (close > emaSlow and close > vwapValue) or forceExitNow or tp3Sent)
+    if exitNow
+        reason = forceExitNow ? "TIME_EXIT" : tp3Sent ? "FINAL_TARGET" : high >= stopPrice ? "STOP_HIT" : "TREND_INVALIDATED"
+        directive := "EXIT_PUT"
+        send("EXIT", "PUT", putScore, reason)
+        pos := 0
+
+plot(emaFast, "Fast EMA")
+plot(emaSlow, "Slow EMA")
+plot(emaTrend, "Trend EMA")
+plot(vwapValue, "VWAP", linewidth=2)
+plot(showORB and orbReady ? orbHigh : na, "ORB High", style=plot.style_linebr)
+plot(showORB and orbReady ? orbLow : na, "ORB Low", style=plot.style_linebr)
+plot(showLevels and pos != 0 ? entryPrice : na, "Entry", style=plot.style_linebr)
+plot(showLevels and pos != 0 ? stopPrice : na, "Stop", style=plot.style_linebr)
+plot(showLevels and pos != 0 ? tp1 : na, "TP1", style=plot.style_linebr)
+plot(showLevels and pos != 0 ? tp2 : na, "TP2", style=plot.style_linebr)
+plot(showLevels and pos != 0 ? tp3 : na, "TP3", style=plot.style_linebr)
+plotshape(enterCall, title="ENTER CALL", style=shape.triangleup, location=location.belowbar, size=size.small)
+plotshape(enterPut, title="ENTER PUT", style=shape.triangledown, location=location.abovebar, size=size.small)
+
+if showLabels and enterCall
+    label.new(bar_index, low, "ENTER CALL\nScore " + str.tostring(callScore), style=label.style_label_up)
+if showLabels and enterPut
+    label.new(bar_index, high, "ENTER PUT\nScore " + str.tostring(putScore), style=label.style_label_down)
+
+var table t = table.new(position.top_right, 2, 10)
+if showTable and barstate.islast
+    posText = pos == 1 ? "CALL" : pos == -1 ? "PUT" : "FLAT"
+    table.cell(t, 0, 0, "APEX")
+    table.cell(t, 1, 0, "Trade Director v4")
+    table.cell(t, 0, 1, "Position")
+    table.cell(t, 1, 1, posText)
+    table.cell(t, 0, 2, "Directive")
+    table.cell(t, 1, 2, directive)
+    table.cell(t, 0, 3, "Call Score")
+    table.cell(t, 1, 3, str.tostring(callScore))
+    table.cell(t, 0, 4, "Put Score")
+    table.cell(t, 1, 4, str.tostring(putScore))
+    table.cell(t, 0, 5, "Entry")
+    table.cell(t, 1, 5, pos != 0 ? str.tostring(entryPrice, "#.00") : "--")
+    table.cell(t, 0, 6, "Stop")
+    table.cell(t, 1, 6, pos != 0 ? str.tostring(stopPrice, "#.00") : "--")
+    table.cell(t, 0, 7, "Adds")
+    table.cell(t, 1, 7, str.tostring(adds) + "/" + str.tostring(maxAdds))
+    table.cell(t, 0, 8, "Trades")
+    table.cell(t, 1, 8, maxTrades == 0 ? str.tostring(tradesToday) + "/∞" : str.tostring(tradesToday) + "/" + str.tostring(maxTrades))
+    table.cell(t, 0, 9, "HTF")
+    table.cell(t, 1, 9, htfBull ? "BULL" : htfBear ? "BEAR" : "MIXED")
