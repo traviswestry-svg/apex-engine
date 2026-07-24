@@ -378,6 +378,17 @@ except Exception as _td37_err:
     TRADE_DIRECTOR_PHASE37_AVAILABLE = False
     print(f"Trade Director Phase 37 unavailable: {_td37_err}", flush=True)
 
+# APEX Trade Director Phase 38 — decision quality and alert integrity
+try:
+    from engine.trade_director_decision_quality import (
+        build_decision_quality as td38_build_decision_quality,
+        build_flow_participation as td38_build_flow_participation,
+    )
+    TRADE_DIRECTOR_PHASE38_AVAILABLE = True
+except Exception as _td38_err:
+    TRADE_DIRECTOR_PHASE38_AVAILABLE = False
+    print(f"Trade Director Phase 38 unavailable: {_td38_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -7413,6 +7424,14 @@ def api_institutional_os():
                         with SENT_ALERTS_LOCK:
                             SENT_ALERTS.discard(_enter_key)
 
+            # Phase 38 — decision-quality and alert-integrity overlay.
+            # This is advisory and cached-input only; it can suppress an alert but never create an order.
+            if TRADE_DIRECTOR_PHASE38_AVAILABLE:
+                try:
+                    result["decision_quality"] = td38_build_decision_quality(result)
+                except Exception as _td38_scan_err:
+                    print(f"Phase 38 decision quality error (non-fatal): {_td38_scan_err}", flush=True)
+
             # Phase 37 — advisory mobile Momentum Burst state machine.
             # It may notify Telegram, but it never places, modifies, or closes an order.
             if TRADE_DIRECTOR_PHASE37_AVAILABLE:
@@ -7456,6 +7475,7 @@ def api_institutional_os():
                         "entry_quality": _entry_quality,
                         "momentum_lifecycle": _lifecycle,
                         "assistant_url": os.getenv("APEX_ASSISTANT_URL", request.host_url.rstrip("/") + "/assistant"),
+                        "decision_quality": result.get("decision_quality") or {},
                     }
                     result["mobile_momentum_alert"] = td37_dispatch_mobile_alert(_snapshot, send_telegram)
                 except Exception as _td37_scan_err:
@@ -8865,6 +8885,31 @@ def api_entry_quality():
         return jsonify({"ok": False, "error": "Phase 36 unavailable"}), 503
     body = request.get_json(silent=True) or {}
     return jsonify({"ok": True, "entry_quality": td36_compute_entry_quality(body.get("evidence") or body)})
+
+
+@app.route("/api/decision-quality", methods=["GET", "POST"])
+def api_decision_quality():
+    if not TRADE_DIRECTOR_PHASE38_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 38 unavailable"}), 503
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+    else:
+        with STATE_LOCK:
+            body = dict(STATE.get("last_result") or {})
+    result = td38_build_decision_quality(body)
+    return jsonify({"ok": True, "decision_quality": result})
+
+
+@app.route("/api/decision-quality/flow-participation", methods=["GET", "POST"])
+def api_decision_quality_flow_participation():
+    if not TRADE_DIRECTOR_PHASE38_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 38 unavailable"}), 503
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+    else:
+        with STATE_LOCK:
+            body = dict(STATE.get("last_result") or {})
+    return jsonify({"ok": True, "flow_participation": td38_build_flow_participation(body)})
 
 
 @app.route("/api/mobile-momentum-alerts/status", methods=["GET"])
