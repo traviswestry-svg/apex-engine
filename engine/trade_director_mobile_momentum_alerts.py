@@ -95,6 +95,9 @@ def classify_alert_stage(snapshot: Optional[Mapping[str, Any]] = None) -> Dict[s
     risk_eligible = bool(s.get("risk_eligible", True))
     spread_ok = bool(s.get("spread_ok", True))
     invalidated = bool(s.get("invalidated", False))
+    dq = dict(s.get("decision_quality") or {})
+    dq_alert = dict(dq.get("alert_quality") or {})
+    decision_quality_eligible = dq_alert.get("alert_eligible")
 
     rec = str(lifecycle.get("recommendation") or "").upper()
     if rec == "TAKE_PROFIT":
@@ -104,6 +107,8 @@ def classify_alert_stage(snapshot: Optional[Mapping[str, Any]] = None) -> Dict[s
     elif invalidated:
         stage = "SETUP_INVALIDATED"
     elif not market_open or not data_fresh:
+        stage = "NONE"
+    elif decision_quality_eligible is False:
         stage = "NONE"
     elif function != "MOMENTUM_BURST":
         stage = "NONE"
@@ -129,7 +134,14 @@ def classify_alert_stage(snapshot: Optional[Mapping[str, Any]] = None) -> Dict[s
         "data_fresh": data_fresh,
         "risk_eligible": risk_eligible,
         "spread_ok": spread_ok,
-        "reason": _reason(stage, entry_score, confidence, trigger),
+        "decision_quality_eligible": decision_quality_eligible,
+        "decision_quality_blockers": dq_alert.get("blocking_conditions") or [],
+        "reason": (
+            "Phase 38 decision-quality policy suppressed this alert: "
+            + ", ".join(dq_alert.get("blocking_conditions") or [])
+            if stage == "NONE" and decision_quality_eligible is False
+            else _reason(stage, entry_score, confidence, trigger)
+        ),
     }
 
 
