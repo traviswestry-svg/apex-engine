@@ -1,5 +1,5 @@
 //@version=6
-indicator("APEX SPX Trade Director v4", shorttitle="APEXv4", overlay=true, max_labels_count=300, max_lines_count=200)
+indicator("APEX SPX Trade Director v4.1", shorttitle="APEXv4.1", overlay=true, max_labels_count=300, max_lines_count=200)
 
 // INPUTS
 g1 = "Signal Engine"
@@ -44,7 +44,7 @@ useHTF = input.bool(true, "Use 15-Minute Trend Confirmation", group=g4)
 
 g5 = "Webhook"
 secret = input.string("REPLACE_WITH_NEW_SECRET", "Webhook Secret", group=g5)
-strategyId = input.string("SPX_TRADE_DIRECTOR_V4", "Strategy ID", group=g5)
+strategyId = input.string("SPX_TRADE_DIRECTOR_V4_1", "Strategy ID", group=g5)
 
 g6 = "Display"
 showORB = input.bool(true, "Show Opening Range", group=g6)
@@ -133,6 +133,13 @@ var bool tp1Sent = false
 var bool tp2Sent = false
 var bool tp3Sent = false
 var string directive = "FLAT"
+var bool eventAdd = false
+var bool eventBE = false
+var bool eventTP1 = false
+var bool eventTP2 = false
+var bool eventTP3 = false
+var bool eventExit = false
+var string eventSide = ""
 
 if newRTH
     pos := 0
@@ -151,6 +158,14 @@ if newRTH
     tp2Sent := false
     tp3Sent := false
     directive := "FLAT"
+
+eventAdd := false
+eventBE := false
+eventTP1 := false
+eventTP2 := false
+eventTP3 := false
+eventExit := false
+eventSide := ""
 
 cooldownOK = na(lastEntryBar) or bar_index - lastEntryBar > cooldownBars
 tradeLimitOK = maxTrades == 0 or tradesToday < maxTrades
@@ -222,30 +237,40 @@ if enterPut
     directive := "ENTER_PUT"
     send("ENTER_PUT", "PUT", putScore, "ENTRY_SETUP_CONFIRMED")
 
-if pos == 1
+if pos == 1 and bar_index > entryBar
     bestPrice := math.max(nz(bestPrice, high), high)
     profitATR = atrValue > 0 ? (close - entryPrice) / atrValue : 0.0
     addSignal = barstate.isconfirmed and adds < maxAdds and low <= emaFast and close > emaFast and callFilters and callScore >= minAddScore and bar_index > entryBar
     if addSignal
         adds += 1
         directive := "ADD_CALL"
+        eventAdd := true
+        eventSide := "CALL"
         send("ADD", "CALL", callScore, "CONTROLLED_PULLBACK_ADD")
     if not beSent and profitATR >= breakevenATR
         beSent := true
         stopPrice := entryPrice
         directive := "MOVE_STOP_BREAKEVEN"
+        eventBE := true
+        eventSide := "CALL"
         send("MOVE_STOP_BREAKEVEN", "CALL", callScore, "PROFIT_THRESHOLD")
     if not tp1Sent and high >= tp1
         tp1Sent := true
         directive := "TAKE_PROFIT_1"
+        eventTP1 := true
+        eventSide := "CALL"
         send("TAKE_PROFIT_1", "CALL", callScore, "TP1_REACHED")
     if not tp2Sent and high >= tp2
         tp2Sent := true
         directive := "TAKE_PROFIT_2"
+        eventTP2 := true
+        eventSide := "CALL"
         send("TAKE_PROFIT_2", "CALL", callScore, "TP2_REACHED")
     if not tp3Sent and high >= tp3
         tp3Sent := true
         directive := "TAKE_PROFIT_3"
+        eventTP3 := true
+        eventSide := "CALL"
         send("TAKE_PROFIT_3", "CALL", callScore, "TP3_REACHED")
     if tp1Sent
         stopPrice := math.max(stopPrice, bestPrice - atrValue * trailATR)
@@ -253,33 +278,45 @@ if pos == 1
     if exitNow
         reason = forceExitNow ? "TIME_EXIT" : tp3Sent ? "FINAL_TARGET" : low <= stopPrice ? "STOP_HIT" : "TREND_INVALIDATED"
         directive := "EXIT_CALL"
+        eventExit := true
+        eventSide := "CALL"
         send("EXIT", "CALL", callScore, reason)
         pos := 0
 
-if pos == -1
+if pos == -1 and bar_index > entryBar
     bestPrice := math.min(nz(bestPrice, low), low)
     profitATR = atrValue > 0 ? (entryPrice - close) / atrValue : 0.0
     addSignal = barstate.isconfirmed and adds < maxAdds and high >= emaFast and close < emaFast and putFilters and putScore >= minAddScore and bar_index > entryBar
     if addSignal
         adds += 1
         directive := "ADD_PUT"
+        eventAdd := true
+        eventSide := "PUT"
         send("ADD", "PUT", putScore, "CONTROLLED_PULLBACK_ADD")
     if not beSent and profitATR >= breakevenATR
         beSent := true
         stopPrice := entryPrice
         directive := "MOVE_STOP_BREAKEVEN"
+        eventBE := true
+        eventSide := "PUT"
         send("MOVE_STOP_BREAKEVEN", "PUT", putScore, "PROFIT_THRESHOLD")
     if not tp1Sent and low <= tp1
         tp1Sent := true
         directive := "TAKE_PROFIT_1"
+        eventTP1 := true
+        eventSide := "PUT"
         send("TAKE_PROFIT_1", "PUT", putScore, "TP1_REACHED")
     if not tp2Sent and low <= tp2
         tp2Sent := true
         directive := "TAKE_PROFIT_2"
+        eventTP2 := true
+        eventSide := "PUT"
         send("TAKE_PROFIT_2", "PUT", putScore, "TP2_REACHED")
     if not tp3Sent and low <= tp3
         tp3Sent := true
         directive := "TAKE_PROFIT_3"
+        eventTP3 := true
+        eventSide := "PUT"
         send("TAKE_PROFIT_3", "PUT", putScore, "TP3_REACHED")
     if tp1Sent
         stopPrice := math.min(stopPrice, bestPrice + atrValue * trailATR)
@@ -287,6 +324,8 @@ if pos == -1
     if exitNow
         reason = forceExitNow ? "TIME_EXIT" : tp3Sent ? "FINAL_TARGET" : high >= stopPrice ? "STOP_HIT" : "TREND_INVALIDATED"
         directive := "EXIT_PUT"
+        eventExit := true
+        eventSide := "PUT"
         send("EXIT", "PUT", putScore, reason)
         pos := 0
 
@@ -309,11 +348,30 @@ if showLabels and enterCall
 if showLabels and enterPut
     label.new(bar_index, high, "ENTER PUT\nScore " + str.tostring(putScore), style=label.style_label_down)
 
+
+if showLabels and eventAdd
+    label.new(bar_index, eventSide == "CALL" ? low : high, "ADD " + eventSide, style=eventSide == "CALL" ? label.style_label_up : label.style_label_down)
+
+if showLabels and eventBE
+    label.new(bar_index, close, "STOP → BE", style=label.style_label_left)
+
+if showLabels and eventTP1
+    label.new(bar_index, close, "TP1", style=label.style_label_left)
+
+if showLabels and eventTP2
+    label.new(bar_index, close, "TP2", style=label.style_label_left)
+
+if showLabels and eventTP3
+    label.new(bar_index, close, "TP3", style=label.style_label_left)
+
+if showLabels and eventExit
+    label.new(bar_index, eventSide == "CALL" ? high : low, "EXIT " + eventSide, style=eventSide == "CALL" ? label.style_label_down : label.style_label_up)
+
 var table t = table.new(position.top_right, 2, 10)
 if showTable and barstate.islast
     posText = pos == 1 ? "CALL" : pos == -1 ? "PUT" : "FLAT"
     table.cell(t, 0, 0, "APEX")
-    table.cell(t, 1, 0, "Trade Director v4")
+    table.cell(t, 1, 0, "Trade Director v4.1")
     table.cell(t, 0, 1, "Position")
     table.cell(t, 1, 1, posText)
     table.cell(t, 0, 2, "Directive")
