@@ -1,75 +1,30 @@
-# APEX Trade Director Phase 38 Build
+# APEX Trade Director Phase 38 — Institutional Intent & Flow Persistence
 
-## Phase
-**Phase 38 — Decision Quality & Alert Integrity**
+## Objective
+Stop interpreting large calls as automatically bullish or large puts as automatically bearish. Phase 38 uses the order date/time, expiration, strike proximity, current market regime, dealer gamma, open-interest change, subsequent flow, and market reaction to estimate likely institutional intent and whether the order still matters now.
 
-## Purpose
-Phase 38 converts the latest SPX 0DTE system-design research into production-safe advisory controls. It separates directional prediction from executable alert quality, prevents raw contract volume from being treated as institutional conviction, exposes decision-boundary margin, and adds hysteresis-aware alert governance.
+## Added
+- `engine/trade_director_institutional_intent.py`
+- `tests/test_trade_director_phase38.py`
+- APIs:
+  - `GET /api/institutional-intent/status`
+  - `POST /api/institutional-intent/evaluate`
+  - `POST /api/institutional-intent/batch`
+- `/assistant` Institutional Intent panel
+- Coordinated-scan integration when `large_orders`, `options_blocks`, or `institutional_orders` are present
+- Append-only SQLite evidence at `apex_institutional_intent.db`
 
-## New Engine
-- `engine/trade_director_decision_quality.py`
+## Core outputs
+- Likely intent and probability distribution
+- Trade age and days to expiration
+- Expiration bucket and relevance to the selected trade function
+- Persistence score
+- Current influence
+- Signed directional value
+- Momentum Burst impact
 
-### Flow Participation Intelligence
-Reports:
-- premium-weighted participation
-- delta-adjusted notional when delta is available
-- small-lot share
-- block share
-- opening-intent share
-- top-three-strike concentration
-- participant mix
+## Important limitation
+Intent is probabilistic. Public flow cannot prove beneficial ownership, opening/closing status when the provider does not supply it, or hidden multi-leg relationships. Phase 38 fails toward neutral/uncertain rather than fabricating certainty.
 
-Raw contract volume is never independently treated as conviction.
-
-### Decision Boundary and Hysteresis
-Reports:
-- entry threshold
-- lower active-position exit threshold
-- applied threshold
-- margin from the active boundary
-- required confidence improvement
-- explicit hysteresis width
-
-Alerts touching a threshold without a five-point stability margin remain `WATCH_ONLY`.
-
-### Alert Quality Governance
-Alerts fail closed for:
-- closed market
-- stale or missing data
-- absent directional consensus
-- poor or unavailable liquidity
-- confidence below the decision boundary
-- weak execution or position quality
-- small-lot-dominated flow
-- dispersed strike participation
-- insufficient decision-boundary margin
-
-`STAND_DOWN` and abstention remain valid governed outputs.
-
-### Policy Quality Contract
-The engine accepts but never fabricates:
-- actionable-alert precision
-- next-executable-price return
-- slippage
-- alert latency
-- maximum adverse excursion
-
-Until those fields are collected, policy quality reports `COLLECTING`.
-
-## API
-- `GET|POST /api/decision-quality`
-- `GET|POST /api/decision-quality/flow-participation`
-
-GET uses the latest cached APEX result. POST evaluates a supplied normalized snapshot.
-
-## Mobile Alert Integration
-Phase 37 now honors Phase 38 `alert_eligible`. A Phase 38 policy suppression prevents a Momentum Burst Telegram alert but never creates, modifies, or closes an order.
-
-## Safety
-- Advisory only
-- Cached normalized inputs only
-- No provider calls
-- No broker calls
-- No trade calls
-- No fabricated policy statistics
-- Next-executable-price grading required
+## Execution policy
+Advisory only. No broker orders are placed, modified, or closed.
