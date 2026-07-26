@@ -7614,6 +7614,14 @@ def api_institutional_os():
             except Exception as _li44_err:
                 print(f"Liquidity intelligence error (non-fatal): {_li44_err}", flush=True)
 
+            # APEX 46 — Adaptive Learning Engine. Shadow-first, bounded and
+            # advisory-only. Active weights are exposed before narrative scoring.
+            try:
+                from engine.adaptive_learning import evaluate as _evaluate_adaptive_learning
+                result["adaptive_learning"] = _evaluate_adaptive_learning(result)
+            except Exception as _al46_err:
+                print(f"Adaptive learning error (non-fatal): {_al46_err}", flush=True)
+
             # APEX 45 — Institutional Market Narrative Engine. Explainability,
             # contradiction detection, readiness checklist, and advisory context.
             try:
@@ -7716,6 +7724,37 @@ def compose_institutional_os_headless(ticker: str = ASSISTANT_TICKER) -> bool:
         print(f"Headless IOS compose failed (non-fatal): {e}", flush=True)
         return False
 
+
+
+@app.route("/api/adaptive-learning", methods=["GET"])
+def api_adaptive_learning():
+    from engine.adaptive_learning import evaluate
+    latest = (STATE.get("last_result") or {}) if isinstance(STATE, dict) else {}
+    payload = latest.get("adaptive_learning")
+    return jsonify(payload if isinstance(payload, dict) else evaluate(latest))
+
+
+@app.route("/api/adaptive-learning/outcome", methods=["POST"])
+def api_adaptive_learning_outcome():
+    from engine.adaptive_learning import record_outcome
+    payload = request.get_json(silent=True) or {}
+    try:
+        outcome_id = record_outcome(payload if isinstance(payload, dict) else {})
+        return jsonify({"ok": True, "outcome_id": outcome_id, "advisory_only": True})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/adaptive-learning/recalibrate", methods=["POST"])
+def api_adaptive_learning_recalibrate():
+    from engine.adaptive_learning import recalibrate
+    return jsonify({"ok": True, **recalibrate(), "advisory_only": True})
+
+
+@app.route("/api/adaptive-learning/summary", methods=["GET"])
+def api_adaptive_learning_summary():
+    from engine.adaptive_learning import summary
+    return jsonify(summary())
 
 
 @app.route("/api/market-narrative", methods=["GET", "POST"])
