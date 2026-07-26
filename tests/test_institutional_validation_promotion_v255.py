@@ -4,7 +4,7 @@ import datetime as dt
 import pytest
 
 from engine import institutional_validation_promotion_v255 as validation
-from engine import institutional_decision_review_v254 as review
+from engine import institutional_decision_review as review
 
 
 def _iso(offset_s=0):
