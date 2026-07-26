@@ -102,7 +102,7 @@ def test_versioned_filename_freeze():
     # The set above is computed live, so this test asserts the FROZEN COUNT:
     # additions raise the count and fail; deletions (consolidation) lower it
     # and the ceiling ratchets down via the recorded number below.
-    FROZEN_MAX = 39  # ratcheted in Sprint 3 (49 at Sprint 1, 48 at Sprint 2)
+    FROZEN_MAX = 37  # ratcheted in Sprint 4 (49→48→39→37)
     current = len(grandfathered)
     assert current <= FROZEN_MAX, (
         f"{current} versioned engine filenames (> frozen max {FROZEN_MAX}). "
