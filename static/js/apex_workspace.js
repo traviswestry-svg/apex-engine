@@ -1,14 +1,14 @@
 (()=>{
-const VERSION='41.0';
+const VERSION='42.0';
 const NAV=[
 ['Favorites',[]],
-['Command',[['Home','/apex_os','Institutional OS'],['Scanner','/scanner','Market scanner'],['Trade Command','/apex_os/trade_command','Live decision and execution'],['Execution OS','/apex_os/execution','Execution readiness'],['Morning Readiness','/apex_os/readiness','Pre-market checks']]],
+['Command',[['Command Center','/command_center','APEX 42 unified session workspace'],['Institutional OS','/apex_os','Institutional OS'],['Scanner','/scanner','Market scanner'],['Trade Command','/apex_os/trade_command','Live decision and execution'],['Execution OS','/apex_os/execution','Execution readiness'],['Morning Readiness','/apex_os/readiness','Pre-market checks']]],
 ['Trading',[['Flow / GEX','/flow','Options flow and dealer exposure'],['Chart','/chart','Synchronized market chart'],['Premium Discipline','/apex_os/premium_discipline','Premium scalp command center'],['Trading Desk','/apex_os/institutional_trading_desk','Institutional trading workspace'],['Execution Intelligence','/apex_os/institutional_execution_intelligence','Execution analytics']]],
 ['Intelligence',[['Market State','/apex_os/institutional_market_state','Market regime and state'],['Decision Intelligence','/apex_os/decision_intelligence','Decision core'],['Playbook Engine','/apex_os/institutional_playbooks','Playbook matching'],['Strategy Intelligence','/apex_os/strategy_intelligence','Strategy analytics'],['Similarity Lab','/apex_os/institutional_similarity','Historical similarity'],['Research Lab','/apex_os/research_lab','Institutional research']]],
 ['Learning',[['Assistant','/assistant','APEX assistant'],['Adaptive Learning','/apex_os/adaptive_learning','Learning engine'],['Replay Laboratory','/apex_os/institutional_replay','Replay and review'],['Cross Examination','/apex_os/cross_examination','Challenge decisions'],['Confidence Attribution','/apex_os/confidence_attribution','Confidence drivers'],['Evidence Graph','/apex_os/evidence_graph','Decision evidence']]],
 ['Operations',[['Operations Center','/apex_os/operations','System operations'],['Data Quality','/apex_os/data_quality','Data quality dashboard'],['Historical Readiness','/apex_os/historical_readiness','History coverage'],['Shadow Validation','/apex_os/shadow_validation','Shadow testing'],['Production Governance','/apex_os/production_governance','Production controls'],['Release Manager','/apex_os/release_manager','Release governance'],['Offline Optimization','/apex_os/offline_optimization','Offline optimization']]]];
-const MOBILE_TABS=[['Home','⌂','/apex_os'],['Trade','⚡','/apex_os/trade_command'],['Market','◈','/apex_os/institutional_market_state'],['AI','◆','/assistant'],['More','☰','#more']];
-const PRESETS={scanner:'/scanner',execution:'/apex_os/trade_command',manage:'/apex_os',review:'/apex_os/institutional_replay'};
+const MOBILE_TABS=[['Home','⌂','/command_center'],['Trade','⚡','/apex_os/trade_command'],['Market','◈','/apex_os/institutional_market_state'],['AI','◆','/assistant'],['More','☰','#more']];
+const PRESETS={scanner:'/command_center',find:'/scanner',execution:'/apex_os/trade_command',manage:'/apex_os',review:'/apex_os/institutional_replay'};
 const all=()=>NAV.flatMap(([g,x])=>x.map(v=>[g,...v]));
 const path=location.pathname.replace(/\/$/,'')||'/';
 const safeJson=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(fallback))}catch{return fallback}};
@@ -23,7 +23,7 @@ function render(){
  applyDeviceClass(); document.body.classList.add('ap41-ready');
  const sidebar=document.createElement('aside');sidebar.className='ap41-sidebar';sidebar.id='ap41Sidebar';
  const favorites=fav().map(u=>all().find(x=>x[2]===u)).filter(Boolean);
- sidebar.innerHTML=`<div class="ap41-brand"><b>APEX</b><span>41</span><small>${deviceKey()}</small></div><div class="ap41-workflows"><button data-preset="scanner">Find Trade</button><button data-preset="execution">Execute</button><button data-preset="manage">Manage</button><button data-preset="review">Review</button></div>`+NAV.map(([g,items])=>{if(g==='Favorites')items=favorites.map(x=>[x[1],x[2],x[3]]);if(!items.length)return'';return `<section class="ap41-section"><button>${g}<span>⌄</span></button><div>${items.map(x=>link(g,...x)).join('')}</div></section>`}).join('');
+ sidebar.innerHTML=`<div class="ap41-brand"><b>APEX</b><span>42</span><small>${deviceKey()}</small></div><div class="ap41-workflows"><button data-preset="scanner">Find Trade</button><button data-preset="execution">Execute</button><button data-preset="manage">Manage</button><button data-preset="review">Review</button></div>`+NAV.map(([g,items])=>{if(g==='Favorites')items=favorites.map(x=>[x[1],x[2],x[3]]);if(!items.length)return'';return `<section class="ap41-section"><button>${g}<span>⌄</span></button><div>${items.map(x=>link(g,...x)).join('')}</div></section>`}).join('');
  document.body.prepend(sidebar);
  const current=all().find(x=>path===x[2].replace(/\/$/,''));
  const top=document.createElement('header');top.className='ap41-topbar';top.innerHTML=`<button class="ap41-menu" id="ap41Menu">☰</button><div class="ap41-crumb">APEX / ${current?current[0]+' / <strong>'+current[1]+'</strong>':'<strong>Workspace</strong>'}</div><div class="ap41-device">${deviceKey()}</div><button class="ap41-search" id="ap41Search">Search <span>Ctrl K</span></button>`;document.body.prepend(top);
