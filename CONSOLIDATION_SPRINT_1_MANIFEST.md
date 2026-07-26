@@ -69,3 +69,43 @@ hub with dynamic string imports — rescoped to Sprint 3).
 ## Validation
 Full suite 1,514 passed / 0 failed. Boot smoke: 812 routes; /api/decision and
 /api/institutional-decision/* return 200 with unchanged payloads.
+
+---
+
+# Consolidation Sprint 3 — v25x Hub Cascade + Calibration Family (executed 2026-07-26)
+
+## Merged / unversioned (5 new canonical modules replace 9 files)
+- institutional_decision_integrity_v250 (+_routes) → institutional_decision_integrity.py
+  THE nine-importer hub — every importer repointed incl. the dynamic string
+  imports in command_center_v269 (_optional("institutional_decision_review")).
+- decision_outcome_forecast_v252 (+_routes)       → decision_outcome_forecast.py
+- institutional_decision_review_v254 (+_routes)   → institutional_decision_review.py
+- adaptive_confidence_calibration_v253 (+_routes) → adaptive_confidence_calibration.py
+- continuous_learning_calibration_v234 + continuous_learning_routes
+                                                  → continuous_learning_calibration.py
+Route paths, payloads, and semantic VERSION strings unchanged. SQLite table
+names (decision_lifecycle_v254 etc.) deliberately untouched — renaming them
+would orphan production data on the /data disk.
+
+## Rescued
+templates/test_continuous_learning_*.py were never collected (testpaths=tests).
+Moved into tests/ — suite grew from 1,514 to 1,518.
+
+## Hygiene
+Removed a duplicate _now() introduced by the Sprint 2 trade_director_decision merge.
+
+## Vetoes (recorded in CONSOLIDATION_MERGE_MAP.md)
+- trade_director_performance_calibration → trade_director_decision: the former
+  is a SQLite-backed store, the latter deliberately pure builders. Keeping the
+  pure/stateful separation (same principle as trade_risk_guard).
+- confidence_attribution ⇄ confidence_attribution_engine: same concept name,
+  different subsystems (live bus explainability vs Sprint 10.2 record store).
+  Both stay.
+- prediction_confidence_calibration: kept — distinct 15.3 feature with its own
+  dashboard template, wired via roadmap routes.
+
+## Guard ratchet
+FROZEN_MAX 48 → 39. Test files renamed to unversioned names (8) plus 2 rescued.
+
+## Validation
+Full suite 1,518 passed / 0 failed.

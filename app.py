@@ -920,7 +920,7 @@ except Exception as _ipe_err:
 
 # APEX 23.4 — Continuous Learning & Confidence Calibration (advisory-only).
 try:
-    from engine.continuous_learning_routes import register_continuous_learning_routes
+    from engine.continuous_learning_calibration import register_continuous_learning_routes
     CONTINUOUS_LEARNING_CALIBRATION_AVAILABLE = True
 except Exception as _clc_err:
     register_continuous_learning_routes = None  # type: ignore[assignment]
@@ -1007,14 +1007,14 @@ except Exception as _mtf_err:
 
 # APEX 25.0 — Institutional Decision Integrity (required, read-only governance).
 try:
-    from engine.institutional_decision_integrity_v250_routes import (
-        register_institutional_decision_integrity_v250_routes,
+    from engine.institutional_decision_integrity import (
+        register_institutional_decision_integrity_routes,
         verify_registered as _idi_verify_registered,
         REQUIRED_ROUTES as _IDI_REQUIRED,
     )
     INSTITUTIONAL_DECISION_INTEGRITY_V250_AVAILABLE = True
 except Exception as _idi_err:
-    register_institutional_decision_integrity_v250_routes = None  # type: ignore[assignment]
+    register_institutional_decision_integrity_routes = None  # type: ignore[assignment]
     _idi_verify_registered = None  # type: ignore[assignment]
     _IDI_REQUIRED = ()  # type: ignore[assignment]
     INSTITUTIONAL_DECISION_INTEGRITY_V250_AVAILABLE = False
@@ -1037,14 +1037,14 @@ except Exception as _ir251_err:
 
 # APEX 25.2 — Decision Outcome Forecasting (required, shadow-mode only).
 try:
-    from engine.decision_outcome_forecast_v252_routes import (
-        register_decision_outcome_forecast_v252_routes,
+    from engine.decision_outcome_forecast import (
+        register_decision_outcome_forecast_routes,
         verify_registered as _dof252_verify_registered,
         REQUIRED_ROUTES as _DOF252_REQUIRED,
     )
     DECISION_OUTCOME_FORECAST_V252_AVAILABLE = True
 except Exception as _dof252_err:
-    register_decision_outcome_forecast_v252_routes = None  # type: ignore[assignment]
+    register_decision_outcome_forecast_routes = None  # type: ignore[assignment]
     _dof252_verify_registered = None  # type: ignore[assignment]
     _DOF252_REQUIRED = ()  # type: ignore[assignment]
     DECISION_OUTCOME_FORECAST_V252_AVAILABLE = False
@@ -1052,14 +1052,14 @@ except Exception as _dof252_err:
 
 # APEX 25.3 — Adaptive Confidence Calibration (required, shadow-mode only).
 try:
-    from engine.adaptive_confidence_calibration_v253_routes import (
-        register_adaptive_confidence_calibration_v253_routes,
+    from engine.adaptive_confidence_calibration import (
+        register_adaptive_confidence_calibration_routes,
         verify_registered as _acc253_verify_registered,
         REQUIRED_ROUTES as _ACC253_REQUIRED,
     )
     ADAPTIVE_CONFIDENCE_CALIBRATION_V253_AVAILABLE = True
 except Exception as _acc253_err:
-    register_adaptive_confidence_calibration_v253_routes = None  # type: ignore[assignment]
+    register_adaptive_confidence_calibration_routes = None  # type: ignore[assignment]
     _acc253_verify_registered = None  # type: ignore[assignment]
     _ACC253_REQUIRED = ()  # type: ignore[assignment]
     ADAPTIVE_CONFIDENCE_CALIBRATION_V253_AVAILABLE = False
@@ -1067,14 +1067,14 @@ except Exception as _acc253_err:
 
 # APEX 25.4 — Institutional Decision Review & Learning (required, advisory-only).
 try:
-    from engine.institutional_decision_review_v254_routes import (
-        register_institutional_decision_review_v254_routes,
+    from engine.institutional_decision_review import (
+        register_institutional_decision_review_routes,
         verify_registered as _idr254_verify_registered,
         REQUIRED_ROUTES as _IDR254_REQUIRED,
     )
     INSTITUTIONAL_DECISION_REVIEW_V254_AVAILABLE = True
 except Exception as _idr254_err:
-    register_institutional_decision_review_v254_routes = None  # type: ignore[assignment]
+    register_institutional_decision_review_routes = None  # type: ignore[assignment]
     _idr254_verify_registered = None  # type: ignore[assignment]
     _IDR254_REQUIRED = ()  # type: ignore[assignment]
     INSTITUTIONAL_DECISION_REVIEW_V254_AVAILABLE = False
@@ -12429,7 +12429,7 @@ else:
 
 # APEX 25.0 — Institutional Decision Integrity registration. This governance
 # surface is required and fails loudly if route registration is incomplete.
-if not INSTITUTIONAL_DECISION_INTEGRITY_V250_AVAILABLE or register_institutional_decision_integrity_v250_routes is None:
+if not INSTITUTIONAL_DECISION_INTEGRITY_V250_AVAILABLE or register_institutional_decision_integrity_routes is None:
     raise RuntimeError(
         "APEX 25.0 Institutional Decision Integrity routes are required but the "
         "module failed to import. See the earlier import diagnostic.")
@@ -12439,7 +12439,7 @@ else:
             value = STATE.get("last_result") or {}
             return dict(value) if isinstance(value, dict) else {}
     try:
-        register_institutional_decision_integrity_v250_routes(app, last_result_provider=_idi_last_result)
+        register_institutional_decision_integrity_routes(app, last_result_provider=_idi_last_result)
     except (AssertionError, ValueError) as e:
         raise RuntimeError(
             "APEX 25.0 Institutional Decision Integrity route registration failed "
@@ -12479,7 +12479,7 @@ else:
 
 
 # APEX 25.2 — Decision Outcome Forecast registration. Required and fail-loud.
-if not DECISION_OUTCOME_FORECAST_V252_AVAILABLE or register_decision_outcome_forecast_v252_routes is None:
+if not DECISION_OUTCOME_FORECAST_V252_AVAILABLE or register_decision_outcome_forecast_routes is None:
     raise RuntimeError(
         "APEX 25.2 Decision Outcome Forecast routes are required but the module "
         "failed to import. See the earlier import diagnostic.")
@@ -12489,7 +12489,7 @@ else:
             value = STATE.get("last_result") or {}
             return dict(value) if isinstance(value, dict) else {}
     try:
-        register_decision_outcome_forecast_v252_routes(app, last_result_provider=_dof252_last_result)
+        register_decision_outcome_forecast_routes(app, last_result_provider=_dof252_last_result)
     except (AssertionError, ValueError) as e:
         raise RuntimeError(
             "APEX 25.2 Decision Outcome Forecast route registration failed "
@@ -12504,7 +12504,7 @@ else:
 
 
 # APEX 25.3 — Adaptive Confidence Calibration registration. Required and fail-loud.
-if not ADAPTIVE_CONFIDENCE_CALIBRATION_V253_AVAILABLE or register_adaptive_confidence_calibration_v253_routes is None:
+if not ADAPTIVE_CONFIDENCE_CALIBRATION_V253_AVAILABLE or register_adaptive_confidence_calibration_routes is None:
     raise RuntimeError(
         "APEX 25.3 Adaptive Confidence Calibration routes are required but the "
         "module failed to import. See the earlier import diagnostic.")
@@ -12514,7 +12514,7 @@ else:
             value = STATE.get("last_result") or {}
             return dict(value) if isinstance(value, dict) else {}
     try:
-        register_adaptive_confidence_calibration_v253_routes(app, last_result_provider=_acc253_last_result)
+        register_adaptive_confidence_calibration_routes(app, last_result_provider=_acc253_last_result)
     except (AssertionError, ValueError) as e:
         raise RuntimeError(
             "APEX 25.3 Adaptive Confidence Calibration route registration failed "
@@ -12529,7 +12529,7 @@ else:
 
 
 # APEX 25.4 — Institutional Decision Review & Learning registration. Required and fail-loud.
-if not INSTITUTIONAL_DECISION_REVIEW_V254_AVAILABLE or register_institutional_decision_review_v254_routes is None:
+if not INSTITUTIONAL_DECISION_REVIEW_V254_AVAILABLE or register_institutional_decision_review_routes is None:
     raise RuntimeError(
         "APEX 25.4 Institutional Decision Review routes are required but the "
         "module failed to import. See the earlier import diagnostic.")
@@ -12539,7 +12539,7 @@ else:
             value = STATE.get("last_result") or {}
             return dict(value) if isinstance(value, dict) else {}
     try:
-        register_institutional_decision_review_v254_routes(app, last_result_provider=_idr254_last_result)
+        register_institutional_decision_review_routes(app, last_result_provider=_idr254_last_result)
     except (AssertionError, ValueError) as e:
         raise RuntimeError(
             "APEX 25.4 Institutional Decision Review route registration failed "
