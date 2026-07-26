@@ -390,6 +390,16 @@ except Exception as _td38_err:
     TRADE_DIRECTOR_PHASE38_AVAILABLE = False
     print(f"Trade Director Phase 38 unavailable: {_td38_err}", flush=True)
 
+# APEX Trade Director Phase 39 — subminute execution timing
+try:
+    from engine.trade_director_subminute_execution import (
+        evaluate_subminute_execution as td39_evaluate_subminute_execution,
+    )
+    TRADE_DIRECTOR_PHASE39_AVAILABLE = True
+except Exception as _td39_err:
+    TRADE_DIRECTOR_PHASE39_AVAILABLE = False
+    print(f"Trade Director Phase 39 unavailable: {_td39_err}", flush=True)
+
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
@@ -8931,6 +8941,23 @@ def api_mobile_momentum_alerts_test():
     result = td37_dispatch_mobile_alert(payload, send_telegram, force=True)
     result["test_only"] = True
     return jsonify(result), (200 if result.get("ok") else 502)
+
+
+@app.route("/api/subminute-execution/evaluate", methods=["POST"])
+def api_subminute_execution_evaluate():
+    if not TRADE_DIRECTOR_PHASE39_AVAILABLE:
+        return jsonify({"ok": False, "error": "Phase 39 unavailable"}), 503
+    body = request.get_json(silent=True) or {}
+    with ACTIVE_POSITION_LOCK:
+        active_position = dict(ACTIVE_POSITION)
+    result = td39_evaluate_subminute_execution(
+        setup=body.get("setup") or {},
+        bars_15s=body.get("bars_15s") or [],
+        bars_30s=body.get("bars_30s") or [],
+        position=body.get("position") or active_position,
+        current_premium=body.get("current_premium"),
+    )
+    return jsonify({"ok": True, "subminute_execution": result})
 
 
 @app.route("/api/institutional-intent/status", methods=["GET"])
