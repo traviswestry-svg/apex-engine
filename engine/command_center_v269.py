@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Optional
 
-from . import institutional_decision_integrity_v250 as integrity
+from . import institutional_decision_integrity as integrity
 
 VERSION = "26.9_26.10_COMMAND_CENTER_TRADER_MODE"
 SCHEMA_VERSION = "apex.command_center.v269_v2610.v1"
@@ -58,7 +58,7 @@ def build_command_center(payload: Optional[Mapping[str, Any]]) -> dict[str, Any]
     broker = _optional("broker_intelligence_v267")
     exec_review = _optional("execution_review_v268")
     validation = _optional("institutional_validation_promotion_v255")
-    review = _optional("institutional_decision_review_v254")
+    review = _optional("institutional_decision_review")
 
     plan = _safe(execution.build_execution_plan, root) if execution else None
     plan_body = _mapping(_mapping(plan).get("execution_plan"))
@@ -105,9 +105,9 @@ def build_trader_mode(payload: Optional[Mapping[str, Any]]) -> dict[str, Any]:
     d = _mapping(decision.get("decision"))
 
     reasoning = _optional("institutional_reasoning_v251")
-    forecast = _optional("decision_outcome_forecast_v252")
-    calibration = _optional("adaptive_confidence_calibration_v253")
-    review = _optional("institutional_decision_review_v254")
+    forecast = _optional("decision_outcome_forecast")
+    calibration = _optional("adaptive_confidence_calibration")
+    review = _optional("institutional_decision_review")
     validation = _optional("institutional_validation_promotion_v255")
     broker = _optional("broker_intelligence_v267")
 

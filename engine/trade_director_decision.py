@@ -311,10 +311,6 @@ def build_institutional_decision_engine(context: Optional[Mapping[str, Any]], pr
 
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _num(v: Any, default: float = 0.0) -> float:
     try:
         n = float(v)

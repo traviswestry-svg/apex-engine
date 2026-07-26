@@ -25,7 +25,7 @@ import datetime as dt
 import math
 from typing import Any, Mapping, Optional
 
-from . import institutional_decision_integrity_v250 as integrity
+from . import institutional_decision_integrity as integrity
 
 try:  # Reuse the existing risk envelope; degrade to conservative defaults if absent.
     from .execution.trade_risk_guard import RiskLimits  # type: ignore

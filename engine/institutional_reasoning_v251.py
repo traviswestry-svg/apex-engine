@@ -11,7 +11,7 @@ import datetime as dt
 import math
 from typing import Any, Mapping, Optional
 
-from . import institutional_decision_integrity_v250 as integrity
+from . import institutional_decision_integrity as integrity
 
 VERSION = "25.1.0_INSTITUTIONAL_REASONING"
 SCHEMA_VERSION = "apex.institutional_reasoning.v251.v1"

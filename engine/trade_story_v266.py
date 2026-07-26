@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional
 
-from . import institutional_decision_integrity_v250 as integrity
+from . import institutional_decision_integrity as integrity
 
 try:
-    from . import decision_outcome_forecast_v252 as forecast_engine  # type: ignore
+    from . import decision_outcome_forecast as forecast_engine  # type: ignore
 except Exception:  # pragma: no cover
     forecast_engine = None  # type: ignore
 try:
-    from . import adaptive_confidence_calibration_v253 as calibration_engine  # type: ignore
+    from . import adaptive_confidence_calibration as calibration_engine  # type: ignore
 except Exception:  # pragma: no cover
     calibration_engine = None  # type: ignore
 try:

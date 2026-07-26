@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 
-from .continuous_learning_calibration_v234 import build_continuous_learning, record_outcome
+from .continuous_learning_calibration import build_continuous_learning, record_outcome
 from .institutional_forecast_engine_v232 import build_institutional_forecast
 from .institutional_playbook_engine_v233 import build_institutional_playbooks
 from .institutional_regime_intelligence_v231 import build_regime_intelligence

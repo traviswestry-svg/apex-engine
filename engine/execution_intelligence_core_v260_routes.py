@@ -35,7 +35,7 @@ def register_execution_intelligence_core_v260_routes(app, *, last_result_provide
     @app.get("/api/execution/readiness")
     def execution_v260_readiness():
         payload = current_payload()
-        from . import institutional_decision_integrity_v250 as integrity
+        from . import institutional_decision_integrity as integrity
         decision = integrity.evaluate_decision(payload)
         readiness = execution.assess_readiness(payload, decision)
         return jsonify({"ok": True, "version": execution.VERSION,

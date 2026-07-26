@@ -6,14 +6,14 @@ from .institutional_trading_brain_v230 import build_institutional_trading_brain
 from .institutional_regime_intelligence_v231 import build_regime_intelligence
 from .institutional_forecast_engine_v232 import build_institutional_forecast
 from .institutional_playbook_engine_v233 import build_institutional_playbooks
-from .continuous_learning_calibration_v234 import build_continuous_learning
+from .continuous_learning_calibration import build_continuous_learning
 from .institutional_ai_trading_coach_v235 import build_trading_coach, behavioral_scorecard
 from .institutional_execution_intelligence_v240 import build_execution_intelligence, journal
 from .institutional_portfolio_risk_v241 import build_portfolio_intelligence
 from . import institutional_replay_v242 as replay_engine
 from . import institutional_research_lab_v243 as research_engine
 from . import institutional_multi_timeframe_v244 as mtf_engine
-from . import institutional_decision_integrity_v250 as decision_integrity_engine
+from . import institutional_decision_integrity as decision_integrity_engine
 from . import institutional_reasoning_v251 as reasoning_engine
 VERSION="14.3.0_INSTITUTIONAL_MISSION_CONTROL_2"
 
