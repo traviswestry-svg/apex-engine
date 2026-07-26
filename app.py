@@ -16,6 +16,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from flask import Flask, jsonify, render_template, request, redirect
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
+from engine.institutional_intelligence_mesh import build_intelligence_mesh
 
 # APEX Trade Director Phase 6 — lazy trade learning/replay persistence
 try:
@@ -6582,6 +6583,14 @@ def health():
 # =============================================================================
 # APEX 4.5 NEW API ROUTES
 # =============================================================================
+
+
+
+@app.route("/api/intelligence-mesh", methods=["POST"])
+def api_intelligence_mesh():
+    payload = request.get_json(silent=True) or {}
+    snapshot = payload.get("snapshot") if isinstance(payload, dict) else {}
+    return jsonify(build_intelligence_mesh(snapshot if isinstance(snapshot, dict) else {}))
 
 @app.route("/command_center")
 @app.route("/apex42")
