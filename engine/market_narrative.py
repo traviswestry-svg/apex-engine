@@ -52,15 +52,19 @@ def evaluate(snapshot: Mapping[str, Any] | None = None) -> dict[str, Any]:
     race_leader = str(race.get("leader") or "BALANCED").upper()
     liquidity_score = 50 + (_num(race.get("edge_pct"), 0) / 2) * (1 if race_leader == "UPPER" else -1 if race_leader == "LOWER" else 0)
     intent_score = _num(intent.get("score"), 50)
+    adaptive = s.get("adaptive_learning") or {}
+    weights = adaptive.get("active_weights") or {}
+    def w(name: str, default: float) -> float:
+        return _clamp(_num(weights.get(name), default), 0.01, 0.40)
     components = [
-        _component("Liquidity", liquidity_score, .22, str(race.get("interpretation") or "")),
-        _component("Order Flow", flow.get("flow_score") or flow.get("order_flow_score"), .18),
-        _component("Delta", flow.get("delta_score") or flow.get("cumulative_delta_score"), .14),
-        _component("Auction", auction.get("auction_score"), .12),
-        _component("Structure", s.get("structure_score") or structure.get("score"), .12),
-        _component("Momentum", s.get("momentum_score"), .10),
-        _component("Gamma", s.get("dealer_score") or gamma.get("score"), .07),
-        _component("VWAP", s.get("vwap_score"), .05),
+        _component("Liquidity", liquidity_score, w("liquidity", .22), str(race.get("interpretation") or "")),
+        _component("Order Flow", flow.get("flow_score") or flow.get("order_flow_score"), w("order_flow", .18)),
+        _component("Delta", flow.get("delta_score") or flow.get("cumulative_delta_score"), w("delta", .14)),
+        _component("Auction", auction.get("auction_score"), w("auction", .12)),
+        _component("Structure", s.get("structure_score") or structure.get("score"), w("structure", .12)),
+        _component("Momentum", s.get("momentum_score"), w("momentum", .10)),
+        _component("Gamma", s.get("dealer_score") or gamma.get("score"), w("gamma", .07)),
+        _component("VWAP", s.get("vwap_score"), w("vwap", .05)),
     ]
     weighted = 50 + sum(c["contribution"] for c in components)
     weighted = _clamp(weighted)
@@ -114,6 +118,7 @@ def evaluate(snapshot: Mapping[str, Any] | None = None) -> dict[str, Any]:
         "trade_director_context": {"eligible": readiness >= 65 and alignment not in ("HIGH_CONFLICT","NO_TRADE"),
                                    "direction": thesis_direction, "target_level": target_level,
                                    "reason": market_story, "advisory_only": True},
+        "adaptive_weights_applied": bool(adaptive.get("applied_to_live_scoring")),
         "schema_version": SCHEMA_VERSION, "engine_version": VERSION, "advisory_only": True,
     }
 
