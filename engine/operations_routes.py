@@ -6,6 +6,7 @@ dependent capabilities.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import sqlite3
 import time
@@ -33,38 +34,104 @@ def _overall(checks: Mapping[str, Mapping[str, Any]]) -> str:
                key=lambda s: _STATUS_RANK.get(s, 3), default="WARN")
 
 
+def _capability_route_metadata() -> Dict[str, Dict[str, Any]]:
+    """Return route metadata from the canonical capability registry.
+
+    The release-manifest parser deliberately has no PyYAML dependency, so this
+    lightweight reader extracts only fields needed by the Operations Center.
+    """
+    try:
+        from .release_manifest import REGISTRY_PATH
+        text = REGISTRY_PATH.read_text(encoding="utf-8")
+    except Exception:
+        return {}
+
+    result: Dict[str, Dict[str, Any]] = {}
+    current: Optional[str] = None
+    fields: Dict[str, Any] = {}
+
+    def flush() -> None:
+        if not current:
+            return
+        routes = fields.get("api_routes", [])
+        for route in routes:
+            result[str(route)] = {
+                "capability": current,
+                "status": fields.get("status", "unregistered"),
+                "version": fields.get("version"),
+                "canonical_module": fields.get("canonical_module"),
+                "decision_authority": fields.get("decision_authority", "unknown"),
+            }
+
+    for raw in text.splitlines():
+        if raw.startswith("  ") and not raw.startswith("    ") and raw.strip().endswith(":"):
+            flush()
+            current = raw.strip()[:-1]
+            fields = {}
+            continue
+        if current and raw.startswith("    ") and ":" in raw:
+            key, value = raw.strip().split(":", 1)
+            value = value.strip()
+            if key == "api_routes":
+                fields[key] = [x.strip().strip("'\"") for x in value.strip("[]").split(",") if x.strip()]
+            elif key in {"status", "version", "canonical_module", "decision_authority"}:
+                fields[key] = value.strip("'\"")
+    flush()
+    return result
+
+
+def _category_for_route(route: str) -> str:
+    if route.startswith("/static/"):
+        return "static"
+    if route.startswith("/api/system") or route in {"/health", "/api/version", "/api/release-manifest"}:
+        return "system"
+    if any(token in route for token in ("/broker/", "/trade/", "/execution")):
+        return "execution"
+    if any(token in route for token in ("learning", "calibration", "outcome-grader")):
+        return "learning"
+    if any(token in route for token in ("replay", "review", "signal", "ledger")):
+        return "review"
+    if "flow" in route or "liquidity" in route:
+        return "flow"
+    if any(token in route for token in ("feature_store", "similarity", "provenance", "evidence", "decision-snapshot")):
+        return "history"
+    if route.startswith("/api/"):
+        return "intelligence"
+    return "dashboard"
+
+
 def _routes(app) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
+    registry = _capability_route_metadata()
     for rule in sorted(app.url_map.iter_rules(), key=lambda r: (str(r.rule), r.endpoint)):
         methods = sorted(m for m in rule.methods if m not in {"HEAD", "OPTIONS"})
         route = str(rule.rule)
         endpoint = str(rule.endpoint)
-        if route.startswith("/static/"):
-            category = "static"
-        elif route.startswith("/api/system") or route == "/health":
-            category = "system"
-        elif "/broker/" in route or "/trade/" in route:
-            category = "execution"
-        elif "learning" in route or "calibration" in route:
-            category = "learning"
-        elif "replay" in route or "review" in route or "signal" in route:
-            category = "review"
-        elif "flow" in route:
-            category = "flow"
-        elif "feature_store" in route or "similarity" in route or "provenance" in route:
-            category = "history"
-        elif route.startswith("/api/"):
-            category = "intelligence"
-        else:
-            category = "dashboard"
+        view = app.view_functions.get(endpoint)
+        owner_module = getattr(view, "__module__", "unknown") if view else "unknown"
+        doc = inspect.getdoc(view) if view else None
+        description = (doc.splitlines()[0].strip() if doc else endpoint.replace("_", " ").strip())
+        cap = registry.get(route, {})
+        auth_required = bool(
+            getattr(view, "auth_required", False)
+            or getattr(view, "login_required", False)
+            or any(token in endpoint.lower() for token in ("oauth", "login", "callback"))
+        )
         rows.append({
             "route": route,
             "methods": methods,
             "endpoint": endpoint,
-            "category": category,
-            "auth_required": False,
-            "description": endpoint.replace("_", " ").strip(),
+            "category": _category_for_route(route),
+            "owner_module": cap.get("canonical_module") or owner_module,
+            "runtime_module": owner_module,
+            "capability": cap.get("capability"),
+            "capability_version": cap.get("version"),
+            "status": cap.get("status", "active" if not route.startswith("/static/") else "system"),
+            "decision_authority": cap.get("decision_authority", "unknown"),
+            "auth_required": auth_required,
+            "description": description,
             "dynamic": "<" in route,
+            "safe_probe": "GET" in methods and "<" not in route and not auth_required,
         })
     return rows
 
