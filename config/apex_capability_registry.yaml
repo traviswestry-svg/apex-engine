@@ -1,10 +1,10 @@
 schema_version: apex.capability_registry.v1
-apex_version: 47.0.4
+apex_version: 48.1.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
     status: active
-    version: 47.0.5
+    version: 48.1.0
     inputs: [flask_route_registry, capability_registry]
     outputs: [endpoint_inventory, openapi_inventory, developer_console]
     api_routes: [/api/endpoints, /api/endpoints/search, /api/endpoints/stats, /api/endpoints/openapi]
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: 47.0.1
+    version: 48.1.0
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -70,4 +70,14 @@ capabilities:
     inputs: [recommendation_ledger, canonical_decision_snapshot, outcome_grader, adaptive_learning]
     outputs: [pipeline_trace, first_blocker, lifecycle_counts]
     api_routes: [/api/evidence-pipeline/trace]
+    decision_authority: none
+
+  production_observability:
+    canonical_module: engine.production_observability
+    status: active
+    version: "48.1.0"
+    component_version: "10.1.0_PRODUCTION_OBSERVABILITY"
+    inputs: [runtime_metrics, capability_registry, canonical_release_manifest]
+    outputs: [system_metrics, system_readiness, integration_health]
+    api_routes: [/api/system/metrics, /api/system/readiness]
     decision_authority: none

@@ -1,7 +1,7 @@
 {
-  "apex_version": "47.0.7",
-  "build_name": "Runtime Status Truth & Release Authority Repair",
-  "release_series": "APEX 47",
+  "apex_version": "48.1.0",
+  "build_name": "Canonical Version Unification",
+  "release_series": "APEX 48",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
@@ -10,7 +10,7 @@
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
-    "read_only_status_patch": true
+    "read_only_version_unification": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
