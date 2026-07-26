@@ -3611,6 +3611,31 @@ function renderLiquidityRaceInline(race, intelligence) {
 }
 
 
+
+function renderAdaptiveLearningInline(a) {
+  if (!a || !a.ok) return '';
+  const mode = a.status || 'COLD_START';
+  const modeColor = mode === 'ACTIVE_BOUNDED' ? 'var(--green)' : mode === 'SHADOW_LEARNING' ? 'var(--blue)' : 'var(--amber)';
+  const weights = a.proposed_weights || a.active_weights || {};
+  const labels = {liquidity:'Liquidity',order_flow:'Order Flow',delta:'Delta',auction:'Auction',structure:'Structure',momentum:'Momentum',gamma:'Gamma',vwap:'VWAP'};
+  const rows = Object.keys(labels).map(k => {
+    const active = Number((a.active_weights||{})[k] || 0) * 100;
+    const proposed = Number(weights[k] || 0) * 100;
+    const delta = proposed - active;
+    return `<div class="fm-prem-row"><span class="fm-prem-label">${labels[k]}</span><span class="fm-prem-val">${active.toFixed(1)}% <span style="color:${delta>0?'var(--green)':delta<0?'var(--red)':'var(--faint)'}">${delta>=0?'+':''}${delta.toFixed(1)}</span></span></div>`;
+  }).join('');
+  const cal = a.calibration || {};
+  return `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr)">
+    <div class="fm-header"><span class="fm-intent">ADAPTIVE LEARNING 46</span><span style="color:${modeColor};font-weight:800">${esc(mode.replaceAll('_',' '))}</span></div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Graded outcomes</span><span class="fm-prem-val">${Number(a.sample_count||0)} / ${Number(a.minimum_training_samples||30)}</span></div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Live weights</span><span class="fm-prem-val">${a.applied_to_live_scoring ? 'ACTIVE' : 'UNCHANGED'}</span></div>
+    ${cal.win_rate_pct != null ? `<div class="fm-prem-row"><span class="fm-prem-label">Observed win rate</span><span class="fm-prem-val">${Number(cal.win_rate_pct).toFixed(1)}%</span></div>` : ''}
+    ${cal.brier_score != null ? `<div class="fm-prem-row"><span class="fm-prem-label">Brier score</span><span class="fm-prem-val">${Number(cal.brier_score).toFixed(4)}</span></div>` : ''}
+    <div style="margin-top:8px"><div class="fm-meter-label">ACTIVE WEIGHT · PROPOSED CHANGE</div>${rows}</div>
+    <div class="fm-narrative">${esc(a.interpretation||'')}</div>
+  </div>`;
+}
+
 function renderMarketNarrativeInline(n) {
   if (!n || !n.ok) return '';
   const t = n.thesis || {}, c = n.contradiction_engine || {}, ck = n.institutional_checklist || {};
@@ -3690,6 +3715,7 @@ function renderFlowMeter(d) {
     ${dealRead  ? `<div class="fm-dealer-read">${esc(dealRead.slice(0,100))}</div>` : ''}
     ${renderLiquidityRaceInline(d.liquidity_race, d.liquidity_intelligence)}
     ${renderMarketNarrativeInline(d.market_narrative)}
+    ${renderAdaptiveLearningInline(d.adaptive_learning)}
   `;
 }
 
