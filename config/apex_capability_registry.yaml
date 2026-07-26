@@ -1,0 +1,56 @@
+schema_version: apex.capability_registry.v1
+apex_version: 47.0.4
+capabilities:
+  release_manifest:
+    canonical_module: engine.release_manifest
+    status: active
+    version: 47.0.1
+    inputs: [environment, capability_registry]
+    outputs: [release_manifest]
+    api_routes: [/api/version, /api/release-manifest]
+    decision_authority: none
+  canonical_decision_snapshot:
+    canonical_module: engine.canonical_decision
+    status: active
+    version: 47.0.2
+    inputs: [institutional_os_composition]
+    outputs: [canonical_decision_snapshot, feature_vector]
+    api_routes: [/api/decision-snapshot/latest]
+    decision_authority: advisory
+  evidence_readiness:
+    canonical_module: engine.evidence_pipeline
+    status: active
+    version: 47.0.3
+    inputs: [canonical_decision_snapshot, grading_records]
+    outputs: [evidence_readiness]
+    api_routes: [/api/evidence-readiness]
+    decision_authority: none
+  automatic_outcome_grader:
+    canonical_module: engine.outcome_grader
+    status: active
+    version: 47.0.4
+    inputs: [stored_decisions, forward_price_samples]
+    outputs: [graded_outcomes, exclusion_reasons]
+    api_routes: [/api/outcome-grader/run, /api/outcome-grader/summary]
+    decision_authority: none
+  market_narrative:
+    canonical_module: engine.market_narrative
+    status: active
+    version: 45.0.0
+    inputs: [canonical_decision_snapshot]
+    outputs: [market_narrative]
+    decision_authority: advisory
+    replaces: [engine.institutional_narrative, engine.decision_narrative]
+  adaptive_learning:
+    canonical_module: engine.adaptive_learning
+    status: shadow
+    version: 46.0.0
+    inputs: [graded_outcomes, feature_vector]
+    outputs: [bounded_weight_proposals]
+    decision_authority: advisory
+  legacy_engine_app:
+    canonical_module: engine.app
+    status: quarantined
+    version: legacy
+    decision_authority: none
+    note: Root app.py remains the canonical production application for APEX 47.
