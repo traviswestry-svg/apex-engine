@@ -22,7 +22,7 @@ from .execution_reality_slippage import ExecutionRealityStore, build_execution_r
 from .premium_portfolio_risk_governor import RiskGovernorStore, evaluate_portfolio_risk
 from .premium_execution_orchestrator import PremiumExecutionOrchestrator
 from .institutional_learning_engine import LearningStore, build_learning_intelligence
-from .decision_narrative import build_decision_narrative
+from .premium_discipline import build_decision_narrative
 from .trade_lifecycle_intelligence import LifecycleStore, evaluate_trade_lifecycle
 from .strategy_discovery_engine import StrategyDiscoveryStore, build_strategy_discovery, match_current_market
 

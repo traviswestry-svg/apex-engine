@@ -1,7 +1,7 @@
 """APEX 21.2 — Institutional Trading Workspace aggregation."""
 from datetime import datetime, timezone
 from typing import Any, Dict
-from .institutional_decision_engine_v20 import build_institutional_decision
+from .institutional_decision_engine import build_institutional_decision
 from .institutional_execution_optimizer_v201 import build_execution_plan
 from .strategy_intelligence_v203 import build_strategy_intelligence
 from .institutional_volume_profile_v211 import build_volume_profile_intelligence

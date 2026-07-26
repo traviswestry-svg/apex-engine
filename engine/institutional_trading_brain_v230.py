@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 import math
 
-from .institutional_decision_engine_v20 import build_institutional_decision
+from .institutional_decision_engine import build_institutional_decision
 from .market_memory_engine_v220 import find_similar, status as memory_status
 
 VERSION = "16.0.0_INSTITUTIONAL_TRADING_BRAIN"

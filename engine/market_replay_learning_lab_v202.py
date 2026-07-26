@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime,timezone
 from typing import Any,Dict,List
-from .institutional_decision_engine_v20 import build_institutional_decision
+from .institutional_decision_engine import build_institutional_decision
 from .institutional_execution_optimizer_v201 import build_execution_plan
 VERSION='13.2.0_MARKET_REPLAY_LEARNING_LAB'
 

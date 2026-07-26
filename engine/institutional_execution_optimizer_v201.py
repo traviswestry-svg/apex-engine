@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict
-from .institutional_decision_engine_v20 import build_institutional_decision
+from .institutional_decision_engine import build_institutional_decision
 VERSION='13.1.0_INSTITUTIONAL_EXECUTION_OPTIMIZER'
 
 def _f(v,d=0.0):
