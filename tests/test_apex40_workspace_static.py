@@ -5,8 +5,12 @@ def test_app_registers_workspace_injector():
     source=(ROOT/'app.py').read_text(encoding='utf-8')
     assert '@app.after_request' in source
     assert 'inject_apex41_workspace' in source
-    assert '/static/css/apex_workspace.css?v=41.0' in source
-    assert '/static/js/apex_workspace.js?v=41.0' in source
+    # Cache-bust version is intentionally NOT pinned: it bumps every UI phase
+    # (41.0 -> 42.0 -> ...) and a literal pin rots on the next bump. Assert the
+    # injector wires BOTH assets with SOME versioned cache-bust instead.
+    import re
+    assert re.search(r"/static/css/apex_workspace\.css\?v=[\d.]+", source)
+    assert re.search(r"/static/js/apex_workspace\.js\?v=[\d.]+", source)
 
 def test_workspace_assets_preserve_phase40_core_features():
     js=(ROOT/'static/js/apex_workspace.js').read_text(encoding='utf-8')

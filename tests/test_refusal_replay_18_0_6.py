@@ -58,7 +58,10 @@ def test_due_replay_is_idempotent_and_persists_scorecard():
         c = candidate()
         d = {"decision": REFUSE, "score": 60, "threshold": 65,
              "blockers": ["below threshold"], "warnings": []}
-        rec = ledger.record(session_date="2026-07-20", ticker="SPX", candidate=c, decision=d)
+        # ts pinned to the fixed session_date: wall-clock stamping made this
+        # test rot as real time passed the session (forward window inverted).
+        rec = ledger.record(session_date="2026-07-20", ticker="SPX", candidate=c, decision=d,
+                            ts="2026-07-20T14:30:00+00:00")
         decision_time = dt.datetime.fromisoformat(rec["ts"])
         bars = [bar(decision_time + dt.timedelta(minutes=5), 6010, 6020, 6005, 6015)]
 

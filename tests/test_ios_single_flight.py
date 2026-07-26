@@ -75,7 +75,12 @@ def test_endpoint_returns_fast_when_compose_in_flight():
     assert resp.status_code == 200
     body = resp.get_json()
     assert body.get("status") == "refresh_in_progress"
-    assert body.get("stale") is True
+    # 47.0.7 status truth: a FRESH cache being refreshed is not stale — the
+    # payload is served with honest cache-age metadata instead of a blanket
+    # stale flag. (The pre-47.0.7 contract asserted stale=True here.)
+    assert body.get("stale") is False
+    assert body.get("cache_age_seconds") is not None
+    assert body.get("cached") == "value"  # served the cached payload, no recompose
     # Fast path: must not have run the multi-second compose.
     assert elapsed < 2.0
     _reset(t)
@@ -95,6 +100,11 @@ def test_endpoint_cold_start_no_cache_returns_warming_up():
     elapsed = time.monotonic() - start
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body.get("status") == "refresh_in_progress"
+    # 47.0.7 status truth: cold start with NO data yet reports "warming"
+    # (distinct from "refresh_in_progress", which means cached data exists and
+    # is being refreshed). refresh_in_progress=True still signals the compose.
+    assert body.get("status") == "warming"
+    assert body.get("refresh_in_progress") is True
+    assert body.get("stale") is True
     assert elapsed < 2.0
     _reset(t)
