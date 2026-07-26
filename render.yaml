@@ -12,6 +12,12 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.11"
+      - key: APEX_AUTH_TOKEN
+        sync: false
+      - key: APEX_SESSION_HOURS
+        value: "12"
+      - key: APEX_COOKIE_SECURE
+        value: "true"
       - key: POLYGON_API_KEY
         sync: false
       - key: QUANTDATA_API_KEY
