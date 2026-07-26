@@ -81,3 +81,13 @@ capabilities:
     outputs: [system_metrics, system_readiness, integration_health]
     api_routes: [/api/system/metrics, /api/system/readiness]
     decision_authority: none
+
+  decision_evidence_pipeline:
+    canonical_module: engine.decision_evidence_pipeline
+    status: active
+    version: "48.2.0"
+    inputs: [recommendation_ledger, governed_terminal_events]
+    outputs: [flow_features, apex_signals, flow_labels, evidence_readiness]
+    api_routes: [/api/evidence-pipeline/readiness, /api/evidence-pipeline/backfill]
+    decision_authority: none
+    guardrails: [no_proxy_outcomes, immutable_pre_decision_features, terminal_economics_required]
