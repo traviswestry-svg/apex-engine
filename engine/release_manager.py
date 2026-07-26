@@ -31,16 +31,50 @@ the value was actually read from the database.
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-APPLICATION_VERSION = "25.1.1_DECISION_QUALITY"
-SEMANTIC_VERSION = "25.1.1"
-DATABASE_VERSION = "5"
+LEGACY_APPLICATION_VERSION = "25.1.1_DECISION_QUALITY"
+LEGACY_SEMANTIC_VERSION = "25.1.1"
+LEGACY_BUILD = "11.0.1"
 
-# Backward-compatible alias used by app.py.
+_MANIFEST_PATH = Path(__file__).resolve().parents[1] / "config" / "apex_release_manifest.json"
+
+
+def _load_release_manifest() -> Dict[str, Any]:
+    """Load the canonical APEX release identity without making startup fragile.
+
+    The manifest is authoritative for the product release. Environment variables
+    may override it for emergency deployment correction, but legacy component
+    versions never override the active APEX version.
+    """
+    payload: Dict[str, Any] = {}
+    try:
+        raw = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            payload = raw
+    except (OSError, ValueError, TypeError):
+        payload = {}
+
+    version = (os.getenv("APEX_VERSION") or payload.get("apex_version") or "47.0.7").strip()
+    payload["apex_version"] = version
+    payload.setdefault("build_name", "Runtime Status Truth & Release Authority Repair")
+    payload.setdefault("canonical_release_source", "config/apex_release_manifest.json")
+    payload.setdefault("database_schema_version", "5")
+    return payload
+
+
+RELEASE_MANIFEST = _load_release_manifest()
+APPLICATION_VERSION = RELEASE_MANIFEST["apex_version"]
+SEMANTIC_VERSION = RELEASE_MANIFEST["apex_version"]
+DATABASE_VERSION = str(RELEASE_MANIFEST.get("database_schema_version", "5"))
+
+# Backward-compatible alias used by app.py. It now resolves to the canonical
+# APEX release rather than the retired 25.1.1 component identity.
 APP_VERSION = APPLICATION_VERSION
 
 FEATURES = [
@@ -147,7 +181,10 @@ def release_metadata() -> Dict[str, Any]:
     mig = migration_status()
     return {
         "version": SEMANTIC_VERSION,
+        "apex_version": SEMANTIC_VERSION,
         "application_version": APPLICATION_VERSION,
+        "build_name": RELEASE_MANIFEST.get("build_name"),
+        "version_source": RELEASE_MANIFEST.get("canonical_release_source"),
         "build": build,
         "commit": commit,
         "commit_known": commit != "unknown",
@@ -155,6 +192,9 @@ def release_metadata() -> Dict[str, Any]:
         "deployed_at": deployed_at,
         "features": list(FEATURES),
         "database_version": DATABASE_VERSION,
+        "legacy_application_version": LEGACY_APPLICATION_VERSION,
+        "legacy_semantic_version": LEGACY_SEMANTIC_VERSION,
+        "legacy_build": LEGACY_BUILD,
         "pending_migrations": mig["pending_migrations"],
         "migration_status": "CURRENT" if mig["ready"] else "PENDING",
         "migrations_verified": mig["verified"],

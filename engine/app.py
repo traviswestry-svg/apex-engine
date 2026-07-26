@@ -6184,8 +6184,27 @@ def _resolve_health_state(session, scan_in_progress, updated_at, last_scan_durat
 
     age = _age_seconds(updated_at)
 
+    # Session truth must be evaluated before scanner state. An intentionally idle
+    # weekend/overnight scanner is not a degraded production process.
+    if not live_session:
+        if updated_at is not None and last_scan_duration is not None:
+            return {"state": "CLOSED",
+                    "detail": "Market closed — showing last session's completed scan.",
+                    "data_fresh": False,
+                    "scanner_expected": False,
+                    "scanner_state": "SCHEDULED_IDLE"}
+        return {"state": "CLOSED",
+                "detail": "Market closed — scanner intentionally idle.",
+                "data_fresh": False,
+                "scanner_expected": False,
+                "scanner_state": "SCHEDULED_IDLE"}
+
     if not scanner_started:
-        return {"state": "DEGRADED", "detail": "Scanner not started.", "data_fresh": False}
+        return {"state": "DEGRADED",
+                "detail": "Scanner expected during the live session but not started.",
+                "data_fresh": False,
+                "scanner_expected": True,
+                "scanner_state": "NOT_STARTED"}
 
     # No completed scan yet (updated_at null / no duration) → warming, not stale.
     if updated_at is None or last_scan_duration is None:
@@ -6195,7 +6214,9 @@ def _resolve_health_state(session, scan_in_progress, updated_at, last_scan_durat
                     "data_fresh": False}
         return {"state": "WARMING",
                 "detail": "Scanner started; first scan cycle not yet complete.",
-                "data_fresh": False}
+                "data_fresh": False,
+                "scanner_expected": True,
+                "scanner_state": "WARMING"}
 
     # We have a completed scan. Fresh or stale?
     fresh = age is not None and age <= STALE_AFTER_S
@@ -6208,14 +6229,20 @@ def _resolve_health_state(session, scan_in_progress, updated_at, last_scan_durat
     if fresh:
         return {"state": "HEALTHY",
                 "detail": f"Live scan fresh ({int(age)}s ago).",
-                "data_fresh": True}
+                "data_fresh": True,
+                "scanner_expected": True,
+                "scanner_state": "RUNNING"}
     if scan_in_progress:
         return {"state": "WARMING",
                 "detail": "Live scan in progress; refreshing data.",
-                "data_fresh": False}
+                "data_fresh": False,
+                "scanner_expected": True,
+                "scanner_state": "SCANNING"}
     return {"state": "STALE",
-            "detail": f"Last scan {int(age)}s ago (> {int(STALE_AFTER_S)}s) — data may be stale.",
-            "data_fresh": False}
+            "detail": f"Last scan {int(age) if age is not None else 'unknown'}s ago (> {int(STALE_AFTER_S)}s) — data may be stale.",
+            "data_fresh": False,
+            "scanner_expected": True,
+            "scanner_state": "STALE"}
 
 
 @app.route("/api/overnight_briefing")
@@ -6345,8 +6372,14 @@ def _deployment_metadata():
         try:
             meta = get_release_metadata()
             return {
+                "apex_version": meta.get("apex_version", meta.get("version", VERSION)),
                 "application_version": meta.get("application_version", VERSION),
                 "semantic_version": meta.get("version"),
+                "build_name": meta.get("build_name"),
+                "version_source": meta.get("version_source"),
+                "legacy_application_version": meta.get("legacy_application_version"),
+                "legacy_semantic_version": meta.get("legacy_semantic_version"),
+                "legacy_build": meta.get("legacy_build"),
                 "build": meta.get("build"),
                 "git_sha": meta.get("commit"),
                 "git_sha_known": meta.get("commit_known", False),
@@ -6358,8 +6391,11 @@ def _deployment_metadata():
         except Exception:
             pass
     return {
+        "apex_version": VERSION,
         "application_version": VERSION,
-        "semantic_version": None,
+        "semantic_version": VERSION,
+        "build_name": "Runtime Status Truth & Release Authority Repair",
+        "version_source": "config/apex_release_manifest.json",
         "build": None,
         "git_sha": None,
         "git_sha_known": False,
@@ -6398,6 +6434,7 @@ def health():
 
     return jsonify({
         "ok": True,
+        "apex_version": VERSION,
         "version": VERSION,
         "mode": VERSION,
         "deployment": _deployment_metadata(),
@@ -6407,6 +6444,8 @@ def health():
         "health_state": _hstate["state"],
         "health_detail": _hstate["detail"],
         "data_fresh": _hstate["data_fresh"],
+        "scanner_expected": _hstate.get("scanner_expected", s_session == "MARKET_OPEN"),
+        "scanner_state": _hstate.get("scanner_state", "UNKNOWN"),
         # Back-compatible field, now guaranteed non-null. The basis says whether
         # it represents a completed scan or this status evaluation.
         "updated_at": effective_updated_at,
@@ -6431,7 +6470,12 @@ def health():
                     for k, v in s_sources.items()},
         "source_health": _source_observability(s_sources, generated_at),
         "storage": storage_status(),
-        "scanner_process": read_scanner_heartbeat(),
+        "scanner_process": (
+            {"available": False, "state": "NOT_EXPECTED", "error": None,
+             "detail": "Heartbeat is not required while the scanner is scheduled idle."}
+            if not _hstate.get("scanner_expected", s_session == "MARKET_OPEN")
+            else read_scanner_heartbeat()
+        ),
         "is_tradeable": s_session == "MARKET_OPEN",
     })
 
