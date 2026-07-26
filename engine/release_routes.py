@@ -35,8 +35,10 @@ def _safe(fn: Callable[[], Dict[str, Any]]):
     try:
         payload = fn()
         payload.setdefault("ok", True)
-        healthy = payload.get("ready", payload.get("statistics_supportable", True))
-        return jsonify(payload), (200 if healthy else 503)
+        # Empty-but-writable evidence stores are an ACCUMULATING readiness state,
+        # not an unavailable HTTP service. Reserve 503 for actual endpoint/storage failures.
+        failed = payload.get("status") == "FAIL" or payload.get("degraded") is True
+        return jsonify(payload), (503 if failed else 200)
     except Exception as e:  # pragma: no cover
         return jsonify({"ok": True, "degraded": True, "error": str(e)}), 503
 

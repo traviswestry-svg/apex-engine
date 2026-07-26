@@ -10,6 +10,11 @@ VERSION = ledger.VERSION
 
 def register_recommendation_ledger_routes(app, **_kwargs) -> None:
     ledger.init_db()
+    try:
+        from .decision_evidence_pipeline import backfill
+        backfill(ledger.list_recommendations(limit=500))
+    except Exception as exc:
+        print(f"APEX 48.2 evidence backfill unavailable (non-fatal): {exc}", flush=True)
 
     @app.get("/api/recommendation-ledger")
     @app.get("/api/recommendation-ledger/recommendations")
@@ -105,6 +110,18 @@ def register_recommendation_ledger_routes(app, **_kwargs) -> None:
         return jsonify({"ok": True, "version": VERSION, "graded": 0, "pending": len(pending),
                         "status": "AWAITING_EXECUTABLE_OUTCOMES",
                         "note": "No directional proxy grading. Record close/settlement economics first."})
+
+
+    @app.get("/api/evidence-pipeline/readiness")
+    def _evidence_pipeline_readiness():
+        from .decision_evidence_pipeline import readiness
+        return jsonify({"ok": True, **readiness()}), 200
+
+    @app.post("/api/evidence-pipeline/backfill")
+    def _evidence_pipeline_backfill():
+        from .decision_evidence_pipeline import backfill, readiness
+        rows = ledger.list_recommendations(limit=request.args.get("limit", 500, type=int))
+        return jsonify({"ok": True, "backfill": backfill(rows), "readiness": readiness()}), 200
 
     @app.get("/api/calibration/readiness")
     def _calibration_readiness():

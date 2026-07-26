@@ -300,7 +300,14 @@ def record_recommendation(capture: Mapping[str, Any]) -> Dict[str, Any]:
             (capture["recommendation_id"], "CAPTURED", capture["captured_at"], _json({"state": capture.get("state")})),
         )
         conn.commit()
-    return {"created": True, "recommendation_id": capture["recommendation_id"], "duplicate": False}
+    pipeline = {}
+    try:
+        from .decision_evidence_pipeline import capture_recommendation
+        pipeline = capture_recommendation(capture)
+    except Exception as exc:  # evidence persistence must never stop live decisions
+        pipeline = {"error": str(exc)}
+    return {"created": True, "recommendation_id": capture["recommendation_id"], "duplicate": False,
+            "evidence_pipeline": pipeline}
 
 
 def _row_field(row: Any, key: str, default: Any = None) -> Any:
@@ -408,8 +415,17 @@ def append_event(recommendation_id: str, event_type: str, payload: Optional[Mapp
         args.append(recommendation_id)
         conn.execute(f"UPDATE recommendation_ledger SET {', '.join(updates)} WHERE recommendation_id=?", args)
         conn.commit()
+    pipeline = {}
+    if event in {"CLOSED", "SETTLED", "INVALIDATED", "GRADED"}:
+        try:
+            from .decision_evidence_pipeline import process_terminal_event
+            current = get_recommendation(recommendation_id) or {"recommendation_id": recommendation_id}
+            pipeline = process_terminal_event(current, event, data, at)
+        except Exception as exc:
+            pipeline = {"error": str(exc)}
     return {"ok": True, "recommendation_id": recommendation_id, "event_type": event, "event_at": at,
-            "executability_override": bool(data.get("executability_override", False))}
+            "executability_override": bool(data.get("executability_override", False)),
+            "evidence_pipeline": pipeline}
 
 
 def _decode_row(row: sqlite3.Row) -> Dict[str, Any]:
