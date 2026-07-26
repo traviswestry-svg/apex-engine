@@ -112,8 +112,12 @@ no-trade — read-only over the bus) · `/api/premium_strategy/scorecard`
 
 ### Top-level `engine/`
 Composition & state: `market_state`, `institutional_intelligence`, `data_bus`,
-`cache`, `types`, `format`, `math`, `logging`, `diagnostics`, `scheduler`,
-`confidence`, `ribbon`.
+`diagnostics`.
+(Removed in Consolidation Sprint 1 as dead code — imported by nothing:
+`cache`, `types`, `format`, `math`, `logging`, `scheduler`, `confidence`,
+`ribbon`, `risk`, `structure`, `trend`, `market_regime`. The last six were
+one-line re-export shims into `apex_engines` left over from the original
+dedup; all consumers now import `apex_engines` directly.)
 
 Intelligence: `dealer_positioning`, `gamma`, `auction`, `auction_intelligence`,
 `volume_profile`, `market_drivers`, `rotation`, `strike_magnet`, `flow_intelligence`,
