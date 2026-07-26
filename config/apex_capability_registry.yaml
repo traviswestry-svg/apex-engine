@@ -1,6 +1,14 @@
 schema_version: apex.capability_registry.v1
 apex_version: 47.0.4
 capabilities:
+  api_explorer:
+    canonical_module: engine.operations_routes
+    status: active
+    version: 47.0.5
+    inputs: [flask_route_registry, capability_registry]
+    outputs: [endpoint_inventory, openapi_inventory, developer_console]
+    api_routes: [/api/endpoints, /api/endpoints/search, /api/endpoints/stats, /api/endpoints/openapi]
+    decision_authority: none
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
