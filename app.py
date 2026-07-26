@@ -1255,11 +1255,11 @@ app = Flask(__name__)
 # APEX 40 — Institutional Workspace shell.  Dashboard HTML is decorated at
 # response time so legacy pages keep their independent rendering logic while
 # sharing one navigation, command palette, favorites, and breadcrumb layer.
-_APEX40_SHELL_CSS = "/static/css/apex_workspace.css?v=40.0"
-_APEX40_SHELL_JS = "/static/js/apex_workspace.js?v=40.0"
+_APEX41_SHELL_CSS = "/static/css/apex_workspace.css?v=41.0"
+_APEX41_SHELL_JS = "/static/js/apex_workspace.js?v=41.0"
 
 @app.after_request
-def inject_apex40_workspace(response):
+def inject_apex41_workspace(response):
     try:
         if request.path.startswith(("/static/", "/api/", "/health", "/tv_signal")):
             return response
@@ -1270,9 +1270,9 @@ def inject_apex40_workspace(response):
         if "apex_workspace.js" in html:
             return response
         if "</head>" in html:
-            html = html.replace("</head>", f'<link rel="stylesheet" href="{_APEX40_SHELL_CSS}"></head>', 1)
+            html = html.replace("</head>", f'<link rel="stylesheet" href="{_APEX41_SHELL_CSS}"></head>', 1)
         if "</body>" in html:
-            html = html.replace("</body>", f'<script src="{_APEX40_SHELL_JS}" defer></script></body>', 1)
+            html = html.replace("</body>", f'<script src="{_APEX41_SHELL_JS}" defer></script></body>', 1)
         response.set_data(html)
         response.headers.pop("Content-Length", None)
     except Exception as exc:
