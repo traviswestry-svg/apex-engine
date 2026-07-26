@@ -3581,16 +3581,32 @@ function renderStrikeMagnetPanel(d) {
    Reads from: flow_intelligence_2 inside the API response
    ────────────────────────────────────────────────────────────────────────── */
 
-function renderLiquidityRaceInline(race) {
-  if (!race || !race.ok) return `<div class="fm-narrative">Liquidity Race: waiting for valid levels above and below price.</div>`;
+function renderLiquidityRaceInline(race, intelligence) {
+  if (!race || !race.ok) return `<div class="fm-narrative">Liquidity Intelligence: waiting for valid levels above and below price.</div>`;
   const up = race.upper || {}, dn = race.lower || {};
+  const li = intelligence || {};
+  const intent = li.institutional_intent || {};
+  const sweep = li.sweep_detection || {};
+  const pools = (li.top_pools || []).slice(0, 6);
   const leaderColor = race.leader === 'UPPER' ? 'var(--green)' : race.leader === 'LOWER' ? 'var(--red)' : 'var(--amber)';
+  const poolRows = pools.map(p => {
+    const sideColor = p.side === 'UPPER' ? 'var(--green)' : 'var(--red)';
+    const statusColor = p.status === 'CONSUMED' ? 'var(--faint)' : sideColor;
+    return `<div class="fm-prem-row" style="gap:7px">
+      <span class="fm-prem-label" style="min-width:88px;color:${statusColor}">${esc((p.type||'POOL').replaceAll('_',' '))}</span>
+      <span class="fm-prem-val">${fmt(p.level)}</span>
+      <span style="font-size:10px;color:${statusColor};font-weight:800">${Number(p.strength_score||0).toFixed(0)}</span>
+    </div>`;
+  }).join('');
   return `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr)">
-    <div class="fm-header"><span class="fm-intent">LIQUIDITY RACE</span><span style="color:${leaderColor};font-weight:800">${esc((race.status||'').replaceAll('_',' '))}</span></div>
+    <div class="fm-header"><span class="fm-intent">LIQUIDITY INTELLIGENCE 44</span><span style="color:${leaderColor};font-weight:800">${esc((race.status||'').replaceAll('_',' '))}</span></div>
     <div class="fm-prem-row"><span class="fm-prem-label">Upper ${fmt(up.level)}</span><span class="fm-prem-val rv-green">${Number(up.probability_first_pct||0).toFixed(1)}%</span></div>
     <div class="fm-meter-track"><div class="fm-meter-fill" style="width:${Number(up.probability_first_pct||50)}%;background:var(--green)"></div></div>
     <div class="fm-prem-row"><span class="fm-prem-label">Lower ${fmt(dn.level)}</span><span class="fm-prem-val rv-red">${Number(dn.probability_first_pct||0).toFixed(1)}%</span></div>
-    <div class="fm-narrative">${esc(race.interpretation||'')} Confidence ${Number(race.confidence||0).toFixed(0)}%. Reassess at contact for absorption.</div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Intent</span><span class="fm-prem-val" style="color:${intent.direction==='BULLISH'?'var(--green)':intent.direction==='BEARISH'?'var(--red)':'var(--amber)'}">${esc((intent.state||'NEUTRAL').replaceAll('_',' '))}</span></div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Sweep</span><span class="fm-prem-val">${esc((sweep.state||'NO ACTIVE SWEEP').replaceAll('_',' '))}</span></div>
+    ${poolRows ? `<div style="margin-top:8px"><div class="fm-meter-label">TOP LIQUIDITY POOLS · LEVEL · STRENGTH</div>${poolRows}</div>` : ''}
+    <div class="fm-narrative">${esc(race.interpretation||'')} Confidence ${Number(race.confidence||0).toFixed(0)}%. Reassess absorption and replenishment at contact.</div>
   </div>`;
 }
 
@@ -3654,7 +3670,7 @@ function renderFlowMeter(d) {
     ${contras.length ? `<div class="fm-contra">⚡ ${esc(contras[0].slice(0,120))}</div>` : ''}
     ${dpLine    ? `<div class="fm-dp">${esc(dpLine)}</div>` : ''}
     ${dealRead  ? `<div class="fm-dealer-read">${esc(dealRead.slice(0,100))}</div>` : ''}
-    ${renderLiquidityRaceInline(d.liquidity_race)}
+    ${renderLiquidityRaceInline(d.liquidity_race, d.liquidity_intelligence)}
   `;
 }
 
