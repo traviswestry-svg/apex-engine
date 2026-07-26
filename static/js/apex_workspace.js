@@ -1,0 +1,31 @@
+(()=>{
+const NAV=[
+['Favorites',[]],
+['Command',[['Home','/apex_os','Institutional OS'],['Scanner','/scanner','Market scanner'],['Trade Command','/apex_os/trade_command','Live decision and execution'],['Execution OS','/apex_os/execution','Execution readiness'],['Morning Readiness','/apex_os/readiness','Pre-market checks']]],
+['Trading',[['Flow / GEX','/flow','Options flow and dealer exposure'],['Chart','/chart','Synchronized market chart'],['Premium Discipline','/apex_os/premium_discipline','Premium scalp command center'],['Trading Desk','/apex_os/institutional_trading_desk','Institutional trading workspace'],['Execution Intelligence','/apex_os/institutional_execution_intelligence','Execution analytics']]],
+['Intelligence',[['Market State','/apex_os/institutional_market_state','Market regime and state'],['Decision Intelligence','/apex_os/decision_intelligence','Decision core'],['Playbook Engine','/apex_os/institutional_playbooks','Playbook matching'],['Strategy Intelligence','/apex_os/strategy_intelligence','Strategy analytics'],['Similarity Lab','/apex_os/institutional_similarity','Historical similarity'],['Research Lab','/apex_os/research_lab','Institutional research']]],
+['Learning',[['Assistant','/assistant','APEX assistant'],['Adaptive Learning','/apex_os/adaptive_learning','Learning engine'],['Replay Laboratory','/apex_os/institutional_replay','Replay and review'],['Cross Examination','/apex_os/cross_examination','Challenge decisions'],['Confidence Attribution','/apex_os/confidence_attribution','Confidence drivers'],['Evidence Graph','/apex_os/evidence_graph','Decision evidence']]],
+['Operations',[['Operations Center','/apex_os/operations','System operations'],['Data Quality','/apex_os/data_quality','Data quality dashboard'],['Historical Readiness','/apex_os/historical_readiness','History coverage'],['Shadow Validation','/apex_os/shadow_validation','Shadow testing'],['Production Governance','/apex_os/production_governance','Production controls'],['Release Manager','/apex_os/release_manager','Release governance'],['Offline Optimization','/apex_os/offline_optimization','Offline optimization']]]];
+const all=()=>NAV.flatMap(([g,x])=>x.map(v=>[g,...v])); const path=location.pathname.replace(/\/$/,'')||'/';
+const fav=()=>JSON.parse(localStorage.getItem('ap40:favorites')||'[]'); const setFav=x=>localStorage.setItem('ap40:favorites',JSON.stringify(x));
+function icon(g){return {Command:'⌂',Trading:'⚡',Intelligence:'◈',Learning:'◆',Operations:'⚙',Favorites:'★'}[g]||'•'}
+function link(g,n,u,d){const active=path===u.replace(/\/$/,'');return `<a class="ap40-link ${active?'active':''}" href="${u}" title="${d}"><span>${icon(g)}</span><span>${n}</span><button class="ap40-star ${fav().includes(u)?'on':''}" data-fav="${u}" data-name="${n}" aria-label="Favorite">★</button></a>`}
+function render(){
+ document.body.classList.add('ap40-ready');
+ const sidebar=document.createElement('aside');sidebar.className='ap40-sidebar';sidebar.id='ap40Sidebar';
+ const favorites=fav().map(u=>all().find(x=>x[2]===u)).filter(Boolean);
+ sidebar.innerHTML=`<div class="ap40-brand"><b>APEX</b>&nbsp;40</div><div class="ap40-workflows"><button class="ap40-workflow" data-go="/scanner">Find Trade</button><button class="ap40-workflow" data-go="/apex_os/trade_command">Execute</button><button class="ap40-workflow" data-go="/apex_os">Manage</button><button class="ap40-workflow" data-go="/apex_os/institutional_replay">Review</button></div>`+NAV.map(([g,items])=>{if(g==='Favorites')items=favorites.map(x=>[x[1],x[2],x[3]]);if(!items.length)return'';return `<section class="ap40-section"><button>${g}<span>⌄</span></button><div class="ap40-links">${items.map(x=>link(g,...x)).join('')}</div></section>`}).join('');
+ document.body.prepend(sidebar);
+ const current=all().find(x=>path===x[2].replace(/\/$/,'')); const top=document.createElement('header');top.className='ap40-topbar';top.innerHTML=`<button class="ap40-menu" id="ap40Menu">☰</button><div class="ap40-crumb">APEX / ${current?current[0]+' / <strong>'+current[1]+'</strong>':'<strong>Workspace</strong>'}</div><button class="ap40-search" id="ap40Search">Search pages and tools <span class="ap40-kbd">Ctrl K</span></button>`;document.body.prepend(top);
+ const ov=document.createElement('div');ov.className='ap40-overlay';ov.id='ap40Overlay';ov.innerHTML='<div class="ap40-palette"><input id="ap40Input" placeholder="Search APEX pages, tools, and workflows…" autocomplete="off"><div class="ap40-results" id="ap40Results"></div></div>';document.body.append(ov);
+ document.querySelectorAll('.ap40-section>button').forEach(b=>b.onclick=()=>b.parentElement.classList.toggle('collapsed'));
+ document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>location.href=b.dataset.go);
+ document.querySelectorAll('[data-fav]').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();let f=fav(),u=b.dataset.fav;f=f.includes(u)?f.filter(x=>x!==u):[...f,u];setFav(f);renderRefresh()});
+ document.getElementById('ap40Menu').onclick=()=>sidebar.classList.toggle('open');document.getElementById('ap40Search').onclick=openPalette;ov.onclick=e=>{if(e.target===ov)closePalette()};document.getElementById('ap40Input').oninput=search;
+ document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openPalette()}if(e.key==='Escape')closePalette()});search();
+}
+function renderRefresh(){document.querySelectorAll('.ap40-sidebar,.ap40-topbar,.ap40-overlay').forEach(x=>x.remove());document.body.classList.remove('ap40-ready');render()}
+function openPalette(){document.getElementById('ap40Overlay').classList.add('open');setTimeout(()=>document.getElementById('ap40Input').focus(),0)}function closePalette(){document.getElementById('ap40Overlay').classList.remove('open')}
+function search(){const q=(document.getElementById('ap40Input').value||'').toLowerCase();const rows=all().filter(x=>!q||x.join(' ').toLowerCase().includes(q)).slice(0,20);document.getElementById('ap40Results').innerHTML=rows.map(x=>`<a class="ap40-result" href="${x[2]}"><span>${x[1]}</span><small>${x[0]} · ${x[3]}</small></a>`).join('')||'<div class="ap40-result">No matching workspace pages</div>'}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',render);else render();
+})();
