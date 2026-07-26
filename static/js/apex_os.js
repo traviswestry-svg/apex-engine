@@ -3610,6 +3610,24 @@ function renderLiquidityRaceInline(race, intelligence) {
   </div>`;
 }
 
+
+function renderMarketNarrativeInline(n) {
+  if (!n || !n.ok) return '';
+  const t = n.thesis || {}, c = n.contradiction_engine || {}, ck = n.institutional_checklist || {};
+  const dirColor = t.direction === 'BULLISH' ? 'var(--green)' : t.direction === 'BEARISH' ? 'var(--red)' : 'var(--amber)';
+  const rows = (n.confidence_breakdown || []).slice(0,8).map(x => `
+    <div class="fm-prem-row"><span class="fm-prem-label">${esc(x.name)}</span><span class="fm-prem-val" style="color:${x.direction==='BULLISH'?'var(--green)':x.direction==='BEARISH'?'var(--red)':'var(--muted)'}">${Number(x.score||0).toFixed(0)} · ${Number(x.contribution||0)>=0?'+':''}${Number(x.contribution||0).toFixed(1)}</span></div>`).join('');
+  const conflicts = (c.items || []).slice(0,2).map(x => `<div class="fm-contra">⚡ ${esc(x)}</div>`).join('');
+  return `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr)">
+    <div class="fm-header"><span class="fm-intent">MARKET NARRATIVE 45</span><span style="color:${dirColor};font-weight:800">${esc(t.direction||'NEUTRAL')} · ${Number(t.readiness_score||0).toFixed(0)}</span></div>
+    <div class="fm-narrative">${esc(n.market_story||'')}</div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Alignment</span><span class="fm-prem-val">${esc((t.alignment||'').replaceAll('_',' '))}</span></div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Checklist</span><span class="fm-prem-val">${Number(ck.passed||0)}/${Number(ck.total||0)} passed</span></div>
+    ${rows ? `<div style="margin-top:8px"><div class="fm-meter-label">CONFIDENCE CONTRIBUTORS</div>${rows}</div>` : ''}
+    ${conflicts}
+  </div>`;
+}
+
 function renderFlowMeter(d) {
   const el = $('opFlowPanel');
   if (!el || !d) return;
@@ -3671,6 +3689,7 @@ function renderFlowMeter(d) {
     ${dpLine    ? `<div class="fm-dp">${esc(dpLine)}</div>` : ''}
     ${dealRead  ? `<div class="fm-dealer-read">${esc(dealRead.slice(0,100))}</div>` : ''}
     ${renderLiquidityRaceInline(d.liquidity_race, d.liquidity_intelligence)}
+    ${renderMarketNarrativeInline(d.market_narrative)}
   `;
 }
 
