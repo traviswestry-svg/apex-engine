@@ -13,7 +13,35 @@
 > 5. Before each merge, re-verify the wiring live (grep + import graph) — this
 >    map is a plan, not a substitute for looking.
 
-## Sprint 2 — DECISION family: 22 modules → 4
+## Sprint 2 — DECISION family — EXECUTED 2026-07-26 (22 modules → 16)
+
+**Merged (verified, full suite green):**
+- decision_routes.py → decision_intelligence.py (route /api/decision unchanged)
+- institutional_decision_engine_v20.py + _routes.py → institutional_decision_engine.py
+  (unversioned; 6 engine importers + app.py + test repointed; routes unchanged)
+- trade_director_decision_intelligence + trade_director_institutional_decision_engine
+  + trade_director_decision_quality → trade_director_decision.py (Phase 19/20/38
+  builders under one roof; byte-identical private helpers deduplicated;
+  TEST_ONLY_ALLOWLIST shrank by one)
+- decision_narrative.py → premium_discipline.py (sole consumer family;
+  NARRATIVE_VERSION preserved so payload version strings are unchanged)
+
+**Vetoed by live verification (rule 5) — recorded so nobody re-attempts them blind:**
+- decision_intelligence_center → core: CIRCULAR IMPORT (center composes
+  confidence_attribution_engine, which imports core). Center is a legitimate
+  composition layer; it stays.
+- decision_review → institutional_decision_object: review imports
+  recommendation_ledger; merging gives the schema/contract module a store
+  dependency. Review is a distinct 11.3 feature; it stays.
+
+**Rescoped to Sprint 3 opening move:**
+- The v250/v252/v254 shadow trio is NOT isolated: institutional_decision_integrity_v250
+  is imported by NINE engines (v213, v251, v252, v253, v254, v255, v260, v266,
+  v269) including STRING-BASED dynamic imports in command_center_v269
+  (_optional("institutional_decision_review_v254")). Renaming v250 is a
+  suite-wide cascade and must be its own deploy with every site enumerated.
+
+## Original Sprint 2 plan (superseded above, kept for history): 22 → 4
 
 **Anchors (survive):**
 - `decision_intelligence.py` — the 7.5.7 six-question panel. THE live decision

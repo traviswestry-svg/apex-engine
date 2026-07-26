@@ -1,19 +1,10 @@
-Delete these 16 files from the GitHub repo (dead code — imported by nothing;
-verified by import-graph analysis + string-reference grep; full suite green after removal):
+Delete these 8 files from GitHub (merged in Consolidation Sprint 2; suite green):
 
-engine/cache.py
-engine/confidence.py
-engine/format.py
-engine/institutional_command_center_v245.py
-engine/institutional_command_center_v245_routes.py
-engine/logging.py
-engine/market_regime.py
-engine/math.py
-engine/recommendation_ledger_routes.py
-engine/ribbon.py
-engine/risk.py
-engine/scheduler.py
-engine/structure.py
-engine/trend.py
-engine/types.py
-engine/director/test_active_trade_director.py
+engine/decision_routes.py
+engine/institutional_decision_engine_v20.py
+engine/institutional_decision_engine_routes.py
+engine/trade_director_decision_intelligence.py
+engine/trade_director_institutional_decision_engine.py
+engine/trade_director_decision_quality.py
+engine/decision_narrative.py
+tests/test_institutional_decision_engine_v20.py  (renamed — new copy included)

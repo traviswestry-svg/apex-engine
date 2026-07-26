@@ -35,3 +35,37 @@ tests/test_consolidation_guard.py
 
 ## Validation
 Full suite green after removal (run pytest; see test count in ARCHITECTURE.md).
+
+---
+
+# Consolidation Sprint 2 — Decision Family (executed 2026-07-26)
+
+## Deleted (7 files) / Created (2)
+- engine/decision_routes.py                              → absorbed into engine/decision_intelligence.py
+- engine/institutional_decision_engine_v20.py            ┐ merged into engine/institutional_decision_engine.py (NEW)
+- engine/institutional_decision_engine_routes.py         ┘
+- engine/trade_director_decision_intelligence.py         ┐
+- engine/trade_director_institutional_decision_engine.py ├ merged into engine/trade_director_decision.py (NEW)
+- engine/trade_director_decision_quality.py              ┘
+- engine/decision_narrative.py                           → absorbed into engine/premium_discipline.py
+
+## Renamed
+- tests/test_institutional_decision_engine_v20.py → tests/test_institutional_decision_engine.py
+
+## Repointed imports
+app.py (3 blocks), 5 engine modules (workspace_v212, replay_lab_v202,
+execution_optimizer_v201, strategy_intelligence_v203, trading_brain_v230),
+premium_discipline_routes.py, 4 test files.
+
+## Guard ratchet
+FROZEN_MAX 49 → 48 (institutional_decision_engine_v20 unversioned).
+TEST_ONLY_ALLOWLIST: trade_director_decision_quality removed (now runtime).
+
+## Vetoes (see CONSOLIDATION_MERGE_MAP.md for detail)
+decision_intelligence_center (circular import), decision_review (store
+dependency on a contract module), v250/v252/v254 trio (v250 is a nine-importer
+hub with dynamic string imports — rescoped to Sprint 3).
+
+## Validation
+Full suite 1,514 passed / 0 failed. Boot smoke: 812 routes; /api/decision and
+/api/institutional-decision/* return 200 with unchanged payloads.

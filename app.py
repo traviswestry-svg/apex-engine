@@ -158,7 +158,7 @@ except Exception as _td18_err:
 
 # APEX Trade Director Phase 19 — institutional decision intelligence
 try:
-    from engine.trade_director_decision_intelligence import (
+    from engine.trade_director_decision import (  # merged in Sprint 2
         build_decision_intelligence as td19_build_decision_intelligence,
     )
     TRADE_DIRECTOR_PHASE19_AVAILABLE = True
@@ -168,7 +168,7 @@ except Exception as _td19_err:
 
 # APEX Trade Director Phase 20 — institutional decision engine
 try:
-    from engine.trade_director_institutional_decision_engine import (
+    from engine.trade_director_decision import (  # merged in Sprint 2
         build_institutional_decision_engine as td20_build_institutional_decision_engine,
     )
     TRADE_DIRECTOR_PHASE20_AVAILABLE = True
@@ -610,8 +610,7 @@ except Exception as _ev_err:
 
 # APEX 7.5.7 — Decision Intelligence (six-question top panel, read-only)
 try:
-    from engine.decision_routes import register_decision_routes
-    from engine.decision_intelligence import VERSION as DECISION_VERSION
+    from engine.decision_intelligence import register_decision_routes, VERSION as DECISION_VERSION  # routes absorbed in Sprint 2
     DECISION_INTEL_AVAILABLE = True
 except Exception as _dc_err:
     register_decision_routes = None  # type: ignore[assignment]
@@ -858,7 +857,7 @@ except Exception as _iis_err:
 
 # APEX 20.0 — unified institutional decision engine (read-only).
 try:
-    from engine.institutional_decision_engine_routes import register_institutional_decision_engine_routes
+    from engine.institutional_decision_engine import register_institutional_decision_engine_routes  # v20 pair merged in Sprint 2
     INSTITUTIONAL_DECISION_ENGINE_AVAILABLE = True
 except Exception as _ide_err:
     register_institutional_decision_engine_routes = None  # type: ignore[assignment]
