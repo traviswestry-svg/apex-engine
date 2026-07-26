@@ -3612,6 +3612,26 @@ function renderLiquidityRaceInline(race, intelligence) {
 
 
 
+function renderEvidenceReadinessInline(e) {
+  if (!e || !e.ok) return '';
+  const status = e.status || 'WAITING_FOR_LIVE_DATA';
+  const color = status === 'HEALTHY' ? 'var(--green)' : status.includes('FAILURE') || status === 'PIPELINE_STALLED' ? 'var(--red)' : 'var(--amber)';
+  const rows = [
+    ['Decisions recorded', e.decisions_recorded], ['Actionable decisions', e.actionable_decisions],
+    ['Feature vectors', e.feature_vectors_stored], ['Matured outcomes', e.matured_outcomes],
+    ['Graded outcomes', e.graded_outcomes], ['Excluded outcomes', e.excluded_outcomes],
+    ['Pending decisions', e.pending_decisions], ['Price samples', e.price_samples]
+  ].map(x => `<div class="fm-prem-row"><span class="fm-prem-label">${esc(x[0])}</span><span class="fm-prem-val">${Number(x[1]||0)}</span></div>`).join('');
+  const reasons = Object.entries(e.exclusion_reasons||{}).slice(0,5).map(([k,v]) => `<div class="fm-prem-row"><span class="fm-prem-label">${esc(k.replaceAll('_',' '))}</span><span class="fm-prem-val">${Number(v||0)}</span></div>`).join('');
+  return `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr)">
+    <div class="fm-header"><span class="fm-intent">EVIDENCE READINESS 47</span><span style="color:${color};font-weight:800">${esc(status.replaceAll('_',' '))}</span></div>
+    ${rows}
+    <div class="fm-prem-row"><span class="fm-prem-label">Last decision write</span><span class="fm-prem-val">${esc(e.last_decision_write||'—')}</span></div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Last successful grade</span><span class="fm-prem-val">${esc(e.last_successful_grade||'—')}</span></div>
+    ${reasons ? `<div style="margin-top:8px"><div class="fm-meter-label">EXCLUSION REASONS</div>${reasons}</div>` : ''}
+  </div>`;
+}
+
 function renderAdaptiveLearningInline(a) {
   if (!a || !a.ok) return '';
   const mode = a.status || 'COLD_START';
@@ -3716,6 +3736,7 @@ function renderFlowMeter(d) {
     ${renderLiquidityRaceInline(d.liquidity_race, d.liquidity_intelligence)}
     ${renderMarketNarrativeInline(d.market_narrative)}
     ${renderAdaptiveLearningInline(d.adaptive_learning)}
+    ${renderEvidenceReadinessInline(d.evidence_readiness)}
   `;
 }
 
