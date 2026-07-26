@@ -7,7 +7,7 @@ extracted incrementally from app.py.
 from __future__ import annotations
 from typing import Any, Dict
 
-VERSION = "15.5.0_PRE_23_HARDENING"
+VERSION = "47.0.4"
 
 
 def create_app():
