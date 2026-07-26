@@ -11559,7 +11559,33 @@ try:
             with STATE_LOCK:
                 value = STATE.get("last_result") or {}
                 return dict(value) if isinstance(value, dict) else {}
-        register_execution_os_routes(app, last_result_provider=_execution_os_last_result)
+
+        def _execution_os_session():
+            # Reuse the canonical session detector — no duplicate session logic.
+            try:
+                return system_mode()
+            except Exception:
+                return None
+
+        def _execution_os_risk_config():
+            cfg = {
+                "account_size": ACCOUNT_SIZE,
+                "max_risk_per_trade": MAX_RISK_PER_TRADE,
+                "max_contracts": os.getenv("APEX_MAX_CONTRACTS", "3"),
+                "max_daily_loss": os.getenv("APEX_MAX_DAILY_LOSS", "1000"),
+            }
+            cfg["configured"] = bool(
+                (MAX_RISK_PER_TRADE and MAX_RISK_PER_TRADE > 0)
+                and (ACCOUNT_SIZE and ACCOUNT_SIZE > 0)
+            )
+            return cfg
+
+        register_execution_os_routes(
+            app,
+            last_result_provider=_execution_os_last_result,
+            session_provider=_execution_os_session,
+            risk_config_provider=_execution_os_risk_config,
+        )
         print("APEX Institutional Execution OS routes registered (11.1).", flush=True)
 except Exception as e:
     PRODUCTION_ROUTES_AVAILABLE = False

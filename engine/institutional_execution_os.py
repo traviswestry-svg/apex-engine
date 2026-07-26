@@ -10,6 +10,8 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Mapping, Optional
 
+from .session_readiness import build_session_readiness
+
 VERSION = "11.1.0_INSTITUTIONAL_EXECUTION_OS"
 
 
@@ -156,7 +158,16 @@ def build_execution_snapshot(result: Optional[Mapping[str, Any]]) -> Dict[str, A
     }
 
 
-def build_morning_readiness(*, system_checks: Mapping[str, Any], execution: Mapping[str, Any], market_open: bool = False) -> Dict[str, Any]:
+def build_morning_readiness(
+    *,
+    system_checks: Mapping[str, Any],
+    execution: Mapping[str, Any],
+    market_open: bool = False,
+    session: Any = None,
+    execution_checks: Optional[Mapping[str, Any]] = None,
+    risk_config_ready: bool = False,
+    broker_required: Optional[bool] = None,
+) -> Dict[str, Any]:
     weights = {
         "application": 10, "database": 10, "data_freshness": 15, "providers": 10,
         "recommendation_ledger": 10, "execution": 10, "clock": 5,
@@ -194,9 +205,34 @@ def build_morning_readiness(*, system_checks: Mapping[str, Any], execution: Mapp
         mode, status = "DEGRADED", "CAUTION"
     else:
         mode, status = "DO_NOT_TRADE", "NOT_READY"
+
+    # APEX 48.2.1 — session-aware presentation layer. Reuses the boolean checks
+    # already produced by build_execution_snapshot and the canonical session
+    # detector (passed in via ``session``) to express each checklist item as a
+    # rich state instead of a bare pass/fail. Never fabricates a FAIL from the
+    # mere absence of live market data.
+    checks_source = execution_checks
+    if checks_source is None and isinstance(execution.get("checks"), Mapping):
+        checks_source = execution.get("checks")
+    session_readiness = build_session_readiness(
+        session=session,
+        market_open=market_open,
+        execution_checks=checks_source,
+        risk_config_ready=risk_config_ready,
+        broker_required=broker_required,
+    )
+
     return {
         "ok": True, "version": VERSION, "generated_at": datetime.now(timezone.utc).isoformat(),
         "score": score, "status": status, "trading_mode": mode, "market_open": market_open,
         "blocking_items": blockers, "components": components,
         "recommendation": "READY TO TRADE" if mode == "FULLY_OPERATIONAL" else "ANALYSIS ONLY" if mode == "ANALYSIS_ONLY" else "DO NOT TRADE" if mode == "DO_NOT_TRADE" else "TRADE WITH CAUTION",
+        # Session-aware checklist + intelligent overall status (APEX 48.2.1).
+        "session": session_readiness["session"],
+        "checklist": session_readiness["checklist"],
+        "overall_status": session_readiness["overall"]["status"],
+        "overall_color": session_readiness["overall"]["color"],
+        "overall_headline": session_readiness["overall"]["headline"],
+        "overall_detail": session_readiness["overall"]["detail"],
+        "color_legend": session_readiness["color_legend"],
     }
