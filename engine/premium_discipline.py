@@ -264,9 +264,13 @@ class RefusalLedger:
                     c.execute(f"ALTER TABLE premium_discipline_decisions ADD COLUMN {name} {ddl}")
             c.commit()
 
-    def record(self, *, session_date: str, ticker: str, candidate: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
+    def record(self, *, session_date: str, ticker: str, candidate: Dict[str, Any], decision: Dict[str, Any], ts: Optional[str] = None) -> Dict[str, Any]:
+        """Record a decision. ``ts`` (ISO-8601 UTC) is injectable so replay tests
+        can pin the decision time to their fixed session_date instead of wall
+        clock — a wall-clock stamp against a fixed session_date silently inverts
+        the replay's forward-bar window once real time passes the session."""
         fp = decision_fingerprint(session_date, ticker, candidate, decision)
-        now = datetime.now(timezone.utc).isoformat()
+        now = ts or datetime.now(timezone.utc).isoformat()
         with self._connect() as c:
             c.execute("""INSERT OR IGNORE INTO premium_discipline_decisions
                 (fingerprint, ts, session_date, ticker, strategy, decision,

@@ -39,7 +39,17 @@ from .feature_store import (
     assert_disjoint_sessions,
 )
 
-_DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")
+# DB path resolution is DYNAMIC (read at call time), not frozen at import.
+# Freezing os.getenv at module import silently ignored DB_PATH changes made
+# after first import (e.g. monkeypatch.setenv in tests, or late env injection),
+# sending writes to ./apex_tracking.db instead. _DB_PATH stays as an override
+# hook: tests that setattr(_DB_PATH, tmp.name) keep working — an explicit
+# override wins over the environment.
+_DB_PATH = None
+
+
+def _db_path() -> str:
+    return _DB_PATH or os.getenv("DB_PATH", "apex_tracking.db")
 _LOCK = threading.Lock()
 _DB_READY = False
 
@@ -47,7 +57,7 @@ STORE_VERSION = "9.5.0_FEATURE_STORE_DB"
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(_DB_PATH, timeout=10)
+    c = sqlite3.connect(_db_path(), timeout=10)
     c.row_factory = sqlite3.Row
     return c
 
@@ -56,7 +66,7 @@ def init_db() -> bool:
     """Create/upgrade both tables. Non-fatal."""
     global _DB_READY
     try:
-        d = os.path.dirname(_DB_PATH)
+        d = os.path.dirname(_db_path())
         if d:
             os.makedirs(d, exist_ok=True)
         with _conn() as c:
@@ -95,7 +105,7 @@ def init_db() -> bool:
         _DB_READY = True
     except Exception as e:  # pragma: no cover
         _DB_READY = False
-        print(f"Feature store DISABLED — DB init failed at '{_DB_PATH}': {e}", flush=True)
+        print(f"Feature store DISABLED — DB init failed at '{_db_path()}': {e}", flush=True)
     return _DB_READY
 
 
@@ -270,7 +280,7 @@ def unlabelled_samples(session_date: Optional[str] = None) -> List[str]:
 
 def health() -> Dict[str, Any]:
     info: Dict[str, Any] = {"ready": _DB_READY, "store_version": STORE_VERSION,
-                            "db_path": _DB_PATH,
+                            "db_path": _db_path(),
                             "feature_schema": FEATURE_SCHEMA_VERSION,
                             "label_schema": LABEL_SCHEMA_VERSION}
     if _DB_READY:
