@@ -39,7 +39,6 @@ RUNTIME_ROOTS = ["app", "wsgi", "scanner_worker", "signal_evaluator",
 TEST_ONLY_ALLOWLIST = {
     "engine.canonical_decision",
     "engine.outcome_grader",
-    "engine.trade_director_decision_quality",
 }
 
 _VERSION_SUFFIX = re.compile(r"_v\d")
@@ -103,7 +102,7 @@ def test_versioned_filename_freeze():
     # The set above is computed live, so this test asserts the FROZEN COUNT:
     # additions raise the count and fail; deletions (consolidation) lower it
     # and the ceiling ratchets down via the recorded number below.
-    FROZEN_MAX = 49  # measured at Sprint 1 close — may only decrease
+    FROZEN_MAX = 48  # ratcheted down in Sprint 2 (was 49 at Sprint 1)
     current = len(grandfathered)
     assert current <= FROZEN_MAX, (
         f"{current} versioned engine filenames (> frozen max {FROZEN_MAX}). "

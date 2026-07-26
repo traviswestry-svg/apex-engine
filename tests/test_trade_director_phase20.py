@@ -1,4 +1,4 @@
-from engine.trade_director_institutional_decision_engine import build_institutional_decision_engine
+from engine.trade_director_decision import build_institutional_decision_engine
 
 
 def base():

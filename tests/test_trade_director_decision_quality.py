@@ -1,4 +1,4 @@
-from engine.trade_director_decision_quality import build_decision_quality, build_flow_participation
+from engine.trade_director_decision import build_decision_quality, build_flow_participation
 
 
 def _flow(size=200, premium=100000, strike=7500, delta=.5, kind="BLOCK", effect="OPENING"):

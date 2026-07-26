@@ -1,4 +1,4 @@
-from engine.trade_director_decision_intelligence import build_decision_intelligence
+from engine.trade_director_decision import build_decision_intelligence
 
 
 def bullish_context():
