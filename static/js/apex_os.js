@@ -3580,6 +3580,20 @@ function renderStrikeMagnetPanel(d) {
    renderFlowMeter — Sprint 8.0.4
    Reads from: flow_intelligence_2 inside the API response
    ────────────────────────────────────────────────────────────────────────── */
+
+function renderLiquidityRaceInline(race) {
+  if (!race || !race.ok) return `<div class="fm-narrative">Liquidity Race: waiting for valid levels above and below price.</div>`;
+  const up = race.upper || {}, dn = race.lower || {};
+  const leaderColor = race.leader === 'UPPER' ? 'var(--green)' : race.leader === 'LOWER' ? 'var(--red)' : 'var(--amber)';
+  return `<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bdr)">
+    <div class="fm-header"><span class="fm-intent">LIQUIDITY RACE</span><span style="color:${leaderColor};font-weight:800">${esc((race.status||'').replaceAll('_',' '))}</span></div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Upper ${fmt(up.level)}</span><span class="fm-prem-val rv-green">${Number(up.probability_first_pct||0).toFixed(1)}%</span></div>
+    <div class="fm-meter-track"><div class="fm-meter-fill" style="width:${Number(up.probability_first_pct||50)}%;background:var(--green)"></div></div>
+    <div class="fm-prem-row"><span class="fm-prem-label">Lower ${fmt(dn.level)}</span><span class="fm-prem-val rv-red">${Number(dn.probability_first_pct||0).toFixed(1)}%</span></div>
+    <div class="fm-narrative">${esc(race.interpretation||'')} Confidence ${Number(race.confidence||0).toFixed(0)}%. Reassess at contact for absorption.</div>
+  </div>`;
+}
+
 function renderFlowMeter(d) {
   const el = $('opFlowPanel');
   if (!el || !d) return;
@@ -3640,6 +3654,7 @@ function renderFlowMeter(d) {
     ${contras.length ? `<div class="fm-contra">⚡ ${esc(contras[0].slice(0,120))}</div>` : ''}
     ${dpLine    ? `<div class="fm-dp">${esc(dpLine)}</div>` : ''}
     ${dealRead  ? `<div class="fm-dealer-read">${esc(dealRead.slice(0,100))}</div>` : ''}
+    ${renderLiquidityRaceInline(d.liquidity_race)}
   `;
 }
 
