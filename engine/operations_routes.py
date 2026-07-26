@@ -16,7 +16,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from flask import jsonify, render_template, request
 
-VERSION = "11.0D_OPERATIONS_CENTER"
+VERSION = "47.0.6"
 
 _STATUS_RANK = {"PASS": 0, "DISABLED": 1, "BLOCKED": 2, "WARN": 3, "FAIL": 4}
 
@@ -246,6 +246,56 @@ def _route_group_check(app, title: str, routes: List[str], *, blocked_when_missi
                   present=present, missing=missing)
 
 
+
+
+def _canonical_version_check(app) -> Dict[str, Any]:
+    """Verify release endpoints agree with the canonical release manifest."""
+    try:
+        from .release_manifest import manifest
+        expected = str(manifest().get("apex_version") or "")
+        routes = ["/api/version", "/api/release-manifest", "/api/system/version", "/api/system/release"]
+        observed: Dict[str, Any] = {}
+        mismatches: Dict[str, Any] = {}
+        with app.test_client() as client:
+            for route in routes:
+                if not _route_exists(app, route):
+                    observed[route] = {"registered": False}
+                    mismatches[route] = "missing"
+                    continue
+                response = client.get(route)
+                payload = response.get_json(silent=True) or {}
+                candidates = {
+                    "apex_version": payload.get("apex_version"),
+                    "version": payload.get("version"),
+                    "application_version": payload.get("application_version"),
+                }
+                canonical_values = [str(v) for v in candidates.values() if v not in (None, "")]
+                matches = expected in canonical_values
+                observed[route] = {"http_status": response.status_code, "values": candidates, "matches": matches}
+                if response.status_code >= 500 or not matches:
+                    mismatches[route] = observed[route]
+        if mismatches:
+            return _check("WARN", "Release endpoints do not all report the canonical APEX version",
+                          expected=expected, observed=observed, mismatches=mismatches)
+        return _check("PASS", f"All release endpoints report APEX {expected}", expected=expected, observed=observed)
+    except Exception as exc:
+        return _check("FAIL", "Canonical version consistency check failed", error=str(exc))
+
+
+def _evidence_pipeline_check() -> Dict[str, Any]:
+    try:
+        from .evidence_pipeline_trace import build_trace
+        trace = build_trace()
+        status_map = {"HEALTHY": "PASS", "COLLECTING": "WARN", "WAITING_FOR_LIVE_DATA": "BLOCKED", "FAIL": "FAIL"}
+        first = trace.get("first_blocker") or {}
+        summary = first.get("summary") or "Evidence pipeline is healthy"
+        return _check(status_map.get(trace.get("status"), "WARN"), summary,
+                      pipeline_status=trace.get("status"), totals=trace.get("totals"),
+                      first_blocker=first, stages=trace.get("stages"))
+    except Exception as exc:
+        return _check("FAIL", "Evidence pipeline trace failed", error=str(exc))
+
+
 def _all_checks(app) -> Dict[str, Dict[str, Any]]:
     checks: Dict[str, Dict[str, Any]] = {
         "application": _check("PASS", "Flask application is responding", version=VERSION,
@@ -258,7 +308,8 @@ def _all_checks(app) -> Dict[str, Dict[str, Any]]:
         "chain_quality": _route_group_check(app, "Chain quality", ["/api/options_chain_intelligence", "/api/premium_strategy"]),
         "execution": _route_group_check(app, "Execution", ["/api/broker/etrade/status", "/api/trade/spx/preview-entry"]),
         "clock": _clock_check(),
-        "version_consistency": _route_group_check(app, "Release management", ["/api/system/release", "/api/system/migrations", "/api/system/integrity"]),
+        "version_consistency": _canonical_version_check(app),
+        "evidence_pipeline": _evidence_pipeline_check(),
         "calibration": _route_group_check(app, "Calibration", ["/api/learning/calibration", "/api/calibration/readiness"], blocked_when_missing=True),
         "similarity": _route_group_check(app, "Similarity", ["/api/feature_store/health", "/api/feature_store/coverage"], blocked_when_missing=True),
         "learning_safety": _route_group_check(app, "Learning safety", ["/api/learning/proposals", "/api/learning/apply"], blocked_when_missing=True),
@@ -323,6 +374,12 @@ def register_operations_routes(app, **_kwargs) -> None:
                 }
         return jsonify({"openapi": "3.0.3", "info": {"title": "APEX API", "version": VERSION}, "paths": paths})
 
+
+    @app.get("/api/evidence-pipeline/trace")
+    def _evidence_pipeline_trace():
+        from .evidence_pipeline_trace import build_trace
+        return jsonify(build_trace())
+
     @app.get("/api/system/checks")
     def _checks_all():
         started = time.perf_counter()
@@ -334,7 +391,7 @@ def register_operations_routes(app, **_kwargs) -> None:
     check_names = {
         "application", "database", "data-freshness", "providers", "recommendation-ledger",
         "outcome-grader", "chain-quality", "execution", "clock", "version-consistency",
-        "calibration", "similarity", "learning-safety", "end-to-end", "alerts", "scheduler",
+        "calibration", "similarity", "learning-safety", "end-to-end", "alerts", "scheduler", "evidence-pipeline",
     }
 
     @app.get("/api/system/checks/<name>")

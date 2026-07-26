@@ -16,11 +16,13 @@ from typing import Any, Callable, Dict
 
 from flask import jsonify
 
+from engine.release_manifest import manifest as canonical_manifest
+
 from engine.release_manager import (APPLICATION_VERSION, DATABASE_VERSION, FEATURES,
                                     SEMANTIC_VERSION, data_integrity, migration_status,
                                     release_metadata)
 
-RELEASE_ROUTES_VERSION = "11.0.0_RELEASE_ROUTES"
+RELEASE_ROUTES_VERSION = "47.0.6"
 
 
 def _safe(fn: Callable[[], Dict[str, Any]]):
@@ -44,10 +46,14 @@ def register_release_routes(app, **_kwargs) -> None:
 
     @app.route("/api/system/version", methods=["GET"])
     def _system_version():
+        canonical = canonical_manifest()
         return jsonify({
             "ok": True,
-            "version": SEMANTIC_VERSION,
-            "application_version": APPLICATION_VERSION,
+            "version": canonical["apex_version"],
+            "apex_version": canonical["apex_version"],
+            "application_version": canonical["apex_version"],
+            "legacy_semantic_version": SEMANTIC_VERSION,
+            "legacy_application_version": APPLICATION_VERSION,
             "database_version": DATABASE_VERSION,
         }), 200
 
@@ -78,7 +84,20 @@ def register_release_routes(app, **_kwargs) -> None:
 
     @app.route("/api/system/release", methods=["GET"])
     def _system_release():
-        return _safe(release_metadata)
+        def payload():
+            legacy = release_metadata()
+            canonical = canonical_manifest()
+            legacy["legacy_version"] = legacy.get("version")
+            legacy["legacy_application_version"] = legacy.get("application_version")
+            legacy["legacy_build"] = legacy.get("build")
+            legacy["version"] = canonical["apex_version"]
+            legacy["apex_version"] = canonical["apex_version"]
+            legacy["application_version"] = canonical["apex_version"]
+            legacy["build_name"] = canonical["build_name"]
+            legacy["canonical_manifest"] = True
+            legacy["capability_registry"] = canonical.get("registry_path")
+            return legacy
+        return _safe(payload)
 
 
 # Backward-compatible name: app.py imports register_release_manager_routes.
