@@ -1251,6 +1251,34 @@ DYNAMIC_TICKERS_ENABLED = os.getenv("DYNAMIC_TICKERS_ENABLED", "true").lower() =
 MAX_DYNAMIC_TICKERS = int(os.getenv("MAX_DYNAMIC_TICKERS", "25"))
 
 app = Flask(__name__)
+
+# APEX 40 — Institutional Workspace shell.  Dashboard HTML is decorated at
+# response time so legacy pages keep their independent rendering logic while
+# sharing one navigation, command palette, favorites, and breadcrumb layer.
+_APEX40_SHELL_CSS = "/static/css/apex_workspace.css?v=40.0"
+_APEX40_SHELL_JS = "/static/js/apex_workspace.js?v=40.0"
+
+@app.after_request
+def inject_apex40_workspace(response):
+    try:
+        if request.path.startswith(("/static/", "/api/", "/health", "/tv_signal")):
+            return response
+        content_type = str(response.headers.get("Content-Type", ""))
+        if "text/html" not in content_type.lower() or response.direct_passthrough:
+            return response
+        html = response.get_data(as_text=True)
+        if "apex_workspace.js" in html:
+            return response
+        if "</head>" in html:
+            html = html.replace("</head>", f'<link rel="stylesheet" href="{_APEX40_SHELL_CSS}"></head>', 1)
+        if "</body>" in html:
+            html = html.replace("</body>", f'<script src="{_APEX40_SHELL_JS}" defer></script></body>', 1)
+        response.set_data(html)
+        response.headers.pop("Content-Length", None)
+    except Exception as exc:
+        print(f"APEX 40 workspace injection skipped: {exc}", flush=True)
+    return response
+
 APP_PROCESS_STARTED_AT = dt.datetime.now(dt.timezone.utc).isoformat()
 
 @app.after_request
