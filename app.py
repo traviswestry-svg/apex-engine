@@ -6590,10 +6590,13 @@ def health():
 def api_intelligence_mesh():
     payload = request.get_json(silent=True) or {}
     snapshot = payload.get("snapshot") if isinstance(payload, dict) else {}
-    return jsonify(build_intelligence_mesh(snapshot if isinstance(snapshot, dict) else {}))
+    calibration = payload.get("calibration") if isinstance(payload, dict) else {}
+    return jsonify(build_intelligence_mesh(snapshot if isinstance(snapshot, dict) else {}, calibration=calibration if isinstance(calibration, dict) else {}))
 
 @app.route("/command_center")
 @app.route("/apex42")
+@app.route("/apex43")
+@app.route("/apex43.5")
 def institutional_command_center():
     return render_template("institutional_command_center.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
 
