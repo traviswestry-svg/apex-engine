@@ -7577,6 +7577,43 @@ def api_institutional_os():
             except Exception as _lr_err:
                 print(f"Liquidity race error (non-fatal): {_lr_err}", flush=True)
 
+            # APEX 44 — ranked liquidity map, institutional intent, sweep state,
+            # and Trade Director advisory context. No execution authority.
+            try:
+                from engine.liquidity_intelligence import evaluate as _evaluate_liquidity_intelligence
+                _ms = result.get("market_state") or {}
+                _st = result.get("structure") or {}
+                _gm = result.get("gamma_regime") or {}
+                _au = result.get("auction_intelligence") or result.get("auction") or {}
+                _fi = result.get("flow_intelligence_2") or result.get("flow_intelligence") or {}
+                _vp = result.get("volume_profile") or result.get("profile") or {}
+                _price = (_ms.get("price") or result.get("spot") or result.get("price")
+                          or (result.get("flow") or {}).get("stock_price"))
+                result["liquidity_intelligence"] = _evaluate_liquidity_intelligence({
+                    "current_price": _price, "previous_price": _ms.get("previous_price"),
+                    "bar_high": _ms.get("high") or result.get("high"), "bar_low": _ms.get("low") or result.get("low"),
+                    "atr": result.get("atr") or _ms.get("atr"),
+                    "pdh": _st.get("pdh") or _ms.get("pdh"), "pdl": _st.get("pdl") or _ms.get("pdl"),
+                    "onh": _st.get("onh") or _ms.get("onh"), "onl": _st.get("onl") or _ms.get("onl"),
+                    "swing_high": _st.get("swing_high") or _st.get("resistance"),
+                    "swing_low": _st.get("swing_low") or _st.get("support"),
+                    "vah": _vp.get("vah") or _au.get("vah"), "val": _vp.get("val") or _au.get("val"),
+                    "poc": _vp.get("poc") or _au.get("poc"),
+                    "call_wall": _gm.get("call_wall") or _ms.get("call_wall"),
+                    "put_wall": _gm.get("put_wall") or _ms.get("put_wall"),
+                    "call_wall_gamma": _gm.get("call_wall_gamma"), "put_wall_gamma": _gm.get("put_wall_gamma"),
+                    "expected_move_high": result.get("expected_move_high"), "expected_move_low": result.get("expected_move_low"),
+                    "order_flow_score": _fi.get("flow_score") or _fi.get("order_flow_score"),
+                    "delta_score": _fi.get("delta_score") or _fi.get("cumulative_delta_score"),
+                    "momentum_score": result.get("momentum_score") or _ms.get("momentum_score"),
+                    "structure_score": result.get("structure_score"), "auction_score": _au.get("auction_score"),
+                    "vwap_score": result.get("vwap_score"), "gamma_score": result.get("dealer_score"),
+                    "liquidity_pressure": _fi.get("liquidity_pressure"),
+                })
+                result["liquidity_race"] = result["liquidity_intelligence"].get("race", result.get("liquidity_race"))
+            except Exception as _li44_err:
+                print(f"Liquidity intelligence error (non-fatal): {_li44_err}", flush=True)
+
             _record_confidence_timeline_point(ticker, result)
             # APEX 7.6.0 Premium Strategy — dispatch on the composition cycle
             # (not the polled GET). Logs the structure and fires Telegram only
@@ -7671,6 +7708,24 @@ def compose_institutional_os_headless(ticker: str = ASSISTANT_TICKER) -> bool:
         print(f"Headless IOS compose failed (non-fatal): {e}", flush=True)
         return False
 
+
+
+@app.route("/api/liquidity-intelligence", methods=["GET", "POST"])
+def api_liquidity_intelligence():
+    from engine.liquidity_intelligence import evaluate, memory_summary
+    if request.method == "POST":
+        return jsonify(evaluate(request.get_json(silent=True) or {}))
+    latest = STATE.get("last_result") or {}
+    payload = latest.get("liquidity_intelligence")
+    if payload:
+        return jsonify(payload)
+    return jsonify({"ok": False, "status": "WAITING_FOR_COMPOSITION", "memory": memory_summary()})
+
+
+@app.route("/api/liquidity-intelligence/memory")
+def api_liquidity_intelligence_memory():
+    from engine.liquidity_intelligence import memory_summary
+    return jsonify(memory_summary())
 
 
 @app.route("/api/liquidity-race", methods=["GET", "POST"])
