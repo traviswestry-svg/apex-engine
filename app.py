@@ -1255,8 +1255,8 @@ app = Flask(__name__)
 # APEX 40 — Institutional Workspace shell.  Dashboard HTML is decorated at
 # response time so legacy pages keep their independent rendering logic while
 # sharing one navigation, command palette, favorites, and breadcrumb layer.
-_APEX41_SHELL_CSS = "/static/css/apex_workspace.css?v=41.0"
-_APEX41_SHELL_JS = "/static/js/apex_workspace.js?v=41.0"
+_APEX41_SHELL_CSS = "/static/css/apex_workspace.css?v=42.0"
+_APEX41_SHELL_JS = "/static/js/apex_workspace.js?v=42.0"
 
 @app.after_request
 def inject_apex41_workspace(response):
@@ -6582,6 +6582,12 @@ def health():
 # =============================================================================
 # APEX 4.5 NEW API ROUTES
 # =============================================================================
+
+@app.route("/command_center")
+@app.route("/apex42")
+def institutional_command_center():
+    return render_template("institutional_command_center.html", version=VERSION, asset_version=STATIC_ASSET_VERSION)
+
 
 @app.route("/apex_os")
 def apex_os_dashboard():
