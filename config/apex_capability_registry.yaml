@@ -62,3 +62,12 @@ capabilities:
     version: legacy
     decision_authority: none
     note: Root app.py remains the canonical production application for APEX 47.
+
+  evidence_pipeline_trace:
+    canonical_module: engine.evidence_pipeline_trace
+    status: active
+    version: "47.0.6"
+    inputs: [recommendation_ledger, canonical_decision_snapshot, outcome_grader, adaptive_learning]
+    outputs: [pipeline_trace, first_blocker, lifecycle_counts]
+    api_routes: [/api/evidence-pipeline/trace]
+    decision_authority: none
