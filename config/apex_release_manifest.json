@@ -1,0 +1,20 @@
+{
+  "apex_version": "47.0.7",
+  "build_name": "Runtime Status Truth & Release Authority Repair",
+  "release_series": "APEX 47",
+  "application_entrypoint": "wsgi.py",
+  "canonical_app": "app.py",
+  "canonical_release_source": "config/apex_release_manifest.json",
+  "database_schema_version": "5",
+  "released_at": "2026-07-26",
+  "guardrails": {
+    "changes_trade_decisions": false,
+    "changes_execution_authority": false,
+    "read_only_status_patch": true
+  },
+  "legacy_identity": {
+    "application_version": "25.1.1_DECISION_QUALITY",
+    "semantic_version": "25.1.1",
+    "build": "11.0.1"
+  }
+}
