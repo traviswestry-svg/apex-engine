@@ -7630,6 +7630,25 @@ def api_institutional_os():
             except Exception as _mn45_err:
                 print(f"Market narrative error (non-fatal): {_mn45_err}", flush=True)
 
+            # APEX 47.0.2–47.0.4 — canonical decision/evidence spine. One
+            # immutable decision contract feeds storage, grading and diagnostics.
+            try:
+                from engine.canonical_decision import build_snapshot as _build_canonical_decision
+                from engine.evidence_pipeline import record_snapshot as _record_evidence_snapshot, record_price as _record_evidence_price, readiness as _evidence_readiness
+                from engine.outcome_grader import run_grader as _run_outcome_grader
+                _canonical = _build_canonical_decision(result, ticker=ticker)
+                result["canonical_decision_snapshot"] = _canonical
+                _record_evidence_snapshot(_canonical)
+                if _canonical.get("entry_reference") is not None:
+                    _record_evidence_price(ticker, _canonical.get("entry_reference"), _canonical.get("timestamp"))
+                # Idempotent and bounded. Matured decisions are graded; immature
+                # records remain pending with a truthful readiness state.
+                _grade_cycle = _run_outcome_grader(limit=100)
+                result["outcome_grader"] = _grade_cycle
+                result["evidence_readiness"] = _grade_cycle.get("readiness") or _evidence_readiness()
+            except Exception as _ev47_err:
+                print(f"APEX 47 evidence pipeline error (non-fatal): {_ev47_err}", flush=True)
+
             _record_confidence_timeline_point(ticker, result)
             # APEX 7.6.0 Premium Strategy — dispatch on the composition cycle
             # (not the polled GET). Logs the structure and fires Telegram only
@@ -7724,6 +7743,42 @@ def compose_institutional_os_headless(ticker: str = ASSISTANT_TICKER) -> bool:
         print(f"Headless IOS compose failed (non-fatal): {e}", flush=True)
         return False
 
+
+
+@app.route("/api/version", methods=["GET"])
+@app.route("/api/release-manifest", methods=["GET"])
+def api_release_manifest_47():
+    from engine.release_manifest import manifest
+    return jsonify(manifest())
+
+
+@app.route("/api/decision-snapshot/latest", methods=["GET"])
+def api_decision_snapshot_latest_47():
+    from engine.canonical_decision import build_snapshot
+    latest = (STATE.get("last_result") or {}) if isinstance(STATE, dict) else {}
+    payload = latest.get("canonical_decision_snapshot")
+    return jsonify(payload if isinstance(payload, dict) else build_snapshot(latest, ticker=request.args.get("ticker", ASSISTANT_TICKER)))
+
+
+@app.route("/api/evidence-readiness", methods=["GET"])
+def api_evidence_readiness_47():
+    from engine.evidence_pipeline import readiness
+    return jsonify(readiness())
+
+
+@app.route("/api/outcome-grader/run", methods=["POST"])
+def api_outcome_grader_run_47():
+    from engine.outcome_grader import run_grader
+    payload = request.get_json(silent=True) or {}
+    horizon = max(60, min(86400, int(payload.get("horizon_seconds", 300))))
+    limit = max(1, min(5000, int(payload.get("limit", 500))))
+    return jsonify(run_grader(horizon_seconds=horizon, limit=limit))
+
+
+@app.route("/api/outcome-grader/summary", methods=["GET"])
+def api_outcome_grader_summary_47():
+    from engine.outcome_grader import summary
+    return jsonify(summary())
 
 
 @app.route("/api/adaptive-learning", methods=["GET"])
