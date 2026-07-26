@@ -7550,6 +7550,33 @@ def api_institutional_os():
                 except Exception as _td38_scan_err:
                     print(f"Phase 38 institutional intent error (non-fatal): {_td38_scan_err}", flush=True)
 
+            # APEX 43.6 — Liquidity Race Engine: probability that the nearest
+            # meaningful liquidity pool above or below is reached first.
+            try:
+                from engine.liquidity_race import evaluate as _evaluate_liquidity_race
+                _ms = result.get("market_state") or {}
+                _gm = result.get("gamma_regime") or {}
+                _st = result.get("structure") or {}
+                _fi = result.get("flow_intelligence_2") or result.get("flow_intelligence") or {}
+                _price = (_ms.get("price") or result.get("spot") or result.get("price")
+                          or (result.get("flow") or {}).get("stock_price"))
+                _upper = (_gm.get("call_wall") or _ms.get("call_wall") or _st.get("resistance")
+                          or _st.get("next_resistance") or _st.get("pdh"))
+                _lower = (_gm.get("put_wall") or _ms.get("put_wall") or _st.get("support")
+                          or _st.get("next_support") or _st.get("pdl"))
+                result["liquidity_race"] = _evaluate_liquidity_race({
+                    "current_price": _price, "upper_level": _upper, "lower_level": _lower,
+                    "upper_size": _gm.get("call_wall_size", 1), "lower_size": _gm.get("put_wall_size", 1),
+                    "order_flow_score": _fi.get("flow_score") or _fi.get("order_flow_score"),
+                    "delta_score": _fi.get("delta_score") or _fi.get("cumulative_delta_score"),
+                    "momentum_score": result.get("momentum_score") or (_ms.get("momentum_score")),
+                    "structure_score": result.get("structure_score"),
+                    "auction_score": (result.get("auction_intelligence") or {}).get("auction_score"),
+                    "liquidity_pressure": _fi.get("liquidity_pressure"),
+                })
+            except Exception as _lr_err:
+                print(f"Liquidity race error (non-fatal): {_lr_err}", flush=True)
+
             _record_confidence_timeline_point(ticker, result)
             # APEX 7.6.0 Premium Strategy — dispatch on the composition cycle
             # (not the polled GET). Logs the structure and fires Telegram only
@@ -7644,6 +7671,19 @@ def compose_institutional_os_headless(ticker: str = ASSISTANT_TICKER) -> bool:
         print(f"Headless IOS compose failed (non-fatal): {e}", flush=True)
         return False
 
+
+
+@app.route("/api/liquidity-race", methods=["GET", "POST"])
+def api_liquidity_race():
+    """Evaluate a supplied liquidity race or return the latest composed race."""
+    from engine.liquidity_race import evaluate
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        return jsonify(evaluate(payload if isinstance(payload, dict) else {}))
+    with STATE_LOCK:
+        latest = dict(STATE.get("last_result") or {})
+    race = latest.get("liquidity_race")
+    return jsonify(race if isinstance(race, dict) else {"ok": False, "status": "UNAVAILABLE"})
 
 @app.route("/api/story")
 def api_story():
