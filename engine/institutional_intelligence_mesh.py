@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 import math
 import time
 
-MESH_VERSION = "43.0"
+MESH_VERSION = "43.5"
 
 @dataclass(frozen=True)
 class EvidenceNode:
@@ -113,33 +113,45 @@ def _node(snapshot: Mapping[str, Any], engine: str, aliases: Tuple[str, ...], we
     return EvidenceNode(engine, source, direction, round(score, 4), weight, round(freshness, 4), round(reliability, 4), round(contribution, 4), reason[:240], True)
 
 
-def build_intelligence_mesh(snapshot: Optional[Mapping[str, Any]], now: Optional[float] = None) -> Dict[str, Any]:
+def build_intelligence_mesh(snapshot: Optional[Mapping[str, Any]], now: Optional[float] = None, calibration: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     snapshot = snapshot or {}
+    calibration = calibration or {}
     now = float(now if now is not None else time.time())
-    nodes = [_node(snapshot, name, aliases, weight, now) for name, aliases, weight in ENGINE_SPECS]
+    disabled = {str(x) for x in calibration.get("disabled_engines", []) if x}
+    custom_weights = calibration.get("weights", {}) if isinstance(calibration.get("weights"), Mapping) else {}
+    specs = [(name, aliases, float(custom_weights.get(name, weight))) for name, aliases, weight in ENGINE_SPECS if name not in disabled]
+    nodes = [_node(snapshot, name, aliases, weight, now) for name, aliases, weight in specs]
+    disabled_nodes = [EvidenceNode(name, aliases[0], "NEUTRAL", 0.0, float(custom_weights.get(name, weight)), 0.0, 0.0, 0.0, "Disabled in temporary calibration sandbox", False) for name, aliases, weight in ENGINE_SPECS if name in disabled]
+    nodes.extend(disabled_nodes)
     active = [n for n in nodes if n.available]
     directional = [n for n in active if n.direction in ("CALL", "PUT")]
     call_weight = sum(max(0.0, n.contribution) for n in directional)
     put_weight = sum(abs(min(0.0, n.contribution)) for n in directional)
     total = call_weight + put_weight
-    coverage = len(active) / len(nodes)
+    coverage = len(active) / max(1, len(ENGINE_SPECS))
     agreement = (max(call_weight, put_weight) / total) if total else 0.0
     conflict = (min(call_weight, put_weight) / total) if total else 0.0
     net = (call_weight - put_weight) / total if total else 0.0
-    confidence = 100.0 * agreement * (0.55 + 0.45 * coverage) * (1.0 - 0.55 * conflict)
+    pre_penalty_confidence = 100.0 * agreement * (0.55 + 0.45 * coverage)
+    conflict_penalty = pre_penalty_confidence * 0.55 * conflict
+    confidence = pre_penalty_confidence - conflict_penalty
     confidence = max(0.0, min(99.0, confidence))
 
+    min_engines = max(1, int(calibration.get("min_engines", 3)))
+    min_agreement = max(0.0, min(1.0, float(calibration.get("min_agreement", 0.58))))
+    max_conflict = max(0.0, min(1.0, float(calibration.get("max_conflict", 0.34))))
+    min_confidence = max(0.0, min(99.0, float(calibration.get("min_confidence", 58))))
     reasons: List[str] = []
-    if len(active) < 3:
+    if len(active) < min_engines:
         decision = "WAIT"
         reasons.append("Insufficient engine coverage")
-    elif total == 0 or agreement < 0.58:
+    elif total == 0 or agreement < min_agreement:
         decision = "WAIT"
         reasons.append("Directional consensus is below threshold")
-    elif conflict > 0.34:
+    elif conflict > max_conflict:
         decision = "WAIT"
         reasons.append("Material cross-engine conflict")
-    elif confidence < 58:
+    elif confidence < min_confidence:
         decision = "WAIT"
         reasons.append("Governed confidence threshold not met")
     else:
@@ -156,6 +168,8 @@ def build_intelligence_mesh(snapshot: Optional[Mapping[str, Any]], now: Optional
         "version": MESH_VERSION,
         "decision": decision,
         "confidence": round(confidence, 1),
+        "pre_penalty_confidence": round(pre_penalty_confidence, 1),
+        "conflict_penalty": round(conflict_penalty, 1),
         "coverage": round(coverage * 100.0, 1),
         "agreement": round(agreement * 100.0, 1),
         "conflict": round(conflict * 100.0, 1),
@@ -166,4 +180,19 @@ def build_intelligence_mesh(snapshot: Optional[Mapping[str, Any]], now: Optional
         "supporting_engines": [n.engine for n in supporting[:4]],
         "opposing_engines": [n.engine for n in opposing[:4]],
         "nodes": [asdict(n) for n in nodes],
+        "diagnostics": {
+            "evaluated_at": now,
+            "active_engines": len(active),
+            "directional_engines": len(directional),
+            "call_weight": round(call_weight, 4),
+            "put_weight": round(put_weight, 4),
+            "thresholds": {
+                "min_engines": min_engines,
+                "min_agreement": round(min_agreement, 4),
+                "max_conflict": round(max_conflict, 4),
+                "min_confidence": round(min_confidence, 1),
+            },
+            "temporary_calibration": bool(calibration),
+            "disabled_engines": sorted(disabled),
+        },
     }
