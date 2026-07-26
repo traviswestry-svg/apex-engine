@@ -16,7 +16,9 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from flask import jsonify, render_template, request
 
-VERSION = "47.0.6"
+from .release_manager import APP_VERSION
+
+VERSION = APP_VERSION
 
 _STATUS_RANK = {"PASS": 0, "DISABLED": 1, "BLOCKED": 2, "WARN": 3, "FAIL": 4}
 

@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-VERSION = "47.0.6"
-BUILD_NAME = "Evidence Pipeline Trace & Canonical Version Enforcement"
+from .release_manager import APP_VERSION, RELEASE_MANIFEST
+
+VERSION = APP_VERSION
+BUILD_NAME = str(RELEASE_MANIFEST.get("build_name") or "Canonical Version Unification")
 SCHEMA_VERSION = "apex.release_manifest.v1"
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = ROOT / "config" / "apex_capability_registry.yaml"

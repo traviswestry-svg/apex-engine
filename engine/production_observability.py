@@ -15,7 +15,12 @@ from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any, Deque, Dict, Iterator, Optional
 
-VERSION = "10.1.0_PRODUCTION_OBSERVABILITY"
+from .release_manager import APP_VERSION
+
+# Product responses use the canonical APEX release identity. The historical
+# observability package version remains available only as component metadata.
+COMPONENT_VERSION = "10.1.0_PRODUCTION_OBSERVABILITY"
+VERSION = APP_VERSION
 _MAX_SAMPLES = 512
 _lock = threading.RLock()
 _latency_ms: Dict[str, Deque[float]] = defaultdict(lambda: deque(maxlen=_MAX_SAMPLES))
@@ -90,6 +95,9 @@ def metrics_snapshot() -> Dict[str, Any]:
             }
         return {
             "version": VERSION,
+            "apex_version": VERSION,
+            "component_version": COMPONENT_VERSION,
+            "version_source": "config/apex_release_manifest.json",
             "uptime_seconds": round(time.monotonic() - _started, 3),
             "components": components,
             "counters": dict(sorted(_counters.items())),

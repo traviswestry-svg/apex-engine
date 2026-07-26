@@ -60,9 +60,9 @@ def _load_release_manifest() -> Dict[str, Any]:
     except (OSError, ValueError, TypeError):
         payload = {}
 
-    version = (os.getenv("APEX_VERSION") or payload.get("apex_version") or "47.0.7").strip()
+    version = (os.getenv("APEX_VERSION") or payload.get("apex_version") or "48.1.0").strip()
     payload["apex_version"] = version
-    payload.setdefault("build_name", "Runtime Status Truth & Release Authority Repair")
+    payload.setdefault("build_name", "Canonical Version Unification")
     payload.setdefault("canonical_release_source", "config/apex_release_manifest.json")
     payload.setdefault("database_schema_version", "5")
     return payload
