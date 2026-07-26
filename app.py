@@ -7614,6 +7614,14 @@ def api_institutional_os():
             except Exception as _li44_err:
                 print(f"Liquidity intelligence error (non-fatal): {_li44_err}", flush=True)
 
+            # APEX 45 — Institutional Market Narrative Engine. Explainability,
+            # contradiction detection, readiness checklist, and advisory context.
+            try:
+                from engine.market_narrative import evaluate as _evaluate_market_narrative
+                result["market_narrative"] = _evaluate_market_narrative(result)
+            except Exception as _mn45_err:
+                print(f"Market narrative error (non-fatal): {_mn45_err}", flush=True)
+
             _record_confidence_timeline_point(ticker, result)
             # APEX 7.6.0 Premium Strategy — dispatch on the composition cycle
             # (not the polled GET). Logs the structure and fires Telegram only
@@ -7708,6 +7716,22 @@ def compose_institutional_os_headless(ticker: str = ASSISTANT_TICKER) -> bool:
         print(f"Headless IOS compose failed (non-fatal): {e}", flush=True)
         return False
 
+
+
+@app.route("/api/market-narrative", methods=["GET", "POST"])
+def api_market_narrative():
+    from engine.market_narrative import evaluate
+    if request.method == "POST":
+        return jsonify(evaluate(request.get_json(silent=True) or {}))
+    latest = (STATE.get("last_result") or {}) if isinstance(STATE, dict) else {}
+    payload = latest.get("market_narrative")
+    return jsonify(payload if isinstance(payload, dict) else evaluate(latest))
+
+
+@app.route("/api/market-narrative/timeline", methods=["GET"])
+def api_market_narrative_timeline():
+    from engine.market_narrative import timeline_summary
+    return jsonify(timeline_summary(limit=max(1, min(500, int(request.args.get("limit", 50))))))
 
 
 @app.route("/api/liquidity-intelligence", methods=["GET", "POST"])
