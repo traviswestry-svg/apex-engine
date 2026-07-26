@@ -5,7 +5,7 @@ from engine.outcome_grader import run_grader
 from engine.release_manifest import manifest
 
 def test_manifest_is_canonical_47():
-    m=manifest(); assert m['apex_version']=='47.0.4'; assert m['canonical_app']=='app.py'; assert 'evidence_readiness' in m['active_capabilities']
+    m=manifest(); assert m['apex_version']=='47.0.6'; assert m['canonical_app']=='app.py'; assert 'evidence_readiness' in m['active_capabilities']
 
 def test_snapshot_contract_actionable():
     s=build_snapshot({'timestamp':'2026-07-27T14:00:00+00:00','session':'RTH','price':7000,'direction':'BULLISH','action':'ENTER','confidence':88},'SPX')
