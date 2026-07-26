@@ -3,7 +3,7 @@ from flask import jsonify
 from .institutional_dealer_positioning_engine import build_dealer_positioning
 from .institutional_options_flow_engine import build_options_flow_intelligence
 from .institutional_probability_engine import build_probability_engine
-from .adaptive_learning_engine_v2 import build_adaptive_learning_v2
+from .institutional_decision_engine import build_adaptive_learning_v2
 from .institutional_market_structure_engine import build_institutional_market_structure
 
 def register_institutional_intelligence_suite_routes(app, *, last_result_provider):
