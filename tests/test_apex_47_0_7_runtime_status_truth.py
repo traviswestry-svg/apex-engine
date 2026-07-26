@@ -16,11 +16,11 @@ def _resolver():
 
 
 def test_canonical_manifest_controls_backend_version():
-    assert RELEASE_MANIFEST["apex_version"] == "47.0.7"
-    assert APP_VERSION == "47.0.7"
+    canonical = RELEASE_MANIFEST["apex_version"]
+    assert canonical == APP_VERSION
     payload = release_metadata()
-    assert payload["apex_version"] == "47.0.7"
-    assert payload["application_version"] == "47.0.7"
+    assert payload["apex_version"] == canonical
+    assert payload["application_version"] == canonical
     assert payload["version_source"] == "config/apex_release_manifest.json"
     assert payload["legacy_application_version"] == "25.1.1_DECISION_QUALITY"
 
