@@ -109,3 +109,36 @@ FROZEN_MAX 48 → 39. Test files renamed to unversioned names (8) plus 2 rescued
 
 ## Validation
 Full suite 1,518 passed / 0 failed.
+
+---
+
+# Consolidation Sprint 4 — Learning Family (executed 2026-07-26)
+
+## Merged (3 files removed)
+- engine/learning_routes.py            → engine/learning_calibration.py (register fn absorbed)
+- engine/adaptive_learning_engine_v2.py → engine/institutional_decision_engine.py
+  (pure builder folded into its primary caller; NaN/inf-guarded numeric helper
+  preserved verbatim as _f_finite; payload version string 12.5.0 unchanged as
+  ALE2_VERSION)
+- engine/market_replay_learning_lab_v202.py → engine/institutional_decision_suite_routes.py
+  (sole consumer; folding into institutional_decision_engine was VETOED — the
+  lab imports execution_optimizer_v201, which imports institutional_decision_engine:
+  circular. Payload version 13.2.0 unchanged as REPLAY_LAB_VERSION.)
+
+## Vetoes — the learning family is mostly legitimate distinct stores
+- trade_director_learning ⇄ trade_director_institutional_learning: two separate
+  SQLite stores with colliding function names (learning_db_path, _connect) and
+  different schemas (Phase 6 trade archive vs Phase 22/23 institutional learning).
+- institutional_learning_engine → learning_calibration: ALSO an independent
+  SQLite store (LearningStore, 18.2.0) vs the feature-store calibration DB.
+  Merging stores conflates schemas for zero behavioral benefit.
+- adaptive_learning stays untouched as the 47.x evidence-stack anchor.
+
+Finding recorded: the sprawl lived in the decision/confidence families; the
+learning family is mostly real, separately-persisted subsystems.
+
+## Guard ratchet
+FROZEN_MAX 39 → 37.
+
+## Validation
+Full suite 1,518 passed / 0 failed.

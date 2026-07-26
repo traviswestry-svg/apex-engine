@@ -763,7 +763,7 @@ except Exception as _sim_err:
     print(f"APEX 10 similarity routes unavailable (non-fatal): {_sim_err}", flush=True)
 
 try:
-    from engine.learning_routes import register_learning_routes
+    from engine.learning_calibration import register_learning_routes  # routes absorbed in Sprint 4
     LEARNING_ROUTES_AVAILABLE = True
 except Exception as _learn_err:
     register_learning_routes = None  # type: ignore[assignment]
