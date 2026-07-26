@@ -1253,6 +1253,20 @@ MAX_DYNAMIC_TICKERS = int(os.getenv("MAX_DYNAMIC_TICKERS", "25"))
 
 app = Flask(__name__)
 
+# ── APEX access control — application-wide shared-secret auth ────────────────
+# Every route (including /api/trade/spx/*) requires APEX_AUTH_TOKEN via header
+# (X-APEX-KEY / Authorization: Bearer) or the /login session cookie. Exempt:
+# /health, /login, /logout, /static/*, /tv_signal (own HMAC), /favicon.ico.
+# Fail-closed: token unset => 503 on every non-exempt route. See engine/auth.py.
+try:
+    from engine.auth import install_auth
+    install_auth(app)
+    AUTH_LAYER_AVAILABLE = True
+except Exception as _auth_err:
+    AUTH_LAYER_AVAILABLE = False
+    print(f"FATAL: auth layer failed to install: {_auth_err}", flush=True)
+    raise  # never boot open — an unauthenticated deploy is worse than no deploy
+
 # APEX 40 — Institutional Workspace shell.  Dashboard HTML is decorated at
 # response time so legacy pages keep their independent rendering logic while
 # sharing one navigation, command palette, favorites, and breadcrumb layer.
