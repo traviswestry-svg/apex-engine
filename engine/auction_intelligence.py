@@ -790,7 +790,7 @@ def build_node_intelligence(
             "speed":  "FAST",  # LVNs are fast — price moves quickly through low-volume zones
             "note": (
                 f"LVN at {_fmt(level)}: low-volume node — price will travel through this level quickly. "
-                f"{'If price breaks above {_fmt(level)}, expect a fast move to the next HVN.' if dist > 0 else 'Below this LVN, price will drop quickly until the next HVN support.'}"
+                (f"If price breaks above {_fmt(level)}, expect a fast move to the next HVN." if dist > 0 else "Below this LVN, price will drop quickly until the next HVN support.")
             ),
         })
 

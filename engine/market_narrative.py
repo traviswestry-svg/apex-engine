@@ -27,8 +27,12 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, v))
 
 
-def _direction(score: float) -> str:
-    return "BULLISH" if score >= 58 else "BEARISH" if score <= 42 else "NEUTRAL"
+def _direction(score: Any) -> str:
+    # Sanitize here, not at call sites: several callers pass raw .get() values,
+    # and a missing score (None) must read as NEUTRAL, not raise. This was the
+    # recurring "'>=' not supported between 'NoneType' and 'int'" compose error.
+    x = _num(score, 50.0)
+    return "BULLISH" if x >= 58 else "BEARISH" if x <= 42 else "NEUTRAL"
 
 
 def _component(name: str, score: Any, weight: float, detail: str = "") -> dict[str, Any]:
