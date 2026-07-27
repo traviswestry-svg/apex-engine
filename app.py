@@ -5974,8 +5974,12 @@ def api_assistant():
 
 @app.route("/tv_signal", methods=["POST"])
 def tv_signal():
-    payload = request.get_json(silent=True) or {}
-    secret = str(payload.get("secret", ""))
+    # force=True: TradingView posts JSON with a text/plain Content-Type;
+    # without force, get_json returns None and the secret reads as empty —
+    # rejecting a correct secret (root cause of the 2026-07-27 session-long
+    # webhook outage). silent=True keeps malformed bodies from raising.
+    payload = request.get_json(silent=True, force=True) or {}
+    secret = str(payload.get("secret", "")).strip()
     if not WEBHOOK_SECRET:
         return jsonify({"ok": False, "error": "webhook disabled: secret not configured"}), 503
     if not hmac.compare_digest(secret.encode("utf-8"), WEBHOOK_SECRET.encode("utf-8")):
