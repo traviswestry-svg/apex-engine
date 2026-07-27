@@ -394,7 +394,8 @@
       var st=document.getElementById('psStrikes');
       if(p.strategy==='IRON_CONDOR'&&legs.put_short!=null){
         st.style.display='';
-        st.textContent='Puts: '+legs.put_long+' / '+legs.put_short+'    ·    Calls: '+legs.call_short+' / '+legs.call_long;
+        // Explicit buy/sell per leg — condor sells the inner strikes, buys the wings.
+        st.textContent='Sell '+legs.put_short+'P / Buy '+legs.put_long+'P   ·   Sell '+legs.call_short+'C / Buy '+legs.call_long+'C';
       } else if(legs.sell_leg!=null||legs.buy_leg!=null){
         st.style.display='';
         if(kind==='CREDIT'){st.textContent='Sell '+legs.sell_leg+'  ·  Buy '+legs.buy_leg+'  ('+(legs.short_delta!=null?('short Δ '+legs.short_delta):'')+')';}
