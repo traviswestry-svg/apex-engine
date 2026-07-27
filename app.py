@@ -5979,6 +5979,10 @@ def tv_signal():
     if not WEBHOOK_SECRET:
         return jsonify({"ok": False, "error": "webhook disabled: secret not configured"}), 503
     if not hmac.compare_digest(secret.encode("utf-8"), WEBHOOK_SECRET.encode("utf-8")):
+        # Loud server-side log: a silent webhook outage means no Pine
+        # confirmations reach the execution engine for the whole session.
+        # Log lengths only — never the received value.
+        print(f"WEBHOOK REJECTED (bad secret): received len={len(secret)}, expected len={len(WEBHOOK_SECRET)}, ticker={payload.get('ticker')!r}, source={payload.get('source', payload.get('system'))!r}", flush=True)
         return jsonify({"ok": False, "error": "bad secret"}), 403
 
     ticker = normalize_signal_ticker(str(payload.get("ticker", ASSISTANT_TICKER)))
@@ -6899,7 +6903,8 @@ def api_institutional_os():
                 volume_bundle = vp_future.result(timeout=_FETCH_TIMEOUT)
             except Exception as vp_err:
                 vp_future.cancel()
-                print(f"[IOS] volume_profile timed out / failed: {vp_err}", flush=True)
+                # str(TimeoutError()) is empty — log type + repr so the cause is visible.
+                print(f"[IOS] volume_profile timed out / failed: {type(vp_err).__name__}: {vp_err!r} (timeout={_FETCH_TIMEOUT}s)", flush=True)
                 volume_bundle = {}
                 timed_out.append("volume_profile")
             finally:
