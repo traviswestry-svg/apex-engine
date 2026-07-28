@@ -788,9 +788,15 @@ def build_node_intelligence(
             "side":   "ABOVE" if dist > 0 else "BELOW",
             "role":   role,
             "speed":  "FAST",  # LVNs are fast — price moves quickly through low-volume zones
+            # Explicit '+' concatenation. An adjacent parenthesized expression
+            # after a string literal is a CALL, not concatenation — that mistake
+            # shipped on 2026-07-26 and threw "'str' object is not callable" on
+            # every RTH compose, degrading this whole block.
             "note": (
                 f"LVN at {_fmt(level)}: low-volume node — price will travel through this level quickly. "
-                (f"If price breaks above {_fmt(level)}, expect a fast move to the next HVN." if dist > 0 else "Below this LVN, price will drop quickly until the next HVN support.")
+                + (f"If price breaks above {_fmt(level)}, expect a fast move to the next HVN."
+                   if dist > 0
+                   else "Below this LVN, price will drop quickly until the next HVN support.")
             ),
         })
 
