@@ -299,6 +299,32 @@ def register_learning_routes(app) -> None:
                         'evaluation': calibration_report(pairs['eval']),
                         'active_policy': active_policy()})
 
+    @app.get('/api/settlement/health')
+    def _settlement_health():
+        # Standalone view of the signal -> grading -> calibration chain so a
+        # silent execution-feed outage is queryable directly, not just buried
+        # in the institutional_os payload.
+        try:
+            from engine.settlement_health import build_settlement_health
+            fs = feature_store_db.health()
+            sessions = feature_store_db.sessions('features')
+            calib = {'train': {'sample_count': fs.get('label_rows', 0)}, 'active_policy': active_policy()}
+            last_sig = None
+            try:
+                from app import TRADE_ASSISTANT_STATE, TRADE_ASSISTANT_LOCK
+                with TRADE_ASSISTANT_LOCK:
+                    last_sig = TRADE_ASSISTANT_STATE.get('last_signal')
+            except Exception:
+                pass
+            import datetime as _dt
+            now = _dt.datetime.now(_dt.timezone.utc)
+            is_rth = 9 * 60 + 30 <= (int(now.strftime('%H')) * 60 + int(now.strftime('%M'))) < 16 * 60  # UTC-naive fallback
+            payload = build_settlement_health(last_signal=last_sig, feature_store_health=fs,
+                                              calibration=calib, is_rth=bool(sessions) or is_rth, now=now)
+            return jsonify(payload)
+        except Exception as e:
+            return jsonify({'ok': True, 'available': False, 'error': f'{type(e).__name__}: {e!r}'})
+
     @app.post('/api/learning/proposals')
     def _proposal():
         body = request.get_json(silent=True) or {}
