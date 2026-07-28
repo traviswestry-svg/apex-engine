@@ -451,11 +451,13 @@ try:
     from engine.overnight import build_overnight_game_plan
     from engine.premarket import build_premarket_forecast
     from engine.settlement_health import build_settlement_health
+    from engine.component_liveness import observe as observe_component_liveness
     OVERNIGHT_ENGINE_AVAILABLE = True
 except Exception as _on_err:
     build_overnight_game_plan = None  # type: ignore[assignment]
     build_premarket_forecast = None  # type: ignore[assignment]
     build_settlement_health = None  # type: ignore[assignment]
+    observe_component_liveness = None  # type: ignore[assignment]
     OVERNIGHT_ENGINE_AVAILABLE = False
     print(f"APEX overnight engine unavailable: {_on_err}", flush=True)
 
@@ -6243,6 +6245,27 @@ def api_backtest_stats():
     except Exception as e:
         return jsonify({"enabled": TRACKING_ENABLED, "error": str(e), "buckets": []}), 500
 
+@app.route("/api/component-liveness")
+def api_component_liveness():
+    """GET /api/component-liveness — latest liveness snapshot from the most
+    recent compose. Distinguishes FROZEN (stuck) from STABLE (quiet) components
+    so a dead panel can't hide behind an unchanging value."""
+    try:
+        with STATE_LOCK:
+            osp = STATE.get("last_institutional_os")
+        if isinstance(osp, dict) and "component_liveness" in osp:
+            return jsonify(osp["component_liveness"])
+    except Exception:
+        pass
+    # Fall back to composing fresh if no cached snapshot carries it.
+    try:
+        osp = build_institutional_os("SPX", include_heatmap=False)
+        return jsonify(osp.get("component_liveness")
+                       or {"ok": True, "available": False, "reason": "liveness not yet computed"})
+    except Exception as e:
+        return jsonify({"ok": True, "available": False, "error": f"{type(e).__name__}: {e!r}"})
+
+
 @app.route("/api/diagnostics")
 def api_diagnostics():
     with STATE_LOCK:
@@ -7582,6 +7605,16 @@ def api_institutional_os():
                     )
                 except Exception as _sh_err:
                     print(f"Settlement health error (non-fatal): {type(_sh_err).__name__}: {_sh_err!r}", flush=True)
+            if observe_component_liveness is not None:
+                # Component liveness: detects a FROZEN component (unchanged while
+                # neighbours move) vs a genuinely STABLE one (quiet market). Runs
+                # last so it fingerprints the fully-assembled payload. Pure
+                # in-memory diffing — no I/O.
+                try:
+                    result["component_liveness"] = observe_component_liveness(
+                        result, is_rth=(_session_state_now == "MARKET_OPEN"))
+                except Exception as _cl_err:
+                    print(f"Component liveness error (non-fatal): {type(_cl_err).__name__}: {_cl_err!r}", flush=True)
             recommendation = result.get("recommendation", "")
             if "ENTER" in recommendation and "NOW" in recommendation:
                 # De-dupe: fire once per distinct recommendation per session, so the

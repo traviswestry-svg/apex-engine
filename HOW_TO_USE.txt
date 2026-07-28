@@ -1,0 +1,29 @@
+COMPONENT LIVENESS — how to check every component is actually working
+
+WHY: a value that never changes looks the same whether it's genuinely stable
+(quiet market) or silently frozen (dead feed). This tells them apart.
+
+FILES:
+  engine/component_liveness.py   (new)
+  tests/test_component_liveness.py (new)
+  app.py                          (adds compose wiring + /api/component-liveness route)
+  ALSO REQUIRED: engine/settlement_health.py must already be in the repo
+  (app.py imports both in the same block; a missing module takes the block down).
+
+HOW TO READ IT (curl with your X-APEX-KEY header):
+  GET /api/component-liveness
+
+  state = HEALTHY            -> all watched components live/stable, feeds responsive
+  state = QUIET_MARKET_OPEN  -> open but calm; unchanged values are NOT flagged
+  state = QUIET_MARKET_CLOSED-> closed; unchanged is expected
+  state = FROZEN_COMPONENTS  -> LOOK HERE. listed components haven't changed in
+                                4+ composes WHILE the market is moving. Stuck feed
+                                or silent engine error. This is your "never changes"
+                                symptom, now named.
+  state = DEGRADED           -> component self-reports available=false / error
+
+  Each component lists: status (LIVE/STABLE/STALE/FROZEN/UNAVAILABLE) and
+  unchanged_composes. Watch the ones that sit at FROZEN across the session.
+
+NOTE: liveness needs a few composes of history to judge. Right after a deploy
+it will read everything as LIVE/STABLE until it has seen enough cycles.
