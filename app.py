@@ -450,10 +450,12 @@ except Exception as _cms_err:
 try:
     from engine.overnight import build_overnight_game_plan
     from engine.premarket import build_premarket_forecast
+    from engine.settlement_health import build_settlement_health
     OVERNIGHT_ENGINE_AVAILABLE = True
 except Exception as _on_err:
     build_overnight_game_plan = None  # type: ignore[assignment]
     build_premarket_forecast = None  # type: ignore[assignment]
+    build_settlement_health = None  # type: ignore[assignment]
     OVERNIGHT_ENGINE_AVAILABLE = False
     print(f"APEX overnight engine unavailable: {_on_err}", flush=True)
 
@@ -7558,6 +7560,28 @@ def api_institutional_os():
                         result["executive_summary"] = _pm["executive_summary"]
                 except Exception as _pm_err:
                     print(f"Premarket forecast error (non-fatal): {type(_pm_err).__name__}: {_pm_err!r}", flush=True)
+            if build_settlement_health is not None:
+                # Settlement-path health: makes a silent execution-feed outage
+                # visible (the 2026-07-27 webhook 403 left calibration at
+                # sample_count=0 with nothing on the dashboard saying why).
+                # Pure assembly from already-fetched state — no I/O, no timeout.
+                try:
+                    from engine import feature_store_db as _fsdb
+                    _fs_health = _fsdb.health()
+                    _last_sig = None
+                    with TRADE_ASSISTANT_LOCK:
+                        _last_sig = TRADE_ASSISTANT_STATE.get("last_signal")
+                    _calib_lite = {"train": {"sample_count": _fs_health.get("label_rows", 0)},
+                                   "active_policy": None}
+                    result["settlement_health"] = build_settlement_health(
+                        last_signal=_last_sig,
+                        feature_store_health=_fs_health,
+                        calibration=_calib_lite,
+                        is_rth=(_session_state_now == "MARKET_OPEN"),
+                        now=dt.datetime.now(dt.timezone.utc),
+                    )
+                except Exception as _sh_err:
+                    print(f"Settlement health error (non-fatal): {type(_sh_err).__name__}: {_sh_err!r}", flush=True)
             recommendation = result.get("recommendation", "")
             if "ENTER" in recommendation and "NOW" in recommendation:
                 # De-dupe: fire once per distinct recommendation per session, so the
