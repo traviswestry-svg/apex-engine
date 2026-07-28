@@ -443,8 +443,14 @@ def _chapter_verdict(
     # No trade
     else:
         if not is_tradeable:
-            text = "Market is closed. This is a pre-session or after-hours read — no live trading."
-            color = "#475569"
+            if ms.get("session_state") == "PREMARKET":
+                text = ("Pre-market session — forecast mode. SPY, QQQ, and ES are live; "
+                        "APEX is building the opening game plan. Entries unlock at 9:30 ET "
+                        "with Pine confirmation.")
+                color = "#fab219"
+            else:
+                text = "Market is closed. This is a pre-session or after-hours read — no live trading."
+                color = "#475569"
         elif n_bull == n_bear:
             text = (
                 f"No institutional consensus — {n_bull} engines bullish, {n_bear} bearish. "
@@ -590,6 +596,9 @@ def _executive_summary(
 
     # No trade — be specific about why
     if not is_tradeable:
+        if ms.get("session_state") == "PREMARKET":
+            return (f"{prefix}Pre-market forecast mode — SPY/QQQ/ES live. "
+                    f"Building the opening game plan; entries unlock at 9:30 ET.")
         return f"{prefix}Market is closed. Review only — no live trading signals."
 
     if n_bull == n_bear:
