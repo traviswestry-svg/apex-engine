@@ -449,9 +449,11 @@ except Exception as _cms_err:
 # APEX Overnight Game Plan Engine
 try:
     from engine.overnight import build_overnight_game_plan
+    from engine.premarket import build_premarket_forecast
     OVERNIGHT_ENGINE_AVAILABLE = True
 except Exception as _on_err:
     build_overnight_game_plan = None  # type: ignore[assignment]
+    build_premarket_forecast = None  # type: ignore[assignment]
     OVERNIGHT_ENGINE_AVAILABLE = False
     print(f"APEX overnight engine unavailable: {_on_err}", flush=True)
 
@@ -1703,7 +1705,9 @@ def _build_market_status_panel(session: str) -> Dict[str, Any]:
         {
             "label": "Scanner",
             "status": scanner_mode,
-            "detail": "Scanning for live setups" if spx_open else "Historical analysis mode",
+            "detail": ("Scanning for live setups" if spx_open
+                       else "Pre-market monitor — SPY/QQQ/ES live" if session == "PREMARKET"
+                       else "Historical analysis mode"),
             "color":  "green" if spx_open else "amber",
         },
         {
@@ -7518,6 +7522,42 @@ def api_institutional_os():
                         result["executive_summary"] = _on_plan["executive_summary"]
                 except Exception as _on_err:
                     print(f"Overnight game plan error (non-fatal): {_on_err}", flush=True)
+            if _session_state_now == "PREMARKET" and build_premarket_forecast is not None:
+                # SPY/QQQ trade pre-market from ~4:00 ET (analyzed from 6:00);
+                # turn that plus ES into an opening forecast instead of a
+                # "market closed" read. Advisory-only; own try so a data miss
+                # never degrades the rest of the compose.
+                try:
+                    _spy_bars = get_intraday_bars("SPY", multiplier=5, limit_days=1)
+                    _qqq_bars = get_intraday_bars("QQQ", multiplier=5, limit_days=1)
+                    def _prev_close(_tkr: str) -> float:
+                        _t0 = now_et().date()
+                        for _b in reversed(get_daily_bars(_tkr, days=7)):
+                            _bd = dt.datetime.fromtimestamp(_sf(_b.get("t")) / 1000.0).date()
+                            if _bd < _t0 and _sf(_b.get("c")) > 0:
+                                return _sf(_b.get("c"))
+                        return 0.0
+                    _pm = build_premarket_forecast(
+                        spy_bars=_spy_bars,
+                        qqq_bars=_qqq_bars,
+                        es_price=locals().get("_es_price"),
+                        spy_prior_close=_prev_close("SPY") or None,
+                        qqq_prior_close=_prev_close("QQQ") or None,
+                        spx_prior_close=_prior_close if _prior_close else None,
+                        prior_poc=_prior_poc if _prior_poc else None,
+                        prior_vah=_prior_vah if _prior_vah else None,
+                        prior_val=_prior_val if _prior_val else None,
+                        call_wall=canonical_ms.get("call_wall"),
+                        put_wall=canonical_ms.get("put_wall"),
+                        now_et=now_et(),
+                    )
+                    result["premarket_forecast"] = _pm
+                    # Pre-market forecast owns the executive summary in this
+                    # window (takes precedence over the overnight read).
+                    if _pm.get("available") and _pm.get("executive_summary"):
+                        result["executive_summary"] = _pm["executive_summary"]
+                except Exception as _pm_err:
+                    print(f"Premarket forecast error (non-fatal): {type(_pm_err).__name__}: {_pm_err!r}", flush=True)
             recommendation = result.get("recommendation", "")
             if "ENTER" in recommendation and "NOW" in recommendation:
                 # De-dupe: fire once per distinct recommendation per session, so the
