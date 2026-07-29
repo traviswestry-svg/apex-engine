@@ -183,16 +183,49 @@ def build_morning_readiness(
         item = system_checks.get(name, {}) if isinstance(system_checks, Mapping) else {}
         status = str(item.get("status", "WARN")).upper()
         points = status_value.get(status, 55)
-        weighted += points * weight
-        used += weight
-        components[name] = {"status": status, "weight": weight, "score": points, "summary": item.get("summary")}
+
+        # Closed-session readiness must not treat the absence of future live
+        # recommendations/outcomes as an operational failure. Preserve the raw
+        # ledger diagnosis in the summary, but remove it from the weighted score
+        # and blocker list until a live executable session exists.
+        effective_weight = weight
+        effective_score: Optional[float] = float(points)
+        summary = item.get("summary")
+        if name == "recommendation_ledger" and not market_open and status in {"BLOCKED", "WARN"}:
+            status = "WAITING"
+            effective_weight = 0
+            effective_score = None
+            summary = "Awaiting live executable recommendations and graded outcomes"
+
+        if effective_weight:
+            weighted += points * effective_weight
+            used += effective_weight
+        components[name] = {
+            "status": status,
+            "weight": effective_weight,
+            "score": effective_score,
+            "summary": summary,
+        }
         if name in critical and status in {"FAIL", "BLOCKED"}:
             blockers.append(name)
 
     execution_score = _num(execution.get("execution_score"), 0)
-    weighted += execution_score * 10
-    used += 10
-    components["execution_intelligence"] = {"status": execution.get("execution_decision", "UNKNOWN"), "weight": 10, "score": execution_score}
+    if market_open:
+        weighted += execution_score * 10
+        used += 10
+        components["execution_intelligence"] = {
+            "status": execution.get("execution_decision", "UNKNOWN"),
+            "weight": 10,
+            "score": execution_score,
+            "summary": execution.get("execution_quality") or "Live execution conditions evaluated",
+        }
+    else:
+        components["execution_intelligence"] = {
+            "status": "NOT_EXPECTED",
+            "weight": 0,
+            "score": None,
+            "summary": "Execution scoring resumes during the live cash session",
+        }
 
     score = round(weighted / max(used, 1), 1)
     if blockers:

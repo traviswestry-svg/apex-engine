@@ -266,12 +266,27 @@ def _canonical_version_check(app) -> Dict[str, Any]:
                     continue
                 response = client.get(route)
                 payload = response.get_json(silent=True) or {}
-                candidates = {
-                    "apex_version": payload.get("apex_version"),
-                    "version": payload.get("version"),
-                    "application_version": payload.get("application_version"),
-                }
-                canonical_values = [str(v) for v in candidates.values() if v not in (None, "")]
+                # Release identity is exposed by both flat release endpoints and
+                # runtime-health payloads that nest it under ``deployment`` or
+                # ``release``. Inspect those canonical containers rather than
+                # falsely warning whenever a route uses a structured payload.
+                containers = [payload]
+                for key in ("deployment", "release", "metadata", "data"):
+                    nested = payload.get(key)
+                    if isinstance(nested, Mapping):
+                        containers.append(nested)
+                candidates: Dict[str, Any] = {}
+                canonical_values: List[str] = []
+                for index, container in enumerate(containers):
+                    prefix = "root" if index == 0 else next(
+                        (key for key in ("deployment", "release", "metadata", "data") if payload.get(key) is container),
+                        f"nested_{index}",
+                    )
+                    for field in ("apex_version", "version", "application_version", "semantic_version"):
+                        value = container.get(field)
+                        candidates[f"{prefix}.{field}"] = value
+                        if value not in (None, ""):
+                            canonical_values.append(str(value))
                 matches = expected in canonical_values
                 observed[route] = {"http_status": response.status_code, "values": candidates, "matches": matches}
                 if response.status_code >= 500 or not matches:
