@@ -131,6 +131,8 @@ class KeyLevel:
     reversal_prob: Maybe = FEED_REQUIRED
     magnet_score: Maybe = FEED_REQUIRED
     label: str = ""
+    instrument: str = "SPX"          # instrument the level was computed on (SPX/ES/SPY)
+    normalized: bool = False         # True once translated into SPX points via basis
 
     def distance(self, spot: Maybe) -> Maybe:
         return _sub(self.price, spot)
@@ -149,6 +151,8 @@ class KeyLevel:
             "reversal_prob": self.reversal_prob if present(self.reversal_prob) else str(FEED_REQUIRED),
             "magnet": self.magnet_score if present(self.magnet_score) else str(FEED_REQUIRED),
             "label": self.label,
+            "instrument": self.instrument,
+            "normalized": self.normalized,
         }
 
 
@@ -606,7 +610,8 @@ class DailyKeyLevels:
 
     @classmethod
     def build(cls, md: MarketDataProvider, gp: GammaProvider,
-              vp: VolumeProfileProvider, lp: Optional[LiquidityProvider] = None) -> "DailyKeyLevels":
+              vp: VolumeProfileProvider, lp: Optional[LiquidityProvider] = None,
+              *, level_postprocess=None) -> "DailyKeyLevels":
         spot = md.spot()
         levels: list[KeyLevel] = []
         levels += previous_session_levels(md)
@@ -620,6 +625,10 @@ class DailyKeyLevels:
         levels += volume_profile_levels(vp)
         if lp is not None:
             levels += list(lp.levels() or [])
+        # Proxy levels (e.g. ES overnight) must be translated into SPX points
+        # BEFORE the trade map / ranking compare them against SPX spot & gamma.
+        if level_postprocess is not None:
+            levels = level_postprocess(levels)
         tmap = trade_map(spot, levels, g, em)
         ranked = rank_levels(spot, levels)
         return cls(spot, levels, g, em, tmap, ranked)

@@ -85,6 +85,7 @@ class CanonicalMarketDataAdapter:
         daily_bars: Sequence[dict],
         intraday_1m_bars: Sequence[dict],
         overnight_bars: Optional[Sequence[dict]] = None,
+        es_daily_bars: Optional[Sequence[dict]] = None,   # ES daily -> real settlement
         spot: Maybe = FEED_REQUIRED,
         straddle: Maybe = FEED_REQUIRED,
         iv: Maybe = FEED_REQUIRED,
@@ -95,6 +96,7 @@ class CanonicalMarketDataAdapter:
         self._daily = list(daily_bars or [])
         self._intraday = list(intraday_1m_bars or [])
         self._overnight = list(overnight_bars or [])
+        self._es_daily = list(es_daily_bars or [])
         self._spot = spot
         self._straddle = straddle
         self._iv = iv
@@ -110,11 +112,20 @@ class CanonicalMarketDataAdapter:
         row = (completed or self._daily)[-1] if (completed or self._daily) else None
         if not row:
             return {}
+        # Settlement: SPX cash has none; use the ES daily close (real CME
+        # settlement) if ES bars were supplied. Returned in ES points here and
+        # normalized to SPX by the basis postprocessor in build_daily_key_levels.
+        settlement = FEED_REQUIRED
+        if self._es_daily:
+            es_completed = [r for r in self._es_daily
+                            if (_bar_et(r).date() < today if _bar_et(r) else True)]
+            es_row = (es_completed or self._es_daily)[-1] if (es_completed or self._es_daily) else None
+            if es_row:
+                settlement = _f(es_row.get("c"))
         return {
             "open": _f(row.get("o")), "high": _f(row.get("h")),
             "low": _f(row.get("l")), "close": _f(row.get("c")),
-            # SPX cash has no settlement distinct from close -> don't fabricate one
-            "settlement": FEED_REQUIRED,
+            "settlement": settlement,
         }
 
     def overnight_bars(self) -> Sequence[Bar]:
@@ -269,7 +280,11 @@ def build_daily_key_levels(
     flow_snapshot: Optional[dict] = None,
     daily_bars: Sequence[dict],
     intraday_1m_bars: Sequence[dict],
-    overnight_bars: Optional[Sequence[dict]] = None,
+    overnight_bars: Optional[Sequence[dict]] = None,   # ES globex bars (proxy)
+    es_daily_bars: Optional[Sequence[dict]] = None,    # ES daily -> settlement (proxy)
+    es_spot: Maybe = FEED_REQUIRED,                    # ES spot for basis (same instant as spx)
+    proxy_instrument: str = "ES",
+    proxy_scale: float = 1.0,                          # 1.0 for ES, 10.0 for SPY
     straddle: Maybe = FEED_REQUIRED,
     iv: Maybe = FEED_REQUIRED,
     time_to_close_frac: Maybe = FEED_REQUIRED,
@@ -280,12 +295,33 @@ def build_daily_key_levels(
     spot = _f((flow_snapshot or {}).get("stock_price"))
     md = CanonicalMarketDataAdapter(
         daily_bars=daily_bars, intraday_1m_bars=intraday_1m_bars,
-        overnight_bars=overnight_bars, spot=spot, straddle=straddle, iv=iv,
+        overnight_bars=overnight_bars, es_daily_bars=es_daily_bars,
+        spot=spot, straddle=straddle, iv=iv,
         time_to_close_frac=time_to_close_frac, atr_val=atr_val, adr_val=adr_val,
     )
     gp = CanonicalGammaAdapter(canonical_ms, flow_snapshot)
     vp = CanonicalVolumeProfileAdapter(canonical_ms, vp_extra)
-    return DailyKeyLevels.build(md, gp, vp, NullLiquidityAdapter())
+
+    # Translate ES-sourced overnight/settlement levels into SPX points before the
+    # trade map and ranking run. If es_spot is absent, the normalizer blanks those
+    # proxy levels to [FEED REQUIRED] rather than emitting mis-scaled prices.
+    postprocess = None
+    if overnight_bars or es_daily_bars:
+        from_module = _import_basis()
+        postprocess = from_module.make_proxy_normalizer(
+            proxy_spot=es_spot, spx_spot=spot,
+            scale=proxy_scale, instrument=proxy_instrument,
+        )
+    return DailyKeyLevels.build(md, gp, vp, NullLiquidityAdapter(),
+                                level_postprocess=postprocess)
+
+
+def _import_basis():
+    try:
+        from . import instrument_basis
+    except ImportError:
+        import instrument_basis
+    return instrument_basis
 
 
 # --------------------------------------------------------------------------- #
@@ -323,24 +359,38 @@ if __name__ == "__main__":
         intraday.append({"t": int(t.timestamp() * 1000), "o": px, "h": px + 3,
                          "l": px - 3, "c": px + 1, "v": 800})
 
+    # ES overnight globex bars (proxy) — note these are ~13 pts above SPX here
+    es_overnight = [
+        {"t": ms_ts(20, 0, -1), "o": 7443, "h": 7451, "l": 7438, "c": 7446, "v": 90000},
+        {"t": ms_ts(2, 0, 0),   "o": 7446, "h": 7453, "l": 7442, "c": 7449, "v": 120000},
+    ]
+    es_daily = [  # ES daily -> real settlement (in ES points)
+        {"t": ms_ts(16, 0, -2), "o": 7393, "h": 7433, "l": 7373, "c": 7418, "v": 1_100_000},
+        {"t": ms_ts(16, 0, -1), "o": 7418, "h": 7455, "l": 7411, "c": 7443, "v": 1_250_000},
+    ]
+    es_spot = 7468.0   # ES trading ~13 above SPX 7455 -> basis offset -13
+
     dkl = build_daily_key_levels(
         canonical_ms=canonical_ms, flow_snapshot=flow_snapshot,
         daily_bars=daily_bars, intraday_1m_bars=intraday,
+        overnight_bars=es_overnight, es_daily_bars=es_daily, es_spot=es_spot,
         straddle=58.0, iv=0.14,
         time_to_close_frac=intraday_time_to_close_frac(now),
         atr_val=62.0, adr_val=55.0,
     )
 
-    import json
     d = dkl.to_dict()
-    print("spot:", d["spot"], "| gamma_regime:", d["gamma_regime"])
-    print("\nprev-session + gamma levels (real values from wrapped sources):")
+    print("spot:", d["spot"], "| gamma_regime:", d["gamma_regime"],
+          "| ES basis offset:", round(7455.0 - es_spot, 1))
+    print("\nlevels (instrument tag shows ES-normalized vs SPX-native):")
     for lv in d["levels"]:
         if lv["kind"] in ("prev_day_high", "prev_day_low", "prev_close",
-                          "prev_settlement", "gamma_flip", "zero_gamma",
-                          "call_wall", "put_wall", "developing_poc", "vah", "val",
-                          "em_upper", "em_lower", "high_gamma_strike"):
-            print(f'  {lv["kind"]:<18} {lv["price"]}')
+                          "prev_settlement", "overnight_high", "overnight_low",
+                          "overnight_mid", "gamma_flip", "call_wall", "put_wall",
+                          "developing_poc", "em_upper", "em_lower"):
+            tag = f'[{lv["instrument"]}{"*" if lv["normalized"] else ""}]'
+            print(f'  {lv["kind"]:<18} {str(lv["price"]):>16}  {tag}')
+    print("  (* = translated into SPX points via basis)")
     print("\ntrade map:")
     for t in d["trade_map"]:
         print(f'  {t["condition"]} -> {t["implication"]}')
