@@ -769,6 +769,14 @@ except Exception as _sim_err:
     print(f"APEX 10 similarity routes unavailable (non-fatal): {_sim_err}", flush=True)
 
 try:
+    from engine.recommendation_ledger_routes import register_recommendation_ledger_routes
+    RECOMMENDATION_LEDGER_ROUTES_AVAILABLE = True
+except Exception as _ledger_routes_err:
+    register_recommendation_ledger_routes = None  # type: ignore[assignment]
+    RECOMMENDATION_LEDGER_ROUTES_AVAILABLE = False
+    print(f"APEX recommendation ledger routes unavailable (non-fatal): {_ledger_routes_err}", flush=True)
+
+try:
     from engine.learning_calibration import register_learning_routes  # routes absorbed in Sprint 4
     LEARNING_ROUTES_AVAILABLE = True
 except Exception as _learn_err:
@@ -12188,6 +12196,14 @@ try:
 except Exception as e:
     SIMILARITY_ROUTES_AVAILABLE = False
     print(f"APEX 10 similarity registration unavailable (non-fatal): {e}", flush=True)
+
+try:
+    if RECOMMENDATION_LEDGER_ROUTES_AVAILABLE and register_recommendation_ledger_routes is not None:
+        register_recommendation_ledger_routes(app)
+        print("APEX recommendation ledger routes registered.", flush=True)
+except Exception as e:
+    RECOMMENDATION_LEDGER_ROUTES_AVAILABLE = False
+    print(f"APEX recommendation ledger registration unavailable (non-fatal): {e}", flush=True)
 
 try:
     if LEARNING_ROUTES_AVAILABLE and register_learning_routes is not None:
