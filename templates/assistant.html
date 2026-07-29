@@ -128,6 +128,9 @@
 <script>
 const TICKER = new URLSearchParams(location.search).get('ticker') || 'SPX';
 let LAST_ARCHIVE_ID = '';
+let CURRENT_DIRECTOR = {};
+let CURRENT_STYLE = {};
+let SELECTED_FUNCTION = 'AUTO';
 
 function toggleEntryForm(){const f=document.getElementById('entryForm');f.style.display=f.style.display==='none'?'block':'none';}
 function fieldNum(id){const v=document.getElementById(id).value;return v===''?0:Number(v);}
@@ -635,7 +638,7 @@ async function loadDirector(){
       fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
     ]);
-    const d=dr||{}; const fa=d.flow_acceleration||{}; const pos=d.position||{}; const conf=d.conflict||{};
+    const d=dr||{}; CURRENT_DIRECTOR=d; const fa=d.flow_acceleration||{}; const pos=d.position||{}; const conf=d.conflict||{};
     const timeline=(tlr&&tlr.timeline)||[];
     renderSessionIntelligence(sm);
     renderMarketMemory(mm);
