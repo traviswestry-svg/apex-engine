@@ -1,0 +1,67 @@
+diff --git a/app.py b/app.py
+index eb27014..a2f138a 100644
+--- a/app.py
++++ b/app.py
+@@ -606,10 +606,12 @@ except Exception as _cf_err:
+ try:
+     from engine.event_routes import register_event_routes
+     from engine.event_calendar import build_event_intelligence, VERSION as EVENT_VERSION
++    from engine.event_regime import apply_event_confidence
+     EVENT_INTEL_AVAILABLE = True
+ except Exception as _ev_err:
+     register_event_routes = None  # type: ignore[assignment]
+     build_event_intelligence = None  # type: ignore[assignment]
++    apply_event_confidence = None  # type: ignore[assignment]
+     EVENT_VERSION = "unavailable"
+     EVENT_INTEL_AVAILABLE = False
+     print(f"APEX Event Intelligence unavailable (non-fatal): {_ev_err}", flush=True)
+@@ -5611,7 +5613,15 @@ def monitor_active_position() -> Dict[str, Any]:
+     if TRADE_DIRECTOR_PHASE19_AVAILABLE:
+         try:
+             # Phase 19 fuses only already-built cached Trade Director evidence.
+-            result["decision_intelligence"] = td19_build_decision_intelligence(result)
++            # Put event intelligence on the bus once so the decision engine's
++            # event-phase gating (PRE_RELEASE/IMPULSE -> WATCH) actually fires.
++            if result.get("event_intelligence") is None and EVENT_INTEL_AVAILABLE and build_event_intelligence is not None:
++                try:
++                    result["event_intelligence"] = build_event_intelligence()
++                except Exception:
++                    pass
++            result["decision_intelligence"] = td19_build_decision_intelligence(
++                result, events=result.get("event_intelligence"))
+         except Exception as _td19_build_err:
+             result["decision_intelligence"] = {"version": "PHASE_19", "error": str(_td19_build_err)}
+ 
+@@ -7017,6 +7027,18 @@ def api_institutional_os():
+             consensus = result.get("consensus", {}) or {}
+             ribbon = result.get("ribbon", {}) or {}
+             ici = result.get("ici", {}) or {}
++            # Event-mode confidence scaling: during scheduled-event phases cap the
++            # ICI by the regime's alert_confidence_multiplier (activates event_regime).
++            _ev_regime = (result.get("event_intelligence") or {}).get("intraday_event_regime") or {}
++            if apply_event_confidence is not None and safe_float(ici.get("ici"), 0.0) > 0:
++                _scaled = apply_event_confidence(safe_float(ici.get("ici"), 0.0), _ev_regime)
++                if _scaled is not None and _scaled < safe_float(ici.get("ici"), 0.0):
++                    ici = dict(ici)
++                    ici["ici_raw"] = ici.get("ici")
++                    ici["ici"] = _scaled
++                    ici["event_scaled"] = True
++                    ici["event_state"] = _ev_regime.get("state")
++                    result["ici"] = ici
+ 
+             # ── ICI carry-forward: if current ICI is 0 and we have a recent
+             # valid value in SCANNER_STATE, carry it forward so the dashboard
+@@ -8592,7 +8614,12 @@ def api_position_institutional_decision_intelligence():
+         body = request.get_json(silent=True) or {}
+         context = dict(monitor)
+         context.update(body.get("context") or body.get("evidence") or {})
+-        data = td19_build_decision_intelligence(context)
++        if context.get("event_intelligence") is None and EVENT_INTEL_AVAILABLE and build_event_intelligence is not None:
++            try:
++                context["event_intelligence"] = build_event_intelligence()
++            except Exception:
++                pass
++        data = td19_build_decision_intelligence(context, events=context.get("event_intelligence"))
+         return jsonify({"ok": True, "decision_intelligence": data})
+     data = monitor.get("decision_intelligence")
+     if not data:
