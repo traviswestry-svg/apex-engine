@@ -10503,6 +10503,111 @@ def api_volume_profile():
         return jsonify({"ok": False, "error": str(e), "version": VERSION, "ticker": ticker}), 500
 
 
+# APEX 45.1 — On-demand Institutional Morning Brief API.
+# The Execution OS page calls this exact path; keep the route in app.py so it is
+# registered by the same Flask process serving the dashboard.
+_MORNING_BRIEF_CACHE: Dict[str, dict] = {}
+_MORNING_BRIEF_LOCK = threading.Lock()
+
+
+def _morning_brief_market_state(flow_snapshot: dict, volume_bundle: dict) -> dict:
+    """Build the Daily Key Levels canonical subset without running a second OS scan."""
+    with STATE_LOCK:
+        last_result = STATE.get("last_result") or {}
+    existing = (last_result.get("market_state") or {}) if isinstance(last_result, dict) else {}
+    if isinstance(existing, dict) and existing:
+        state = dict(existing)
+    else:
+        state = {}
+
+    profile = (volume_bundle or {}).get("profile") or {}
+    levels = profile.get("levels") or {}
+    auction = (volume_bundle or {}).get("auction") or {}
+    state.update({
+        "price": state.get("price") or flow_snapshot.get("stock_price"),
+        "poc": state.get("poc") or levels.get("poc") or auction.get("poc"),
+        "vah": state.get("vah") or levels.get("vah") or auction.get("vah"),
+        "val": state.get("val") or levels.get("val") or auction.get("val"),
+        "hvn": state.get("hvn") or levels.get("hvn") or [],
+        "lvn": state.get("lvn") or levels.get("lvn") or [],
+        "call_wall": state.get("call_wall") or flow_snapshot.get("call_wall"),
+        "put_wall": state.get("put_wall") or flow_snapshot.get("put_wall"),
+        "zero_gamma": state.get("zero_gamma") or flow_snapshot.get("zero_gamma"),
+        "gamma_regime": state.get("gamma_regime") or flow_snapshot.get("gamma_regime") or "UNAVAILABLE",
+    })
+    return state
+
+
+@app.route("/api/morning-brief", methods=["GET"])
+def api_morning_brief():
+    """Generate or return the cached SPX institutional morning brief.
+
+    Query: ?refresh=1 bypasses the ET-session cache. Missing optional feeds or
+    ANTHROPIC_API_KEY degrade to deterministic output instead of returning 404.
+    """
+    force = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
+    ticker = request.args.get("ticker", "SPX").strip().upper() or "SPX"
+    try:
+        from engine.morning_brief import generate_morning_brief
+        from engine.daily_key_levels_adapters import intraday_time_to_close_frac
+
+        # Bound the independent provider calls and fetch them concurrently.
+        pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="morning-brief")
+        futures = {
+            "flow": pool.submit(quantdata_flow_snapshot, ticker),
+            "daily": pool.submit(get_daily_bars, ticker, 260),
+            "intraday": pool.submit(get_intraday_bars, ticker, 1, 3),
+            "volume": pool.submit(_volume_profile_bundle, ticker, 2, 5),
+        }
+        fetched = {}
+        for name, future in futures.items():
+            try:
+                fetched[name] = future.result(timeout=20)
+            except Exception as exc:
+                future.cancel()
+                fetched[name] = {} if name in {"flow", "volume"} else []
+                print(f"[MORNING_BRIEF] {name} unavailable: {type(exc).__name__}: {exc}", flush=True)
+        pool.shutdown(wait=False, cancel_futures=True)
+
+        flow = fetched["flow"] if isinstance(fetched["flow"], dict) else {}
+        daily = fetched["daily"] if isinstance(fetched["daily"], list) else []
+        intraday = fetched["intraday"] if isinstance(fetched["intraday"], list) else []
+        volume = fetched["volume"] if isinstance(fetched["volume"], dict) else {}
+        canonical = _morning_brief_market_state(flow, volume)
+
+        ranges = [
+            safe_float(b.get("h")) - safe_float(b.get("l"))
+            for b in daily[-20:]
+            if safe_float(b.get("h")) > 0 and safe_float(b.get("l")) > 0
+        ]
+        adr_val = (sum(ranges) / len(ranges)) if ranges else None
+
+        with _MORNING_BRIEF_LOCK:
+            payload = generate_morning_brief(
+                cache=_MORNING_BRIEF_CACHE,
+                force=force,
+                canonical_ms=canonical,
+                flow_snapshot=flow,
+                daily_bars=daily,
+                intraday_1m_bars=intraday,
+                time_to_close_frac=intraday_time_to_close_frac(),
+                atr_val=atr(daily),
+                adr_val=adr_val,
+                vp_extra=(volume.get("profile") or {}).get("levels") or {},
+            )
+        payload["ticker"] = ticker
+        payload["version"] = VERSION
+        return jsonify(payload)
+    except Exception as exc:
+        print(f"[MORNING_BRIEF] generation failed: {type(exc).__name__}: {exc}", flush=True)
+        return jsonify({
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "ticker": ticker,
+            "version": VERSION,
+        }), 500
+
+
 @app.route("/api/auction_state")
 def api_auction_state():
     """Compact auction-state endpoint for Ribbon/Story/Trade Coach integration."""
