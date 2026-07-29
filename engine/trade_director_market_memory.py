@@ -13,12 +13,12 @@ import sqlite3
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS market_memory_sessions (
+CREATE TABLE IF NOT EXISTS trade_director_memory_sessions (
  session_id TEXT PRIMARY KEY, session_date TEXT NOT NULL, captured_at TEXT NOT NULL,
  snapshot_json TEXT NOT NULL, outcome_json TEXT, source TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_market_memory_date ON market_memory_sessions(session_date DESC);
-CREATE TABLE IF NOT EXISTS market_memory_opportunities (
+CREATE INDEX IF NOT EXISTS idx_trade_director_memory_date ON trade_director_memory_sessions(session_date DESC, captured_at DESC);
+CREATE TABLE IF NOT EXISTS trade_director_memory_opportunities (
  opportunity_id TEXT PRIMARY KEY, session_date TEXT NOT NULL, captured_at TEXT NOT NULL,
  opportunity_json TEXT NOT NULL, outcome_json TEXT
 );
@@ -87,14 +87,14 @@ def archive_session(snapshot: Dict[str,Any], outcome: Optional[Dict[str,Any]]=No
     raw=json.dumps(snapshot,sort_keys=True,default=str)
     sid='MM-'+hashlib.sha256((snapshot.get('session_date','')+raw).encode()).hexdigest()[:14].upper()
     with _connect() as c:
-        c.execute("""INSERT INTO market_memory_sessions(session_id,session_date,captured_at,snapshot_json,outcome_json,source)
-        VALUES(?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET snapshot_json=excluded.snapshot_json,outcome_json=COALESCE(excluded.outcome_json,market_memory_sessions.outcome_json),captured_at=excluded.captured_at""",
+        c.execute("""INSERT INTO trade_director_memory_sessions(session_id,session_date,captured_at,snapshot_json,outcome_json,source)
+        VALUES(?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET snapshot_json=excluded.snapshot_json,outcome_json=COALESCE(excluded.outcome_json,trade_director_memory_sessions.outcome_json),captured_at=excluded.captured_at""",
         (sid,str(snapshot.get('session_date') or '')[:10],str(snapshot.get('captured_at') or _now()),raw,json.dumps(outcome,default=str) if outcome else None,source))
     return {'session_id':sid,'snapshot':snapshot,'outcome':outcome,'source':source}
 
 def memory_sessions(limit:int=250)->List[Dict[str,Any]]:
     limit=max(1,min(2000,int(limit)))
-    with _connect() as c: rows=c.execute('SELECT * FROM market_memory_sessions ORDER BY session_date DESC,captured_at DESC LIMIT ?',(limit,)).fetchall()
+    with _connect() as c: rows=c.execute('SELECT * FROM trade_director_memory_sessions ORDER BY session_date DESC,captured_at DESC LIMIT ?',(limit,)).fetchall()
     out=[]
     for r in rows:
         try: snap=json.loads(r['snapshot_json'] or '{}')
