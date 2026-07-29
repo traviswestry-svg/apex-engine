@@ -469,6 +469,10 @@ _BASE_WEIGHT = {
     LevelKind.VAL: 0.70, LevelKind.PDH: 0.75, LevelKind.PDL: 0.75,
     LevelKind.ON_HIGH: 0.60, LevelKind.ON_LOW: 0.60, LevelKind.LVN: 0.65,
     LevelKind.NAKED_POC: 0.80, LevelKind.PREV_POC: 0.70,
+    # liquidity structure
+    LevelKind.LIQ_POOL: 0.78, LevelKind.BSL: 0.72, LevelKind.SSL: 0.72,
+    LevelKind.EQ_HIGH: 0.66, LevelKind.EQ_LOW: 0.66, LevelKind.FVG: 0.60,
+    LevelKind.SWING_HIGH: 0.58, LevelKind.SWING_LOW: 0.58, LevelKind.OPT_STRIKE: 0.64,
 }
 
 

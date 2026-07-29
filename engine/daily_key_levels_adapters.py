@@ -291,6 +291,7 @@ def build_daily_key_levels(
     atr_val: Maybe = FEED_REQUIRED,
     adr_val: Maybe = FEED_REQUIRED,
     vp_extra: Optional[dict] = None,
+    liquidity_option_strikes: Optional[Sequence[tuple]] = None,
 ) -> DailyKeyLevels:
     spot = _f((flow_snapshot or {}).get("stock_price"))
     md = CanonicalMarketDataAdapter(
@@ -302,6 +303,13 @@ def build_daily_key_levels(
     gp = CanonicalGammaAdapter(canonical_ms, flow_snapshot)
     vp = CanonicalVolumeProfileAdapter(canonical_ms, vp_extra)
 
+    # Liquidity structure from the latest available RTH session's 1-min bars
+    # (SPX-native price geometry — pivots/FVGs don't need volume).
+    liq = _import_liquidity().PriceStructureLiquidityAdapter(
+        bars=md.opening_bars(), spot=spot, instrument="SPX",
+        option_strikes=liquidity_option_strikes,
+    )
+
     # Translate ES-sourced overnight/settlement levels into SPX points before the
     # trade map and ranking run. If es_spot is absent, the normalizer blanks those
     # proxy levels to [FEED REQUIRED] rather than emitting mis-scaled prices.
@@ -312,8 +320,15 @@ def build_daily_key_levels(
             proxy_spot=es_spot, spx_spot=spot,
             scale=proxy_scale, instrument=proxy_instrument,
         )
-    return DailyKeyLevels.build(md, gp, vp, NullLiquidityAdapter(),
-                                level_postprocess=postprocess)
+    return DailyKeyLevels.build(md, gp, vp, liq, level_postprocess=postprocess)
+
+
+def _import_liquidity():
+    try:
+        from . import liquidity_structure
+    except ImportError:
+        import liquidity_structure
+    return liquidity_structure
 
 
 def _import_basis():
