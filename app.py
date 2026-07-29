@@ -10549,7 +10549,9 @@ def api_morning_brief():
     ticker = request.args.get("ticker", "SPX").strip().upper() or "SPX"
     try:
         from engine.morning_brief import generate_morning_brief
-        from engine.daily_key_levels_adapters import intraday_time_to_close_frac
+        from engine.daily_key_levels_adapters import compute_atm_straddle_iv
+        from engine.options.polygon_chain import fetch_expirations, fetch_chain
+        from engine.options.options_data_bus import normalize_chain
 
         # Bound the independent provider calls and fetch them concurrently.
         pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="morning-brief")
@@ -10582,6 +10584,83 @@ def api_morning_brief():
         ]
         adr_val = (sum(ranges) / len(ranges)) if ranges else None
 
+        # Expected Move feed: Polygon/Massive SPX option snapshots. Select the
+        # nearest expiration whose 16:00 ET settlement is still in the future,
+        # normalize the ATM call/put quotes, then derive straddle + mean ATM IV.
+        # The Daily Key Levels engine prefers the straddle-implied move and uses
+        # IV as an agreement check/fallback.
+        straddle = None
+        atm_iv = None
+        time_to_expiry_frac = None
+        options_feed = {
+            "source": "polygon",
+            "expiration": None,
+            "call_contracts": 0,
+            "put_contracts": 0,
+            "status": "unavailable",
+            "error": None,
+        }
+        try:
+            spot = safe_float(canonical.get("price") or flow.get("stock_price"), 0.0)
+            if not POLYGON_API_KEY:
+                raise RuntimeError("POLYGON_API_KEY is not configured")
+            if spot <= 0:
+                raise RuntimeError("SPX spot is unavailable")
+
+            underlying = os.getenv("POLYGON_OPTIONS_UNDERLYING", "I:SPX").strip() or "I:SPX"
+            expirations = fetch_expirations(
+                safe_get_json,
+                underlying=underlying,
+                side="CALL",
+                next_page=_polygon_next_page,
+            )
+            now = now_et()
+            expiration = None
+            expiry_dt = None
+            for exp in expirations:
+                try:
+                    exp_date = dt.date.fromisoformat(str(exp))
+                    candidate = dt.datetime.combine(exp_date, dt.time(16, 0), tzinfo=now.tzinfo)
+                except Exception:
+                    continue
+                if candidate > now:
+                    expiration, expiry_dt = str(exp), candidate
+                    break
+            if not expiration or expiry_dt is None:
+                raise RuntimeError("no unexpired SPX option expiration returned")
+
+            raw_calls = fetch_chain(
+                safe_get_json, expiration, "CALL",
+                underlying=underlying,
+                next_page=_polygon_next_page,
+                spot=spot,
+                window_pct=0.03,
+            )
+            raw_puts = fetch_chain(
+                safe_get_json, expiration, "PUT",
+                underlying=underlying,
+                next_page=_polygon_next_page,
+                spot=spot,
+                window_pct=0.03,
+            )
+            calls = normalize_chain(raw_calls, symbol="SPX", source="polygon")
+            puts = normalize_chain(raw_puts, symbol="SPX", source="polygon")
+            straddle, atm_iv = compute_atm_straddle_iv(calls, puts, spot)
+
+            # IV expected move uses annualized calendar time to the selected
+            # expiration. The straddle remains authoritative when available.
+            seconds_left = max(0.0, (expiry_dt - now).total_seconds())
+            time_to_expiry_frac = seconds_left / (365.0 * 24.0 * 60.0 * 60.0)
+            options_feed.update({
+                "expiration": expiration,
+                "call_contracts": len(calls),
+                "put_contracts": len(puts),
+                "status": "ok" if straddle is not None else "incomplete",
+            })
+        except Exception as exc:
+            options_feed["error"] = f"{type(exc).__name__}: {exc}"
+            print(f"[MORNING_BRIEF] options expected-move feed unavailable: {options_feed['error']}", flush=True)
+
         with _MORNING_BRIEF_LOCK:
             payload = generate_morning_brief(
                 cache=_MORNING_BRIEF_CACHE,
@@ -10590,11 +10669,14 @@ def api_morning_brief():
                 flow_snapshot=flow,
                 daily_bars=daily,
                 intraday_1m_bars=intraday,
-                time_to_close_frac=intraday_time_to_close_frac(),
+                straddle=straddle,
+                iv=atm_iv,
+                time_to_close_frac=time_to_expiry_frac,
                 atr_val=atr(daily),
                 adr_val=adr_val,
                 vp_extra=(volume.get("profile") or {}).get("levels") or {},
             )
+        payload["options_feed"] = options_feed
         payload["ticker"] = ticker
         payload["version"] = VERSION
         return jsonify(payload)
