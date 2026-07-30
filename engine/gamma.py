@@ -200,9 +200,12 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
     zero_details = _calculate_zero_gamma_details(filtered, normalized_stock_price)
     raw_zero_gamma = zero_details["raw_zero_gamma"]
     active_gamma_flip = zero_details["active_gamma_flip"]
-    # Dashboard-facing gamma flip. Prefer the local/tradable flip if available;
-    # keep raw_zero_gamma separately for diagnostics and source audit.
-    zero_gamma = active_gamma_flip if active_gamma_flip is not None else raw_zero_gamma
+    gamma_flip_candidate = zero_details.get("gamma_flip_candidate")
+    # Only publish a dashboard/trading gamma flip when the curve contains an
+    # actual local zero crossing. A local minimum of |cumulative gamma| is useful
+    # diagnostic context, but it is not a true sign change and must not be
+    # promoted into an authoritative dealer-regime threshold.
+    zero_gamma = active_gamma_flip
 
     total_net = sum(v["net"] for v in filtered.values())
     total_abs = sum(abs(v["call"]) + abs(v["put"]) for v in filtered.values()) or 1.0
@@ -217,6 +220,7 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "putWall": put_wall,
         "rawZeroGamma": raw_zero_gamma,
         "activeGammaFlip": active_gamma_flip,
+        "gammaFlipCandidate": gamma_flip_candidate,
         "displayZeroGamma": zero_gamma,
         "zeroGammaMethod": zero_details.get("active_method"),
         "gexScore": round(score, 1),
@@ -237,8 +241,10 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         quality_flags.append("RAW_ZERO_GAMMA_FAR_FROM_SPOT_SOURCE_CONFIRMED")
     if active_gamma_flip is not None and raw_zero_gamma != active_gamma_flip:
         quality_flags.append("ACTIVE_GAMMA_FLIP_USED_FOR_DASHBOARD")
-    if zero_details.get("active_confidence") == "LOW":
-        quality_flags.append("ACTIVE_GAMMA_FLIP_LOW_CONFIDENCE")
+    if active_gamma_flip is None and gamma_flip_candidate is not None:
+        quality_flags.append("GAMMA_FLIP_CANDIDATE_SUPPRESSED_NO_LOCAL_CROSSING")
+    if zero_details.get("candidate_confidence") in {"LOW", "MEDIUM"}:
+        quality_flags.append("GAMMA_FLIP_CANDIDATE_NOT_AUTHORITATIVE")
 
     return {
         "gex_score": round(score, 1),
@@ -247,6 +253,7 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "put_wall": _round_level(put_wall),
         "zero_gamma": _round_level(zero_gamma),
         "active_gamma_flip": _round_level(active_gamma_flip),
+        "gamma_flip_candidate": _round_level(gamma_flip_candidate),
         "raw_zero_gamma": _round_level(raw_zero_gamma),
         "stock_price": _round_level(normalized_stock_price),
         "raw_stock_price": raw_stock_price,
@@ -255,11 +262,16 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "raw_strike_count": len(by_strike),
         "zero_gamma_method": zero_details.get("active_method"),
         "zero_gamma_confidence": zero_details.get("active_confidence"),
+        "gamma_flip_candidate_method": zero_details.get("candidate_method"),
+        "gamma_flip_candidate_confidence": zero_details.get("candidate_confidence"),
         "quality_flags": quality_flags,
         "gex_notes": [
             f"Call wall {call_wall:.2f}",
             f"Put wall {put_wall:.2f}",
-            f"Active gamma flip {zero_gamma:.2f}",
+            (f"Active gamma flip {zero_gamma:.2f}" if zero_gamma is not None
+             else "Active gamma flip unavailable — no local zero crossing"),
+            (f"Diagnostic gamma candidate {gamma_flip_candidate:.2f}" if gamma_flip_candidate is not None
+             else "Diagnostic gamma candidate unavailable"),
             f"Raw full-curve zero gamma {raw_zero_gamma:.2f}",
             f"Spot {normalized_stock_price:.2f}",
             f"Filtered strikes {len(filtered)}/{len(by_strike)} within {low_bound:.2f}-{high_bound:.2f}",
@@ -269,12 +281,13 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
 
 
 def _calculate_zero_gamma_details(filtered: Dict[float, Dict[str, float]], spot: float) -> Dict[str, Any]:
-    """Return both full-curve and active/local gamma flip references.
+    """Return audited full-curve and local gamma references.
 
-    raw_zero_gamma is the traditional full filtered-curve cumulative crossing.
-    active_gamma_flip is the nearest locally meaningful intraday reference within
-    6% of spot. If no local crossing exists, it uses the local minimum absolute
-    cumulative exposure level as a tradable approximation and marks confidence.
+    ``raw_zero_gamma`` preserves the source-curve diagnostic result. The
+    dashboard-facing ``active_gamma_flip`` is emitted only when an actual zero
+    crossing exists inside the local 6% trading band. A minimum-|cumulative|
+    strike is retained as ``gamma_flip_candidate`` for diagnostics, but is never
+    allowed to imply dealer long/short gamma by itself.
     """
     sorted_rows = sorted(filtered.items(), key=lambda kv: kv[0])
     cumulative = 0.0
@@ -287,7 +300,7 @@ def _calculate_zero_gamma_details(filtered: Dict[float, Dict[str, float]], spot:
 
     for strike, vals in sorted_rows:
         cumulative += vals["net"]
-        if prev_cum is not None and ((prev_cum <= 0 <= cumulative) or (prev_cum >= 0 >= cumulative)):
+        if prev_cum is not None and ((prev_cum < 0 < cumulative) or (prev_cum > 0 > cumulative) or cumulative == 0):
             crossings.append((prev_strike + strike) / 2 if prev_strike is not None else strike)
         abs_cum = abs(cumulative)
         cumulative_points.append({"strike": strike, "cumulative": cumulative, "abs": abs_cum})
@@ -306,28 +319,35 @@ def _calculate_zero_gamma_details(filtered: Dict[float, Dict[str, float]], spot:
     local_points = [p for p in cumulative_points if local_low <= p["strike"] <= local_high]
 
     active = None
-    active_method = "unavailable"
-    confidence = "LOW"
+    active_method = "unavailable_no_local_zero_crossing"
+    active_confidence = "UNAVAILABLE"
+    candidate = None
+    candidate_method = "unavailable"
+    candidate_confidence = "UNAVAILABLE"
+
     if local_crossings:
         active = min(local_crossings, key=lambda x: abs(x - spot))
         active_method = "nearest_local_zero_crossing"
-        confidence = "HIGH"
+        active_confidence = "HIGH"
     elif local_points:
         best_local = min(local_points, key=lambda p: (p["abs"], abs(p["strike"] - spot)))
-        active = best_local["strike"]
-        active_method = "local_minimum_absolute_cumulative_gamma"
-        distance_pct = abs(active - spot) / spot if spot else 1.0
-        confidence = "MEDIUM" if distance_pct <= 0.025 else "LOW"
+        candidate = best_local["strike"]
+        candidate_method = "local_minimum_absolute_cumulative_gamma"
+        distance_pct = abs(candidate - spot) / spot if spot else 1.0
+        candidate_confidence = "MEDIUM" if distance_pct <= 0.025 else "LOW"
     else:
-        active = raw_zero
-        active_method = "raw_full_curve_fallback"
-        confidence = "LOW"
+        candidate = raw_zero
+        candidate_method = "raw_full_curve_fallback"
+        candidate_confidence = "LOW"
 
     return {
         "raw_zero_gamma": _round_level(raw_zero),
         "active_gamma_flip": _round_level(active),
         "active_method": active_method,
-        "active_confidence": confidence,
+        "active_confidence": active_confidence,
+        "gamma_flip_candidate": _round_level(candidate),
+        "candidate_method": candidate_method,
+        "candidate_confidence": candidate_confidence,
         "local_band_pct": local_band_pct,
         "local_bounds": [_round_level(local_low), _round_level(local_high)],
         "crossing_count": len(crossings),
@@ -348,6 +368,7 @@ def _empty_gamma(status: str, note: str, trace: DiagnosticsTrace, stock_price: O
         "put_wall": None,
         "zero_gamma": None,
         "active_gamma_flip": None,
+        "gamma_flip_candidate": None,
         "raw_zero_gamma": None,
         "stock_price": stock_price,
         "raw_stock_price": None,
@@ -356,6 +377,8 @@ def _empty_gamma(status: str, note: str, trace: DiagnosticsTrace, stock_price: O
         "raw_strike_count": 0,
         "zero_gamma_method": None,
         "zero_gamma_confidence": None,
+        "gamma_flip_candidate_method": None,
+        "gamma_flip_candidate_confidence": None,
         "quality_flags": ["NO_USABLE_GAMMA"],
         "gex_notes": [note],
         "diagnostics": trace.to_dict(),

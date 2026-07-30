@@ -172,12 +172,15 @@ class CanonicalGammaAdapter:
         self._flow = flow_snapshot or {}
 
     def levels(self) -> dict:
-        flip = _f(self._flow.get("active_gamma_flip"))
-        if not present(flip):
-            flip = _f(self._ms.get("zero_gamma"))   # fall back to zero gamma
+        confidence = str(self._flow.get("zero_gamma_confidence") or "").upper()
+        # A gamma flip is authoritative only when the parser found a genuine
+        # local zero crossing. Never fall back to raw/far-tail zero gamma when
+        # confidence is LOW, MEDIUM, or unavailable.
+        flip = _f(self._flow.get("active_gamma_flip")) if confidence == "HIGH" else FEED_REQUIRED
+        zero_gamma = _f(self._flow.get("zero_gamma")) if confidence == "HIGH" else FEED_REQUIRED
         return {
             "gamma_flip": flip,
-            "zero_gamma": _f(self._ms.get("zero_gamma")),
+            "zero_gamma": zero_gamma,
             "call_wall": _f(self._ms.get("call_wall")),
             "put_wall": _f(self._ms.get("put_wall")),
             # not carried by the canonical dict -> honest [FEED REQUIRED]

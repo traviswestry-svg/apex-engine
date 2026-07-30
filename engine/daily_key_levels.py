@@ -437,13 +437,23 @@ def trade_map(spot: Maybe, levels: list[KeyLevel], gamma: GammaStructure,
         lines.append(TradeMapLine("Inside value", "Responsive auction expected.", "mean_reversion")
                      if inside else
                      TradeMapLine("Outside value", "Initiative auction expected.", "expansion"))
-    if present(gamma.flip):
-        if spot >= gamma.flip:
-            lines.append(TradeMapLine(f"Above Gamma Flip ({gamma.flip})",
-                                      "Mean-reversion environment (dealers long gamma).", "mean_reversion"))
-        else:
-            lines.append(TradeMapLine(f"Below Gamma Flip ({gamma.flip})",
-                                      "Momentum environment (dealers short gamma).", "momentum"))
+    # Dealer regime is the authoritative directional signal. Spot-vs-flip is
+    # supplemental context only when a genuine local zero crossing is available.
+    if gamma.regime == GammaRegime.SHORT_GAMMA:
+        lines.append(TradeMapLine("Dealer gamma regime: SHORT",
+                                  "Momentum/expansion risk; dealer hedging may amplify moves.", "momentum"))
+    elif gamma.regime == GammaRegime.LONG_GAMMA:
+        lines.append(TradeMapLine("Dealer gamma regime: LONG",
+                                  "Mean-reversion/pinning risk; dealer hedging may dampen moves.", "mean_reversion"))
+    elif gamma.regime == GammaRegime.NEUTRAL_GAMMA:
+        lines.append(TradeMapLine("Dealer gamma regime: MIXED",
+                                  "Gamma is not providing a strong directional volatility bias.", "balance"))
+
+    if isinstance(gamma.flip, (int, float)):
+        relation = "Above" if spot >= gamma.flip else "Below"
+        lines.append(TradeMapLine(f"{relation} confirmed Gamma Flip ({gamma.flip})",
+                                  "Local zero-crossing reference; use with the dealer gamma regime.",
+                                  "context"))
     if present(gamma.call_wall) and spot > gamma.call_wall:
         lines.append(TradeMapLine(f"Above Call Wall ({gamma.call_wall})",
                                   "Dealer unwind / pin risk possible.", "expansion"))
