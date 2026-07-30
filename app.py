@@ -10683,9 +10683,13 @@ def api_morning_brief():
         # survive deploys/restarts and validate against what was actually shown.
         try:
             from engine.evening_recap import save_morning_snapshot
-            save_morning_snapshot(payload, ticker=ticker)
+            payload["forecast_archive"] = save_morning_snapshot(payload, ticker=ticker)
         except Exception as recap_store_exc:
-            print(f"[APEX49] morning snapshot persistence unavailable: {type(recap_store_exc).__name__}: {recap_store_exc}", flush=True)
+            payload["forecast_archive"] = {
+                "archived": False,
+                "error": f"{type(recap_store_exc).__name__}: {recap_store_exc}",
+            }
+            print(f"[APEX49.1] morning snapshot persistence unavailable: {type(recap_store_exc).__name__}: {recap_store_exc}", flush=True)
         return jsonify(payload)
     except Exception as exc:
         print(f"[MORNING_BRIEF] generation failed: {type(exc).__name__}: {exc}", flush=True)
@@ -10695,6 +10699,20 @@ def api_morning_brief():
             "ticker": ticker,
             "version": VERSION,
         }), 500
+
+
+@app.route("/api/morning-brief/archive-status", methods=["GET"])
+def api_morning_brief_archive_status():
+    """Return whether an immutable official forecast exists for a session."""
+    try:
+        from engine.evening_recap import morning_archive_status
+        requested = request.args.get("date", "").strip()
+        session_date = dt.date.fromisoformat(requested).isoformat() if requested else now_et().date().isoformat()
+        return jsonify(morning_archive_status(session_date))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}", "version": VERSION}), 400
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}", "version": VERSION}), 500
 
 
 @app.route("/api/evening-recap", methods=["GET"])
@@ -10729,7 +10747,11 @@ def api_evening_recap():
             return jsonify({
                 "ok": False,
                 "status": "MORNING_BRIEF_REQUIRED",
-                "error": f"No persisted Morning Brief exists for {session_date}",
+                "error": f"No official Morning Brief was archived for {session_date}",
+                "detail": (
+                    "The Evening Recap requires the first Morning Brief generated for the session. "
+                    "Generate the Morning Brief before the next market session; APEX 49.1 will archive it automatically."
+                ),
                 "session_date": session_date,
                 "ticker": ticker,
                 "version": VERSION,
