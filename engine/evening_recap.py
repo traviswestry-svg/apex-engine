@@ -19,7 +19,7 @@ try:
 except Exception:  # pragma: no cover
     ET = dt.timezone(dt.timedelta(hours=-5))
 
-VERSION = "49.0.0_INSTITUTIONAL_REVIEW_LEARNING"
+VERSION = "49.1.0_FORECAST_ARCHIVE_INTEGRITY"
 DB_PATH = os.getenv("APEX_GOVERNANCE_DB", os.path.join(os.path.dirname(os.path.dirname(__file__)), "apex_governance.db"))
 FEED_REQUIRED = "[FEED REQUIRED]"
 REGIMES = ("EVENT DRIVEN", "MEAN REVERSION", "HIGH VOLATILITY", "LOW VOLATILITY", "BALANCED AUCTION", "COMPRESSION", "EXPANSION", "TREND")
@@ -63,6 +63,15 @@ def init_db() -> None:
           payload_json TEXT NOT NULL,
           version TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS apex49_morning_revisions(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_date TEXT NOT NULL,
+          generated_at TEXT NOT NULL,
+          ticker TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          version TEXT NOT NULL,
+          is_official INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS apex49_evening_recaps(
           session_date TEXT PRIMARY KEY,
           generated_at TEXT NOT NULL,
@@ -73,18 +82,73 @@ def init_db() -> None:
           version TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_apex49_recap_generated ON apex49_evening_recaps(generated_at);
+        CREATE INDEX IF NOT EXISTS idx_apex49_morning_revision_date ON apex49_morning_revisions(session_date, generated_at);
         """)
 
 
-def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> None:
+def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
+    """Archive every generated brief while preserving the first as official.
+
+    The official snapshot is immutable. Later generations are retained as
+    revisions so forecast validation can never be rewritten after the fact.
+    """
     init_db()
     sdate = str(payload.get("session_date") or _now_et().date().isoformat())
+    generated_at = str(payload.get("generated_at") or _now_et().isoformat())
+    body = _json(payload)
     with sqlite3.connect(DB_PATH, timeout=10) as c:
-        c.execute("""INSERT INTO apex49_morning_snapshots VALUES(?,?,?,?,?)
-                     ON CONFLICT(session_date) DO UPDATE SET generated_at=excluded.generated_at,
-                     ticker=excluded.ticker,payload_json=excluded.payload_json,version=excluded.version""",
-                  (sdate, str(payload.get("generated_at") or _now_et().isoformat()), ticker, _json(payload), VERSION))
+        existing = c.execute(
+            "SELECT generated_at FROM apex49_morning_snapshots WHERE session_date=?",
+            (sdate,),
+        ).fetchone()
+        is_official = existing is None
+        if is_official:
+            c.execute(
+                "INSERT INTO apex49_morning_snapshots VALUES(?,?,?,?,?)",
+                (sdate, generated_at, ticker, body, VERSION),
+            )
+        c.execute(
+            """INSERT INTO apex49_morning_revisions
+               (session_date,generated_at,ticker,payload_json,version,is_official)
+               VALUES(?,?,?,?,?,?)""",
+            (sdate, generated_at, ticker, body, VERSION, 1 if is_official else 0),
+        )
+        revision_count = c.execute(
+            "SELECT COUNT(*) FROM apex49_morning_revisions WHERE session_date=?",
+            (sdate,),
+        ).fetchone()[0]
+        official_generated_at = generated_at if is_official else existing[0]
+    return {
+        "session_date": sdate,
+        "archived": True,
+        "is_official": is_official,
+        "official_generated_at": official_generated_at,
+        "revision_count": int(revision_count),
+        "version": VERSION,
+    }
 
+
+def morning_archive_status(session_date: str) -> dict:
+    init_db()
+    with sqlite3.connect(DB_PATH, timeout=10) as c:
+        official = c.execute(
+            "SELECT generated_at,ticker,version FROM apex49_morning_snapshots WHERE session_date=?",
+            (session_date,),
+        ).fetchone()
+        count = c.execute(
+            "SELECT COUNT(*) FROM apex49_morning_revisions WHERE session_date=?",
+            (session_date,),
+        ).fetchone()[0]
+    return {
+        "ok": True,
+        "session_date": session_date,
+        "archived": bool(official),
+        "official_generated_at": official[0] if official else None,
+        "ticker": official[1] if official else None,
+        "archive_version": official[2] if official else None,
+        "revision_count": int(count),
+        "version": VERSION,
+    }
 
 def get_morning_snapshot(session_date: str) -> Optional[dict]:
     init_db()
