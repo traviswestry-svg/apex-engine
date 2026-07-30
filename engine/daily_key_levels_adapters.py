@@ -240,28 +240,65 @@ class NullLiquidityAdapter:
 # Pure helpers the Morning-Readiness caller uses to derive straddle/IV & T
 # --------------------------------------------------------------------------- #
 
-def compute_atm_straddle_iv(contracts_calls, contracts_puts, spot: float):
-    """ATM straddle price + IV from normalized OptionContract lists.
+def compute_atm_straddle_iv_details(contracts_calls, contracts_puts, spot: float):
+    """Return ATM straddle, IV and transparent quote-selection diagnostics.
 
-    Pure. Picks the strike nearest spot present on BOTH sides; straddle = call.mid
-    + put.mid; iv = mean of available ivs. Returns (straddle, iv), each Maybe.
+    Mid quotes are authoritative. When the market is closed or pre-open and a
+    valid two-sided quote is absent, the most recent positive trade is accepted
+    as an explicit lower-confidence fallback. A one-sided bid/ask is never used.
     """
-    if not present(_f(spot)) or not contracts_calls or not contracts_puts:
-        return FEED_REQUIRED, FEED_REQUIRED
-    calls = {c.strike: c for c in contracts_calls if getattr(c, "mid", None)}
-    puts = {p.strike: p for p in contracts_puts if getattr(p, "mid", None)}
+    details = {"status": "unavailable", "reason": None, "atm_strike": None,
+               "call": {}, "put": {}, "price_method": None, "confidence": "UNAVAILABLE"}
+    if not present(_f(spot)):
+        details["reason"] = "SPX spot unavailable"
+        return FEED_REQUIRED, FEED_REQUIRED, details
+    if not contracts_calls or not contracts_puts:
+        details["reason"] = "Normalized call or put contracts unavailable"
+        return FEED_REQUIRED, FEED_REQUIRED, details
+    calls = {float(c.strike): c for c in contracts_calls if present(_f(getattr(c, "strike", None)))}
+    puts = {float(x.strike): x for x in contracts_puts if present(_f(getattr(x, "strike", None)))}
     common = set(calls) & set(puts)
     if not common:
-        return FEED_REQUIRED, FEED_REQUIRED
-    k = min(common, key=lambda s: abs(float(s) - float(spot)))
-    c, p = calls[k], puts[k]
-    straddle = _f(c.mid) if present(_f(c.mid)) else FEED_REQUIRED
-    if present(straddle) and present(_f(p.mid)):
-        straddle = float(c.mid) + float(p.mid)
-    else:
-        return FEED_REQUIRED, FEED_REQUIRED
-    ivs = [float(x.iv) for x in (c, p) if getattr(x, "iv", None)]
+        details["reason"] = "No overlapping call/put strike"
+        return FEED_REQUIRED, FEED_REQUIRED, details
+    k = min(common, key=lambda strike: abs(strike - float(spot)))
+    c, put = calls[k], puts[k]
+
+    def quote(contract):
+        mid = _f(getattr(contract, "mid", None))
+        last = _f(getattr(contract, "last", None))
+        bid = _f(getattr(contract, "bid", None)); ask = _f(getattr(contract, "ask", None))
+        if present(mid) and float(mid) > 0:
+            return float(mid), "mid"
+        if present(last) and float(last) > 0:
+            return float(last), "last_trade"
+        return FEED_REQUIRED, None
+
+    call_px, call_method = quote(c); put_px, put_method = quote(put)
+    details.update({
+        "atm_strike": k,
+        "call": {"bid": _f(getattr(c, "bid", None)), "ask": _f(getattr(c, "ask", None)),
+                 "mid": _f(getattr(c, "mid", None)), "last": _f(getattr(c, "last", None)),
+                 "iv": _f(getattr(c, "iv", None)), "method": call_method},
+        "put": {"bid": _f(getattr(put, "bid", None)), "ask": _f(getattr(put, "ask", None)),
+                "mid": _f(getattr(put, "mid", None)), "last": _f(getattr(put, "last", None)),
+                "iv": _f(getattr(put, "iv", None)), "method": put_method},
+    })
+    if not present(call_px) or not present(put_px):
+        details["reason"] = "ATM call/put lacked both a valid mid and last trade"
+        return FEED_REQUIRED, FEED_REQUIRED, details
+    straddle = float(call_px) + float(put_px)
+    ivs = [float(v) for v in (_f(getattr(c, "iv", None)), _f(getattr(put, "iv", None))) if present(v) and float(v) > 0]
     iv = (sum(ivs) / len(ivs)) if ivs else FEED_REQUIRED
+    fallback = call_method != "mid" or put_method != "mid"
+    details.update({"status": "ok", "reason": None, "price_method": "last_trade_fallback" if fallback else "two_sided_mid",
+                    "confidence": "MEDIUM" if fallback else "HIGH", "straddle": straddle,
+                    "atm_iv": iv if present(iv) else None})
+    return straddle, iv, details
+
+
+def compute_atm_straddle_iv(contracts_calls, contracts_puts, spot: float):
+    straddle, iv, _ = compute_atm_straddle_iv_details(contracts_calls, contracts_puts, spot)
     return straddle, iv
 
 

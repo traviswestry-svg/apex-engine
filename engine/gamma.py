@@ -207,6 +207,11 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
     # promoted into an authoritative dealer-regime threshold.
     zero_gamma = active_gamma_flip
 
+    # Curve-derived extrema are authoritative because they come directly from
+    # QuantData exposure-by-strike, not aliases that may or may not be present.
+    high_gamma_strike = max(filtered.items(), key=lambda kv: kv[1].get("net", 0.0))[0]
+    low_gamma_strike = min(filtered.items(), key=lambda kv: kv[1].get("net", 0.0))[0]
+
     total_net = sum(v["net"] for v in filtered.values())
     total_abs = sum(abs(v["call"]) + abs(v["put"]) for v in filtered.values()) or 1.0
     net_ratio = total_net / total_abs
@@ -222,6 +227,9 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "activeGammaFlip": active_gamma_flip,
         "gammaFlipCandidate": gamma_flip_candidate,
         "displayZeroGamma": zero_gamma,
+        "highGammaStrike": high_gamma_strike,
+        "lowGammaStrike": low_gamma_strike,
+        "volatilityTrigger": active_gamma_flip,
         "zeroGammaMethod": zero_details.get("active_method"),
         "gexScore": round(score, 1),
         "netGammaRatio": round(net_ratio, 4),
@@ -251,6 +259,11 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "gex_status": status,
         "call_wall": _round_level(call_wall),
         "put_wall": _round_level(put_wall),
+        "high_gamma_strike": _round_level(high_gamma_strike),
+        "low_gamma_strike": _round_level(low_gamma_strike),
+        # A volatility trigger is only authoritative when an actual local gamma
+        # crossing exists. It is intentionally unavailable on a one-sided curve.
+        "volatility_trigger": _round_level(active_gamma_flip),
         "zero_gamma": _round_level(zero_gamma),
         "active_gamma_flip": _round_level(active_gamma_flip),
         "gamma_flip_candidate": _round_level(gamma_flip_candidate),
