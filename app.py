@@ -10617,7 +10617,9 @@ def api_morning_brief():
     force = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
     ticker = request.args.get("ticker", "SPX").strip().upper() or "SPX"
     validation_started = time.perf_counter()
+    stage_started = validation_started
     provider_timings = {}
+    stage_timings = {}
     try:
         from engine.morning_brief import generate_morning_brief
         from engine.daily_key_levels_adapters import compute_atm_straddle_iv_details
@@ -10645,6 +10647,8 @@ def api_morning_brief():
                 provider_timings[name] = {"status": "degraded", "latency_ms": round((time.perf_counter() - provider_started) * 1000, 1), "error": f"{type(exc).__name__}: {exc}"}
                 print(f"[MORNING_BRIEF] {name} unavailable: {type(exc).__name__}: {exc}", flush=True)
         pool.shutdown(wait=False, cancel_futures=True)
+        stage_timings["providers"] = round((time.perf_counter() - stage_started) * 1000, 1)
+        stage_started = time.perf_counter()
 
         flow = fetched["flow"] if isinstance(fetched["flow"], dict) else {}
         daily = fetched["daily"] if isinstance(fetched["daily"], list) else []
@@ -10738,6 +10742,8 @@ def api_morning_brief():
         except Exception as exc:
             options_feed["error"] = f"{type(exc).__name__}: {exc}"
             print(f"[MORNING_BRIEF] options expected-move feed unavailable: {options_feed['error']}", flush=True)
+        stage_timings["expected_move"] = round((time.perf_counter() - stage_started) * 1000, 1)
+        stage_started = time.perf_counter()
 
         # APEX 50.2: load persisted prior/composite profile context before
         # building the deterministic brief. Current-session profile is saved
@@ -10750,6 +10756,8 @@ def api_morning_brief():
             print(f"[APEX50.2] profile history load unavailable: {type(profile_load_exc).__name__}: {profile_load_exc}", flush=True)
         live_profile_levels = (volume.get("profile") or {}).get("levels") or {}
         vp_extra = {**live_profile_levels, **profile_context}
+        stage_timings["profile_history_load"] = round((time.perf_counter() - stage_started) * 1000, 1)
+        stage_started = time.perf_counter()
 
         with _MORNING_BRIEF_LOCK:
             payload = generate_morning_brief(
@@ -10771,6 +10779,8 @@ def api_morning_brief():
                 es_spot=futures_context.get("spot"),
                 proxy_instrument=futures_context.get("ticker") or "ES",
             )
+        stage_timings["brief_generation"] = round((time.perf_counter() - stage_started) * 1000, 1)
+        stage_started = time.perf_counter()
         payload["options_feed"] = options_feed
         payload["futures_feed"] = {k: v for k, v in futures_context.items() if k not in {"bars", "daily_bars"}}
         try:
@@ -10782,6 +10792,8 @@ def api_morning_brief():
             }
         except Exception as profile_save_exc:
             payload["profile_history"] = {"saved": False, "error": f"{type(profile_save_exc).__name__}: {profile_save_exc}"}
+        stage_timings["profile_history_save"] = round((time.perf_counter() - stage_started) * 1000, 1)
+        stage_started = time.perf_counter()
 
         try:
             from engine.data_quality import build_morning_registry
@@ -10803,19 +10815,53 @@ def api_morning_brief():
             _APEX50_LAST_DATA_QUALITY = payload["data_quality"]
         except Exception as dq_exc:
             payload["data_quality"] = {"score": 0.0, "error": f"{type(dq_exc).__name__}: {dq_exc}"}
+        stage_timings["data_quality"] = round((time.perf_counter() - stage_started) * 1000, 1)
+        stage_started = time.perf_counter()
+
+        # APEX 50.4.1: make raw ES and SPX-normalized settlement explicit.
+        raw_es_settlement = safe_float(futures_context.get("prev_settlement"), 0.0) or None
+        normalized_spx_settlement = None
+        for level in ((payload.get("structured") or {}).get("levels") or []):
+            if isinstance(level, dict) and level.get("kind") == "prev_settlement":
+                normalized_spx_settlement = safe_float(level.get("price"), 0.0) or None
+                break
+        payload["settlement_normalization"] = {
+            "raw_es_settlement": raw_es_settlement,
+            "normalized_spx_settlement": normalized_spx_settlement,
+            "basis_adjustment": round(normalized_spx_settlement - raw_es_settlement, 2) if raw_es_settlement is not None and normalized_spx_settlement is not None else None,
+            "normalization_method": "ES_TO_SPX_BASIS" if raw_es_settlement is not None and normalized_spx_settlement is not None else None,
+        }
         payload["ticker"] = ticker
-        payload["version"] = VERSION
         try:
-            from engine.morning_brief_validation import validate_payload, record
-            validation = validate_payload(payload)
+            from engine.version import MORNING_BRIEF_VERSION
+        except Exception:
+            MORNING_BRIEF_VERSION = "50.4.1_VALIDATION_CONSISTENCY_HOTFIX"
+        payload["version"] = MORNING_BRIEF_VERSION
+        payload["section_profile"] = "EXECUTIVE_5"
+        total_before_validation = round((time.perf_counter() - validation_started) * 1000, 1)
+        try:
+            from engine.morning_brief_validation import derive_status, validate_payload, record
+            validation = validate_payload(payload, duration_ms=total_before_validation)
+            stage_timings["validation"] = round((time.perf_counter() - stage_started) * 1000, 1)
+            stage_timings["total"] = round((time.perf_counter() - validation_started) * 1000, 1)
             record({
                 "ok": not validation["errors"],
-                "status": "HEALTHY" if not validation["errors"] and not validation["warnings"] else ("DEGRADED" if not validation["errors"] else "FAILED"),
-                "duration_ms": round((time.perf_counter() - validation_started) * 1000, 1),
+                "status": derive_status(validation["errors"], validation["warnings"]),
+                "duration_ms": stage_timings["total"],
+                "timing": stage_timings,
                 "providers": provider_timings,
                 "warnings": validation["warnings"],
                 "errors": validation["errors"],
                 "sections": validation["sections"],
+                "section_profile": validation["section_profile"],
+                "required_sections": validation["required_sections"],
+                "missing_required_sections": validation["missing_required_sections"],
+                "profile_history_state": validation["profile_history_state"],
+                "gamma_state": {
+                    "regime": (payload.get("structured") or {}).get("gamma_regime"),
+                    "directional_logic_enabled": str((payload.get("structured") or {}).get("gamma_regime") or "unknown").lower() not in {"unknown", "unavailable", "none", ""},
+                },
+                "settlement_normalization": payload["settlement_normalization"],
                 "cache": {"forced_refresh": force, "payload_cached": bool(payload.get("cached"))},
                 "data_quality_score": (payload.get("data_quality") or {}).get("score"),
                 "fallback_count": len((payload.get("data_quality") or {}).get("fallbacks") or []),
@@ -10839,7 +10885,7 @@ def api_morning_brief():
         print(f"[MORNING_BRIEF] generation failed: {type(exc).__name__}: {exc}", flush=True)
         try:
             from engine.morning_brief_validation import record
-            record({"ok": False, "status": "FAILED", "duration_ms": round((time.perf_counter() - validation_started) * 1000, 1), "providers": provider_timings, "warnings": [], "errors": [f"{type(exc).__name__}: {exc}"], "sections": {}, "cache": {"forced_refresh": force}})
+            record({"ok": False, "status": "FAILED", "duration_ms": round((time.perf_counter() - validation_started) * 1000, 1), "timing": stage_timings, "providers": provider_timings, "warnings": [], "errors": [f"{type(exc).__name__}: {exc}"], "sections": {}, "cache": {"forced_refresh": force}})
         except Exception:
             pass
         return jsonify({
