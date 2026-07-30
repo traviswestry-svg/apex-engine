@@ -46,3 +46,24 @@ def test_missing_bars_never_fabricates_outcome():
 def test_regime_extraction():
     assert er.extract_projected_regime("Regime: Event Driven") == "Event Driven"
     assert er.extract_projected_regime("No classification present") is None
+
+
+def test_first_morning_brief_is_immutable_official(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "DB_PATH", str(tmp_path / "apex49.db"))
+    first = morning()
+    first["generated_at"] = "2026-07-29T08:00:00-04:00"
+    first["markdown"] = "Original forecast"
+    second = morning()
+    second["generated_at"] = "2026-07-29T08:30:00-04:00"
+    second["markdown"] = "Revised forecast"
+
+    a = er.save_morning_snapshot(first)
+    b = er.save_morning_snapshot(second)
+
+    assert a["is_official"] is True
+    assert b["is_official"] is False
+    assert b["revision_count"] == 2
+    assert er.get_morning_snapshot("2026-07-29")["markdown"] == "Original forecast"
+    status = er.morning_archive_status("2026-07-29")
+    assert status["archived"] is True
+    assert status["revision_count"] == 2
