@@ -2707,6 +2707,10 @@ def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
         "gex_status": gex.get("gex_status"),
         "call_wall": gex.get("call_wall"),
         "put_wall": gex.get("put_wall"),
+        "high_gamma_strike": gex.get("high_gamma_strike"),
+        "low_gamma_strike": gex.get("low_gamma_strike"),
+        "volatility_trigger": gex.get("volatility_trigger"),
+        "gamma_flip_candidate": gex.get("gamma_flip_candidate"),
         "zero_gamma": gex.get("zero_gamma"),
         "active_gamma_flip": gex.get("active_gamma_flip"),
         "raw_zero_gamma": gex.get("raw_zero_gamma"),
@@ -10573,6 +10577,7 @@ def _morning_es_context() -> dict:
     start = dt.datetime.combine(now.date() - dt.timedelta(days=1), dt.time(18, 0), tzinfo=now.tzinfo)
     end = dt.datetime.combine(now.date(), dt.time(9, 30), tzinfo=now.tzinfo)
     selected = []
+    prior = []
     for row in bars:
         try:
             when = dt.datetime.fromtimestamp(float(row.get("t")) / 1000.0, tz=dt.timezone.utc).astimezone(now.tzinfo)
@@ -10580,11 +10585,21 @@ def _morning_es_context() -> dict:
             continue
         if start <= when < end:
             selected.append(row)
+        elif when < start:
+            prior.append(row)
     latest = selected[-1].get("c") if selected else None
+    # Massive futures aggregates do not expose the exchange's official daily
+    # settlement in this route. The final prior-session bar close is retained as
+    # an explicit proxy and marked as a fallback in data-quality diagnostics.
+    settlement_bar = prior[-1] if prior else None
+    settlement_proxy = safe_float((settlement_bar or {}).get("c"), 0.0) or None
     return {
         "ticker": front,
         "bars": selected,
+        "daily_bars": [settlement_bar] if settlement_bar else [],
         "spot": safe_float(latest, 0.0) or None,
+        "prev_settlement": settlement_proxy,
+        "settlement_method": "previous_session_close_proxy" if settlement_proxy else None,
         "status": "ok" if selected else "unavailable",
         "reason": None if selected else "Massive returned no ES Globex bars for the current overnight window",
     }
@@ -10603,7 +10618,7 @@ def api_morning_brief():
     ticker = request.args.get("ticker", "SPX").strip().upper() or "SPX"
     try:
         from engine.morning_brief import generate_morning_brief
-        from engine.daily_key_levels_adapters import compute_atm_straddle_iv
+        from engine.daily_key_levels_adapters import compute_atm_straddle_iv_details
         from engine.options.polygon_chain import fetch_expirations, fetch_chain
         from engine.options.options_data_bus import normalize_chain
 
@@ -10701,7 +10716,7 @@ def api_morning_brief():
             )
             calls = normalize_chain(raw_calls, symbol="SPX", source="polygon")
             puts = normalize_chain(raw_puts, symbol="SPX", source="polygon")
-            straddle, atm_iv = compute_atm_straddle_iv(calls, puts, spot)
+            straddle, atm_iv, em_diag = compute_atm_straddle_iv_details(calls, puts, spot)
 
             # IV expected move uses annualized calendar time to the selected
             # expiration. The straddle remains authoritative when available.
@@ -10711,7 +10726,9 @@ def api_morning_brief():
                 "expiration": expiration,
                 "call_contracts": len(calls),
                 "put_contracts": len(puts),
-                "status": "ok" if straddle is not None else "incomplete",
+                "status": "ok" if straddle is not None and straddle != "[FEED REQUIRED]" else "incomplete",
+                "diagnostics": em_diag,
+                "fallback_used": em_diag.get("price_method") == "last_trade_fallback",
             })
         except Exception as exc:
             options_feed["error"] = f"{type(exc).__name__}: {exc}"
@@ -10732,11 +10749,12 @@ def api_morning_brief():
                 adr_val=adr_val,
                 vp_extra=(volume.get("profile") or {}).get("levels") or {},
                 overnight_bars=futures_context.get("bars") or [],
+                es_daily_bars=futures_context.get("daily_bars") or [],
                 es_spot=futures_context.get("spot"),
                 proxy_instrument=futures_context.get("ticker") or "ES",
             )
         payload["options_feed"] = options_feed
-        payload["futures_feed"] = {k: v for k, v in futures_context.items() if k != "bars"}
+        payload["futures_feed"] = {k: v for k, v in futures_context.items() if k not in {"bars", "daily_bars"}}
         try:
             from engine.data_quality import build_morning_registry
             registry = build_morning_registry(
