@@ -643,6 +643,13 @@ class DailyKeyLevels:
         # BEFORE the trade map / ranking compare them against SPX spot & gamma.
         if level_postprocess is not None:
             levels = level_postprocess(levels)
+        # APEX 50.2: populate transparent internal analytics. These are
+        # deterministic context heuristics, not calibrated outcome probabilities.
+        try:
+            from .level_analytics import enrich_level_analytics
+        except ImportError:
+            from level_analytics import enrich_level_analytics
+        levels = enrich_level_analytics(spot, levels)
         tmap = trade_map(spot, levels, g, em)
         ranked = rank_levels(spot, levels)
         return cls(spot, levels, g, em, tmap, ranked)

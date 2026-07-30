@@ -338,6 +338,7 @@ def build_daily_key_levels(
     adr_val: Maybe = FEED_REQUIRED,
     vp_extra: Optional[dict] = None,
     liquidity_option_strikes: Optional[Sequence[tuple]] = None,
+    expected_move_confidence: Optional[str] = None,
 ) -> DailyKeyLevels:
     spot = _f((flow_snapshot or {}).get("stock_price"))
     md = CanonicalMarketDataAdapter(
@@ -366,7 +367,13 @@ def build_daily_key_levels(
             proxy_spot=es_spot, spx_spot=spot,
             scale=proxy_scale, instrument=proxy_instrument,
         )
-    return DailyKeyLevels.build(md, gp, vp, liq, level_postprocess=postprocess)
+    result = DailyKeyLevels.build(md, gp, vp, liq, level_postprocess=postprocess)
+    # Quote-quality confidence is supplied by the options diagnostics even when
+    # IV is absent. Preserve that honest execution-quality signal.
+    if expected_move_confidence and present(result.expected_move.em_1sigma):
+        result.expected_move.confidence = str(expected_move_confidence).upper()
+        result.expected_move.confidence_basis = "option quote quality; IV agreement unavailable"
+    return result
 
 
 def _import_liquidity():
