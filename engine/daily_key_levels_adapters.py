@@ -183,10 +183,11 @@ class CanonicalGammaAdapter:
             "zero_gamma": zero_gamma,
             "call_wall": _f(self._ms.get("call_wall")),
             "put_wall": _f(self._ms.get("put_wall")),
-            # not carried by the canonical dict -> honest [FEED REQUIRED]
-            "hi_gamma": FEED_REQUIRED,
-            "lo_gamma": FEED_REQUIRED,
-            "vol_trigger": FEED_REQUIRED,
+            # QuantData response shapes have changed over time. Accept the
+            # canonical aliases but never infer a value from call/put walls.
+            "hi_gamma": _f(self._flow.get("high_gamma_strike") or self._flow.get("hi_gamma") or self._ms.get("high_gamma_strike")),
+            "lo_gamma": _f(self._flow.get("low_gamma_strike") or self._flow.get("lo_gamma") or self._ms.get("low_gamma_strike")),
+            "vol_trigger": _f(self._flow.get("volatility_trigger") or self._flow.get("vol_trigger") or self._ms.get("volatility_trigger")),
         }
 
     def dealer_position(self) -> GammaRegime:
