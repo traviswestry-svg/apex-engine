@@ -10734,6 +10734,18 @@ def api_morning_brief():
             options_feed["error"] = f"{type(exc).__name__}: {exc}"
             print(f"[MORNING_BRIEF] options expected-move feed unavailable: {options_feed['error']}", flush=True)
 
+        # APEX 50.2: load persisted prior/composite profile context before
+        # building the deterministic brief. Current-session profile is saved
+        # after generation so later sessions can reference it.
+        profile_context = {}
+        try:
+            from engine.profile_history import load_profile_context
+            profile_context = load_profile_context(ticker, now_et().date().isoformat())
+        except Exception as profile_load_exc:
+            print(f"[APEX50.2] profile history load unavailable: {type(profile_load_exc).__name__}: {profile_load_exc}", flush=True)
+        live_profile_levels = (volume.get("profile") or {}).get("levels") or {}
+        vp_extra = {**live_profile_levels, **profile_context}
+
         with _MORNING_BRIEF_LOCK:
             payload = generate_morning_brief(
                 cache=_MORNING_BRIEF_CACHE,
@@ -10747,7 +10759,8 @@ def api_morning_brief():
                 time_to_close_frac=time_to_expiry_frac,
                 atr_val=atr(daily),
                 adr_val=adr_val,
-                vp_extra=(volume.get("profile") or {}).get("levels") or {},
+                vp_extra=vp_extra,
+                expected_move_confidence=(options_feed.get("diagnostics") or {}).get("confidence"),
                 overnight_bars=futures_context.get("bars") or [],
                 es_daily_bars=futures_context.get("daily_bars") or [],
                 es_spot=futures_context.get("spot"),
@@ -10755,6 +10768,16 @@ def api_morning_brief():
             )
         payload["options_feed"] = options_feed
         payload["futures_feed"] = {k: v for k, v in futures_context.items() if k not in {"bars", "daily_bars"}}
+        try:
+            from engine.profile_history import save_profile
+            save_profile(now_et().date().isoformat(), ticker, volume.get("profile") or {})
+            payload["profile_history"] = {
+                "saved": True,
+                "prior_sessions_loaded": int(profile_context.get("profile_history_sessions") or 0),
+            }
+        except Exception as profile_save_exc:
+            payload["profile_history"] = {"saved": False, "error": f"{type(profile_save_exc).__name__}: {profile_save_exc}"}
+
         try:
             from engine.data_quality import build_morning_registry
             registry = build_morning_registry(
