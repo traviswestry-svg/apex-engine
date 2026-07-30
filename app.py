@@ -1995,6 +1995,26 @@ def get_intraday_bars(ticker: str, multiplier: int = 5, limit_days: int = 3) -> 
     return data.get("results", []) if data else []
 
 
+def get_intraday_bars_for_date(ticker: str, session_date: str, multiplier: int = 1) -> List[dict]:
+    """Fetch one exact session from the same Polygon aggregate feed used by the Morning Brief.
+
+    A date-bounded request prevents Polygon's 5,000-row aggregate limit from
+    truncating the newest session when a multi-week 1-minute window is queried.
+    """
+    target = dt.date.fromisoformat(str(session_date))
+    polygon_ticker = polygon_bar_ticker(ticker)
+    url = (
+        f"https://api.polygon.io/v2/aggs/ticker/{polygon_ticker}/range/"
+        f"{multiplier}/minute/{target}/{target}"
+    )
+    data = safe_get_json(
+        url,
+        params={"adjusted": "true", "sort": "asc", "limit": 5000},
+        timeout=20,
+    )
+    return data.get("results", []) if data else []
+
+
 def get_vix_price() -> Optional[float]:
     """Fetch the current VIX level. Uses the Polygon indices snapshot."""
     # Indices snapshot — works on Indices Advanced plan
@@ -10756,7 +10776,10 @@ def api_evening_recap():
                 "ticker": ticker,
                 "version": VERSION,
             }), 404
-        bars = get_intraday_bars(ticker, 1, 7)
+        # Use the same Polygon aggregate provider as the Morning Brief, but
+        # request only the selected session. The prior 21-day/1-minute request
+        # could exceed Polygon's 5,000-row limit and omit the newest bars.
+        bars = get_intraday_bars_for_date(ticker, session_date, 1)
         payload = generate_evening_recap(
             morning=morning,
             intraday_bars=bars,
