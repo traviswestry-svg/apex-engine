@@ -10616,6 +10616,8 @@ def api_morning_brief():
     """
     force = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
     ticker = request.args.get("ticker", "SPX").strip().upper() or "SPX"
+    validation_started = time.perf_counter()
+    provider_timings = {}
     try:
         from engine.morning_brief import generate_morning_brief
         from engine.daily_key_levels_adapters import compute_atm_straddle_iv_details
@@ -10633,11 +10635,14 @@ def api_morning_brief():
         }
         fetched = {}
         for name, future in futures.items():
+            provider_started = time.perf_counter()
             try:
                 fetched[name] = future.result(timeout=20)
+                provider_timings[name] = {"status": "ok", "latency_ms": round((time.perf_counter() - provider_started) * 1000, 1)}
             except Exception as exc:
                 future.cancel()
                 fetched[name] = {} if name in {"flow", "volume", "futures"} else []
+                provider_timings[name] = {"status": "degraded", "latency_ms": round((time.perf_counter() - provider_started) * 1000, 1), "error": f"{type(exc).__name__}: {exc}"}
                 print(f"[MORNING_BRIEF] {name} unavailable: {type(exc).__name__}: {exc}", flush=True)
         pool.shutdown(wait=False, cancel_futures=True)
 
@@ -10800,6 +10805,24 @@ def api_morning_brief():
             payload["data_quality"] = {"score": 0.0, "error": f"{type(dq_exc).__name__}: {dq_exc}"}
         payload["ticker"] = ticker
         payload["version"] = VERSION
+        try:
+            from engine.morning_brief_validation import validate_payload, record
+            validation = validate_payload(payload)
+            record({
+                "ok": not validation["errors"],
+                "status": "HEALTHY" if not validation["errors"] and not validation["warnings"] else ("DEGRADED" if not validation["errors"] else "FAILED"),
+                "duration_ms": round((time.perf_counter() - validation_started) * 1000, 1),
+                "providers": provider_timings,
+                "warnings": validation["warnings"],
+                "errors": validation["errors"],
+                "sections": validation["sections"],
+                "cache": {"forced_refresh": force, "payload_cached": bool(payload.get("cached"))},
+                "data_quality_score": (payload.get("data_quality") or {}).get("score"),
+                "fallback_count": len((payload.get("data_quality") or {}).get("fallbacks") or []),
+                "missing_count": len((payload.get("data_quality") or {}).get("missing") or []),
+            })
+        except Exception as validation_exc:
+            print(f"[APEX50.4] validation recorder unavailable: {type(validation_exc).__name__}: {validation_exc}", flush=True)
         # APEX 49: persist the exact morning evidence so the evening review can
         # survive deploys/restarts and validate against what was actually shown.
         try:
@@ -10814,6 +10837,11 @@ def api_morning_brief():
         return jsonify(payload)
     except Exception as exc:
         print(f"[MORNING_BRIEF] generation failed: {type(exc).__name__}: {exc}", flush=True)
+        try:
+            from engine.morning_brief_validation import record
+            record({"ok": False, "status": "FAILED", "duration_ms": round((time.perf_counter() - validation_started) * 1000, 1), "providers": provider_timings, "warnings": [], "errors": [f"{type(exc).__name__}: {exc}"], "sections": {}, "cache": {"forced_refresh": force}})
+        except Exception:
+            pass
         return jsonify({
             "ok": False,
             "error": f"{type(exc).__name__}: {exc}",
@@ -10823,6 +10851,16 @@ def api_morning_brief():
 
 
 
+
+
+@app.route("/api/morning-brief/validation", methods=["GET"])
+def api_morning_brief_validation():
+    """APEX 50.4 production validation snapshot for the latest Morning Brief."""
+    try:
+        from engine.morning_brief_validation import latest
+        return jsonify(latest())
+    except Exception as exc:
+        return jsonify({"ok": False, "status": "FAILED", "error": f"{type(exc).__name__}: {exc}", "version": VERSION}), 500
 
 @app.route("/api/data-quality", methods=["GET"])
 def api_data_quality():
