@@ -275,14 +275,19 @@ def compute_atm_straddle_iv_details(contracts_calls, contracts_puts, spot: float
         return FEED_REQUIRED, None
 
     call_px, call_method = quote(c); put_px, put_method = quote(put)
+    def diagnostic_value(value):
+        """Return JSON-safe quote diagnostics without leaking FEED_REQUIRED."""
+        parsed = _f(value)
+        return float(parsed) if present(parsed) else None
+
     details.update({
         "atm_strike": k,
-        "call": {"bid": _f(getattr(c, "bid", None)), "ask": _f(getattr(c, "ask", None)),
-                 "mid": _f(getattr(c, "mid", None)), "last": _f(getattr(c, "last", None)),
-                 "iv": _f(getattr(c, "iv", None)), "method": call_method},
-        "put": {"bid": _f(getattr(put, "bid", None)), "ask": _f(getattr(put, "ask", None)),
-                "mid": _f(getattr(put, "mid", None)), "last": _f(getattr(put, "last", None)),
-                "iv": _f(getattr(put, "iv", None)), "method": put_method},
+        "call": {"bid": diagnostic_value(getattr(c, "bid", None)), "ask": diagnostic_value(getattr(c, "ask", None)),
+                 "mid": diagnostic_value(getattr(c, "mid", None)), "last": diagnostic_value(getattr(c, "last", None)),
+                 "iv": diagnostic_value(getattr(c, "iv", None)), "method": call_method},
+        "put": {"bid": diagnostic_value(getattr(put, "bid", None)), "ask": diagnostic_value(getattr(put, "ask", None)),
+                "mid": diagnostic_value(getattr(put, "mid", None)), "last": diagnostic_value(getattr(put, "last", None)),
+                "iv": diagnostic_value(getattr(put, "iv", None)), "method": put_method},
     })
     if not present(call_px) or not present(put_px):
         details["reason"] = "ATM call/put lacked both a valid mid and last trade"
