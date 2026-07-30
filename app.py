@@ -10558,6 +10558,40 @@ def _morning_brief_market_state(flow_snapshot: dict, volume_bundle: dict) -> dic
     return state
 
 
+
+def _morning_es_context() -> dict:
+    """Fetch and isolate the current ES Globex session for APEX 50.
+
+    Uses the existing Massive/Polygon futures adapter and returns only bars from
+    18:00 ET on the prior calendar day through 09:29 ET today.  No SPX cash
+    fallback is accepted for overnight levels because that would fabricate a
+    futures session.
+    """
+    front = _resolve_polygon_futures_ticker("ES")
+    bars = _futures_fetch_bars(front, days=3, multiplier=5)
+    now = now_et()
+    start = dt.datetime.combine(now.date() - dt.timedelta(days=1), dt.time(18, 0), tzinfo=now.tzinfo)
+    end = dt.datetime.combine(now.date(), dt.time(9, 30), tzinfo=now.tzinfo)
+    selected = []
+    for row in bars:
+        try:
+            when = dt.datetime.fromtimestamp(float(row.get("t")) / 1000.0, tz=dt.timezone.utc).astimezone(now.tzinfo)
+        except Exception:
+            continue
+        if start <= when < end:
+            selected.append(row)
+    latest = selected[-1].get("c") if selected else None
+    return {
+        "ticker": front,
+        "bars": selected,
+        "spot": safe_float(latest, 0.0) or None,
+        "status": "ok" if selected else "unavailable",
+        "reason": None if selected else "Massive returned no ES Globex bars for the current overnight window",
+    }
+
+
+_APEX50_LAST_DATA_QUALITY = {}
+
 @app.route("/api/morning-brief", methods=["GET"])
 def api_morning_brief():
     """Generate or return the cached SPX institutional morning brief.
@@ -10574,12 +10608,13 @@ def api_morning_brief():
         from engine.options.options_data_bus import normalize_chain
 
         # Bound the independent provider calls and fetch them concurrently.
-        pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="morning-brief")
+        pool = ThreadPoolExecutor(max_workers=5, thread_name_prefix="morning-brief")
         futures = {
             "flow": pool.submit(quantdata_flow_snapshot, ticker),
             "daily": pool.submit(get_daily_bars, ticker, 260),
             "intraday": pool.submit(get_intraday_bars, ticker, 1, 3),
             "volume": pool.submit(_volume_profile_bundle, ticker, 2, 5),
+            "futures": pool.submit(_morning_es_context),
         }
         fetched = {}
         for name, future in futures.items():
@@ -10587,7 +10622,7 @@ def api_morning_brief():
                 fetched[name] = future.result(timeout=20)
             except Exception as exc:
                 future.cancel()
-                fetched[name] = {} if name in {"flow", "volume"} else []
+                fetched[name] = {} if name in {"flow", "volume", "futures"} else []
                 print(f"[MORNING_BRIEF] {name} unavailable: {type(exc).__name__}: {exc}", flush=True)
         pool.shutdown(wait=False, cancel_futures=True)
 
@@ -10595,6 +10630,7 @@ def api_morning_brief():
         daily = fetched["daily"] if isinstance(fetched["daily"], list) else []
         intraday = fetched["intraday"] if isinstance(fetched["intraday"], list) else []
         volume = fetched["volume"] if isinstance(fetched["volume"], dict) else {}
+        futures_context = fetched["futures"] if isinstance(fetched["futures"], dict) else {}
         canonical = _morning_brief_market_state(flow, volume)
 
         ranges = [
@@ -10695,8 +10731,32 @@ def api_morning_brief():
                 atr_val=atr(daily),
                 adr_val=adr_val,
                 vp_extra=(volume.get("profile") or {}).get("levels") or {},
+                overnight_bars=futures_context.get("bars") or [],
+                es_spot=futures_context.get("spot"),
+                proxy_instrument=futures_context.get("ticker") or "ES",
             )
         payload["options_feed"] = options_feed
+        payload["futures_feed"] = {k: v for k, v in futures_context.items() if k != "bars"}
+        try:
+            from engine.data_quality import build_morning_registry
+            registry = build_morning_registry(
+                structured=payload.get("structured") or {},
+                options_feed=options_feed,
+                flow=flow,
+                overnight_meta=futures_context,
+                provider_flags={
+                    "polygon": bool(POLYGON_API_KEY),
+                    "massive": bool(MASSIVE_API_KEY or POLYGON_API_KEY),
+                    "quantdata": bool(QUANTDATA_API_KEY),
+                    "tradingview": bool(os.getenv("TV_WEBHOOK_SECRET") or os.getenv("TRADINGVIEW_SECRET")),
+                    "benzinga": bool(BENZINGA_API_KEY or MASSIVE_API_KEY),
+                },
+            )
+            payload["data_quality"] = registry.report()
+            global _APEX50_LAST_DATA_QUALITY
+            _APEX50_LAST_DATA_QUALITY = payload["data_quality"]
+        except Exception as dq_exc:
+            payload["data_quality"] = {"score": 0.0, "error": f"{type(dq_exc).__name__}: {dq_exc}"}
         payload["ticker"] = ticker
         payload["version"] = VERSION
         # APEX 49: persist the exact morning evidence so the evening review can
@@ -10720,6 +10780,19 @@ def api_morning_brief():
             "version": VERSION,
         }), 500
 
+
+
+
+@app.route("/api/data-quality", methods=["GET"])
+def api_data_quality():
+    """APEX 50 last Morning Brief data-completeness evidence."""
+    return jsonify({"ok": True, **(_APEX50_LAST_DATA_QUALITY or {
+        "version": "50.0.0_INSTITUTIONAL_DATA_FUSION",
+        "score": 0.0,
+        "status": "WAITING_FOR_MORNING_BRIEF",
+        "providers": {},
+        "missing": [],
+    })})
 
 @app.route("/api/morning-brief/archive-status", methods=["GET"])
 def api_morning_brief_archive_status():
