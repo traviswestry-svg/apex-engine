@@ -63,6 +63,22 @@ def present(x: Maybe) -> bool:
     return not isinstance(x, _FeedRequired)
 
 
+def _api_number(value):
+    """Return a finite JSON numeric value or None.
+
+    Structured analytics must never contain presentation sentinels such as
+    ``[FEED REQUIRED]``. Those labels belong only in the Markdown renderer.
+    """
+    if isinstance(value, bool) or isinstance(value, _FeedRequired) or value is None:
+        return None
+    try:
+        from math import isfinite
+        number = float(value)
+        return number if isfinite(number) else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _sub(a: Maybe, b: Maybe) -> Maybe:
     return (a - b) if present(a) and present(b) else FEED_REQUIRED
 
@@ -143,13 +159,13 @@ class KeyLevel:
             "kind": self.kind.value,
             "price": self.price if present(self.price) else str(FEED_REQUIRED),
             "source": self.source.value,
-            "strength": self.strength_score if present(self.strength_score) else str(FEED_REQUIRED),
-            "prior_reactions": self.prior_reactions if present(self.prior_reactions) else str(FEED_REQUIRED),
-            "distance": round(d, 2) if present(d) else str(FEED_REQUIRED),
-            "reaction_prob": self.reaction_prob if present(self.reaction_prob) else str(FEED_REQUIRED),
-            "break_prob": self.break_prob if present(self.break_prob) else str(FEED_REQUIRED),
-            "reversal_prob": self.reversal_prob if present(self.reversal_prob) else str(FEED_REQUIRED),
-            "magnet": self.magnet_score if present(self.magnet_score) else str(FEED_REQUIRED),
+            "strength": _api_number(self.strength_score),
+            "prior_reactions": _api_number(self.prior_reactions),
+            "distance": round(float(d), 2) if _api_number(d) is not None else None,
+            "reaction_prob": _api_number(self.reaction_prob),
+            "break_prob": _api_number(self.break_prob),
+            "reversal_prob": _api_number(self.reversal_prob),
+            "magnet": _api_number(self.magnet_score),
             "label": self.label,
             "instrument": self.instrument,
             "normalized": self.normalized,
@@ -510,7 +526,8 @@ def rank_levels(spot: Maybe, levels: list[KeyLevel], top_n: int = 10) -> list[Ra
             prox = 1.0 / (1.0 + abs(d) / scale)     # 1 at spot -> decays
         else:
             prox = 0.5
-        strength = l.strength_score if present(l.strength_score) else 0.5
+        strength_value = _api_number(l.strength_score)
+        strength = strength_value if strength_value is not None else 0.5
         importance = base * prox * (0.5 + 0.5 * strength)
         ranked.append(RankedLevel(l, round(importance, 4), d if present(d) else FEED_REQUIRED))
     ranked.sort(key=lambda r: r.importance, reverse=True)
@@ -660,6 +677,14 @@ class DailyKeyLevels:
         # BEFORE the trade map / ranking compare them against SPX spot & gamma.
         if level_postprocess is not None:
             levels = level_postprocess(levels)
+        # APEX 50.4.2.3: restore deterministic level analytics removed by the
+        # formatting hotfix. Keep numeric values in the model; presentation
+        # sentinels are applied only by render_brief_sections().
+        try:
+            from .level_analytics import enrich_level_analytics
+        except ImportError:
+            from level_analytics import enrich_level_analytics
+        levels = enrich_level_analytics(spot, levels)
         tmap = trade_map(spot, levels, g, em)
         ranked = rank_levels(spot, levels)
         return cls(spot, levels, g, em, tmap, ranked)
