@@ -47,6 +47,7 @@ except Exception:  # pragma: no cover
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 DEFAULT_MODEL = os.getenv("APEX_BRIEF_MODEL", "claude-sonnet-5")
+DEFAULT_AI_TIMEOUT = max(5, min(int(os.getenv("APEX_BRIEF_AI_TIMEOUT_SECONDS", "18")), 45))
 
 
 def _now_et() -> dt.datetime:
@@ -105,43 +106,54 @@ _BRIEF_SYSTEM = (
 )
 
 
-def build_prompt(context: dict, sdate: str) -> str:
+def build_prompt(context: dict, sdate: str, session_context: Optional[dict] = None) -> str:
     import json
+    sc = session_context or {"state": "PREMARKET", "brief_mode": "PREMARKET", "label": "Pre-market"}
+    mode = str(sc.get("brief_mode") or "PREMARKET").upper()
+    framing = {
+        "PREMARKET": "Write a forward-looking pre-market planning brief. Treat today's scheduled events as upcoming only when their ET time has not passed.",
+        "LIVE_SESSION": "Write a live-session institutional update. Use completed-event language for releases that already occurred and focus on the active auction, not pre-market framing.",
+        "AFTER_CLOSE": "Write an after-close session recap and next-session preparation brief. Do not use pre-market, ahead-of-open, or upcoming-today language for completed events.",
+        "NEXT_SESSION_PREP": "Write a next-session preparation brief. Separate completed prior-session developments from genuinely upcoming catalysts.",
+    }.get(mode, "Write a session-aware institutional brief.")
     return f"""{_BRIEF_SYSTEM}
 
-Today is {sdate} (US Eastern), pre-market. Use web_search to gather the most
-current information for the macro sections: overnight developments, ES/equity
-futures behavior, Treasury yields, the dollar, VIX, today's economic calendar
-(releases, Fed speakers), and any earnings capable of moving SPX. Prioritize the
-last 24 hours and cite what you find.
+Today is {sdate} (US Eastern). Current APEX session state is
+{sc.get('state')} ({sc.get('label')}). {framing}
 
-APEX has already computed today's deterministic market structure. Use these REAL
-values as the factual backbone of your narrative. DO NOT invent or alter any
-price level — if you reference a level, use exactly the number below. Anything you
-genuinely cannot source, write as [FEED REQUIRED] rather than guessing.
+Use web_search to gather the most current information for the macro sections:
+equity/futures behavior, Treasury yields, the dollar, VIX, the economic calendar,
+Fed speakers, and earnings capable of moving SPX. Prioritize the last 24 hours.
+Never describe an already-completed event as upcoming.
+
+APEX has already computed deterministic market structure. Use these REAL values
+as the factual backbone. DO NOT invent or alter any price level. Anything you
+cannot source must be [FEED REQUIRED].
+
+APEX SESSION CONTEXT:
+{json.dumps(sc, indent=2)}
 
 APEX DATA (authoritative):
 {json.dumps(context, indent=2)}
 
-Write these sections in Markdown, concise and institutional:
+Write concise institutional Markdown:
 
 ## SECTION 1 — EXECUTIVE SUMMARY
-Overnight developments, futures, rates, dollar, VIX, macro themes, sentiment.
-Then classify today's expected regime — one of: Trend, Balanced Auction,
-Expansion, Compression, Mean Reversion, High Volatility, Low Volatility,
-Event Driven — and explain WHY in 2-4 sentences, referencing the APEX gamma
-regime ({context.get('gamma_regime')}) and expected move where relevant.
+Describe the market in language appropriate to the current session state. Then
+classify the expected/current regime — Trend, Balanced Auction, Expansion,
+Compression, Mean Reversion, High Volatility, Low Volatility, or Event Driven —
+and explain why in 2-4 sentences.
 
 ## SECTION 2 — TODAY'S EVENTS
-Scheduled releases, Fed speakers, major earnings, and why each matters to
-intraday SPX. Note exact ET times where known.
+For PREMARKET, list upcoming ET events. For LIVE_SESSION, distinguish completed
+from upcoming events. For AFTER_CLOSE/NEXT_SESSION_PREP, summarize completed
+catalysts and identify only genuinely upcoming next-session events.
 
 ## SECTION 12 — RISK WATCH
-Today's largest unknowns, macro/event/volatility/liquidity risks, and what would
-invalidate the base-case regime you assigned.
+Largest unknowns and what would invalidate the base/current regime.
 
-Do NOT write the key-levels, trade-map, or expected-move sections — APEX appends
-those from its own engine after your text. Keep the whole thing under ~700 words.
+Do not write key-level, trade-map, or expected-move sections. APEX appends those.
+Keep the response under ~700 words.
 """
 
 
@@ -150,7 +162,7 @@ those from its own engine after your text. Keep the whole thing under ~700 words
 # --------------------------------------------------------------------------- #
 
 def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
-                   max_tokens: int = 4000, timeout: int = 120) -> tuple[str, Optional[str]]:
+                   max_tokens: int = 4000, timeout: int = DEFAULT_AI_TIMEOUT) -> tuple[str, Optional[str]]:
     """Returns (narrative_markdown, error). error is None on success."""
     if requests is None:
         return "", "requests library unavailable"
@@ -188,38 +200,91 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
 def generate_morning_brief(
     *,
     cache: Optional[dict] = None,
+    narrative_cache: Optional[dict] = None,
     force: bool = False,
+    refresh_narrative: bool = False,
+    session_context: Optional[dict] = None,
     api_key: Optional[str] = None,
     model: str = DEFAULT_MODEL,
-    _llm=call_anthropic,           # injectable for testing
+    _llm=call_anthropic,
     **engine_kwargs,
 ) -> dict:
-    """Build the full brief. `cache` is any dict you persist (e.g. a module global
-    or ACTIVE_POSITION slot); results are keyed by ET session date."""
+    """Rebuild deterministic data every request while reusing session narrative.
+
+    `force` refreshes market structure. `refresh_narrative` is the explicit,
+    costlier operation that bypasses the narrative cache.
+    """
+    import time
+
+    started = time.perf_counter()
+    timings = {}
     sdate = session_date()
-    if cache is not None and not force:
-        hit = cache.get(sdate)
-        if hit:
-            return {**hit, "cached": True}
+    sc = session_context or {"state": "PREMARKET", "brief_mode": "PREMARKET", "label": "Pre-market"}
+    mode = str(sc.get("brief_mode") or "PREMARKET").upper()
+    result_key = f"{sdate}:{mode}"
 
+    step = time.perf_counter()
     dkl, sections, context = build_deterministic(**engine_kwargs)
+    timings["deterministic"] = round((time.perf_counter() - step) * 1000, 1)
 
-    api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "").strip()
-    if api_key:
-        narrative, err = _llm(build_prompt(context, sdate), api_key=api_key, model=model)
+    narrative = ""
+    err = None
+    narrative_source = "none"
+    narrative_status = "UNAVAILABLE"
+    ncache = narrative_cache if narrative_cache is not None else cache
+    cached_narrative = (ncache or {}).get(result_key) if ncache is not None else None
+
+    if cached_narrative and not refresh_narrative:
+        narrative = str(cached_narrative.get("narrative") or "")
+        err = cached_narrative.get("error")
+        narrative_source = "cache"
+        narrative_status = "CACHED" if narrative else "CACHED_FALLBACK"
+        timings["prompt_build"] = 0.0
+        timings["ai_call"] = 0.0
     else:
-        narrative, err = "", "no ANTHROPIC_API_KEY set"
+        step = time.perf_counter()
+        prompt = build_prompt(context, sdate, sc)
+        timings["prompt_build"] = round((time.perf_counter() - step) * 1000, 1)
+        api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "").strip()
+        step = time.perf_counter()
+        if api_key:
+            narrative, err = _llm(prompt, api_key=api_key, model=model)
+            narrative_source = "anthropic" if narrative else "deterministic_fallback"
+            low_err = str(err or "").lower()
+            narrative_status = "FRESH" if narrative else ("TIMEOUT_FALLBACK" if "timeout" in low_err else "ERROR_FALLBACK")
+        else:
+            narrative, err = "", "no ANTHROPIC_API_KEY set"
+            narrative_source = "deterministic_fallback"
+            narrative_status = "NO_KEY_FALLBACK"
+        timings["ai_call"] = round((time.perf_counter() - step) * 1000, 1)
+        if ncache is not None:
+            ncache[result_key] = {
+                "narrative": narrative,
+                "error": err,
+                "status": narrative_status,
+                "generated_at": _now_et().isoformat(),
+                "session_context": sc,
+            }
 
+    step = time.perf_counter()
     if narrative:
         head = narrative
         has_narrative = True
     else:
-        head = (f"# APEX MORNING BRIEF — {sdate}\n\n"
-                f"_Macro + narrative unavailable ({err}). Showing deterministic "
-                f"levels only._\n")
+        title = {
+            "AFTER_CLOSE": "APEX AFTER-CLOSE BRIEF",
+            "NEXT_SESSION_PREP": "APEX NEXT-SESSION PREP",
+            "LIVE_SESSION": "APEX LIVE SESSION BRIEF",
+        }.get(mode, "APEX MORNING BRIEF")
+        head = (f"# {title} — {sdate}\n\n"
+                f"_AI narrative unavailable ({err}). Deterministic institutional "
+                f"levels remain available._\n")
         has_narrative = False
 
     markdown = f"{head}\n\n---\n\n{sections}\n"
+    timings["assembly"] = round((time.perf_counter() - step) * 1000, 1)
+    timings["total"] = round((time.perf_counter() - started) * 1000, 1)
+
     result = {
         "ok": True,
         "session_date": sdate,
@@ -227,11 +292,15 @@ def generate_morning_brief(
         "cached": False,
         "has_narrative": has_narrative,
         "narrative_error": err,
+        "narrative_status": narrative_status,
+        "narrative_source": narrative_source,
+        "session_context": sc,
+        "generation_timing": timings,
         "markdown": markdown,
         "structured": dkl.to_dict(),
     }
     if cache is not None:
-        cache[sdate] = result
+        cache[result_key] = result
     return result
 
 
