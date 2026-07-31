@@ -10531,6 +10531,7 @@ def api_volume_profile():
 # The Execution OS page calls this exact path; keep the route in app.py so it is
 # registered by the same Flask process serving the dashboard.
 _MORNING_BRIEF_CACHE: Dict[str, dict] = {}
+_MORNING_NARRATIVE_CACHE: Dict[str, dict] = {}
 _MORNING_BRIEF_LOCK = threading.Lock()
 
 
@@ -10615,7 +10616,13 @@ def api_morning_brief():
     ANTHROPIC_API_KEY degrade to deterministic output instead of returning 404.
     """
     force = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
+    refresh_narrative = str(request.args.get("refresh_narrative", "")).strip().lower() in {"1", "true", "yes", "on"}
     ticker = request.args.get("ticker", "SPX").strip().upper() or "SPX"
+    try:
+        from engine.session_intelligence import classify_session
+        session_context = classify_session().to_dict()
+    except Exception:
+        session_context = {"state": "UNKNOWN", "brief_mode": "PREMARKET", "label": "Unknown", "market_open": False, "narrative_policy": "FALLBACK"}
     validation_started = time.perf_counter()
     stage_started = validation_started
     provider_timings = {}
@@ -10762,7 +10769,10 @@ def api_morning_brief():
         with _MORNING_BRIEF_LOCK:
             payload = generate_morning_brief(
                 cache=_MORNING_BRIEF_CACHE,
+                narrative_cache=_MORNING_NARRATIVE_CACHE,
                 force=force,
+                refresh_narrative=refresh_narrative,
+                session_context=session_context,
                 canonical_ms=canonical,
                 flow_snapshot=flow,
                 daily_bars=daily,
@@ -10780,9 +10790,38 @@ def api_morning_brief():
                 proxy_instrument=futures_context.get("ticker") or "ES",
             )
         stage_timings["brief_generation"] = round((time.perf_counter() - stage_started) * 1000, 1)
+        for timing_name, timing_value in ((payload.get("generation_timing") or {}).items()):
+            stage_timings[f"brief_{timing_name}"] = timing_value
         stage_started = time.perf_counter()
         payload["options_feed"] = options_feed
         payload["futures_feed"] = {k: v for k, v in futures_context.items() if k not in {"bars", "daily_bars"}}
+        payload["session_context"] = session_context
+        # APEX 50.4.2: unknown gamma is explicitly unconfirmed and reference-only.
+        structured = payload.get("structured") or {}
+        gamma_regime = str(structured.get("gamma_regime") or "unknown").lower()
+        gamma_directional = gamma_regime not in {"unknown", "unavailable", "none", ""}
+        structured["gamma_semantics"] = {
+            "regime": gamma_regime,
+            "status": "CONFIRMED" if gamma_directional else "UNCONFIRMED",
+            "confidence": 1.0 if gamma_directional else 0.0,
+            "directional_logic_enabled": gamma_directional,
+            "reference_only": not gamma_directional,
+        }
+        if not gamma_directional:
+            for item in structured.get("trade_map") or []:
+                if isinstance(item, dict):
+                    item["condition"] = str(item.get("condition") or "").replace("confirmed Gamma Flip", "reported zero-gamma reference")
+                    item["implication"] = str(item.get("implication") or "").replace(
+                        "Local zero-crossing reference; use with the dealer gamma regime.",
+                        "Reference only; directional dealer-gamma interpretation is unavailable."
+                    )
+            payload["markdown"] = str(payload.get("markdown") or "").replace(
+                "Below confirmed Gamma Flip", "Below reported zero-gamma reference"
+            ).replace(
+                "Local zero-crossing reference; use with the dealer gamma regime.",
+                "Reference only; directional dealer-gamma interpretation is unavailable."
+            )
+        payload["structured"] = structured
         try:
             from engine.profile_history import save_profile
             save_profile(now_et().date().isoformat(), ticker, volume.get("profile") or {})
@@ -10811,6 +10850,14 @@ def api_morning_brief():
                 },
             )
             payload["data_quality"] = registry.report()
+            if not gamma_directional:
+                gamma_point = ((payload["data_quality"].get("points") or {}).get("gamma_regime") or {})
+                if gamma_point:
+                    gamma_point.update({
+                        "confidence": 0.0,
+                        "status": "UNCONFIRMED",
+                        "reason": "Provider did not supply a directional dealer gamma regime",
+                    })
             global _APEX50_LAST_DATA_QUALITY
             _APEX50_LAST_DATA_QUALITY = payload["data_quality"]
         except Exception as dq_exc:
@@ -10835,9 +10882,18 @@ def api_morning_brief():
         try:
             from engine.version import MORNING_BRIEF_VERSION
         except Exception:
-            MORNING_BRIEF_VERSION = "50.4.1_VALIDATION_CONSISTENCY_HOTFIX"
+            MORNING_BRIEF_VERSION = "50.4.2_PERFORMANCE_SESSION_INTELLIGENCE"
         payload["version"] = MORNING_BRIEF_VERSION
         payload["section_profile"] = "EXECUTIVE_5"
+        payload["operational_status"] = {
+            "session": session_context,
+            "brief_mode": session_context.get("brief_mode"),
+            "narrative": payload.get("narrative_status"),
+            "narrative_source": payload.get("narrative_source"),
+            "data_quality": (payload.get("data_quality") or {}).get("score"),
+            "latency_ms": round((time.perf_counter() - validation_started) * 1000, 1),
+            "providers_healthy": all(v.get("status") == "ok" for v in provider_timings.values()),
+        }
         total_before_validation = round((time.perf_counter() - validation_started) * 1000, 1)
         try:
             from engine.morning_brief_validation import derive_status, validate_payload, record
@@ -10862,7 +10918,7 @@ def api_morning_brief():
                     "directional_logic_enabled": str((payload.get("structured") or {}).get("gamma_regime") or "unknown").lower() not in {"unknown", "unavailable", "none", ""},
                 },
                 "settlement_normalization": payload["settlement_normalization"],
-                "cache": {"forced_refresh": force, "payload_cached": bool(payload.get("cached"))},
+                "cache": {"forced_refresh": force, "refresh_narrative": refresh_narrative, "payload_cached": bool(payload.get("cached")), "narrative_source": payload.get("narrative_source")},
                 "data_quality_score": (payload.get("data_quality") or {}).get("score"),
                 "fallback_count": len((payload.get("data_quality") or {}).get("fallbacks") or []),
                 "missing_count": len((payload.get("data_quality") or {}).get("missing") or []),
