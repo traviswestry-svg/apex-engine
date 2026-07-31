@@ -10946,11 +10946,15 @@ def api_morning_brief():
             record({"ok": False, "status": "FAILED", "duration_ms": round((time.perf_counter() - validation_started) * 1000, 1), "timing": stage_timings, "providers": provider_timings, "warnings": [], "errors": [f"{type(exc).__name__}: {exc}"], "sections": {}, "cache": {"forced_refresh": force}})
         except Exception:
             pass
+        try:
+            from engine.version import MORNING_BRIEF_VERSION as _brief_error_version
+        except Exception:
+            _brief_error_version = "50.4.2.2_FORMATTING_REGRESSION_HOTFIX"
         return jsonify({
             "ok": False,
             "error": f"{type(exc).__name__}: {exc}",
             "ticker": ticker,
-            "version": VERSION,
+            "version": _brief_error_version,
         }), 500
 
 
