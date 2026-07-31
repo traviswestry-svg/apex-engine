@@ -10850,6 +10850,8 @@ def api_morning_brief():
                 },
             )
             payload["data_quality"] = registry.report()
+            payload["data_quality"]["application_version"] = "50.4.2.1_NARRATIVE_CACHE_TARGET_SESSION_HOTFIX"
+            payload["data_quality"]["schema_version"] = payload["data_quality"].get("version")
             if not gamma_directional:
                 gamma_point = ((payload["data_quality"].get("points") or {}).get("gamma_regime") or {})
                 if gamma_point:
@@ -10882,7 +10884,7 @@ def api_morning_brief():
         try:
             from engine.version import MORNING_BRIEF_VERSION
         except Exception:
-            MORNING_BRIEF_VERSION = "50.4.2_PERFORMANCE_SESSION_INTELLIGENCE"
+            MORNING_BRIEF_VERSION = "50.4.2.1_NARRATIVE_CACHE_TARGET_SESSION_HOTFIX"
         payload["version"] = MORNING_BRIEF_VERSION
         payload["section_profile"] = "EXECUTIVE_5"
         payload["operational_status"] = {
