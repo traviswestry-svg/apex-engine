@@ -20,9 +20,18 @@ class SessionContext:
     market_open: bool
     narrative_policy: str
     generated_at_et: str
+    source_session_date: str
+    target_session_date: str
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def _next_trading_date(day: dt.date) -> dt.date:
+    candidate = day + dt.timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate += dt.timedelta(days=1)
+    return candidate
 
 
 def classify_session(now: Optional[dt.datetime] = None) -> SessionContext:
@@ -71,6 +80,9 @@ def classify_session(now: Optional[dt.datetime] = None) -> SessionContext:
             "OVERNIGHT", "NEXT_SESSION_PREP", "Overnight / next-session preparation", False, "SESSION_AWARE"
         )
 
+    source_date = now.date()
+    target_date = _next_trading_date(source_date) if mode == "NEXT_SESSION_PREP" else source_date
+
     return SessionContext(
         state=state,
         brief_mode=mode,
@@ -78,4 +90,6 @@ def classify_session(now: Optional[dt.datetime] = None) -> SessionContext:
         market_open=opened,
         narrative_policy=policy,
         generated_at_et=now.isoformat(),
+        source_session_date=source_date.isoformat(),
+        target_session_date=target_date.isoformat(),
     )

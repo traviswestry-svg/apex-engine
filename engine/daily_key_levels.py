@@ -451,8 +451,8 @@ def trade_map(spot: Maybe, levels: list[KeyLevel], gamma: GammaStructure,
 
     if isinstance(gamma.flip, (int, float)):
         relation = "Above" if spot >= gamma.flip else "Below"
-        lines.append(TradeMapLine(f"{relation} confirmed Gamma Flip ({gamma.flip})",
-                                  "Local zero-crossing reference; use with the dealer gamma regime.",
+        lines.append(TradeMapLine(f"{relation} reported zero-gamma reference ({gamma.flip})",
+                                  "Contextual zero-crossing reference; validate provider provenance before local use.",
                                   "context"))
     if present(gamma.call_wall) and spot > gamma.call_wall:
         lines.append(TradeMapLine(f"Above Call Wall ({gamma.call_wall})",
@@ -577,38 +577,8 @@ def build_risk_context(spot: Maybe, levels: list[KeyLevel], em: ExpectedMove,
 # MODULE 10 — Morning-Brief sections 15/16/17
 # --------------------------------------------------------------------------- #
 
-def _is_number(value) -> bool:
-    """Return True only for finite numeric values safe for report formatting."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return False
-    try:
-        from math import isfinite
-        return isfinite(float(value))
-    except (TypeError, ValueError, OverflowError):
-        return False
-
-
-def _fmt(v, *, decimals: int = 2, thousands: bool = True) -> str:
-    """Format report values without allowing presentation errors to abort a brief.
-
-    Numeric values receive institutional price formatting. Strings such as HIGH,
-    neutral_gamma, NOT_APPLICABLE, and legacy feed labels pass through unchanged.
-    Missing values continue to render with the no-fabrication sentinel.
-    """
-    if not present(v) or v is None:
-        return str(FEED_REQUIRED)
-    if _is_number(v):
-        spec = f",.{decimals}f" if thousands else f".{decimals}f"
-        return format(float(v), spec)
-    return str(v)
-
-
-def _fmt_signed(v, *, decimals: int = 2) -> str:
-    if not present(v) or v is None:
-        return str(FEED_REQUIRED)
-    if _is_number(v):
-        return format(float(v), f"+.{decimals}f")
-    return str(v)
+def _fmt(v: Maybe) -> str:
+    return f"{v:,.2f}" if present(v) else str(FEED_REQUIRED)
 
 
 def render_brief_sections(spot: Maybe, levels: list[KeyLevel], gamma: GammaStructure,
@@ -620,7 +590,7 @@ def render_brief_sections(spot: Maybe, levels: list[KeyLevel], gamma: GammaStruc
         if present(l.price):
             d = l.distance(spot)
             out.append(f"  {l.label:<24} {_fmt(l.price):>12}"
-                       + (f"   ({_fmt_signed(d)})" if present(d) else ""))
+                       + (f"   ({d:+.2f})" if present(d) else ""))
         else:
             out.append(f"  {l.label:<24} {str(FEED_REQUIRED):>12}")
     out += ["",
@@ -635,7 +605,7 @@ def render_brief_sections(spot: Maybe, levels: list[KeyLevel], gamma: GammaStruc
     out += ["", "SECTION 17 — HIGHEST PROBABILITY LEVELS", ""]
     for i, r in enumerate(ranked, 1):
         out.append(f"  {i:>2}. {r.level.label:<22} {_fmt(r.level.price):>12}"
-                   f"   importance={_fmt(r.importance, decimals=3, thousands=False)}")
+                   f"   importance={r.importance:.3f}")
     return "\n".join(out)
 
 
@@ -673,13 +643,6 @@ class DailyKeyLevels:
         # BEFORE the trade map / ranking compare them against SPX spot & gamma.
         if level_postprocess is not None:
             levels = level_postprocess(levels)
-        # APEX 50.2: populate transparent internal analytics. These are
-        # deterministic context heuristics, not calibrated outcome probabilities.
-        try:
-            from .level_analytics import enrich_level_analytics
-        except ImportError:
-            from level_analytics import enrich_level_analytics
-        levels = enrich_level_analytics(spot, levels)
         tmap = trade_map(spot, levels, g, em)
         ranked = rank_levels(spot, levels)
         return cls(spot, levels, g, em, tmap, ranked)

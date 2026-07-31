@@ -221,7 +221,10 @@ def generate_morning_brief(
     sdate = session_date()
     sc = session_context or {"state": "PREMARKET", "brief_mode": "PREMARKET", "label": "Pre-market"}
     mode = str(sc.get("brief_mode") or "PREMARKET").upper()
-    result_key = f"{sdate}:{mode}"
+    source_date = str(sc.get("source_session_date") or sdate)
+    target_date = str(sc.get("target_session_date") or source_date)
+    display_date = target_date if mode == "NEXT_SESSION_PREP" else source_date
+    result_key = f"{target_date}:{mode}"
 
     step = time.perf_counter()
     dkl, sections, context = build_deterministic(**engine_kwargs)
@@ -238,12 +241,12 @@ def generate_morning_brief(
         narrative = str(cached_narrative.get("narrative") or "")
         err = cached_narrative.get("error")
         narrative_source = "cache"
-        narrative_status = "CACHED" if narrative else "CACHED_FALLBACK"
+        narrative_status = "CACHED_SUCCESS" if narrative else "UNAVAILABLE"
         timings["prompt_build"] = 0.0
         timings["ai_call"] = 0.0
     else:
         step = time.perf_counter()
-        prompt = build_prompt(context, sdate, sc)
+        prompt = build_prompt(context, display_date, sc)
         timings["prompt_build"] = round((time.perf_counter() - step) * 1000, 1)
         api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "").strip()
         step = time.perf_counter()
@@ -257,13 +260,16 @@ def generate_morning_brief(
             narrative_source = "deterministic_fallback"
             narrative_status = "NO_KEY_FALLBACK"
         timings["ai_call"] = round((time.perf_counter() - step) * 1000, 1)
-        if ncache is not None:
+        # Cache successful narratives only. Timeout/error fallbacks are deterministic
+        # response states, not reusable narrative content.
+        if ncache is not None and narrative:
             ncache[result_key] = {
                 "narrative": narrative,
-                "error": err,
-                "status": narrative_status,
+                "error": None,
+                "status": "FRESH",
                 "generated_at": _now_et().isoformat(),
                 "session_context": sc,
+                "ai_call_ms": timings["ai_call"],
             }
 
     step = time.perf_counter()
@@ -276,7 +282,7 @@ def generate_morning_brief(
             "NEXT_SESSION_PREP": "APEX NEXT-SESSION PREP",
             "LIVE_SESSION": "APEX LIVE SESSION BRIEF",
         }.get(mode, "APEX MORNING BRIEF")
-        head = (f"# {title} — {sdate}\n\n"
+        head = (f"# {title} — {display_date}\n\n"
                 f"_AI narrative unavailable ({err}). Deterministic institutional "
                 f"levels remain available._\n")
         has_narrative = False
@@ -287,7 +293,9 @@ def generate_morning_brief(
 
     result = {
         "ok": True,
-        "session_date": sdate,
+        "session_date": source_date,
+        "source_session_date": source_date,
+        "target_session_date": target_date,
         "generated_at": _now_et().isoformat(),
         "cached": False,
         "has_narrative": has_narrative,
@@ -296,6 +304,12 @@ def generate_morning_brief(
         "narrative_source": narrative_source,
         "session_context": sc,
         "generation_timing": timings,
+        "narrative_attempt": {
+            "attempted": narrative_source in {"anthropic", "deterministic_fallback"},
+            "duration_ms": timings.get("ai_call", 0.0),
+            "status": narrative_status,
+            "error": err,
+        },
         "markdown": markdown,
         "structured": dkl.to_dict(),
     }
