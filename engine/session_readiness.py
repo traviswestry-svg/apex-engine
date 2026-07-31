@@ -186,6 +186,8 @@ def build_checklist(
 
     broker_ready = _b(checks, "broker_ready")
     rec_present = _b(checks, "recommendation_present")
+    chain_evaluated = _b(checks, "chain_evaluated")
+    quotes_expected = _b(checks, "quotes_expected") or rec_present or chain_evaluated
     if broker_required is None:
         # Execution is only *required* to be connected when there is a live
         # session and an actionable recommendation to place.
@@ -237,6 +239,12 @@ def build_checklist(
             ReadinessState.READY,
             "Options chain quality gate is not suppressing entries.",
         ))
+    elif live and not chain_evaluated:
+        rows.append(_row(
+            "chain_gate", "Chain Gate",
+            ReadinessState.WAITING,
+            "Awaiting a candidate recommendation before evaluating the options chain.",
+        ))
     elif live:
         rows.append(_row(
             "chain_gate", "Chain Gate",
@@ -257,11 +265,17 @@ def build_checklist(
             ReadinessState.READY,
             "Live option quotes are present.",
         ))
+    elif live and not quotes_expected:
+        rows.append(_row(
+            "quotes_present", "Quotes Present",
+            ReadinessState.WAITING,
+            "Option quotes are requested after a candidate recommendation is selected.",
+        ))
     elif live:
         rows.append(_row(
             "quotes_present", "Quotes Present",
             ReadinessState.FAIL,
-            "The market is open but no option quotes are present.",
+            "A candidate requires option quotes, but none are present.",
         ))
     else:
         rows.append(_row(
@@ -277,6 +291,12 @@ def build_checklist(
             ReadinessState.NOT_EXPECTED,
             "Live market data is not expected while the market is closed.",
         ))
+    elif not quotes_expected:
+        rows.append(_row(
+            "quotes_fresh", "Quotes Fresh",
+            ReadinessState.WAITING,
+            "Quote freshness will be evaluated after quotes are requested.",
+        ))
     elif _b(checks, "quotes_fresh"):
         rows.append(_row(
             "quotes_fresh", "Quotes Fresh",
@@ -287,7 +307,7 @@ def build_checklist(
         rows.append(_row(
             "quotes_fresh", "Quotes Fresh",
             ReadinessState.FAIL,
-            "The market is open but option quotes are stale.",
+            "Required option quotes are missing or stale.",
         ))
 
     # ── Liquidity ──────────────────────────────────────────────────────────
@@ -297,11 +317,17 @@ def build_checklist(
             ReadinessState.READY,
             "Displayed liquidity meets the acceptability threshold.",
         ))
+    elif live and not quotes_expected:
+        rows.append(_row(
+            "liquidity", "Liquidity",
+            ReadinessState.WAITING,
+            "Liquidity is evaluated after a candidate and live quotes are available.",
+        ))
     elif live:
         rows.append(_row(
             "liquidity", "Liquidity",
             ReadinessState.FAIL,
-            "The market is open but displayed liquidity is below threshold.",
+            "Required displayed liquidity is unavailable or below threshold.",
         ))
     else:
         rows.append(_row(

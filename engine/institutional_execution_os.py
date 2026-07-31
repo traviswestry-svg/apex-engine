@@ -63,6 +63,7 @@ def build_execution_snapshot(result: Optional[Mapping[str, Any]]) -> Dict[str, A
     quality_score = _num(_first(chain, "quality_score", "score", default=50), 50)
     gate = str(_first(chain, "action", "gate", "status", default="UNKNOWN")).upper()
     valid_count = int(_num(_first(chain, "valid_contract_count", "valid_count", default=len(legs)), len(legs)))
+    chain_evaluated = bool(chain) or bool(legs)
 
     bid = _num(_first(premium, "bid", "net_bid", "executable_bid", default=0))
     ask = _num(_first(premium, "ask", "net_ask", "executable_ask", default=0))
@@ -119,12 +120,18 @@ def build_execution_snapshot(result: Optional[Mapping[str, Any]]) -> Dict[str, A
     best_fill = mid + spread * 0.15 if mid else 0.0
     worst_fill = mid - spread * 0.45 if mid else 0.0
 
+    recommendation_present = bool(premium)
+    quotes_present = bool(mid or (bid and ask))
     checks = {
-        "recommendation_present": bool(premium),
-        "chain_gate_passed": gate not in {"SUPPRESS", "BLOCK", "FAIL"},
-        "quotes_present": bool(mid or (bid and ask)),
-        "quotes_fresh": quote_age <= 15 if quote_age else False,
-        "liquidity_acceptable": liquidity_score >= 70,
+        "recommendation_present": recommendation_present,
+        # UNKNOWN is not a passed gate.  Before a recommendation/chain exists,
+        # downstream presentation should report WAITING rather than READY/FAIL.
+        "chain_evaluated": chain_evaluated,
+        "chain_gate_passed": chain_evaluated and gate not in {"UNKNOWN", "SUPPRESS", "BLOCK", "FAIL"},
+        "quotes_expected": recommendation_present or chain_evaluated,
+        "quotes_present": quotes_present,
+        "quotes_fresh": quotes_present and quote_age > 0 and quote_age <= 15,
+        "liquidity_acceptable": quotes_present and liquidity_score >= 70,
         "risk_defined": max_loss > 0,
         "market_open": market_open,
         "broker_ready": broker_ready,
