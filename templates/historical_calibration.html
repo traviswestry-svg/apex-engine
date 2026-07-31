@@ -1,0 +1,171 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APEX — Historical Level Calibration</title>
+<style>
+  body{font-family:-apple-system,Segoe UI,Arial,sans-serif;background:#06101d;color:#e7edf7;margin:0;padding:24px}
+  h1{margin:0 0 2px}.muted{color:#8ea3bd;font-size:13px}
+  .row{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-top:16px}
+  .card{background:#0e1c2e;border:1px solid #24384f;border-radius:12px;padding:16px}
+  .card small{color:#8ea3bd;text-transform:uppercase;letter-spacing:.04em;font-size:11px}
+  .card h2{margin:6px 0 0;font-size:26px}
+  .pill{padding:5px 12px;border:1px solid #3d5675;border-radius:20px;font-size:13px}
+  .good{color:#6fe9a0;border-color:#2f6b4a}.warn{color:#ffd479;border-color:#7a6420}.bad{color:#ff9090;border-color:#7a3232}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #1c2c40}
+  th{color:#8ea3bd;font-weight:600}
+  .bar{height:8px;background:#132339;border-radius:6px;overflow:hidden;margin-top:8px}
+  .bar>span{display:block;height:100%;background:linear-gradient(90deg,#2f7fff,#6fe9a0)}
+  .sec{margin-top:22px}.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:760px){.two{grid-template-columns:1fr}}
+  code{background:#132339;padding:2px 6px;border-radius:5px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="row">
+  <div>
+    <h1>Historical Level Calibration</h1>
+    <p class="muted">Evidence-based level probabilities. Heuristic fallback when history is thin — never fabricated. <span id="ver"></span></p>
+  </div>
+  <span id="collector" class="pill">LOADING</span>
+</div>
+
+<div class="grid">
+  <div class="card"><small>Today · Levels</small><h2 id="t_levels">—</h2></div>
+  <div class="card"><small>Today · Touches</small><h2 id="t_touches">—</h2></div>
+  <div class="card"><small>Today · Outcomes</small><h2 id="t_outcomes">—</h2></div>
+  <div class="card"><small>Historical Samples</small><h2 id="samples">—</h2></div>
+  <div class="card"><small>Graded (24h)</small><h2 id="lrate">—</h2></div>
+  <div class="card"><small>Storage</small><h2 id="storage">—</h2></div>
+</div>
+
+<div class="card sec">
+  <div class="row"><small class="muted">CALIBRATION PROGRESS · toward 500-sample fully-historical gate</small><span id="progress_pct" class="muted">—</span></div>
+  <div class="bar"><span id="progress" style="width:0%"></span></div>
+</div>
+
+<div class="two sec">
+  <div class="card">
+    <small>Collector Status</small>
+    <table>
+      <tr><th>Running</th><td id="h_running">—</td></tr>
+      <tr><th>Queue depth (ungraded)</th><td id="h_queue">—</td></tr>
+      <tr><th>DB latency</th><td id="h_latency">—</td></tr>
+      <tr><th>Write failures</th><td id="h_wf">—</td></tr>
+      <tr><th>Dropped events</th><td id="h_drop">—</td></tr>
+      <tr><th>Calibration lag</th><td id="h_lag">—</td></tr>
+      <tr><th>Last collector event</th><td id="h_last">—</td></tr>
+      <tr><th>Last DB write</th><td id="h_write">—</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <small>Database Health</small>
+    <table id="db_tbl"><tr><th>—</th><td>—</td></tr></table>
+    <div class="row" style="margin-top:8px"><small class="muted">Last successful grade</small><span id="last_grade" class="muted">—</span></div>
+    <div class="row"><small class="muted">Last statistics rebuild</small><span id="last_stats" class="muted">—</span></div>
+  </div>
+</div>
+
+<div class="two sec">
+  <div class="card">
+    <small>Top Performing Level Types</small>
+    <table id="top_tbl"><tr><th>Level</th><th>n</th><th>React%</th><th>Exp</th><th>Stab</th></tr></table>
+  </div>
+  <div class="card">
+    <small>Weakest Level Types</small>
+    <table id="weak_tbl"><tr><th>Level</th><th>n</th><th>React%</th><th>Exp</th><th>Stab</th></tr></table>
+  </div>
+</div>
+
+<div class="card sec">
+  <div class="row">
+    <small>Calibrated Statistics · <span class="muted">segment</span></small>
+    <select id="seg" style="background:#0e1c2e;color:#e7edf7;border:1px solid #24384f;border-radius:8px;padding:6px">
+      <option value="ALL|ALL">ALL</option>
+      <option value="gamma_regime|LONG_GAMMA">Gamma · Long</option>
+      <option value="gamma_regime|SHORT_GAMMA">Gamma · Short</option>
+      <option value="gamma_regime|NEUTRAL_GAMMA">Gamma · Neutral</option>
+      <option value="trend_regime|TREND_DAY">Trend Day</option>
+      <option value="trend_regime|BALANCED_DAY">Balanced Day</option>
+      <option value="session_bucket|OPENING_DRIVE">Opening Drive</option>
+      <option value="session_bucket|POWER_HOUR">Power Hour</option>
+      <option value="expected_move_regime|INSIDE_EXPECTED_MOVE">Inside EM</option>
+      <option value="expected_move_regime|OUTSIDE_EXPECTED_MOVE">Outside EM</option>
+      <option value="touch_ordinality|FIRST_TOUCH">First Touch</option>
+    </select>
+  </div>
+  <table id="stat_tbl">
+    <tr><th>Level</th><th>Sym</th><th>n</th><th>React%</th><th>Break%</th><th>Rev%</th><th>Accept%</th><th>Avg MFE</th><th>Avg Fail</th><th>Hold(s)</th><th>CI</th><th>Stab</th><th>Exp</th></tr>
+  </table>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const fmt=v=>v==null?'—':v;
+const short=t=>t?String(t).replace('T',' ').slice(0,19):'—';
+
+async function j(u){const r=await fetch(u,{headers:{Accept:'application/json'}});return r.json();}
+
+async function load(){
+  try{
+    const d=await j('/api/level-calibration/dashboard');
+    const s=d.status||{}, today=s.today||{}, db=s.database||{}, counts=db.counts||{};
+    $('ver').textContent='· '+(s.version||'');
+    const running=s.collector_running;
+    const cp=$('collector');
+    cp.textContent=running?'COLLECTOR RUNNING':(s.collector_enabled?'COLLECTOR IDLE':'COLLECTOR DISABLED');
+    cp.className='pill '+(running?'good':(s.collector_enabled?'warn':'bad'));
+    $('t_levels').textContent=fmt(today.levels);
+    $('t_touches').textContent=fmt(today.touches);
+    $('t_outcomes').textContent=fmt(today.outcomes);
+    $('samples').textContent=fmt(s.historical_sample_count);
+    $('lrate').textContent=fmt((d.learning_rate||{}).graded_last_24h);
+    $('storage').textContent=(db.storage_mb!=null?db.storage_mb+' MB':'—');
+    const pct=Math.round((s.calibration_progress||0)*100);
+    $('progress').style.width=pct+'%'; $('progress_pct').textContent=pct+'%';
+
+    const h=await j('/api/level-calibration/health');
+    $('h_running').textContent=h.collector_running?'yes':'no';
+    $('h_queue').textContent=fmt(h.queue_depth);
+    $('h_latency').textContent=(h.database_latency_ms!=null?h.database_latency_ms+' ms':'—');
+    $('h_wf').textContent=fmt(h.write_failures);
+    $('h_drop').textContent=fmt(h.dropped_events);
+    $('h_lag').textContent=(h.calibration_lag_seconds!=null?h.calibration_lag_seconds+' s':'—');
+    const ev=s.last_collector_event; $('h_last').textContent=ev?(ev.type+' · '+ev.level_type+' @ '+fmt(ev.price)):'—';
+    $('h_write').textContent=short(s.last_database_write);
+    $('last_grade').textContent=short(db.last_successful_grade);
+    $('last_stats').textContent=short(db.last_statistics_rebuild);
+
+    const dbt=$('db_tbl'); dbt.innerHTML='';
+    Object.entries(counts).forEach(([k,v])=>{dbt.insertAdjacentHTML('beforeend',`<tr><th>${k}</th><td>${v}</td></tr>`);});
+
+    fillTop($('top_tbl'), d.top_performing_levels||[]);
+    fillTop($('weak_tbl'), d.weakest_levels||[]);
+  }catch(e){$('collector').textContent='UNAVAILABLE';$('collector').className='pill bad';}
+  loadStats();
+}
+
+function fillTop(tbl, rows){
+  tbl.innerHTML='<tr><th>Level</th><th>n</th><th>React%</th><th>Exp</th><th>Stab</th></tr>';
+  rows.forEach(r=>tbl.insertAdjacentHTML('beforeend',
+    `<tr><td>${r.level_type}</td><td>${r.sample_count}</td><td>${fmt(r.reaction_pct)}</td><td>${fmt(r.expectancy)}</td><td>${fmt(r.stability_score)}</td></tr>`));
+  if(!rows.length)tbl.insertAdjacentHTML('beforeend','<tr><td colspan="5" class="muted">Awaiting ≥10 graded samples.</td></tr>');
+}
+
+async function loadStats(){
+  const [k,v]=$('seg').value.split('|');
+  const d=await j('/api/level-calibration/statistics?segment_key='+k+'&segment_value='+v);
+  const tbl=$('stat_tbl');
+  tbl.innerHTML='<tr><th>Level</th><th>Sym</th><th>n</th><th>React%</th><th>Break%</th><th>Rev%</th><th>Accept%</th><th>Avg MFE</th><th>Avg Fail</th><th>Hold(s)</th><th>CI</th><th>Stab</th><th>Exp</th></tr>';
+  (d.rows||[]).forEach(r=>tbl.insertAdjacentHTML('beforeend',
+    `<tr><td>${r.level_type}</td><td>${r.symbol}</td><td>${r.sample_count}</td><td>${fmt(r.reaction_pct)}</td><td>${fmt(r.break_pct)}</td><td>${fmt(r.reversal_pct)}</td><td>${fmt(r.acceptance_pct)}</td><td>${fmt(r.avg_excursion)}</td><td>${fmt(r.avg_failure_distance)}</td><td>${fmt(r.avg_hold_time)}</td><td>${fmt(r.ci_low)}–${fmt(r.ci_high)}</td><td>${fmt(r.stability_score)}</td><td>${fmt(r.expectancy)}</td></tr>`));
+  if(!(d.rows||[]).length)tbl.insertAdjacentHTML('beforeend','<tr><td colspan="13" class="muted">No calibrated samples in this segment yet.</td></tr>');
+}
+$('seg').addEventListener('change',loadStats);
+load(); setInterval(load, 20000);
+</script>
+</body>
+</html>
