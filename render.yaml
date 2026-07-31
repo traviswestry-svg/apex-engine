@@ -60,6 +60,10 @@ services:
         value: "/data/apex_evidence.db"
       - key: APEX_RESEARCH_DB
         value: "/data/apex_research.db"
+      - key: APEX_CALIBRATION_DB
+        value: "/data/apex_calibration.db"
+      - key: APEX_CALIBRATION_ENABLED
+        value: "true"
       - key: APEX_SQLITE_TIMEOUT_SECONDS
         value: "15"
       - key: APEX_DISK_WARN_FREE_PCT

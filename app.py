@@ -1174,6 +1174,16 @@ except Exception as _mm_err:
     MARKET_MEMORY_AVAILABLE = False
     print(f"APEX Market Memory Engine unavailable (non-fatal): {_mm_err}", flush=True)
 
+# APEX 50.5.0 — Historical Level Calibration Engine (HLCE). Evidence-based
+# level probabilities with heuristic fallback; collector is dormant-safe.
+try:
+    from engine.historical_level_calibration_routes import register_calibration_routes
+    HLCE_AVAILABLE = True
+except Exception as _hlce_err:
+    register_calibration_routes = None  # type: ignore[assignment]
+    HLCE_AVAILABLE = False
+    print(f"APEX Historical Level Calibration unavailable (non-fatal): {_hlce_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -12944,6 +12954,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_market_memory_routes(app, last_result_provider=_mm_last_result)
         print("APEX 22.0 Market Memory Engine routes registered.", flush=True)
+
+    if HLCE_AVAILABLE and register_calibration_routes is not None:
+        def _hlce_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_calibration_routes(app, last_result_provider=_hlce_last_result)
+        print("APEX 50.5.0 Historical Level Calibration Engine registered.", flush=True)
 
     if INSTITUTIONAL_MARKET_STRUCTURE_AVAILABLE and register_institutional_market_structure_routes is not None:
         def _ims_last_result():
