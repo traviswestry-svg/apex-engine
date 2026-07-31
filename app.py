@@ -10949,7 +10949,7 @@ def api_morning_brief():
         try:
             from engine.version import MORNING_BRIEF_VERSION as _brief_error_version
         except Exception:
-            _brief_error_version = "50.4.2.2_FORMATTING_REGRESSION_HOTFIX"
+            _brief_error_version = "50.4.2.3_ANALYTICS_TYPE_INTEGRITY_HOTFIX"
         return jsonify({
             "ok": False,
             "error": f"{type(exc).__name__}: {exc}",
