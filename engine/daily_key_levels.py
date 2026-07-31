@@ -685,6 +685,16 @@ class DailyKeyLevels:
         except ImportError:
             from level_analytics import enrich_level_analytics
         levels = enrich_level_analytics(spot, levels)
+        # APEX 50.5.0: overlay evidence-based (calibrated) probabilities where
+        # enough historical samples exist. Falls back to the heuristic values
+        # above automatically (blend returns heuristic at n=0). Non-fatal.
+        try:
+            from .historical_level_calibration import enrich_levels_with_calibration
+            symbol = getattr(levels[0], "instrument", "SPX") if levels else "SPX"
+            ctx = {"gamma_regime": g.regime.value.upper() if getattr(g, "regime", None) else None}
+            levels = enrich_levels_with_calibration(levels, ctx, symbol=str(symbol).upper())
+        except Exception:
+            pass
         tmap = trade_map(spot, levels, g, em)
         ranked = rank_levels(spot, levels)
         return cls(spot, levels, g, em, tmap, ranked)
