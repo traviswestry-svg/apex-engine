@@ -212,3 +212,29 @@ def test_morning_readiness_backward_compatible_without_session():
     assert out["trading_mode"] == "ANALYSIS_ONLY"
     assert out["overall_status"] == "STANDBY"
     assert "checklist" in out
+
+
+def test_open_market_without_candidate_waits_instead_of_false_failure():
+    checks = {
+        "recommendation_present": False,
+        "chain_evaluated": False,
+        "chain_gate_passed": False,
+        "quotes_expected": False,
+        "quotes_present": False,
+        "quotes_fresh": False,
+        "liquidity_acceptable": False,
+        "risk_defined": False,
+        "market_open": True,
+        "broker_ready": False,
+    }
+    block = build_session_readiness(
+        session="MARKET_OPEN", execution_checks=checks, risk_config_ready=True
+    )
+    states = _states(block)
+    assert states["chain_gate"] == ReadinessState.WAITING.value
+    assert states["quotes_present"] == ReadinessState.WAITING.value
+    assert states["quotes_fresh"] == ReadinessState.WAITING.value
+    assert states["liquidity"] == ReadinessState.WAITING.value
+    assert states["recommendation"] == ReadinessState.WAITING.value
+    assert block["overall"]["status"] == OverallStatus.WAITING.value
+    assert all(row["state"] != ReadinessState.FAIL.value for row in block["checklist"])

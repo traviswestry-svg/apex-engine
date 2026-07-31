@@ -48,3 +48,11 @@ def test_readiness_blocks_on_critical_failure():
     out = build_morning_readiness(system_checks=checks, execution={"execution_score": 95}, market_open=True)
     assert out["trading_mode"] == "DO_NOT_TRADE"
     assert "database" in out["blocking_items"]
+
+
+def test_empty_live_result_does_not_claim_chain_gate_ready():
+    out = build_execution_snapshot({"market_open": True})
+    assert out["checks"]["recommendation_present"] is False
+    assert out["checks"]["chain_evaluated"] is False
+    assert out["checks"]["chain_gate_passed"] is False
+    assert out["checks"]["quotes_expected"] is False
