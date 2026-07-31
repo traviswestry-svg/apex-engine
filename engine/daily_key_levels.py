@@ -577,8 +577,25 @@ def build_risk_context(spot: Maybe, levels: list[KeyLevel], em: ExpectedMove,
 # MODULE 10 — Morning-Brief sections 15/16/17
 # --------------------------------------------------------------------------- #
 
-def _fmt(v: Maybe) -> str:
-    return f"{v:,.2f}" if present(v) else str(FEED_REQUIRED)
+def _is_number(value) -> bool:
+    """True only for finite numeric values safe for report formatting."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        from math import isfinite
+        return isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _fmt(v: Maybe, *, decimals: int = 2, thousands: bool = True) -> str:
+    """Format numeric values while preserving categorical strings safely."""
+    if not present(v) or v is None:
+        return str(FEED_REQUIRED)
+    if _is_number(v):
+        spec = f",.{decimals}f" if thousands else f".{decimals}f"
+        return format(float(v), spec)
+    return str(v)
 
 
 def render_brief_sections(spot: Maybe, levels: list[KeyLevel], gamma: GammaStructure,
