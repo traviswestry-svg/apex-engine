@@ -122,12 +122,27 @@ def build_runtime_health(
     blockers = [c["name"] for c in components if c["required"] and c["state"] in {"FAILED", "UNAVAILABLE"}]
     warnings = [c["name"] for c in components if c["state"] in {"DEGRADED", "STALE"}]
 
+    session = str(scanner.get("session") or "").strip().upper()
+    runtime_ready = overall not in {"FAILED", "UNAVAILABLE"} and not blockers
+    tradeable_runtime = runtime_ready and overall == "HEALTHY" and session == "MARKET_OPEN"
+    if not runtime_ready:
+        tradeability_reason = "RUNTIME_BLOCKED"
+    elif overall != "HEALTHY":
+        tradeability_reason = "RUNTIME_DEGRADED"
+    elif session != "MARKET_OPEN":
+        tradeability_reason = "MARKET_CLOSED"
+    else:
+        tradeability_reason = "READY"
+
     return {
-        "ok": overall not in {"FAILED", "UNAVAILABLE"},
+        "ok": runtime_ready,
         "status": overall,
         "version": version,
         "generated_at": generated_at,
-        "tradeable_runtime": overall == "HEALTHY" and not blockers,
+        "runtime_ready": runtime_ready,
+        "tradeable_runtime": tradeable_runtime,
+        "tradeability_reason": tradeability_reason,
+        "session": session or None,
         "blockers": blockers,
         "warnings": warnings,
         "components": components,
