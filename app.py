@@ -13611,10 +13611,10 @@ def api_apex65_runtime_consolidation():
 
 @app.get("/api/runtime/monday-readiness")
 def api_apex65_monday_readiness():
-    """APEX 65.6 side-effect-free Monday critical-path preflight."""
+    """APEX 65.6.1 side-effect-free Monday critical-path preflight."""
     if not APEX65_MONDAY_READINESS_AVAILABLE or apex65_build_monday_readiness is None:
         return jsonify({
-            "ok": False, "status": "BLOCKED", "schema_version": "65.6",
+            "ok": False, "status": "BLOCKED", "schema_version": "65.6.1",
             "version": VERSION, "monday_ready": False,
             "blockers": [{"step": "readiness_aggregator", "detail": "Monday readiness aggregator unavailable"}],
         }), 503
@@ -13633,19 +13633,28 @@ def api_apex65_monday_readiness():
             "ETRADE_CONSUMER_KEY", "ETRADE_CONSUMER_SECRET", "ETRADE_OAUTH_TOKEN",
             "ETRADE_OAUTH_TOKEN_SECRET", "ETRADE_ACCOUNT_ID_KEY",
         )
+        broker_freshness = {
+            "issued_at": os.getenv("ETRADE_OAUTH_TOKEN_ISSUED_AT"),
+            "refreshed_at": os.getenv("ETRADE_OAUTH_TOKEN_REFRESHED_AT") or os.getenv("ETRADE_OAUTH_TOKEN_UPDATED_AT"),
+            "expires_at": os.getenv("ETRADE_OAUTH_TOKEN_EXPIRES_AT"),
+            "max_age_seconds": os.getenv("ETRADE_OAUTH_TOKEN_MAX_AGE_SECONDS"),
+            "warn_before_expiry_seconds": os.getenv("ETRADE_OAUTH_TOKEN_WARN_BEFORE_EXPIRY_SECONDS", "7200"),
+            "source": "render_env_local_metadata",
+        }
         payload = apex65_build_monday_readiness(
             version=VERSION, runtime_health=runtime_health, dependency_map=dependency_map,
             registered_routes=route_methods,
             tv_webhook_secret_configured=bool(os.getenv("TV_WEBHOOK_SECRET") or os.getenv("TRADINGVIEW_SECRET")),
             broker_credentials_configured=all(bool(os.getenv(k)) for k in broker_fields),
             live_trading_enabled=os.getenv("ETRADE_ENABLE_TRADING", "false").strip().lower() == "true",
+            broker_credential_freshness=broker_freshness,
         )
-        payload["stabilization_build"] = "65.6"
+        payload["stabilization_build"] = "65.6.1"
         return jsonify(payload), (200 if payload.get("monday_ready") else 503)
     except Exception as exc:
-        app.logger.exception("APEX 65.6 Monday readiness failed")
+        app.logger.exception("APEX 65.6.1 Monday readiness failed")
         return jsonify({
-            "ok": False, "status": "BLOCKED", "schema_version": "65.6",
+            "ok": False, "status": "BLOCKED", "schema_version": "65.6.1",
             "version": VERSION, "monday_ready": False, "error": type(exc).__name__,
         }), 500
 
