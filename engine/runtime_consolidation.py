@@ -1,4 +1,4 @@
-"""APEX 65.4 backend runtime consolidation audit.
+"""APEX 65.5 backend runtime consolidation audit.
 
 This module is intentionally read-only.  It performs a second-level audit over
 65.3 dependency-map cleanup candidates so a static "ORPHANED" label is never
@@ -118,7 +118,7 @@ def build_consolidation_audit() -> Dict[str, Any]:
     return {
         "ok": True,
         "status": "HEALTHY",
-        "schema_version": "65.4",
+        "schema_version": "65.5",
         "summary": {
             "candidate_count": len(rows),
             "actions": dict(sorted(actions.items())),

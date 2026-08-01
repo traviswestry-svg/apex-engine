@@ -43,6 +43,7 @@ FEED_TOKENS = {
 }
 
 COMPAT_MARKERS = ("legacy", "compat", "roadmap", "deprecated", "shim")
+CANONICAL_ACTIVE_OVERRIDES = {"engine.institutional_route_registry"}
 ROUTE_RE = re.compile(r"['\"](/(?:api|tv_signal)[^'\"\s]*)['\"]")
 
 
@@ -168,6 +169,8 @@ def _reachable(graph: Mapping[str, Set[str]], roots: Iterable[str]) -> Set[str]:
 
 
 def _classification(module: str, *, reachable: bool, incoming: int, routes: int, text: str) -> str:
+    if module in CANONICAL_ACTIVE_OVERRIDES and reachable:
+        return "ACTIVE"
     low = f"{module} {text[:1200]}".lower()
     if any(marker in low for marker in COMPAT_MARKERS):
         return "COMPATIBILITY" if reachable or routes else "DORMANT"
@@ -279,7 +282,7 @@ def build_dependency_map() -> Dict[str, Any]:
     return {
         "ok": not critical_missing and not critical_not_active,
         "status": "HEALTHY" if not critical_missing and not critical_not_active else "DEGRADED",
-        "schema_version": "65.4",
+        "schema_version": "65.5",
         "architecture_hash": hashlib.sha256(digest_source).hexdigest()[:16],
         "runtime_roots": runtime_roots,
         "summary": {
