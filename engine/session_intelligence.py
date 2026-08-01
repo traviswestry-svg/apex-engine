@@ -34,6 +34,13 @@ def _next_trading_date(day: dt.date) -> dt.date:
     return candidate
 
 
+def _previous_trading_date(day: dt.date) -> dt.date:
+    candidate = day - dt.timedelta(days=1)
+    while candidate.weekday() >= 5:
+        candidate -= dt.timedelta(days=1)
+    return candidate
+
+
 def classify_session(now: Optional[dt.datetime] = None) -> SessionContext:
     now = (now or dt.datetime.now(ET)).astimezone(ET)
     minute = now.hour * 60 + now.minute
@@ -80,8 +87,21 @@ def classify_session(now: Optional[dt.datetime] = None) -> SessionContext:
             "OVERNIGHT", "NEXT_SESSION_PREP", "Overnight / next-session preparation", False, "SESSION_AWARE"
         )
 
-    source_date = now.date()
-    target_date = _next_trading_date(source_date) if mode == "NEXT_SESSION_PREP" else source_date
+    calendar_date = now.date()
+    # source_session_date means the last completed trading session supplying
+    # historical market context; it is not the wall-clock generation date.
+    if weekday >= 5:
+        source_date = _previous_trading_date(calendar_date)
+        target_date = _next_trading_date(calendar_date)
+    elif mode == "PREMARKET" or (mode == "NEXT_SESSION_PREP" and minute < 4 * 60):
+        source_date = _previous_trading_date(calendar_date)
+        target_date = calendar_date
+    elif mode == "NEXT_SESSION_PREP":
+        source_date = calendar_date
+        target_date = _next_trading_date(calendar_date)
+    else:
+        source_date = calendar_date
+        target_date = calendar_date
 
     return SessionContext(
         state=state,

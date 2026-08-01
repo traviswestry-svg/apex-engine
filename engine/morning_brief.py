@@ -69,7 +69,26 @@ def _v(x: Any) -> Any:
 def build_deterministic(**kwargs) -> tuple[Any, str, dict]:
     """Run the Daily Key Levels engine. Returns (dkl, rendered_sections_text,
     compact_context) where compact_context is a small dict handed to the model."""
+    suppress_opening = bool(kwargs.pop("_suppress_opening_levels", False))
     dkl = build_daily_key_levels(**kwargs)
+    if suppress_opening:
+        # Next-session/pre-market briefs must never present the prior session's
+        # OR/IB as if it belonged to the target session. Preserve the level rows
+        # but make their future-session unavailability explicit and remove them
+        # from ranking.
+        opening_kinds = {"or5_high", "or5_low", "or15_high", "or15_low",
+                         "ib_high", "ib_low", "ib_extension"}
+        for lv in dkl.levels:
+            if getattr(getattr(lv, "kind", None), "value", None) in opening_kinds:
+                lv.price = FEED_REQUIRED
+                lv.strength_score = FEED_REQUIRED
+                lv.prior_reactions = FEED_REQUIRED
+                lv.reaction_prob = FEED_REQUIRED
+                lv.break_prob = FEED_REQUIRED
+                lv.reversal_prob = FEED_REQUIRED
+                lv.magnet_score = FEED_REQUIRED
+        dkl.ranked = [r for r in dkl.ranked
+                      if getattr(getattr(r.level, "kind", None), "value", None) not in opening_kinds]
     sections = render_brief_sections(
         dkl.spot, dkl.levels, dkl.gamma, dkl.expected_move, dkl.trade_map, dkl.ranked
     )
@@ -227,7 +246,10 @@ def generate_morning_brief(
     result_key = f"{target_date}:{mode}"
 
     step = time.perf_counter()
-    dkl, sections, context = build_deterministic(**engine_kwargs)
+    dkl, sections, context = build_deterministic(
+        _suppress_opening_levels=(target_date != source_date),
+        **engine_kwargs,
+    )
     timings["deterministic"] = round((time.perf_counter() - step) * 1000, 1)
 
     narrative = ""

@@ -27,10 +27,22 @@ def build_morning_registry(*, structured: dict, options_feed: dict, flow: dict,
         add_level(kind, "polygon_indices", "SPX daily aggregate unavailable")
     settlement = by_kind.get("prev_settlement") or {}
     settlement_value = settlement.get("price")
-    reg.put("prev_settlement", settlement_value if _present(settlement_value) else None,
-            source="massive_futures", confidence=0.75 if _present(settlement_value) else 0.0,
+    raw_es_settlement = overnight_meta.get("prev_settlement")
+    normalized_available = _present(settlement_value)
+    raw_available = _present(raw_es_settlement)
+    settlement_reason = None if normalized_available else (
+        "ES previous-session close proxy is available, but SPX normalization requires a contemporaneous ES/SPX basis"
+        if raw_available else
+        "ES official settlement unavailable; previous-session close proxy was also unavailable"
+    )
+    reg.put("prev_settlement", settlement_value if normalized_available else None,
+            source="massive_futures", confidence=0.75 if normalized_available else 0.0,
             fallback=bool(overnight_meta.get("settlement_method")),
-            reason="ES official settlement unavailable; previous-session close proxy was also unavailable")
+            reason=settlement_reason)
+    reg.put("prev_settlement_raw_es", raw_es_settlement if raw_available else None,
+            source="massive_futures", confidence=0.65 if raw_available else 0.0,
+            fallback=bool(overnight_meta.get("settlement_method")),
+            reason=None if raw_available else "No ES previous-session settlement/close proxy available")
     for kind in ("overnight_high", "overnight_low", "overnight_mid"):
         add_level(kind, "massive_futures", overnight_meta.get("reason") or "ES Globex bars unavailable")
     gamma_conf = str(flow.get("zero_gamma_confidence") or "").upper()
