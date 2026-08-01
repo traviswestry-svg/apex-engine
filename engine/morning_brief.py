@@ -47,7 +47,7 @@ except Exception:  # pragma: no cover
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 DEFAULT_MODEL = os.getenv("APEX_BRIEF_MODEL", "claude-sonnet-5")
-DEFAULT_AI_TIMEOUT = max(5, min(int(os.getenv("APEX_BRIEF_AI_TIMEOUT_SECONDS", "18")), 45))
+DEFAULT_AI_TIMEOUT = max(5, min(int(os.getenv("APEX_BRIEF_AI_TIMEOUT_SECONDS", "10")), 45))
 
 
 def _now_et() -> dt.datetime:
@@ -305,8 +305,8 @@ def generate_morning_brief(
             "LIVE_SESSION": "APEX LIVE SESSION BRIEF",
         }.get(mode, "APEX MORNING BRIEF")
         head = (f"# {title} — {display_date}\n\n"
-                f"_AI narrative unavailable ({err}). Deterministic institutional "
-                f"levels remain available._\n")
+                "_AI narrative unavailable — deterministic institutional analysis "
+                "is active. Technical failure details are available in diagnostics._\n")
         has_narrative = False
 
     markdown = f"{head}\n\n---\n\n{sections}\n"
