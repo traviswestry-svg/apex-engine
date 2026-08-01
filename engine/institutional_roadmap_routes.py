@@ -319,8 +319,8 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def institutional_release_dashboard(): return render_template('institutional_release_manager.html')
 
     # APEX 13.0 Sprint 1 institutional evidence case files.
-    @app.get('/api/evidence/status')
-    def evidence_status(): return jsonify({'ok':True,**evidence.status()})
+    @app.get('/api/evidence/legacy/status')
+    def evidence_legacy_status(): return jsonify({'ok':True,'legacy':True,**evidence.status()})
     @app.post('/api/evidence/<recommendation_id>/capture')
     def evidence_capture(recommendation_id):
         p=evidence.capture(recommendation_id); return j(p,201 if p.get('created') else (200 if p.get('ok') else 404))

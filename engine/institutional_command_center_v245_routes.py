@@ -4,7 +4,7 @@ from flask import jsonify
 from . import institutional_command_center_v245 as command_center
 
 REQUIRED_ROUTES = (
-    ("GET", "/api/command-center/status"),
+    ("GET", "/api/command-center/v245/status"),
     ("GET", "/api/command-center/overview"),
     ("GET", "/api/command-center/panel/<panel_id>"),
 )
@@ -21,7 +21,7 @@ def register_institutional_command_center_v245_routes(app, *, last_result_provid
         value = last_result_provider() if callable(last_result_provider) else {}
         return value if isinstance(value, dict) else {}
 
-    @app.get('/api/command-center/status')
+    @app.get('/api/command-center/v245/status')
     def command_center_v245_status():
         return jsonify(command_center.status())
 
