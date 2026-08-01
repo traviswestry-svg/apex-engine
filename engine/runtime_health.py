@@ -113,7 +113,7 @@ def build_runtime_health(
         }),
         component("Scanner / Freshness", scanner_state, required=True, detail=str(scanner.get("detail") or scanner.get("health_detail") or ""), data=scanner),
         component("Market Data Sources", source_state, required=False, data={"sources": source_rows}),
-        component("Institutional Engines", engines_state, required=True, detail="Scheduled standby; no live scan required." if not engines_expected and not available else "", data={"red": red, "yellow": yellow, "available": available, "total": total, "expected": engines_expected}),
+        component("Institutional Engines", engines_state, required=True, detail="Scheduled standby; no live scan required." if not engines_expected and not available else "", data={"red": (0 if not engines_expected and not available else red), "yellow": yellow, "available": available, "standby": (total if not engines_expected and not available else 0), "raw_red": red, "total": total, "expected": engines_expected}),
         component("Trade Director Intelligence", td_state, required=True, data={"components": td_components}),
     ]
 
