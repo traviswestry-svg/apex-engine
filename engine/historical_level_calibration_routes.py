@@ -152,10 +152,12 @@ def register_calibration_routes(app, last_result_provider=None):
     @app.get("/api/level-calibration/transitions/path")
     def level_transition_path():
         from .level_transition_probability import current_transition_path
+        explicit_spot = request.args.get("spot", type=float)
         return jsonify(current_transition_path(
             _provider(), path=service.path,
             direction=request.args.get("direction", "UP"),
             max_steps=request.args.get("max_steps", 6, type=int),
+            spot=explicit_spot,
         ))
 
     @app.get("/api/level-calibration/transitions/history")

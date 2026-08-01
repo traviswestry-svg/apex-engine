@@ -1,4 +1,4 @@
-"""APEX 50.6.0 — Level Transition Probability Engine (LTPE).
+"""APEX 50.6.1 — Level Transition Probability Engine (LTPE).
 
 Extension of the Historical Level Calibration Engine (HLCE).  HLCE learns how
 individual institutional levels behave.  LTPE learns the *path between levels*:
@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from . import historical_level_calibration as hlce
 
-VERSION = "50.6.0_LEVEL_TRANSITION_PROBABILITY"
+VERSION = "50.6.1_LEVEL_TRANSITION_PROBABILITY"
 SCHEMA_VERSION = 1
 
 
@@ -588,8 +588,65 @@ def next_level_probability(symbol: str, source_level_type: str, source_event: st
     }
 
 
+def _latest_persisted_spot(symbol: str, *, path: Optional[str] = None) -> Tuple[Optional[float], Optional[str]]:
+    """Return the latest HLCE-persisted session spot without mutating state."""
+    initialize_transition_store(path)
+    with hlce._connect(path) as conn:
+        row = conn.execute(
+            """SELECT session_date, spot_price
+               FROM daily_levels
+               WHERE symbol=? AND spot_price IS NOT NULL
+               ORDER BY session_date DESC, registered_at DESC
+               LIMIT 1""",
+            (_norm(symbol),),
+        ).fetchone()
+    if not row:
+        return None, None
+    try:
+        return float(row["spot_price"]), row["session_date"]
+    except (TypeError, ValueError):
+        return None, row["session_date"]
+
+
+def _snapshot_session_date(snapshot: Mapping[str, Any]) -> Optional[str]:
+    raw = hlce._nested(
+        snapshot,
+        "session_context.source_session_date",
+        "source_session_date",
+        "session_date",
+    )
+    return str(raw) if raw else None
+
+
+def _resolve_path_spot(snapshot: Mapping[str, Any], ctx: Any, levels: Sequence[Any], *,
+                       explicit_spot: Optional[float] = None,
+                       path: Optional[str] = None) -> Tuple[Optional[float], str, Optional[str]]:
+    """Resolve a display-only spot for path construction. Never writes observations."""
+    if explicit_spot is not None:
+        try:
+            return float(explicit_spot), "EXPLICIT_SPOT", _snapshot_session_date(snapshot)
+        except (TypeError, ValueError):
+            return None, "INVALID_EXPLICIT_SPOT", _snapshot_session_date(snapshot)
+    if ctx.spot is not None:
+        return float(ctx.spot), "LIVE_SPOT", _snapshot_session_date(snapshot)
+
+    persisted, session_date = _latest_persisted_spot(ctx.symbol, path=path)
+    if persisted is not None:
+        return persisted, "LAST_SESSION_SPOT", session_date
+
+    # Last-resort structural context: prior close already present in the level set.
+    for lvl in levels:
+        if getattr(lvl, "level_type", None) == "prev_close":
+            try:
+                return float(lvl.price), "LAST_SESSION_CLOSE", _snapshot_session_date(snapshot)
+            except (TypeError, ValueError):
+                break
+    return None, "UNAVAILABLE", _snapshot_session_date(snapshot)
+
+
 def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] = None,
-                            direction: Optional[str] = None, max_steps: int = 6) -> Dict[str, Any]:
+                            direction: Optional[str] = None, max_steps: int = 6,
+                            spot: Optional[float] = None) -> Dict[str, Any]:
     """Build an evidence-backed path through currently registered/extracted levels.
 
     This is a read model only.  It does not claim that a transition will occur;
@@ -599,16 +656,22 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
     initialize_transition_store(path)
     ctx = hlce.extract_context(snapshot)
     levels = hlce.extract_levels(snapshot)
-    if ctx.spot is None:
-        return {"ok": False, "version": VERSION, "error": "NO_SPOT", "steps": []}
+    resolved_spot, spot_mode, spot_session = _resolve_path_spot(
+        snapshot, ctx, levels, explicit_spot=spot, path=path
+    )
+    if resolved_spot is None:
+        return {
+            "ok": False, "version": VERSION, "error": "NO_SPOT", "steps": [],
+            "spot_mode": spot_mode, "spot_session": spot_session,
+        }
     direction = _norm(direction or "UP")
     if direction not in {"UP", "DOWN"}:
         return {"ok": False, "version": VERSION, "error": "INVALID_DIRECTION", "steps": []}
     ordered = sorted(levels, key=lambda x: x.price, reverse=(direction == "DOWN"))
     if direction == "UP":
-        ordered = [x for x in ordered if x.price > ctx.spot + _min_gap(ctx.spot)]
+        ordered = [x for x in ordered if x.price > resolved_spot + _min_gap(resolved_spot)]
     else:
-        ordered = [x for x in ordered if x.price < ctx.spot - _min_gap(ctx.spot)]
+        ordered = [x for x in ordered if x.price < resolved_spot - _min_gap(resolved_spot)]
     # Collapse near-duplicate price clusters.
     collapsed: List[Any] = []
     for lvl in ordered:
@@ -620,7 +683,7 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
 
     steps: List[Dict[str, Any]] = []
     prior_type: Optional[str] = None
-    prior_price = ctx.spot
+    prior_price = resolved_spot
     context = {
         "gamma_regime": ctx.gamma_regime, "auction_regime": ctx.auction_regime,
         "trend_regime": ctx.trend_regime, "volatility_regime": ctx.volatility_regime,
@@ -642,7 +705,9 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
         })
         prior_type, prior_price = lvl.level_type, lvl.price
     return {
-        "ok": True, "version": VERSION, "symbol": ctx.symbol, "spot": ctx.spot,
+        "ok": True, "version": VERSION, "symbol": ctx.symbol, "spot": resolved_spot,
+        "spot_mode": spot_mode, "spot_session": spot_session,
+        "spot_is_observation_input": False,
         "direction": direction, "context": context, "steps": steps,
         "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
     }
