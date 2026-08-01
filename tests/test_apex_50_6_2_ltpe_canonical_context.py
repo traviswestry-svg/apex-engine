@@ -39,7 +39,7 @@ def test_next_session_path_resolves_spot_levels_and_closed_context(tmp_path, mon
     out = ltpe.current_transition_path(snapshot, path=db, direction="UP", max_steps=6)
 
     assert out["ok"] is True
-    assert out["version"] == "50.6.2_LEVEL_TRANSITION_PROBABILITY"
+    assert out["version"] == "50.6.2.1_LEVEL_TRANSITION_PROBABILITY"
     assert out["spot"] == 7489.52
     assert out["spot_mode"] == "CANONICAL_NEXT_SESSION_SPOT"
     assert out["spot_session"] == "2026-07-31"
