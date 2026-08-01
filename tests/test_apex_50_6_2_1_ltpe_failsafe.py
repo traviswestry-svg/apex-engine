@@ -51,4 +51,4 @@ def test_unexpected_level_resolution_returns_structured_failure(tmp_path, monkey
     assert out["failure_stage"] == "LEVEL_UNIVERSE"
     assert out["exception_type"] == "RuntimeError"
     assert out["steps"] == []
-    assert out["version"] == "50.6.2.1_LEVEL_TRANSITION_PROBABILITY"
+    assert out["version"] == "50.6.2.2_LEVEL_TRANSITION_PROBABILITY"
