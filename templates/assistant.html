@@ -72,7 +72,7 @@
   <div class="nav-sep"></div>
   <a href="/api/active_trade_director" target="_blank">API</a>
 </nav>
-<div id="apexFrontendHealth" style="max-width:1180px;margin:8px auto 0;padding:0 18px;font-size:11px;color:#91a4bd;display:flex;gap:10px;flex-wrap:wrap"><span>Frontend API: <b id="apexApiState">INITIALIZING</b></span><span>Failed/Degraded: <b id="apexApiFailures">0</b></span><span>Last Request: <code id="apexApiRequestId">—</code></span></div>
+<div id="apexFrontendHealth" style="max-width:1180px;margin:8px auto 0;padding:0 18px;font-size:11px;color:#91a4bd;display:flex;gap:10px;flex-wrap:wrap"><span>Frontend API: <b id="apexApiState">INITIALIZING</b></span><span>Backend Runtime: <b id="apexRuntimeState">CHECKING</b></span><span>Runtime Issues: <b id="apexRuntimeIssues">0</b></span><span>Failed/Degraded: <b id="apexApiFailures">0</b></span><span>Last Request: <code id="apexApiRequestId">—</code></span></div>
 <div class="wrap"><div id="app" class="panel">Loading Active Trade Director…</div>
 <div id="sessionAllocation" class="session-allocation-panel"></div>
 <div id="mobileMomentumAlerts" class="mobile-alert-panel"></div>
@@ -836,6 +836,23 @@ window.addEventListener('apex:api-result',function(){
   if(f)f.textContent=String(h.degraded);
   if(r)r.textContent=h.latestRequestId||'—';
 });
+async function loadRuntimeHealth(){
+  if(!window.ApexAPI)return;
+  const result=await ApexAPI.get('/api/runtime/health',{timeoutMs:6000,cacheFallback:true,fallback:null});
+  const data=result.data||{};
+  const state=String(data.status||result.state||'UNAVAILABLE').toUpperCase();
+  const blockers=Array.isArray(data.blockers)?data.blockers:[];
+  const warnings=Array.isArray(data.warnings)?data.warnings:[];
+  const st=document.getElementById('apexRuntimeState'), issues=document.getElementById('apexRuntimeIssues');
+  if(st){
+    st.textContent=state;
+    st.title=[...blockers,...warnings].join(' · ');
+    st.style.color=state==='HEALTHY'?'var(--good)':(state==='DEGRADED'||state==='STALE'?'var(--warn)':'var(--bad)');
+  }
+  if(issues){issues.textContent=String(blockers.length+warnings.length);issues.title=[...blockers,...warnings].join(' · ');}
+}
+loadRuntimeHealth();
+setInterval(loadRuntimeHealth,15000);
 </script>
 <script src="{{ url_for('static', filename='js/trader_workflow.js') }}?v={{ asset_version or version }}"></script>
 </body></html>
