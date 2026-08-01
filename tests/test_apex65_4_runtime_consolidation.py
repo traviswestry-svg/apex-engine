@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_dependency_map_uses_complete_root_support_graph():
     clear_dependency_map_cache()
     payload = build_dependency_map()
-    assert payload["schema_version"] == "65.4"
+    assert payload["schema_version"] in {"65.4", "65.5"}
     assert payload["summary"]["monday_critical_missing"] == []
     assert payload["summary"]["monday_critical_not_active"] == []
     # apex_engines.py is imported by app.py and must participate in reachability.
@@ -21,7 +21,7 @@ def test_consolidation_audit_never_auto_deletes_static_orphans():
     clear_consolidation_audit_cache()
     payload = build_consolidation_audit()
     assert payload["ok"] is True
-    assert payload["schema_version"] == "65.4"
+    assert payload["schema_version"] in {"65.4", "65.5"}
     assert payload["summary"]["automatic_deletions"] == 0
     assert payload["policy"]["automatic_deletions"] is False
     assert all(row["safe_to_delete"] is False for row in payload["candidates"])

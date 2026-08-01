@@ -7,7 +7,7 @@ def test_dependency_map_is_healthy_and_critical_path_active():
     payload = build_dependency_map()
     assert payload["ok"] is True
     assert payload["status"] == "HEALTHY"
-    assert payload["schema_version"] in {"65.3", "65.4"}
+    assert payload["schema_version"] in {"65.3", "65.4", "65.5"}
     assert payload["summary"]["monday_critical_missing"] == []
     assert payload["summary"]["monday_critical_not_active"] == []
     assert payload["summary"]["engine_modules"] >= 300
