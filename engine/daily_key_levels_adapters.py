@@ -97,12 +97,18 @@ class CanonicalMarketDataAdapter:
         self._intraday = list(intraday_1m_bars or [])
         self._overnight = list(overnight_bars or [])
         self._es_daily = list(es_daily_bars or [])
-        self._spot = spot
-        self._straddle = straddle
-        self._iv = iv
-        self._ttcf = time_to_close_frac
-        self._atr = atr_val
-        self._adr = adr_val
+        # Normalize every optional numeric input at the adapter boundary.
+        # Upstream provider orchestration legitimately uses ``None`` when a feed
+        # is unavailable (especially on closed/weekend sessions), while the
+        # Daily Key Levels core uses FEED_REQUIRED as its sole missing-value
+        # sentinel. Allowing raw None through makes ``present(None)`` true and
+        # can trigger arithmetic TypeErrors in expected-move construction.
+        self._spot = _f(spot)
+        self._straddle = _f(straddle)
+        self._iv = _f(iv)
+        self._ttcf = _f(time_to_close_frac)
+        self._atr = _f(atr_val)
+        self._adr = _f(adr_val)
 
     def previous_session(self) -> dict:
         # last COMPLETED daily bar (date strictly before today's ET date)
