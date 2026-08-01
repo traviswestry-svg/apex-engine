@@ -106,5 +106,5 @@
     };
   }
 
-  global.ApexAPI = { request, json, get: (url, options) => request(url, Object.assign({}, options || {}, { method: 'GET' })), snapshot };
+  global.ApexAPI = { request, json, get: (url, options) => request(url, Object.assign({}, options || {}, { method: 'GET' })), runtimeHealth: (options) => request('/api/runtime/health', Object.assign({ timeoutMs: 6000, cacheFallback: true }, options || {}, { method: 'GET' })), snapshot };
 })(window);

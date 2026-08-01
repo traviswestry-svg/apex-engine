@@ -4780,3 +4780,35 @@ async function loadInstitutionalState() {
     console.warn('[APEX] institutional state unavailable:', err.message);
   }
 }
+
+// APEX 65.2 — canonical backend runtime health monitor.
+(function () {
+  'use strict';
+  function ensureRuntimeBadge() {
+    let el = document.getElementById('apexRuntimeHealthBadge');
+    if (el) return el;
+    const host = document.querySelector('.topbar, .os-topbar, header, nav');
+    if (!host) return null;
+    el = document.createElement('span');
+    el.id = 'apexRuntimeHealthBadge';
+    el.style.cssText = 'font-family:var(--mono,monospace);font-size:10px;font-weight:800;margin-left:10px;white-space:nowrap;';
+    el.textContent = 'RUNTIME CHECKING';
+    host.appendChild(el);
+    return el;
+  }
+  async function refreshApexRuntimeHealth() {
+    if (!window.ApexAPI) return;
+    const result = await ApexAPI.runtimeHealth({ fallback: null });
+    const d = result.data || {};
+    const state = String(d.status || result.state || 'UNAVAILABLE').toUpperCase();
+    const badge = ensureRuntimeBadge();
+    if (!badge) return;
+    badge.textContent = 'RUNTIME ' + state;
+    badge.title = [...(d.blockers || []), ...(d.warnings || [])].join(' · ');
+    const colors = { HEALTHY: 'var(--green)', DEGRADED: 'var(--amber)', STALE: 'var(--amber)', FAILED: 'var(--red)', UNAVAILABLE: 'var(--red)', DISABLED: 'var(--faint)' };
+    badge.style.color = colors[state] || 'var(--faint)';
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refreshApexRuntimeHealth, { once: true });
+  else refreshApexRuntimeHealth();
+  setInterval(refreshApexRuntimeHealth, 15000);
+})();
