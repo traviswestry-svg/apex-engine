@@ -40,3 +40,15 @@ def test_runtime_route_audit_installed():
 def test_contract_audit_script_parses():
     path = ROOT / 'tools' / 'apex65_contract_audit.py'
     ast.parse(path.read_text(encoding='utf-8'))
+
+
+def test_apex6501_legacy_roadmap_does_not_re_register_canonical_runtime_routes():
+    from pathlib import Path
+    text = Path('engine/institutional_roadmap_routes.py').read_text(encoding='utf-8')
+    assert "@app.get('/api/execution-intelligence/status')" not in text
+    assert "@app.get('/api/trade-management/status')" not in text
+    assert "@app.post('/api/trade-management/evaluate')" not in text
+    # Unique legacy persistence / analysis surfaces are intentionally retained.
+    assert "@app.post('/api/trade-management/record')" in text
+    assert "@app.get('/api/trade-management/history')" in text
+    assert "@app.post('/api/execution-intelligence/evaluate')" in text
