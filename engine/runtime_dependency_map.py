@@ -60,7 +60,10 @@ def _module_name(path: Path) -> Optional[str]:
 
 
 def _python_files() -> List[Path]:
-    files = [ROOT / "app.py", ROOT / "wsgi.py", ROOT / "scanner_worker.py"]
+    # Include all top-level runtime/support Python modules, not only app/wsgi/scanner.
+    # APEX 65.3 under-counted dependencies reachable through apex_engines.py and
+    # other root support modules, which could create false ORPHANED labels.
+    files = [p for p in sorted(ROOT.glob("*.py")) if not p.name.startswith("test_")]
     files.extend(sorted(ENGINE.rglob("*.py")))
     return [p for p in files if p.exists() and "__pycache__" not in p.parts]
 
@@ -276,7 +279,7 @@ def build_dependency_map() -> Dict[str, Any]:
     return {
         "ok": not critical_missing and not critical_not_active,
         "status": "HEALTHY" if not critical_missing and not critical_not_active else "DEGRADED",
-        "schema_version": "65.3",
+        "schema_version": "65.4",
         "architecture_hash": hashlib.sha256(digest_source).hexdigest()[:16],
         "runtime_roots": runtime_roots,
         "summary": {
