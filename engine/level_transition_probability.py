@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from . import historical_level_calibration as hlce
 
-VERSION = "50.6.2.1_LEVEL_TRANSITION_PROBABILITY"
+VERSION = "50.6.2.2_LEVEL_TRANSITION_PROBABILITY"
 SCHEMA_VERSION = 1
 
 
@@ -656,6 +656,31 @@ def _latest_persisted_levels(symbol: str, *, path: Optional[str] = None) -> Tupl
     return out, session_date
 
 
+
+
+def _load_durable_canonical_context(symbol: str = "SPX") -> Optional[Dict[str, Any]]:
+    try:
+        from .canonical_session_context import latest
+        row = latest(symbol)
+        return row if isinstance(row, dict) else None
+    except Exception:
+        return None
+
+def _durable_context_as_brief(row: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(row, Mapping):
+        return None
+    return {
+        "source_session_date": row.get("source_session_date"),
+        "target_session_date": row.get("target_session_date"),
+        "session_date": row.get("source_session_date"),
+        "generated_at": row.get("generated_at"),
+        "session_context": {"state": "WEEKEND", "brief_mode": "NEXT_SESSION_PREP"},
+        "structured": {"spot": row.get("reference_spot"), "levels": row.get("levels") or []},
+        "spot": row.get("reference_spot"),
+        "prev_close": row.get("prev_close"),
+        "durable_context_source": row.get("source"),
+    }
+
 def _load_latest_morning_brief(symbol: str = "SPX") -> Optional[Dict[str, Any]]:
     """Read the latest persisted Morning Brief revision without provider/network I/O.
 
@@ -674,6 +699,12 @@ def _load_latest_morning_brief(symbol: str = "SPX") -> Optional[Dict[str, Any]]:
                    WHERE ticker=? ORDER BY id DESC LIMIT 1""",
                 (_norm(symbol),),
             ).fetchone()
+            if not row:
+                row = conn.execute(
+                    """SELECT payload_json FROM apex49_morning_snapshots
+                       WHERE ticker=? ORDER BY generated_at DESC LIMIT 1""",
+                    (_norm(symbol),),
+                ).fetchone()
         if not row:
             return None
         payload = json.loads(row["payload_json"] or "{}")
@@ -945,11 +976,16 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
         brief = _load_latest_morning_brief(ctx.symbol)
     except Exception:
         brief = None
+    durable_context = _load_durable_canonical_context(ctx.symbol)
+    durable_brief = _durable_context_as_brief(durable_context)
+    canonical_brief = brief or durable_brief
 
     try:
         levels, universe_mode, source_session, target_session = _canonical_level_universe(
-            snapshot, ctx, path=path, brief=brief,
+            snapshot, ctx, path=path, brief=canonical_brief,
         )
+        if levels and brief is None and durable_brief is not None and universe_mode == "NEXT_SESSION_DAILY_KEY_LEVELS":
+            universe_mode = "DURABLE_NEXT_SESSION_LEVELS"
     except Exception as exc:
         return _path_failure(
             "LEVEL_CONTEXT_RESOLUTION_FAILED", stage="LEVEL_UNIVERSE", exc=exc,
@@ -958,8 +994,13 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
 
     try:
         resolved_spot, spot_mode, spot_session, spot_attempts = _resolve_path_spot(
-            snapshot, ctx, levels, explicit_spot=spot, path=path, brief=brief,
+            snapshot, ctx, levels, explicit_spot=spot, path=path, brief=canonical_brief,
         )
+        if resolved_spot is not None and brief is None and durable_brief is not None and spot_mode == "CANONICAL_NEXT_SESSION_SPOT":
+            spot_mode = "DURABLE_CANONICAL_SPOT"
+            for attempt in spot_attempts:
+                if attempt.get("source") == "morning_brief_structured" and attempt.get("status") == "AVAILABLE":
+                    attempt["source"] = "durable_canonical_context"
     except Exception as exc:
         return _path_failure(
             "SPOT_CONTEXT_RESOLUTION_FAILED", stage="SPOT_RESOLUTION", exc=exc,
@@ -990,7 +1031,7 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
             elif _LEVEL_PRIORITY.get(lvl.level_type, 20) > _LEVEL_PRIORITY.get(collapsed[-1].level_type, 20):
                 collapsed[-1] = lvl
         collapsed = collapsed[:max(1, int(max_steps or 6))]
-        context = _path_context(ctx, brief, resolved_spot)
+        context = _path_context(ctx, canonical_brief, resolved_spot)
     except Exception as exc:
         return _path_failure(
             "PATH_ASSEMBLY_FAILED", stage="PATH_ASSEMBLY", exc=exc, direction=norm_direction,
