@@ -596,8 +596,9 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     def pcce_dashboard_page(): return render_template('prediction_confidence_calibration.html')
 
     # APEX 15.4 — Institutional Execution Intelligence.
-    @app.get('/api/execution-intelligence/status')
-    def iei_status(): return jsonify({'ok':True,**iei.status()})
+    # APEX 65.0.1: /api/execution-intelligence/status is owned by the canonical
+    # APEX 24.0 execution-intelligence route module. Keep the legacy roadmap
+    # mutation/history surfaces below, but do not register a competing status route.
     @app.post('/api/execution-intelligence/evaluate')
     def iei_evaluate():
         b=request.get_json(silent=True) or {}; return jsonify({'ok':True,'status':'EVALUATED',**iei.evaluate_trade(side=str(b.get('side') or 'LONG'),quantity=float(b.get('quantity') or 1),planned_entry=float(b.get('planned_entry') or 0),actual_entry=float(b.get('actual_entry') or 0),actual_exit=float(b.get('actual_exit') or 0),opened_at=str(b.get('opened_at') or ''),closed_at=str(b.get('closed_at') or ''),stop_price=b.get('stop_price'),best_price=b.get('best_price'),worst_price=b.get('worst_price'),fees=float(b.get('fees') or 0),context=b.get('context') or {})})
@@ -680,12 +681,9 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
         return jsonify({'ok':True,'status':'EVALUATED',**lmc.confluence(pressure=b.get('pressure'),market_state=b.get('market_state'),playbook=b.get('playbook'),engine_snapshot=b.get('engine_snapshot'))})
 
     # APEX 16.2 — Adaptive Trade Management (advisory only).
-    @app.get('/api/trade-management/status')
-    def adaptive_trade_management_status(): return jsonify({'ok':True,**atm.status()})
-    @app.post('/api/trade-management/evaluate')
-    def adaptive_trade_management_evaluate():
-        b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
-        return jsonify({'ok':True,**atm.evaluate(snapshot)})
+    # APEX 65.0.1: /status and /evaluate are owned by the canonical APEX 26.5
+    # Dynamic Trade Management engine (execution_suite_v26x_routes.py). The
+    # legacy persistence surfaces (/record, /history) remain registered here.
     @app.post('/api/trade-management/record')
     def adaptive_trade_management_record():
         b=request.get_json(silent=True) or {}; snapshot=b.get('snapshot') if isinstance(b.get('snapshot'),dict) else b
