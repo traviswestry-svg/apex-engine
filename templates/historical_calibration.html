@@ -40,6 +40,8 @@
   <div class="card"><small>Historical Samples</small><h2 id="samples">—</h2></div>
   <div class="card"><small>Graded (24h)</small><h2 id="lrate">—</h2></div>
   <div class="card"><small>Storage</small><h2 id="storage">—</h2></div>
+  <div class="card"><small>Level Transitions</small><h2 id="lt_obs">—</h2></div>
+  <div class="card"><small>Targets Reached</small><h2 id="lt_hits">—</h2></div>
 </div>
 
 <div class="card sec">
@@ -78,6 +80,29 @@
     <small>Weakest Level Types</small>
     <table id="weak_tbl"><tr><th>Level</th><th>n</th><th>React%</th><th>Exp</th><th>Stab</th></tr></table>
   </div>
+</div>
+
+<div class="card sec">
+  <div class="row">
+    <div>
+      <small>Level Transition Probability Engine · Current Path</small>
+      <div class="muted" style="margin-top:5px">Acceptance at one institutional level → evidence-based probability of reaching the next distinct level.</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button id="path_up" type="button" style="background:#132339;color:#e7edf7;border:1px solid #3d5675;border-radius:8px;padding:6px 10px">UP PATH</button>
+      <button id="path_down" type="button" style="background:#132339;color:#e7edf7;border:1px solid #3d5675;border-radius:8px;padding:6px 10px">DOWN PATH</button>
+    </div>
+  </div>
+  <table id="path_tbl" style="margin-top:12px">
+    <tr><th>#</th><th>Level</th><th>Price</th><th>From</th><th>P(next)</th><th>n</th><th>Median Time</th><th>95% CI</th><th>Evidence</th></tr>
+  </table>
+</div>
+
+<div class="card sec">
+  <small>Historical Level-to-Level Transitions</small>
+  <table id="transition_tbl">
+    <tr><th>Source</th><th>Event</th><th>Dir</th><th>Target</th><th>n</th><th>Reach%</th><th>Fail%</th><th>Median(s)</th><th>MFE</th><th>MAE</th><th>CI</th><th>Stab</th></tr>
+  </table>
 </div>
 
 <div class="card sec">
@@ -124,6 +149,9 @@ async function load(){
     $('samples').textContent=fmt(s.historical_sample_count);
     $('lrate').textContent=fmt((d.learning_rate||{}).graded_last_24h);
     $('storage').textContent=(db.storage_mb!=null?db.storage_mb+' MB':'—');
+    const lt=s.level_transition_engine||{};
+    $('lt_obs').textContent=fmt(lt.observations);
+    $('lt_hits').textContent=fmt(lt.target_reached);
     const pct=Math.round((s.calibration_progress||0)*100);
     $('progress').style.width=pct+'%'; $('progress_pct').textContent=pct+'%';
 
@@ -146,6 +174,8 @@ async function load(){
     fillTop($('weak_tbl'), d.weakest_levels||[]);
   }catch(e){$('collector').textContent='UNAVAILABLE';$('collector').className='pill bad';}
   loadStats();
+  loadTransitions();
+  loadPath(currentPathDirection);
 }
 
 function fillTop(tbl, rows){
@@ -164,6 +194,39 @@ async function loadStats(){
     `<tr><td>${r.level_type}</td><td>${r.symbol}</td><td>${r.sample_count}</td><td>${fmt(r.reaction_pct)}</td><td>${fmt(r.break_pct)}</td><td>${fmt(r.reversal_pct)}</td><td>${fmt(r.acceptance_pct)}</td><td>${fmt(r.avg_excursion)}</td><td>${fmt(r.avg_failure_distance)}</td><td>${fmt(r.avg_hold_time)}</td><td>${fmt(r.ci_low)}–${fmt(r.ci_high)}</td><td>${fmt(r.stability_score)}</td><td>${fmt(r.expectancy)}</td></tr>`));
   if(!(d.rows||[]).length)tbl.insertAdjacentHTML('beforeend','<tr><td colspan="13" class="muted">No calibrated samples in this segment yet.</td></tr>');
 }
+
+let currentPathDirection='UP';
+function pct(v){return v==null?'—':Number(v).toFixed(1)+'%';}
+async function loadTransitions(){
+  try{
+    const d=await j('/api/level-calibration/transitions/statistics');
+    const tbl=$('transition_tbl');
+    tbl.innerHTML='<tr><th>Source</th><th>Event</th><th>Dir</th><th>Target</th><th>n</th><th>Reach%</th><th>Fail%</th><th>Median(s)</th><th>MFE</th><th>MAE</th><th>CI</th><th>Stab</th></tr>';
+    const rows=(d.rows||[]).filter(r=>r.segment_key==='ALL'&&r.segment_value==='ALL').slice(0,30);
+    rows.forEach(r=>tbl.insertAdjacentHTML('beforeend',
+      `<tr><td>${r.source_level_type}</td><td>${r.source_event}</td><td>${r.direction}</td><td>${r.target_level_type}</td><td>${r.sample_count}</td><td>${pct(r.target_reach_pct)}</td><td>${pct(r.failure_pct)}</td><td>${fmt(r.median_seconds_to_target)}</td><td>${fmt(r.avg_mfe)}</td><td>${fmt(r.avg_mae)}</td><td>${fmt(r.ci_low)}–${fmt(r.ci_high)}</td><td>${fmt(r.stability_score)}</td></tr>`));
+    if(!rows.length)tbl.insertAdjacentHTML('beforeend','<tr><td colspan="12" class="muted">Learning has started. Transition probabilities will appear after graded level-to-level observations accumulate.</td></tr>');
+  }catch(e){}
+}
+async function loadPath(direction){
+  currentPathDirection=direction||'UP';
+  try{
+    const d=await j('/api/level-calibration/transitions/path?direction='+encodeURIComponent(currentPathDirection)+'&max_steps=6');
+    const tbl=$('path_tbl');
+    tbl.innerHTML='<tr><th>#</th><th>Level</th><th>Price</th><th>From</th><th>P(next)</th><th>n</th><th>Median Time</th><th>95% CI</th><th>Evidence</th></tr>';
+    (d.steps||[]).forEach(step=>{
+      const tr=step.transition||{};
+      const cond=step.conditional_on;
+      const prob=tr.probability_pct==null?'—':Number(tr.probability_pct).toFixed(1)+'%';
+      const ev=tr.source|| (cond?'INSUFFICIENT_HISTORY':'NEXT_VISIBLE_LEVEL');
+      tbl.insertAdjacentHTML('beforeend',`<tr><td>${step.ordinal}</td><td>${step.level_type}</td><td>${Number(step.price).toFixed(2)}</td><td>${cond?cond.source_level_type:'SPOT'}</td><td>${prob}</td><td>${fmt(tr.sample_count)}</td><td>${tr.median_seconds_to_target==null?'—':tr.median_seconds_to_target+' s'}</td><td>${tr.ci_low==null?'—':tr.ci_low+'–'+tr.ci_high}</td><td>${ev}</td></tr>`);
+    });
+    if(!(d.steps||[]).length)tbl.insertAdjacentHTML('beforeend','<tr><td colspan="9" class="muted">No distinct institutional levels are currently available in this direction.</td></tr>');
+  }catch(e){}
+}
+$('path_up').addEventListener('click',()=>loadPath('UP'));
+$('path_down').addEventListener('click',()=>loadPath('DOWN'));
+
 $('seg').addEventListener('change',loadStats);
 load(); setInterval(load, 20000);
 </script>
