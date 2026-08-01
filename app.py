@@ -1299,6 +1299,14 @@ except Exception as _consolidation_audit_err:
     APEX65_CONSOLIDATION_AUDIT_AVAILABLE = False
     print(f"APEX 65.5 consolidation audit import unavailable: {_consolidation_audit_err}", flush=True)
 
+try:
+    from engine.monday_readiness import build_monday_readiness as apex65_build_monday_readiness
+    APEX65_MONDAY_READINESS_AVAILABLE = True
+except Exception as _monday_readiness_err:
+    apex65_build_monday_readiness = None
+    APEX65_MONDAY_READINESS_AVAILABLE = False
+    print(f"APEX 65.6 Monday readiness import unavailable: {_monday_readiness_err}", flush=True)
+
 app = Flask(__name__)
 
 # ── APEX access control — application-wide shared-secret auth ────────────────
@@ -13496,21 +13504,18 @@ def api_apex65_route_audit():
     return jsonify(_apex65_route_audit())
 
 
-@app.get("/api/runtime/health")
-def api_apex65_runtime_health():
-    """APEX 65.2 canonical runtime health without triggering engine work."""
+def _apex65_runtime_health_payload():
+    """Build canonical runtime health from existing telemetry only."""
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
     if not APEX65_RUNTIME_HEALTH_AVAILABLE or apex65_build_runtime_health is None:
-        return jsonify({
+        return {
             "ok": False, "status": "FAILED", "version": VERSION,
             "generated_at": generated_at, "runtime_ready": False,
             "tradeable_runtime": False, "tradeability_reason": "RUNTIME_BLOCKED",
-            "blockers": ["Runtime Health Aggregator"],
-            "warnings": [],
-            "components": [],
-            "error": "Runtime health aggregator unavailable",
-        }), 503
+            "blockers": ["Runtime Health Aggregator"], "warnings": [],
+            "components": [], "error": "Runtime health aggregator unavailable",
+        }
 
     with STATE_LOCK:
         scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
@@ -13552,6 +13557,13 @@ def api_apex65_runtime_health():
         }
         for row in engine_rows
     ]
+    return payload
+
+
+@app.get("/api/runtime/health")
+def api_apex65_runtime_health():
+    """APEX 65.2 canonical runtime health without triggering engine work."""
+    payload = _apex65_runtime_health_payload()
     return jsonify(payload)
 
 
@@ -13594,6 +13606,47 @@ def api_apex65_runtime_consolidation():
         return jsonify({
             "ok": False, "status": "FAILED", "schema_version": "65.5",
             "version": VERSION, "error": type(exc).__name__,
+        }), 500
+
+
+@app.get("/api/runtime/monday-readiness")
+def api_apex65_monday_readiness():
+    """APEX 65.6 side-effect-free Monday critical-path preflight."""
+    if not APEX65_MONDAY_READINESS_AVAILABLE or apex65_build_monday_readiness is None:
+        return jsonify({
+            "ok": False, "status": "BLOCKED", "schema_version": "65.6",
+            "version": VERSION, "monday_ready": False,
+            "blockers": [{"step": "readiness_aggregator", "detail": "Monday readiness aggregator unavailable"}],
+        }), 503
+    try:
+        runtime_health = _apex65_runtime_health_payload()
+        dependency_map = dict(apex65_build_dependency_map()) if APEX65_DEPENDENCY_MAP_AVAILABLE and apex65_build_dependency_map else {
+            "summary": {"monday_critical_missing": ["dependency_map_unavailable"], "monday_critical_not_active": []}
+        }
+        route_methods = set()
+        for rule in app.url_map.iter_rules():
+            path = str(rule.rule)
+            for method in rule.methods:
+                if method not in {"HEAD", "OPTIONS"}:
+                    route_methods.add((method, path))
+        broker_fields = (
+            "ETRADE_CONSUMER_KEY", "ETRADE_CONSUMER_SECRET", "ETRADE_OAUTH_TOKEN",
+            "ETRADE_OAUTH_TOKEN_SECRET", "ETRADE_ACCOUNT_ID_KEY",
+        )
+        payload = apex65_build_monday_readiness(
+            version=VERSION, runtime_health=runtime_health, dependency_map=dependency_map,
+            registered_routes=route_methods,
+            tv_webhook_secret_configured=bool(os.getenv("TV_WEBHOOK_SECRET") or os.getenv("TRADINGVIEW_SECRET")),
+            broker_credentials_configured=all(bool(os.getenv(k)) for k in broker_fields),
+            live_trading_enabled=os.getenv("ETRADE_ENABLE_TRADING", "false").strip().lower() == "true",
+        )
+        payload["stabilization_build"] = "65.6"
+        return jsonify(payload), (200 if payload.get("monday_ready") else 503)
+    except Exception as exc:
+        app.logger.exception("APEX 65.6 Monday readiness failed")
+        return jsonify({
+            "ok": False, "status": "BLOCKED", "schema_version": "65.6",
+            "version": VERSION, "monday_ready": False, "error": type(exc).__name__,
         }), 500
 
 
