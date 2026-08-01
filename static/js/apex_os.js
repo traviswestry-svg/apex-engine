@@ -1552,32 +1552,22 @@ function initRunScanButtons() {
      - Shows "Engines warming up" if no stale data available
    ──────────────────────────────────────────────────────────────────────── */
 async function fetchInstitutionalOS() {
-  // Fix 6: heatmap=0 — heatmap loads in its own lazy panel
+  // APEX 65.1: shared timeout/error/correlation behavior via ApexAPI.
   const url = '/api/institutional_os?ticker=' + encodeURIComponent(activeTicker) + '&heatmap=0';
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort('institutional_os_timeout'), 5000);  // cache-only route should answer quickly
-
-  try {
-    const r = await fetch(url, { cache: 'no-store', signal: controller.signal });
-    clearTimeout(timer);
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
-    if (!data.ok) throw new Error(data.error || 'API error');
-    // A cold cache is a valid warming state, not renderable institutional data.
-    if ((data.status === 'warming' || data.status === 'refresh_in_progress') &&
-        !data.engine_mode && !data.institutional_intelligence && !data.decision) {
-      return { data: osData || null, timedOut: false, stale: true, warming: true };
+  if (window.ApexAPI) {
+    const result = await ApexAPI.get(url, { timeoutMs: 5000, fallback: osData || null, cacheFallback: true });
+    const data = result.data;
+    if (data && data.ok === false && !result.stale) {
+      console.warn('[APEX] /api/institutional_os API error:', data.error || data.status || 'unknown');
+      return { data: osData || null, timedOut: result.state === 'UNAVAILABLE', stale: !!osData, warming: false, requestId: result.requestId };
     }
-    return { data, timedOut: false, stale: !!data.stale, warming: false };
-  } catch (err) {
-    clearTimeout(timer);
-    const wasTimeout = err.name === 'AbortError';
-    if (wasTimeout) console.warn('[APEX] /api/institutional_os timed out after 5s');
-    else            console.warn('[APEX] /api/institutional_os failed:', err.message);
-    // Fix 4: return stale data if available, otherwise signal warming-up state
-    if (osData) return { data: osData, timedOut: wasTimeout, stale: true };
-    return { data: null, timedOut: wasTimeout, stale: false };
+    if (data && (data.status === 'warming' || data.status === 'refresh_in_progress') &&
+        !data.engine_mode && !data.institutional_intelligence && !data.decision) {
+      return { data: osData || null, timedOut: false, stale: true, warming: true, requestId: result.requestId };
+    }
+    return { data: data || null, timedOut: result.state === 'UNAVAILABLE', stale: result.stale || !!(data && data.stale), warming: false, requestId: result.requestId };
   }
+  return { data: osData || null, timedOut: false, stale: !!osData, warming: !osData };
 }
 
 async function loadOS() {
@@ -3067,12 +3057,9 @@ function renderMarketStatusBanner(status) {
 }
 
 async function loadMarketStatus() {
-  try {
-    const r = await fetch('/api/market_status', { cache: 'no-store' });
-    if (!r.ok) return;
-    const data = await r.json();
-    if (data.ok) renderMarketStatusBanner(data);
-  } catch (_) {}
+  const result = window.ApexAPI ? await ApexAPI.get('/api/market_status', { timeoutMs: 6000, fallback: null }) : null;
+  const data = result && result.data;
+  if (data && data.ok) renderMarketStatusBanner(data);
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -4135,10 +4122,9 @@ async function loadEngineHealth() {
   const el = $('engineHealthPanel');
   if (!el) return;
   try {
-    const r = await fetch('/api/engine_health', { cache: 'no-store' });
-    if (!r.ok) return;
-    const h = await r.json();
-    if (!h.ok) return;
+    const result = window.ApexAPI ? await ApexAPI.get('/api/engine_health', { timeoutMs: 8000, fallback: null }) : null;
+    const h = result && result.data;
+    if (!h || !h.ok) return;
 
     const statusColor = s => s === 'GREEN' ? 'var(--green)' : s === 'YELLOW' ? 'var(--amber)' : 'var(--red)';
     const statusDot   = s => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${statusColor(s)};margin-right:5px;flex-shrink:0"></span>`;
@@ -4191,11 +4177,8 @@ async function loadMissionControl() {
   mcLoading = true;
   try {
     const url = '/api/mission_control?ticker=' + encodeURIComponent(activeTicker);
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort('mission_control_timeout'), 8000);
-    const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
-    clearTimeout(t);
-    const d = await r.json();
+    const result = window.ApexAPI ? await ApexAPI.get(url, { timeoutMs: 8000, fallback: mcData || null, cacheFallback: true }) : null;
+    const d = result && result.data;
     if (!d || !d.ok || d.available === false) {
       renderMissionEmpty(d && d.reason ? d.reason : 'Waiting for first scan cycle…');
       return;
