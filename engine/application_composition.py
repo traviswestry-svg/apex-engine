@@ -7,7 +7,7 @@ extracted incrementally from app.py.
 from __future__ import annotations
 from typing import Any, Dict
 
-VERSION = "65.6"
+VERSION = "65.6.1"
 
 
 def create_app():
@@ -16,7 +16,7 @@ def create_app():
     # factory so future extraction does not require a deployment-command change.
     from app import app
     app.config.setdefault("APEX_COMPOSITION_BOUNDARY", "engine.application_composition:create_app")
-    app.config.setdefault("APEX_STABILIZATION_BUILD", "65.6")
+    app.config.setdefault("APEX_STABILIZATION_BUILD", "65.6.1")
     return app
 
 
