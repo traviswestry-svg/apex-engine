@@ -72,6 +72,7 @@
   <div class="nav-sep"></div>
   <a href="/api/active_trade_director" target="_blank">API</a>
 </nav>
+<div id="apexFrontendHealth" style="max-width:1180px;margin:8px auto 0;padding:0 18px;font-size:11px;color:#91a4bd;display:flex;gap:10px;flex-wrap:wrap"><span>Frontend API: <b id="apexApiState">INITIALIZING</b></span><span>Failed/Degraded: <b id="apexApiFailures">0</b></span><span>Last Request: <code id="apexApiRequestId">—</code></span></div>
 <div class="wrap"><div id="app" class="panel">Loading Active Trade Director…</div>
 <div id="sessionAllocation" class="session-allocation-panel"></div>
 <div id="mobileMomentumAlerts" class="mobile-alert-panel"></div>
@@ -125,6 +126,7 @@
 <div id="positionStrip" class="position-strip"></div>
 <div id="postTradeReview" class="review-panel"></div>
 </div>
+<script src="{{ url_for('static', filename='js/apex_api.js') }}?v={{ asset_version or version }}"></script>
 <script>
 const TICKER = new URLSearchParams(location.search).get('ticker') || 'SPX';
 let LAST_ARCHIVE_ID = '';
@@ -612,32 +614,34 @@ function executionPlan(d){
 async function loadDirector(){
   const el=document.getElementById('app');
   try{
-    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, chg, pa, ec, ie, pc, so, oi, ed] = await Promise.all([
-      fetch(`/api/active_trade_director?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()),
-      fetch(`/api/active_trade_director/timeline?ticker=${TICKER}`,{cache:'no-store'}).then(r=>r.json()).catch(()=>({timeline:[]})),
-      fetch('/api/position',{cache:'no-store'}).then(r=>r.json()).catch(()=>({status:'NO_POSITION'})),
-      fetch('/api/position/session-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/market-memory',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/cross-asset-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/multi-timeframe-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/institutional-flow-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/institutional-decision-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/institutional-decision-engine',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/trade-lifecycle',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/institutional-learning',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/replay-laboratory',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/policy-governance',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/shadow-validation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/command-center/scorecards',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/change-control/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/portfolio/allocation',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/execution-certification/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/evidence/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/performance-calibration/status',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/strategy-orchestration',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/options-intelligence',{cache:'no-store'}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/position/execution-desk',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}))
+    const apiGet=(url,fallback)=>ApexAPI.get(url,{fallback:fallback,cacheFallback:true});
+    const results = await Promise.all([
+      apiGet(`/api/active_trade_director?ticker=${TICKER}`,{}),
+      apiGet(`/api/active_trade_director/timeline?ticker=${TICKER}`,{timeline:[]}),
+      apiGet('/api/position',{status:'NO_POSITION'}),
+      apiGet('/api/position/session-intelligence',{}),
+      apiGet('/api/position/market-memory',{}),
+      apiGet('/api/position/cross-asset-intelligence',{}),
+      apiGet('/api/position/multi-timeframe-intelligence',{}),
+      apiGet('/api/position/institutional-flow-intelligence',{}),
+      apiGet('/api/position/institutional-decision-intelligence',{}),
+      apiGet('/api/position/institutional-decision-engine',{}),
+      apiGet('/api/position/trade-lifecycle',{}),
+      apiGet('/api/position/institutional-learning',{}),
+      apiGet('/api/position/replay-laboratory',{}),
+      apiGet('/api/position/policy-governance',{}),
+      apiGet('/api/position/shadow-validation',{}),
+      apiGet('/api/command-center/scorecards',{}),
+      apiGet('/api/change-control/status',{}),
+      apiGet('/api/portfolio/allocation',{}),
+      apiGet('/api/execution-certification/status',{}),
+      apiGet('/api/evidence/status',{}),
+      apiGet('/api/performance-calibration/status',{}),
+      apiGet('/api/position/strategy-orchestration',{}),
+      apiGet('/api/position/options-intelligence',{}),
+      apiGet('/api/position/execution-desk',{})
     ]);
+    const [dr, tlr, pm, sm, mm, ca, mt, fi, di, de, tl, il, rl, pg, sv, cc, chg, pa, ec, ie, pc, so, oi, ed] = results.map(x=>x.data||{});
     const d=dr||{}; CURRENT_DIRECTOR=d; const fa=d.flow_acceleration||{}; const pos=d.position||{}; const conf=d.conflict||{};
     const timeline=(tlr&&tlr.timeline)||[];
     renderSessionIntelligence(sm);
@@ -823,6 +827,15 @@ async function loadInstitutionalIntent(){
 
 loadInstitutionalIntent();
 setInterval(loadInstitutionalIntent,30000);
+</script>
+<script>
+window.addEventListener('apex:api-result',function(){
+  const h=ApexAPI.snapshot();
+  const st=document.getElementById('apexApiState'), f=document.getElementById('apexApiFailures'), r=document.getElementById('apexApiRequestId');
+  if(st){st.textContent=h.status;st.style.color=h.status==='HEALTHY'?'var(--good)':'var(--warn)';}
+  if(f)f.textContent=String(h.degraded);
+  if(r)r.textContent=h.latestRequestId||'—';
+});
 </script>
 <script src="{{ url_for('static', filename='js/trader_workflow.js') }}?v={{ asset_version or version }}"></script>
 </body></html>
