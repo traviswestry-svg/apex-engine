@@ -11079,6 +11079,25 @@ def api_morning_brief():
                 "ok": False, "error": f"{type(context_store_exc).__name__}: {context_store_exc}"
             }
             print(f"[APEX50.6.2.2] canonical context persistence unavailable: {type(context_store_exc).__name__}: {context_store_exc}", flush=True)
+        # APEX 50.6.4.1: resolve LTPE from the exact Morning Brief payload so the
+        # dashboard cannot mix a different live/session snapshot into next levels.
+        # This also removes the fragile second browser request from the critical UI path.
+        try:
+            from engine.level_transition_probability import current_transition_path
+            payload["next_level_path"] = current_transition_path(
+                payload, direction="UP", max_steps=6,
+            )
+            payload["next_level_path"]["integration_mode"] = "MORNING_BRIEF_CANONICAL"
+        except Exception as path_exc:
+            payload["next_level_path"] = {
+                "ok": False,
+                "error": "LTPE_EMBEDDED_PATH_FAILURE",
+                "exception_type": type(path_exc).__name__,
+                "steps": [],
+                "integration_mode": "MORNING_BRIEF_CANONICAL",
+                "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+            }
+
         try:
             from engine.evening_recap import save_morning_snapshot
             payload["forecast_archive"] = save_morning_snapshot(payload, ticker=ticker)
