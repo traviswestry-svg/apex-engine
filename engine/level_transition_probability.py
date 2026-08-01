@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from . import historical_level_calibration as hlce
 
-VERSION = "50.6.2_LEVEL_TRANSITION_PROBABILITY"
+VERSION = "50.6.2.1_LEVEL_TRANSITION_PROBABILITY"
 SCHEMA_VERSION = 1
 
 
@@ -589,50 +589,65 @@ def next_level_probability(symbol: str, source_level_type: str, source_event: st
 
 
 def _latest_persisted_spot(symbol: str, *, path: Optional[str] = None) -> Tuple[Optional[float], Optional[str]]:
-    """Return the latest HLCE-persisted session spot without mutating state."""
-    initialize_transition_store(path)
-    with hlce._connect(path) as conn:
-        row = conn.execute(
-            """SELECT session_date, spot_price
-               FROM daily_levels
-               WHERE symbol=? AND spot_price IS NOT NULL
-               ORDER BY session_date DESC, registered_at DESC
-               LIMIT 1""",
-            (_norm(symbol),),
-        ).fetchone()
+    """Return the latest HLCE-persisted session spot without mutating state.
+
+    Production databases may lag a schema migration.  A stale/missing HLCE
+    table must not take down the LTPE path endpoint; callers can continue to the
+    next canonical source.
+    """
+    try:
+        initialize_transition_store(path)
+        with hlce._connect(path) as conn:
+            row = conn.execute(
+                """SELECT session_date, spot_price
+                   FROM daily_levels
+                   WHERE symbol=? AND spot_price IS NOT NULL
+                   ORDER BY session_date DESC, registered_at DESC
+                   LIMIT 1""",
+                (_norm(symbol),),
+            ).fetchone()
+    except Exception:
+        return None, None
     if not row:
         return None, None
     try:
         return float(row["spot_price"]), row["session_date"]
-    except (TypeError, ValueError):
-        return None, row["session_date"]
+    except (TypeError, ValueError, KeyError, IndexError):
+        return None, row["session_date"] if "session_date" in row.keys() else None
 
 
 def _latest_persisted_levels(symbol: str, *, path: Optional[str] = None) -> Tuple[List[Any], Optional[str]]:
-    """Return latest HLCE level set as a read-only fallback universe."""
-    initialize_transition_store(path)
-    with hlce._connect(path) as conn:
-        row = conn.execute(
-            "SELECT MAX(session_date) AS session_date FROM daily_levels WHERE symbol=?",
-            (_norm(symbol),),
-        ).fetchone()
-        session_date = row["session_date"] if row else None
-        if not session_date:
-            return [], None
-        rows = conn.execute(
-            """SELECT level_type, price, source, confidence
-               FROM daily_levels
-               WHERE symbol=? AND session_date=?
-               ORDER BY price""",
-            (_norm(symbol), session_date),
-        ).fetchall()
+    """Return latest HLCE level set as a read-only fallback universe.
+
+    Fail-soft by design: persistence/schema defects are diagnostics, not an HTML
+    500 from a read-only path request.
+    """
+    try:
+        initialize_transition_store(path)
+        with hlce._connect(path) as conn:
+            row = conn.execute(
+                "SELECT MAX(session_date) AS session_date FROM daily_levels WHERE symbol=?",
+                (_norm(symbol),),
+            ).fetchone()
+            session_date = row["session_date"] if row else None
+            if not session_date:
+                return [], None
+            rows = conn.execute(
+                """SELECT level_type, price, source, confidence
+                   FROM daily_levels
+                   WHERE symbol=? AND session_date=?
+                   ORDER BY price""",
+                (_norm(symbol), session_date),
+            ).fetchall()
+    except Exception:
+        return [], None
     out: List[Any] = []
     for row in rows:
         try:
             price = float(row["price"])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, KeyError, IndexError):
             continue
-        if price <= 0:
+        if not math.isfinite(price) or price <= 0:
             continue
         out.append(hlce.ExtractedLevel(
             level_type=str(row["level_type"]), price=price,
@@ -883,92 +898,155 @@ def _path_context(ctx: Any, brief: Optional[Mapping[str, Any]], spot: float) -> 
     }
 
 
+def _path_failure(error: str, *, stage: str, exc: Optional[BaseException] = None,
+                  direction: Optional[str] = None, spot_mode: str = "UNAVAILABLE",
+                  spot_session: Optional[str] = None, attempts: Optional[List[Dict[str, Any]]] = None,
+                  universe_mode: str = "UNAVAILABLE", source_session: Optional[str] = None,
+                  target_session: Optional[str] = None) -> Dict[str, Any]:
+    """Structured fail-closed response for read-only LTPE path resolution."""
+    payload: Dict[str, Any] = {
+        "ok": False, "version": VERSION, "error": error, "failure_stage": stage,
+        "steps": [], "direction": _norm(direction or "UP"),
+        "spot_mode": spot_mode, "spot_session": spot_session,
+        "spot_resolution_attempts": attempts or [],
+        "level_universe_mode": universe_mode,
+        "source_session_date": source_session, "target_session_date": target_session,
+        "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+    }
+    if exc is not None:
+        payload["exception_type"] = type(exc).__name__
+    return payload
+
+
 def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] = None,
                             direction: Optional[str] = None, max_steps: int = 6,
                             spot: Optional[float] = None) -> Dict[str, Any]:
     """Build an evidence-backed path through canonical institutional levels.
 
-    The resolver is side-effect free: fallback spot/levels are read-model context
-    only and are never written as LTPE observations or statistics.
+    50.6.2.1 makes every read-model dependency independently fail-soft.  No
+    resolver/database/statistics defect may escape as Flask's HTML 500 page.
     """
-    initialize_transition_store(path)
-    ctx = hlce.extract_context(snapshot)
-    brief = _load_latest_morning_brief(ctx.symbol)
-    levels, universe_mode, source_session, target_session = _canonical_level_universe(
-        snapshot, ctx, path=path, brief=brief,
-    )
-    resolved_spot, spot_mode, spot_session, spot_attempts = _resolve_path_spot(
-        snapshot, ctx, levels, explicit_spot=spot, path=path, brief=brief,
-    )
+    norm_direction = _norm(direction or "UP")
+    if norm_direction not in {"UP", "DOWN"}:
+        return _path_failure("INVALID_DIRECTION", stage="INPUT", direction=norm_direction)
+    try:
+        initialize_transition_store(path)
+    except Exception as exc:
+        return _path_failure("TRANSITION_STORE_UNAVAILABLE", stage="STORE_INIT", exc=exc, direction=norm_direction)
+
+    try:
+        ctx = hlce.extract_context(snapshot)
+    except Exception as exc:
+        return _path_failure("CONTEXT_EXTRACTION_FAILED", stage="SNAPSHOT_CONTEXT", exc=exc, direction=norm_direction)
+
+    # Morning Brief is optional.  The loader itself is fail-soft; this outer
+    # boundary protects against future loader changes.
+    try:
+        brief = _load_latest_morning_brief(ctx.symbol)
+    except Exception:
+        brief = None
+
+    try:
+        levels, universe_mode, source_session, target_session = _canonical_level_universe(
+            snapshot, ctx, path=path, brief=brief,
+        )
+    except Exception as exc:
+        return _path_failure(
+            "LEVEL_CONTEXT_RESOLUTION_FAILED", stage="LEVEL_UNIVERSE", exc=exc,
+            direction=norm_direction,
+        )
+
+    try:
+        resolved_spot, spot_mode, spot_session, spot_attempts = _resolve_path_spot(
+            snapshot, ctx, levels, explicit_spot=spot, path=path, brief=brief,
+        )
+    except Exception as exc:
+        return _path_failure(
+            "SPOT_CONTEXT_RESOLUTION_FAILED", stage="SPOT_RESOLUTION", exc=exc,
+            direction=norm_direction, universe_mode=universe_mode,
+            source_session=source_session, target_session=target_session,
+        )
     if resolved_spot is None:
-        return {
-            "ok": False, "version": VERSION, "error": "NO_SPOT", "steps": [],
-            "spot_mode": spot_mode, "spot_session": spot_session,
-            "spot_resolution_attempts": spot_attempts,
-            "level_universe_mode": universe_mode,
-            "source_session_date": source_session,
-            "target_session_date": target_session,
-        }
-    direction = _norm(direction or "UP")
-    if direction not in {"UP", "DOWN"}:
-        return {"ok": False, "version": VERSION, "error": "INVALID_DIRECTION", "steps": []}
+        return _path_failure(
+            "NO_SPOT", stage="SPOT_RESOLUTION", direction=norm_direction,
+            spot_mode=spot_mode, spot_session=spot_session, attempts=spot_attempts,
+            universe_mode=universe_mode, source_session=source_session, target_session=target_session,
+        )
 
-    ordered = sorted(levels, key=lambda x: x.price, reverse=(direction == "DOWN"))
-    if direction == "UP":
-        ordered = [x for x in ordered if x.price > resolved_spot + _min_gap(resolved_spot)]
-    else:
-        ordered = [x for x in ordered if x.price < resolved_spot - _min_gap(resolved_spot)]
+    try:
+        ordered = sorted(levels, key=lambda x: float(x.price), reverse=(norm_direction == "DOWN"))
+        if norm_direction == "UP":
+            ordered = [x for x in ordered if float(x.price) > resolved_spot + _min_gap(resolved_spot)]
+        else:
+            ordered = [x for x in ordered if float(x.price) < resolved_spot - _min_gap(resolved_spot)]
 
-    collapsed: List[Any] = []
-    for lvl in ordered:
-        if not collapsed or abs(lvl.price - collapsed[-1].price) > _cluster_band(lvl.price):
-            collapsed.append(lvl)
-        elif _LEVEL_PRIORITY.get(lvl.level_type, 20) > _LEVEL_PRIORITY.get(collapsed[-1].level_type, 20):
-            collapsed[-1] = lvl
-    collapsed = collapsed[:max(1, max_steps)]
+        collapsed: List[Any] = []
+        for lvl in ordered:
+            price = float(lvl.price)
+            if not math.isfinite(price) or price <= 0:
+                continue
+            if not collapsed or abs(price - float(collapsed[-1].price)) > _cluster_band(price):
+                collapsed.append(lvl)
+            elif _LEVEL_PRIORITY.get(lvl.level_type, 20) > _LEVEL_PRIORITY.get(collapsed[-1].level_type, 20):
+                collapsed[-1] = lvl
+        collapsed = collapsed[:max(1, int(max_steps or 6))]
+        context = _path_context(ctx, brief, resolved_spot)
+    except Exception as exc:
+        return _path_failure(
+            "PATH_ASSEMBLY_FAILED", stage="PATH_ASSEMBLY", exc=exc, direction=norm_direction,
+            spot_mode=spot_mode, spot_session=spot_session, attempts=spot_attempts,
+            universe_mode=universe_mode, source_session=source_session, target_session=target_session,
+        )
 
     steps: List[Dict[str, Any]] = []
     prior_type: Optional[str] = None
     prior_price = resolved_spot
-    context = _path_context(ctx, brief, resolved_spot)
+    evidence_warnings: List[Dict[str, Any]] = []
     for i, lvl in enumerate(collapsed):
-        if prior_type is None:
-            evidence = None
-        else:
-            evidence = next_level_probability(
-                ctx.symbol, prior_type, "ACCEPTED", direction,
-                target_level_type=lvl.level_type, context=context, path=path,
-            )
+        evidence = None
+        if prior_type is not None:
+            try:
+                evidence = next_level_probability(
+                    ctx.symbol, prior_type, "ACCEPTED", norm_direction,
+                    target_level_type=lvl.level_type, context=context, path=path,
+                )
+            except Exception as exc:
+                # Statistics availability cannot take down the structural path.
+                evidence = {
+                    "ok": False, "version": VERSION, "source": "STATISTICS_UNAVAILABLE",
+                    "probability": None, "sample_count": 0,
+                    "source_level_type": prior_type, "source_event": "ACCEPTED",
+                    "direction": norm_direction, "target_level_type": lvl.level_type,
+                    "exception_type": type(exc).__name__,
+                    "message": "Transition statistics were unavailable; probability was not fabricated.",
+                }
+                evidence_warnings.append({
+                    "stage": "TRANSITION_STATISTICS", "source_level_type": prior_type,
+                    "target_level_type": lvl.level_type, "exception_type": type(exc).__name__,
+                })
+        price = float(lvl.price)
         steps.append({
-            "ordinal": i + 1,
-            "level_type": lvl.level_type,
-            "price": lvl.price,
+            "ordinal": i + 1, "level_type": lvl.level_type, "price": price,
             "source": getattr(lvl, "source", None),
-            "distance_from_prior": round(abs(lvl.price - prior_price), 4),
+            "distance_from_prior": round(abs(price - prior_price), 4),
             "conditional_on": None if prior_type is None else {
-                "source_level_type": prior_type, "source_event": "ACCEPTED", "direction": direction,
+                "source_level_type": prior_type, "source_event": "ACCEPTED", "direction": norm_direction,
             },
             "transition": evidence,
         })
-        prior_type, prior_price = lvl.level_type, lvl.price
+        prior_type, prior_price = lvl.level_type, price
+
     return {
-        "ok": True,
-        "version": VERSION,
-        "symbol": ctx.symbol,
-        "spot": resolved_spot,
-        "spot_mode": spot_mode,
-        "spot_session": spot_session,
-        "spot_resolution_attempts": spot_attempts,
-        "spot_is_observation_input": False,
-        "direction": direction,
-        "context": context,
-        "steps": steps,
-        "level_universe_mode": universe_mode,
-        "level_universe_count": len(levels),
-        "source_session_date": source_session,
-        "target_session_date": target_session,
+        "ok": True, "version": VERSION, "symbol": ctx.symbol, "spot": resolved_spot,
+        "spot_mode": spot_mode, "spot_session": spot_session,
+        "spot_resolution_attempts": spot_attempts, "spot_is_observation_input": False,
+        "direction": norm_direction, "context": context, "steps": steps,
+        "level_universe_mode": universe_mode, "level_universe_count": len(levels),
+        "source_session_date": source_session, "target_session_date": target_session,
         "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+        "resolution_warnings": evidence_warnings,
     }
+
 
 def transition_history(*, symbol: Optional[str] = None, source_level_type: Optional[str] = None,
                        limit: int = 200, path: Optional[str] = None) -> Dict[str, Any]:

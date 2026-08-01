@@ -153,12 +153,29 @@ def register_calibration_routes(app, last_result_provider=None):
     def level_transition_path():
         from .level_transition_probability import current_transition_path
         explicit_spot = request.args.get("spot", type=float)
-        return jsonify(current_transition_path(
-            _provider(), path=service.path,
-            direction=request.args.get("direction", "UP"),
-            max_steps=request.args.get("max_steps", 6, type=int),
-            spot=explicit_spot,
-        ))
+        direction = request.args.get("direction", "UP")
+        max_steps = request.args.get("max_steps", 6, type=int)
+        try:
+            payload = current_transition_path(
+                _provider(), path=service.path, direction=direction,
+                max_steps=max_steps, spot=explicit_spot,
+            )
+        except Exception as exc:
+            # Last-resort HTTP boundary: read-only LTPE diagnostics must never
+            # fall through to Flask's HTML 500 response.
+            payload = {
+                "ok": False,
+                "version": "50.6.2.1_LEVEL_TRANSITION_PROBABILITY",
+                "error": "LTPE_PATH_UNHANDLED_FAILURE",
+                "failure_stage": "HTTP_BOUNDARY",
+                "exception_type": type(exc).__name__,
+                "direction": str(direction or "UP").upper(),
+                "spot_mode": "UNAVAILABLE",
+                "level_universe_mode": "UNAVAILABLE",
+                "steps": [],
+                "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+            }
+        return jsonify(payload)
 
     @app.get("/api/level-calibration/transitions/history")
     def level_transition_history():
