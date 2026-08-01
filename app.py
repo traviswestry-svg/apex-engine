@@ -1291,6 +1291,14 @@ except Exception as _dependency_map_err:
     APEX65_DEPENDENCY_MAP_AVAILABLE = False
     print(f"APEX 65.3 dependency map import unavailable: {_dependency_map_err}", flush=True)
 
+try:
+    from engine.runtime_consolidation import build_consolidation_audit as apex65_build_consolidation_audit
+    APEX65_CONSOLIDATION_AUDIT_AVAILABLE = True
+except Exception as _consolidation_audit_err:
+    apex65_build_consolidation_audit = None
+    APEX65_CONSOLIDATION_AUDIT_AVAILABLE = False
+    print(f"APEX 65.4 consolidation audit import unavailable: {_consolidation_audit_err}", flush=True)
+
 app = Flask(__name__)
 
 # ── APEX access control — application-wide shared-secret auth ────────────────
@@ -13467,6 +13475,7 @@ def _apex65_route_audit():
         ("GET", "/api/command-center/status"),
         ("GET", "/api/runtime/health"),
         ("GET", "/api/runtime/dependency-map"),
+        ("GET", "/api/runtime/consolidation"),
         ("POST", "/tv_signal"),
     ]
     missing = [{"method": m, "path": p} for m, p in critical if (m, p) not in route_methods]
@@ -13551,7 +13560,7 @@ def api_apex65_runtime_dependency_map():
     """APEX 65.3 static runtime/engine dependency inventory."""
     if not APEX65_DEPENDENCY_MAP_AVAILABLE or apex65_build_dependency_map is None:
         return jsonify({
-            "ok": False, "status": "FAILED", "schema_version": "65.3",
+            "ok": False, "status": "FAILED", "schema_version": "65.4",
             "error": "Runtime dependency mapper unavailable",
         }), 503
     try:
@@ -13559,9 +13568,31 @@ def api_apex65_runtime_dependency_map():
         payload["version"] = VERSION
         return jsonify(payload)
     except Exception as exc:
-        app.logger.exception("APEX 65.3 dependency map failed")
+        app.logger.exception("APEX 65.4 dependency map failed")
         return jsonify({
-            "ok": False, "status": "FAILED", "schema_version": "65.3",
+            "ok": False, "status": "FAILED", "schema_version": "65.4",
+            "version": VERSION, "error": type(exc).__name__,
+        }), 500
+
+
+@app.get("/api/runtime/consolidation")
+def api_apex65_runtime_consolidation():
+    """APEX 65.4 conservative second-level cleanup audit."""
+    if not APEX65_CONSOLIDATION_AUDIT_AVAILABLE or apex65_build_consolidation_audit is None:
+        return jsonify({
+            "ok": False, "status": "FAILED", "schema_version": "65.4",
+            "version": VERSION, "error": "Runtime consolidation auditor unavailable",
+        }), 503
+    try:
+        payload = dict(apex65_build_consolidation_audit())
+        payload["version"] = VERSION
+        payload["stabilization_build"] = "65.4"
+        payload["composition_boundary"] = "engine.application_composition:create_app"
+        return jsonify(payload)
+    except Exception as exc:
+        app.logger.exception("APEX 65.4 consolidation audit failed")
+        return jsonify({
+            "ok": False, "status": "FAILED", "schema_version": "65.4",
             "version": VERSION, "error": type(exc).__name__,
         }), 500
 
