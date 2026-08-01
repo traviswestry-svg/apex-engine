@@ -46,20 +46,31 @@ def _safe(fn: Callable[[], Dict[str, Any]]):
 def register_release_routes(app, **_kwargs) -> None:
     """Register the /api/system/* read-only surface."""
 
-    @app.route("/api/system/version", methods=["GET"])
-    def _system_version():
-        return jsonify({
+    def _canonical_version_payload():
+        return {
             "ok": True,
             "apex_version": SEMANTIC_VERSION,
             "version": SEMANTIC_VERSION,
             "application_version": APPLICATION_VERSION,
+            "runtime_release_version": APPLICATION_VERSION,
             "build_name": RELEASE_MANIFEST.get("build_name"),
             "version_source": RELEASE_MANIFEST.get("canonical_release_source"),
             "database_version": DATABASE_VERSION,
             "legacy_application_version": LEGACY_APPLICATION_VERSION,
             "legacy_semantic_version": LEGACY_SEMANTIC_VERSION,
             "legacy_build": LEGACY_BUILD,
-        }), 200
+        }
+
+    @app.route("/api/version", methods=["GET"])
+    @app.route("/api/system/version", methods=["GET"])
+    def _system_version():
+        return jsonify(_canonical_version_payload()), 200
+
+    @app.route("/api/release-manifest", methods=["GET"])
+    def _release_manifest_alias():
+        payload = dict(RELEASE_MANIFEST)
+        payload.update({"ok": True, "runtime_release_version": APPLICATION_VERSION, "version": APPLICATION_VERSION})
+        return jsonify(payload), 200
 
     @app.route("/api/system/build", methods=["GET"])
     def _system_build():

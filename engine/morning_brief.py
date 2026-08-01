@@ -54,6 +54,9 @@ ANTHROPIC_MAX_ATTEMPTS = 2  # initial request + one controlled retry
 ANTHROPIC_RETRY_BACKOFF_SECONDS = max(0.0, min(float(os.getenv("APEX_BRIEF_AI_RETRY_BACKOFF_SECONDS", "0.75")), 5.0))
 ANTHROPIC_CIRCUIT_FAILURE_THRESHOLD = max(1, int(os.getenv("APEX_BRIEF_AI_CIRCUIT_FAILURE_THRESHOLD", "3")))
 ANTHROPIC_CIRCUIT_COOLDOWN_SECONDS = max(10.0, min(float(os.getenv("APEX_BRIEF_AI_CIRCUIT_COOLDOWN_SECONDS", "120")), 1800.0))
+# 50.6.4.1: hard wall-clock budget across ALL Anthropic attempts + backoff.
+# This intentionally overrides a stale/high per-attempt Render timeout.
+ANTHROPIC_TOTAL_BUDGET_SECONDS = max(5.0, min(float(os.getenv("APEX_BRIEF_AI_TOTAL_BUDGET_SECONDS", "12")), 20.0))
 
 _CIRCUIT_LOCK = threading.RLock()
 _CIRCUIT = {
@@ -285,6 +288,7 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
         "max_attempts": ANTHROPIC_MAX_ATTEMPTS,
         "timeout_seconds_per_attempt": timeout,
         "retry_backoff_base_seconds": ANTHROPIC_RETRY_BACKOFF_SECONDS,
+        "total_budget_seconds": ANTHROPIC_TOTAL_BUDGET_SECONDS,
         "attempts": [],
         "retry_count": 0,
         "total_duration_ms": 0.0,
@@ -310,6 +314,13 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
     total_started = time.perf_counter()
     final_error = None
     for attempt_no in range(1, ANTHROPIC_MAX_ATTEMPTS + 1):
+        elapsed = time.perf_counter() - total_started
+        remaining_budget = ANTHROPIC_TOTAL_BUDGET_SECONDS - elapsed
+        if remaining_budget <= 0.05:
+            final_error = "Anthropic total latency budget exhausted"
+            telemetry["outcome"] = "BUDGET_EXHAUSTED"
+            telemetry["budget_exhausted"] = True
+            break
         attempt_started = time.perf_counter()
         attempt = {
             "attempt": attempt_no,
@@ -335,7 +346,7 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
                     "messages": [{"role": "user", "content": prompt}],
                     "tools": [{"type": "web_search_20250305", "name": "web_search"}],
                 },
-                timeout=timeout,
+                timeout=max(0.05, min(float(timeout), remaining_budget / max(1, ANTHROPIC_MAX_ATTEMPTS - attempt_no + 1))),
             )
             attempt["http_status"] = int(resp.status_code)
             if resp.status_code != 200:
@@ -394,12 +405,20 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
         delay = ANTHROPIC_RETRY_BACKOFF_SECONDS * (2 ** (attempt_no - 1))
         telemetry["retry_count"] += 1
         telemetry["attempts"][-1]["backoff_before_next_attempt_seconds"] = round(delay, 3)
+        remaining_after_attempt = ANTHROPIC_TOTAL_BUDGET_SECONDS - (time.perf_counter() - total_started)
+        if remaining_after_attempt <= 0.05:
+            final_error = "Anthropic total latency budget exhausted"
+            telemetry["outcome"] = "BUDGET_EXHAUSTED"
+            telemetry["budget_exhausted"] = True
+            break
+        delay = min(delay, max(0.0, remaining_after_attempt - 0.05))
+        telemetry["attempts"][-1]["backoff_before_next_attempt_seconds"] = round(delay, 3)
         if delay > 0:
             time.sleep(delay)
 
     telemetry["total_duration_ms"] = round((time.perf_counter() - total_started) * 1000, 1)
     telemetry["final_error"] = final_error
-    telemetry["outcome"] = "FAILED"
+    telemetry.setdefault("outcome", "FAILED")
     breaker_eligible = bool(telemetry["attempts"] and telemetry["attempts"][-1].get("retryable"))
     telemetry["breaker_failure_counted"] = breaker_eligible
     telemetry["circuit"] = (
