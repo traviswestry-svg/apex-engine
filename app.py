@@ -9,12 +9,13 @@ import statistics
 import json
 import math
 import hmac
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
-from flask import Flask, jsonify, render_template, request, redirect
+from flask import Flask, jsonify, render_template, request, redirect, g
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 
@@ -1289,6 +1290,27 @@ except Exception as _auth_err:
     AUTH_LAYER_AVAILABLE = False
     print(f"FATAL: auth layer failed to install: {_auth_err}", flush=True)
     raise  # never boot open — an unauthenticated deploy is worse than no deploy
+
+# APEX 65.0 — request correlation and runtime observability.
+@app.before_request
+def apex65_request_context():
+    incoming = str(request.headers.get("X-Request-ID") or "").strip()[:96]
+    g.apex_request_id = incoming or f"APEX-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8].upper()}"
+    g.apex_request_started = time.perf_counter()
+
+@app.after_request
+def apex65_request_observability(response):
+    request_id = getattr(g, "apex_request_id", "")
+    started = getattr(g, "apex_request_started", None)
+    if request_id:
+        response.headers["X-APEX-Request-ID"] = request_id
+    if started is not None:
+        elapsed_ms = max(0.0, (time.perf_counter() - started) * 1000.0)
+        response.headers["X-APEX-Duration-Ms"] = f"{elapsed_ms:.1f}"
+        if response.status_code >= 500:
+            app.logger.error("APEX65 request failed id=%s method=%s path=%s status=%s duration_ms=%.1f",
+                             request_id, request.method, request.path, response.status_code, elapsed_ms)
+    return response
 
 # APEX 40 — Institutional Workspace shell.  Dashboard HTML is decorated at
 # response time so legacy pages keep their independent rendering logic while
@@ -8514,41 +8536,53 @@ def api_position_session_intelligence():
 
 @app.route("/api/position/market-memory")
 def api_position_market_memory():
-    """Return Phase 12 historical similarity, probabilities, and playbooks."""
+    """Return Phase 12 historical similarity with a fail-soft cached fallback."""
     if not TRADE_DIRECTOR_PHASE12_AVAILABLE:
-        return jsonify({"ok": False, "error": "Phase 12 market memory unavailable"}), 503
+        return jsonify({"ok": False, "status": "UNAVAILABLE", "error": "Phase 12 market memory unavailable"}), 503
     with ACTIVE_POSITION_LOCK:
         pos = dict(ACTIVE_POSITION)
         cached = dict(ACTIVE_POSITION.get("phase12_last_intelligence") or {})
-    monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
-    if monitor.get("market_memory"):
-        intelligence = monitor["market_memory"]
-    else:
-        history = td6_trade_history(250) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
-        session = cached.get("session_intelligence") or {}
-        snapshot = td12_build_snapshot(pos, monitor, session, now_et().replace(tzinfo=None))
-        intelligence = td12_build_intelligence(snapshot, td12_memory_sessions(500), history)
-    return jsonify({"ok": True, "market_memory": intelligence or cached})
+    try:
+        monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
+        if monitor.get("market_memory"):
+            intelligence = monitor["market_memory"]
+        else:
+            history = td6_trade_history(250) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
+            session = cached.get("session_intelligence") or {}
+            snapshot = td12_build_snapshot(pos, monitor, session, now_et().replace(tzinfo=None))
+            intelligence = td12_build_intelligence(snapshot, td12_memory_sessions(500), history)
+        return jsonify({"ok": True, "status": "HEALTHY", "fallback_used": False, "market_memory": intelligence or cached})
+    except Exception as exc:
+        app.logger.exception("APEX65 market-memory build failed")
+        return jsonify({"ok": bool(cached), "status": "DEGRADED" if cached else "FAILED", "fallback_used": bool(cached),
+                        "component": "market_memory", "error_code": "BUILD_FAILED", "error_type": type(exc).__name__,
+                        "market_memory": cached}), (200 if cached else 503)
 
 
 @app.route("/api/position/cross-asset-intelligence")
 def api_position_cross_asset_intelligence():
-    """Return Phase 13 cross-asset confirmation using cached APEX data only."""
+    """Return Phase 13 cross-asset confirmation with a fail-soft cached fallback."""
     if not TRADE_DIRECTOR_PHASE13_AVAILABLE:
-        return jsonify({"ok": False, "error": "Phase 13 cross-asset intelligence unavailable"}), 503
+        return jsonify({"ok": False, "status": "UNAVAILABLE", "error": "Phase 13 cross-asset intelligence unavailable"}), 503
     with ACTIVE_POSITION_LOCK:
         pos = dict(ACTIVE_POSITION)
         cached_result = dict(ACTIVE_POSITION.get("phase13_last_intelligence") or {})
-    monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
-    if monitor.get("cross_asset_intelligence"):
-        intelligence = monitor["cross_asset_intelligence"]
-    else:
-        with STATE_LOCK:
-            cached_market = dict(STATE.get("last_result") or {})
-        snapshot = td13_build_snapshot(cached_market, monitor)
-        history = td12_memory_sessions(500) if TRADE_DIRECTOR_PHASE12_AVAILABLE else []
-        intelligence = td13_build_intelligence(snapshot, monitor, history)
-    return jsonify({"ok": True, "cross_asset_intelligence": intelligence or cached_result})
+    try:
+        monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
+        if monitor.get("cross_asset_intelligence"):
+            intelligence = monitor["cross_asset_intelligence"]
+        else:
+            with STATE_LOCK:
+                cached_market = dict(STATE.get("last_result") or {})
+            snapshot = td13_build_snapshot(cached_market, monitor)
+            history = td12_memory_sessions(500) if TRADE_DIRECTOR_PHASE12_AVAILABLE else []
+            intelligence = td13_build_intelligence(snapshot, monitor, history)
+        return jsonify({"ok": True, "status": "HEALTHY", "fallback_used": False, "cross_asset_intelligence": intelligence or cached_result})
+    except Exception as exc:
+        app.logger.exception("APEX65 cross-asset intelligence build failed")
+        return jsonify({"ok": bool(cached_result), "status": "DEGRADED" if cached_result else "FAILED", "fallback_used": bool(cached_result),
+                        "component": "cross_asset_intelligence", "error_code": "BUILD_FAILED", "error_type": type(exc).__name__,
+                        "cross_asset_intelligence": cached_result}), (200 if cached_result else 503)
 
 
 
@@ -9400,25 +9434,34 @@ def api_institutional_intent_batch():
 
 @app.route("/api/position/strategy-orchestration")
 def api_position_strategy_orchestration():
-    """Return Phase 14 advisory strategy selection and ranked opportunity queue."""
+    """Return Phase 14 orchestration with isolation from Phase 13/build failures."""
     if not TRADE_DIRECTOR_PHASE14_AVAILABLE:
-        return jsonify({"ok": False, "error": "Phase 14 strategy orchestration unavailable"}), 503
+        return jsonify({"ok": False, "status": "UNAVAILABLE", "error": "Phase 14 strategy orchestration unavailable"}), 503
     with ACTIVE_POSITION_LOCK:
         pos = dict(ACTIVE_POSITION)
         cached = dict(ACTIVE_POSITION.get("phase14_last_orchestration") or {})
-    monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
-    if monitor.get("strategy_orchestration"):
-        orchestration = monitor["strategy_orchestration"]
-    else:
-        if TRADE_DIRECTOR_PHASE13_AVAILABLE:
-            with STATE_LOCK:
-                cached_market = dict(STATE.get("last_result") or {})
-            snapshot = td13_build_snapshot(cached_market, monitor)
-            history_sessions = td12_memory_sessions(500) if TRADE_DIRECTOR_PHASE12_AVAILABLE else []
-            monitor["cross_asset_intelligence"] = td13_build_intelligence(snapshot, monitor, history_sessions)
-        trade_history = td6_trade_history(500) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
-        orchestration = td14_build_orchestration(monitor, trade_history)
-    return jsonify({"ok": True, "strategy_orchestration": orchestration or cached})
+    try:
+        monitor = monitor_active_position() if pos.get("status") == "OPEN" else {}
+        if monitor.get("strategy_orchestration"):
+            orchestration = monitor["strategy_orchestration"]
+        else:
+            if TRADE_DIRECTOR_PHASE13_AVAILABLE:
+                try:
+                    with STATE_LOCK:
+                        cached_market = dict(STATE.get("last_result") or {})
+                    snapshot = td13_build_snapshot(cached_market, monitor)
+                    history_sessions = td12_memory_sessions(500) if TRADE_DIRECTOR_PHASE12_AVAILABLE else []
+                    monitor["cross_asset_intelligence"] = td13_build_intelligence(snapshot, monitor, history_sessions)
+                except Exception:
+                    app.logger.exception("APEX65 Phase 13 enrichment failed inside strategy orchestration")
+            trade_history = td6_trade_history(500) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
+            orchestration = td14_build_orchestration(monitor, trade_history)
+        return jsonify({"ok": True, "status": "HEALTHY", "fallback_used": False, "strategy_orchestration": orchestration or cached})
+    except Exception as exc:
+        app.logger.exception("APEX65 strategy orchestration build failed")
+        return jsonify({"ok": bool(cached), "status": "DEGRADED" if cached else "FAILED", "fallback_used": bool(cached),
+                        "component": "strategy_orchestration", "error_code": "BUILD_FAILED", "error_type": type(exc).__name__,
+                        "strategy_orchestration": cached}), (200 if cached else 503)
 
 
 @app.route("/api/position/market-memory/archive", methods=["POST"])
@@ -13354,6 +13397,51 @@ else:
             f"required routes: {', '.join(_es26x2_missing)}")
     print(f"APEX 26.6-26.10 Execution Intelligence Suite part 2 routes registered "
           f"({len(_ES26X2_REQUIRED)} canonical routes verified, advisory-only).", flush=True)
+
+# APEX 65.0 — canonical runtime route diagnostics. Registered after all required
+# suites so this endpoint reflects the final Flask URL map used in production.
+def _apex65_route_audit():
+    route_methods = {}
+    endpoint_rules = {}
+    for rule in app.url_map.iter_rules():
+        methods = sorted(m for m in (rule.methods or set()) if m not in {"HEAD", "OPTIONS"})
+        for method in methods:
+            route_methods.setdefault((method, str(rule)), []).append(rule.endpoint)
+        endpoint_rules.setdefault(rule.endpoint, []).append(str(rule))
+    duplicates = [
+        {"method": method, "path": path, "endpoints": endpoints}
+        for (method, path), endpoints in sorted(route_methods.items()) if len(endpoints) > 1
+    ]
+    critical = [
+        ("GET", "/api/position/market-memory"),
+        ("GET", "/api/position/cross-asset-intelligence"),
+        ("GET", "/api/position/strategy-orchestration"),
+        ("GET", "/api/evidence/status"),
+        ("GET", "/api/command-center/status"),
+        ("POST", "/tv_signal"),
+    ]
+    missing = [{"method": m, "path": p} for m, p in critical if (m, p) not in route_methods]
+    return {
+        "ok": not duplicates and not missing,
+        "status": "HEALTHY" if not duplicates and not missing else "DEGRADED",
+        "version": VERSION,
+        "route_count": len(route_methods),
+        "duplicate_route_count": len(duplicates),
+        "duplicates": duplicates,
+        "critical_missing": missing,
+        "auth_layer_available": bool(AUTH_LAYER_AVAILABLE),
+        "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+
+@app.get("/api/runtime/route-audit")
+def api_apex65_route_audit():
+    return jsonify(_apex65_route_audit())
+
+_APEX65_STARTUP_ROUTE_AUDIT = _apex65_route_audit()
+if not _APEX65_STARTUP_ROUTE_AUDIT["ok"]:
+    app.logger.warning("APEX65 runtime route audit degraded: %s", _APEX65_STARTUP_ROUTE_AUDIT)
+else:
+    print(f"APEX 65.0 runtime route audit healthy ({_APEX65_STARTUP_ROUTE_AUDIT['route_count']} method/routes).", flush=True)
 
 # Warm the cache after Gunicorn has finished importing routes. This uses an
 # isolated daemon thread and never delays the health check or first HTTP request.
