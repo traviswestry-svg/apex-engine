@@ -1210,6 +1210,12 @@ FEATURE_WRITE_SESSIONS = {
 }
 
 VERSION = RELEASE_APP_VERSION
+
+try:
+    from engine.build_identity import apply_build_identity as apex65_apply_build_identity, STABILIZATION_BUILD as APEX_STABILIZATION_BUILD
+except Exception:
+    apex65_apply_build_identity = None
+    APEX_STABILIZATION_BUILD = "65.6.5"
 EASTERN = ZoneInfo("America/New_York")
 
 POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "").strip()
@@ -10966,8 +10972,15 @@ def api_morning_brief():
                 },
             )
             payload["data_quality"] = registry.report()
-            payload["data_quality"]["application_version"] = "50.4.2.1_NARRATIVE_CACHE_TARGET_SESSION_HOTFIX"
+            # APEX 65.6.5: application_version now means the deployed runtime.
+            # Preserve the data-quality engine version separately instead of
+            # presenting an old Morning Brief patch name as the application.
+            payload["data_quality"]["legacy_application_version"] = "50.4.2.1_NARRATIVE_CACHE_TARGET_SESSION_HOTFIX"
+            payload["data_quality"]["application_version"] = VERSION
+            payload["data_quality"]["component_version"] = payload["data_quality"].get("version")
             payload["data_quality"]["schema_version"] = payload["data_quality"].get("version")
+            payload["data_quality"]["stabilization_build"] = APEX_STABILIZATION_BUILD
+            payload["data_quality"]["runtime_release_version"] = VERSION
             if not gamma_directional:
                 gamma_point = ((payload["data_quality"].get("points") or {}).get("gamma_regime") or {})
                 if gamma_point:
@@ -11002,6 +11015,17 @@ def api_morning_brief():
         except Exception:
             MORNING_BRIEF_VERSION = "50.4.2.1_NARRATIVE_CACHE_TARGET_SESSION_HOTFIX"
         payload["version"] = MORNING_BRIEF_VERSION
+        payload["version_scope"] = "component"
+        if apex65_apply_build_identity is not None:
+            apex65_apply_build_identity(
+                payload, component_name="morning_brief",
+                component_version=MORNING_BRIEF_VERSION,
+                runtime_release_version=VERSION,
+            )
+        else:
+            payload["runtime_release_version"] = VERSION
+            payload["component_version"] = MORNING_BRIEF_VERSION
+            payload["stabilization_build"] = APEX_STABILIZATION_BUILD
         payload["section_profile"] = "EXECUTIVE_5"
         payload["operational_status"] = {
             "session": session_context,
@@ -13487,7 +13511,7 @@ def _apex65_route_audit():
         ("POST", "/tv_signal"),
     ]
     missing = [{"method": m, "path": p} for m, p in critical if (m, p) not in route_methods]
-    return {
+    payload = {
         "ok": not duplicates and not missing,
         "status": "HEALTHY" if not duplicates and not missing else "DEGRADED",
         "version": VERSION,
@@ -13498,6 +13522,9 @@ def _apex65_route_audit():
         "auth_layer_available": bool(AUTH_LAYER_AVAILABLE),
         "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
+    if apex65_apply_build_identity is not None:
+        apex65_apply_build_identity(payload, component_name="runtime_route_audit", component_version="65.0.1", runtime_release_version=VERSION)
+    return payload
 
 @app.get("/api/runtime/route-audit")
 def api_apex65_route_audit():
@@ -13548,6 +13575,8 @@ def _apex65_runtime_health_payload():
         auth_layer_available=bool(AUTH_LAYER_AVAILABLE), generated_at=generated_at,
     )
     engines_expected = bool(engine_counts.get("expected"))
+    if apex65_apply_build_identity is not None:
+        apex65_apply_build_identity(payload, component_name="runtime_health", component_version="65.2.1", runtime_release_version=VERSION)
     payload["engine_health_rows"] = [
         {
             "engine": row.get("engine"),
@@ -13578,6 +13607,8 @@ def api_apex65_runtime_dependency_map():
     try:
         payload = dict(apex65_build_dependency_map())
         payload["version"] = VERSION
+        if apex65_apply_build_identity is not None:
+            apex65_apply_build_identity(payload, component_name="runtime_dependency_map", component_version=str(payload.get("schema_version") or "65.5"), runtime_release_version=VERSION)
         return jsonify(payload)
     except Exception as exc:
         app.logger.exception("APEX 65.5 dependency map failed")
@@ -13598,7 +13629,10 @@ def api_apex65_runtime_consolidation():
     try:
         payload = dict(apex65_build_consolidation_audit())
         payload["version"] = VERSION
-        payload["stabilization_build"] = "65.5"
+        if apex65_apply_build_identity is not None:
+            apex65_apply_build_identity(payload, component_name="runtime_consolidation", component_version=str(payload.get("schema_version") or "65.5"), runtime_release_version=VERSION)
+        else:
+            payload["stabilization_build"] = APEX_STABILIZATION_BUILD
         payload["composition_boundary"] = "engine.application_composition:create_app"
         return jsonify(payload)
     except Exception as exc:
@@ -13649,7 +13683,10 @@ def api_apex65_monday_readiness():
             live_trading_enabled=os.getenv("ETRADE_ENABLE_TRADING", "false").strip().lower() == "true",
             broker_credential_freshness=broker_freshness,
         )
-        payload["stabilization_build"] = "65.6.1"
+        if apex65_apply_build_identity is not None:
+            apex65_apply_build_identity(payload, component_name="monday_readiness", component_version=str(payload.get("schema_version") or "65.6.1"), runtime_release_version=VERSION)
+        else:
+            payload["stabilization_build"] = APEX_STABILIZATION_BUILD
         return jsonify(payload), (200 if payload.get("monday_ready") else 503)
     except Exception as exc:
         app.logger.exception("APEX 65.6.1 Monday readiness failed")
