@@ -1313,10 +1313,26 @@ class CalibrationService:
             observed = self.collector.observe(snapshot, now=now)
             graded = run_grader(path=self.path, now=now)
             stats = {"skipped": True}
+            transition = {"skipped": True}
+            transition_stats = {"skipped": True}
+            # APEX 50.6.0: derive evidence-only level-to-level transitions from
+            # matured HLCE outcomes.  The extension reads only this same local
+            # SQLite store; it performs no provider/network calls.  Import is
+            # lazy to keep HLCE backward compatible if the extension is absent.
+            try:
+                from .level_transition_probability import (
+                    process_transition_outcomes, rebuild_transition_statistics,
+                )
+                transition = process_transition_outcomes(path=self.path)
+                if transition.get("recorded"):
+                    transition_stats = rebuild_transition_statistics(path=self.path)
+            except Exception as exc:
+                transition = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "non_fatal": True}
             if graded.get("graded") and (now - self._last_stats_ts) >= STATS_REBUILD_MIN_INTERVAL:
                 stats = rebuild_statistics(path=self.path)
                 self._last_stats_ts = now
-        return {"ok": True, "observed": observed, "graded": graded, "statistics": stats}
+        return {"ok": True, "observed": observed, "graded": graded, "statistics": stats,
+                "transitions": transition, "transition_statistics": transition_stats}
 
     # --- background collector loop ---
     def start(self, provider: Callable[[], Mapping[str, Any]]):
@@ -1367,6 +1383,12 @@ class CalibrationService:
             total_samples = (health.get("counts") or {}).get("outcomes", 0)
         # calibration progress toward the 500-sample "fully historical" gate
         progress = min(1.0, total_samples / 500.0) if total_samples else 0.0
+        transition_status = None
+        try:
+            from .level_transition_probability import status as transition_status_fn
+            transition_status = transition_status_fn(path=self.path)
+        except Exception as exc:
+            transition_status = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         return {
             "ok": True,
             "version": VERSION,
@@ -1379,6 +1401,7 @@ class CalibrationService:
             "last_collector_event": self.collector.last_event,
             "last_database_write": self.collector.last_write_ts,
             "collector_stats": dict(self.collector.stats),
+            "level_transition_engine": transition_status,
             "started_at": self.started_at,
         }
 
