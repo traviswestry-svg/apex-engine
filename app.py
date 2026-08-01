@@ -11069,6 +11069,16 @@ def api_morning_brief():
             print(f"[APEX50.4] validation recorder unavailable: {type(validation_exc).__name__}: {validation_exc}", flush=True)
         # APEX 49: persist the exact morning evidence so the evening review can
         # survive deploys/restarts and validate against what was actually shown.
+        # APEX 50.6.2.2: persist a minimal canonical session context on durable storage
+        # before the forecast archive so LTPE can recover after deploy/restart.
+        try:
+            from engine.canonical_session_context import save_from_morning_brief
+            payload["canonical_session_context"] = save_from_morning_brief(payload, symbol=ticker)
+        except Exception as context_store_exc:
+            payload["canonical_session_context"] = {
+                "ok": False, "error": f"{type(context_store_exc).__name__}: {context_store_exc}"
+            }
+            print(f"[APEX50.6.2.2] canonical context persistence unavailable: {type(context_store_exc).__name__}: {context_store_exc}", flush=True)
         try:
             from engine.evening_recap import save_morning_snapshot
             payload["forecast_archive"] = save_morning_snapshot(payload, ticker=ticker)
