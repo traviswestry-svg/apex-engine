@@ -28,6 +28,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from . import historical_level_calibration as hlce
 
 VERSION = "50.6.2.2_LEVEL_TRANSITION_PROBABILITY"
+PATH_INTELLIGENCE_VERSION = "50.6.5_INSTITUTIONAL_LEVEL_PATH_INTELLIGENCE"
 SCHEMA_VERSION = 1
 
 
@@ -51,6 +52,16 @@ MIN_TARGET_GAP_PCT = _env_float("APEX_LEVEL_TRANSITION_MIN_GAP_PCT", 0.0003)
 TARGET_CLUSTER_ABS = _env_float("APEX_LEVEL_TRANSITION_CLUSTER_ABS", 2.0)
 FAILURE_FRACTION = _env_float("APEX_LEVEL_TRANSITION_FAILURE_FRACTION", 0.35)
 MIN_STAT_SAMPLE = _env_int("APEX_LEVEL_TRANSITION_MIN_STAT_SAMPLE", 5)
+
+# APEX 50.6.5 — Institutional Level Path Intelligence
+ZONE_RADIUS_ABS = _env_float("APEX_LTPE_ZONE_RADIUS_ABS", 4.0)
+ZONE_RADIUS_PCT = _env_float("APEX_LTPE_ZONE_RADIUS_PCT", 0.0005)
+PRIMARY_PRIORITY = _env_int("APEX_LTPE_PRIMARY_PRIORITY", 82)
+SECONDARY_PRIORITY = _env_int("APEX_LTPE_SECONDARY_PRIORITY", 70)
+INTERMEDIATE_PRIORITY = _env_int("APEX_LTPE_INTERMEDIATE_PRIORITY", 60)
+SECONDARY_PRUNE_NEAR_PRIMARY_ABS = _env_float("APEX_LTPE_SECONDARY_PRUNE_NEAR_PRIMARY_ABS", 10.0)
+MAX_PATH_DISTANCE_ABS = _env_float("APEX_LTPE_MAX_PATH_DISTANCE_ABS", 150.0)
+MAX_EXPECTED_MOVE_MULTIPLE = _env_float("APEX_LTPE_MAX_EXPECTED_MOVE_MULTIPLE", 2.0)
 
 # Higher-priority institutional references win when several level labels occupy
 # effectively the same price cluster. Distance always determines the cluster;
@@ -929,6 +940,175 @@ def _path_context(ctx: Any, brief: Optional[Mapping[str, Any]], spot: float) -> 
     }
 
 
+
+def _zone_radius(price: float) -> float:
+    return max(ZONE_RADIUS_ABS, abs(price) * ZONE_RADIUS_PCT)
+
+
+def _tier_for(level_type: str) -> str:
+    p = _LEVEL_PRIORITY.get(level_type, 20)
+    if p >= PRIMARY_PRIORITY:
+        return "PRIMARY"
+    if p >= SECONDARY_PRIORITY:
+        return "SECONDARY"
+    if p >= INTERMEDIATE_PRIORITY:
+        return "INTERMEDIATE"
+    return "SUPPORTING"
+
+
+def _max_path_distance(brief: Optional[Mapping[str, Any]]) -> float:
+    if isinstance(brief, Mapping):
+        st = brief.get("structured") if isinstance(brief.get("structured"), Mapping) else {}
+        em = st.get("expected_move") if isinstance(st.get("expected_move"), Mapping) else {}
+        try:
+            one_sigma = abs(float(em.get("one_sigma")))
+            if math.isfinite(one_sigma) and one_sigma > 0:
+                return min(MAX_PATH_DISTANCE_ABS, max(25.0, one_sigma * MAX_EXPECTED_MOVE_MULTIPLE))
+        except (TypeError, ValueError):
+            pass
+    return MAX_PATH_DISTANCE_ABS
+
+
+def _build_level_zones(levels: Sequence[Any], spot: float, direction: str,
+                       brief: Optional[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Cluster nearby references into decision zones and prune microstructure noise."""
+    sign = 1.0 if direction == "UP" else -1.0
+    max_dist = _max_path_distance(brief)
+    candidates = []
+    for lvl in levels:
+        try:
+            price = float(lvl.price)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        delta = (price - spot) * sign
+        if not math.isfinite(price) or delta <= _min_gap(spot) or delta > max_dist:
+            continue
+        candidates.append(lvl)
+    candidates.sort(key=lambda x: float(x.price), reverse=(direction == "DOWN"))
+
+    zones: List[Dict[str, Any]] = []
+    for lvl in candidates:
+        price = float(lvl.price)
+        lt = str(getattr(lvl, "level_type", "unknown"))
+        member = {
+            "level_type": lt, "price": price, "source": getattr(lvl, "source", None),
+            "priority": _LEVEL_PRIORITY.get(lt, 20), "tier": _tier_for(lt),
+        }
+        if zones and abs(price - zones[-1]["anchor_price"]) <= max(_zone_radius(price), _zone_radius(zones[-1]["anchor_price"])):
+            z = zones[-1]
+            z["members"].append(member)
+            z["low"] = min(z["low"], price)
+            z["high"] = max(z["high"], price)
+            if member["priority"] > z["representative_priority"]:
+                z["representative_type"] = lt
+                z["representative_price"] = price
+                z["representative_source"] = member["source"]
+                z["representative_priority"] = member["priority"]
+                z["tier"] = member["tier"]
+            z["anchor_price"] = sum(m["price"] for m in z["members"]) / len(z["members"])
+        else:
+            zones.append({
+                "low": price, "high": price, "anchor_price": price,
+                "representative_type": lt, "representative_price": price,
+                "representative_source": member["source"],
+                "representative_priority": member["priority"], "tier": member["tier"],
+                "members": [member],
+            })
+
+    if not zones:
+        return []
+
+    # Supporting/secondary zones immediately in front of a primary destination
+    # are evidence around that destination, not separate path steps. Intermediate
+    # zones are preserved when they materially divide a wide primary-to-primary span.
+    pruned: List[Dict[str, Any]] = []
+    i = 0
+    while i < len(zones):
+        z = zones[i]
+        if z["tier"] in {"SUPPORTING", "SECONDARY"}:
+            next_primary = next((x for x in zones[i+1:] if x["tier"] == "PRIMARY"), None)
+            if next_primary is not None:
+                gap = abs(next_primary["representative_price"] - z["representative_price"])
+                limit = 6.0 if z["tier"] == "SUPPORTING" else SECONDARY_PRUNE_NEAR_PRIMARY_ABS
+                if gap <= limit:
+                    next_primary.setdefault("supporting_zones", []).append(z)
+                    i += 1
+                    continue
+            if z["tier"] == "SUPPORTING":
+                i += 1
+                continue
+        pruned.append(z)
+        i += 1
+
+    # Promote at most one intermediate between consecutive primary zones when it
+    # materially divides a wide auction path. This preserves useful staging (e.g.
+    # 7502 between VAH and PDH) without restoring every micro-level.
+    final: List[Dict[str, Any]] = []
+    for z in pruned:
+        if z["tier"] == "INTERMEDIATE":
+            prev_primary = next((x for x in reversed(final) if x["tier"] == "PRIMARY"), None)
+            next_primary = next((x for x in pruned[pruned.index(z)+1:] if x["tier"] == "PRIMARY"), None)
+            if not prev_primary or not next_primary:
+                continue
+            span = abs(next_primary["representative_price"] - prev_primary["representative_price"])
+            if span < 12.0:
+                continue
+        final.append(z)
+    return final
+
+
+def _zone_probability(symbol: str, source_zone: Mapping[str, Any], target_zone: Mapping[str, Any],
+                      direction: str, context: Mapping[str, Any], *, path: Optional[str] = None) -> Dict[str, Any]:
+    """Aggregate evidence across all member level types in two price zones."""
+    initialize_transition_store(path)
+    source_types = sorted({str(m.get("level_type")) for m in source_zone.get("members", []) if m.get("level_type")})
+    target_types = sorted({str(m.get("level_type")) for m in target_zone.get("members", []) if m.get("level_type")})
+    # Supporting sub-zones are part of the target's semantic zone.
+    for sub in target_zone.get("supporting_zones", []) or []:
+        target_types.extend(str(m.get("level_type")) for m in sub.get("members", []) if m.get("level_type"))
+    target_types = sorted(set(target_types))
+    if not source_types or not target_types:
+        return {"ok": True, "version": VERSION, "path_intelligence_version": PATH_INTELLIGENCE_VERSION, "probability": None, "sample_count": 0, "source": "INSUFFICIENT_HISTORY"}
+    if len(source_types) == 1 and len(target_types) == 1:
+        # Preserve the historical single-level query contract and its failure
+        # semantics while zone aggregation is used for multi-member zones.
+        out = next_level_probability(symbol, source_types[0], "ACCEPTED", direction,
+                                     target_level_type=target_types[0], context=context, path=path)
+        out["path_intelligence_version"] = PATH_INTELLIGENCE_VERSION
+        out["source_zone_types"] = source_types
+        out["target_zone_types"] = target_types
+        return out
+    q1 = ",".join("?" for _ in source_types)
+    q2 = ",".join("?" for _ in target_types)
+    params = [_norm(symbol), "ACCEPTED", _norm(direction), *source_types, *target_types]
+    with hlce._connect(path) as conn:
+        rows = conn.execute(
+            f"""SELECT * FROM level_transition_observations
+                WHERE symbol=? AND source_event=? AND direction=?
+                  AND source_level_type IN ({q1}) AND target_level_type IN ({q2})
+                  AND resolution<>'NO_PRICE_DATA'""", params,
+        ).fetchall()
+    selected = list(rows)
+    for seg_key, col in _SEGMENTS:
+        desired = _norm(context.get(seg_key))
+        if desired == "UNKNOWN":
+            continue
+        subset = [r for r in rows if _norm(r[col]) == desired]
+        if len(subset) >= MIN_STAT_SAMPLE:
+            selected = subset
+            break
+    agg = _aggregate(selected)
+    n = int(agg.get("sample_count") or 0)
+    return {
+        "ok": True, "version": VERSION, "probability": (float(agg["target_reach_pct"])/100.0) if n else None,
+        "probability_pct": agg.get("target_reach_pct"), "sample_count": n,
+        "median_seconds_to_target": agg.get("median_seconds_to_target"), "avg_mfe": agg.get("avg_mfe"),
+        "avg_mae": agg.get("avg_mae"), "ci_low": agg.get("ci_low"), "ci_high": agg.get("ci_high"),
+        "source": "HISTORICAL_ZONE" if n >= MIN_STAT_SAMPLE else ("EARLY_ZONE_HISTORY" if n else "INSUFFICIENT_HISTORY"),
+        "source_zone_types": source_types, "target_zone_types": target_types,
+        "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+    }
+
 def _path_failure(error: str, *, stage: str, exc: Optional[BaseException] = None,
                   direction: Optional[str] = None, spot_mode: str = "UNAVAILABLE",
                   spot_session: Optional[str] = None, attempts: Optional[List[Dict[str, Any]]] = None,
@@ -1015,22 +1195,8 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
         )
 
     try:
-        ordered = sorted(levels, key=lambda x: float(x.price), reverse=(norm_direction == "DOWN"))
-        if norm_direction == "UP":
-            ordered = [x for x in ordered if float(x.price) > resolved_spot + _min_gap(resolved_spot)]
-        else:
-            ordered = [x for x in ordered if float(x.price) < resolved_spot - _min_gap(resolved_spot)]
-
-        collapsed: List[Any] = []
-        for lvl in ordered:
-            price = float(lvl.price)
-            if not math.isfinite(price) or price <= 0:
-                continue
-            if not collapsed or abs(price - float(collapsed[-1].price)) > _cluster_band(price):
-                collapsed.append(lvl)
-            elif _LEVEL_PRIORITY.get(lvl.level_type, 20) > _LEVEL_PRIORITY.get(collapsed[-1].level_type, 20):
-                collapsed[-1] = lvl
-        collapsed = collapsed[:max(1, int(max_steps or 6))]
+        zones = _build_level_zones(levels, resolved_spot, norm_direction, canonical_brief)
+        zones = zones[:max(1, int(max_steps or 6))]
         context = _path_context(ctx, canonical_brief, resolved_spot)
     except Exception as exc:
         return _path_failure(
@@ -1040,48 +1206,45 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
         )
 
     steps: List[Dict[str, Any]] = []
-    prior_type: Optional[str] = None
-    prior_price = resolved_spot
     evidence_warnings: List[Dict[str, Any]] = []
-    for i, lvl in enumerate(collapsed):
+    prior_zone: Optional[Dict[str, Any]] = None
+    prior_price = resolved_spot
+    for i, zone in enumerate(zones):
         evidence = None
-        if prior_type is not None:
+        if prior_zone is not None:
             try:
-                evidence = next_level_probability(
-                    ctx.symbol, prior_type, "ACCEPTED", norm_direction,
-                    target_level_type=lvl.level_type, context=context, path=path,
-                )
+                evidence = _zone_probability(ctx.symbol, prior_zone, zone, norm_direction, context, path=path)
             except Exception as exc:
-                # Statistics availability cannot take down the structural path.
                 evidence = {
                     "ok": False, "version": VERSION, "source": "STATISTICS_UNAVAILABLE",
-                    "probability": None, "sample_count": 0,
-                    "source_level_type": prior_type, "source_event": "ACCEPTED",
-                    "direction": norm_direction, "target_level_type": lvl.level_type,
-                    "exception_type": type(exc).__name__,
-                    "message": "Transition statistics were unavailable; probability was not fabricated.",
+                    "probability": None, "sample_count": 0, "exception_type": type(exc).__name__,
+                    "message": "Zone transition statistics were unavailable; probability was not fabricated.",
                 }
-                evidence_warnings.append({
-                    "stage": "TRANSITION_STATISTICS", "source_level_type": prior_type,
-                    "target_level_type": lvl.level_type, "exception_type": type(exc).__name__,
-                })
-        price = float(lvl.price)
+                evidence_warnings.append({"stage": "TRANSITION_STATISTICS", "exception_type": type(exc).__name__})
+        price = float(zone["representative_price"])
+        zone_members = zone.get("members", [])
+        supporting = zone.get("supporting_zones", []) or []
         steps.append({
-            "ordinal": i + 1, "level_type": lvl.level_type, "price": price,
-            "source": getattr(lvl, "source", None),
+            "ordinal": i + 1, "level_type": zone["representative_type"], "price": price,
+            "source": zone.get("representative_source"), "tier": zone.get("tier"),
+            "zone_low": round(float(zone["low"]), 4), "zone_high": round(float(zone["high"]), 4),
+            "zone_member_count": len(zone_members) + sum(len(x.get("members", [])) for x in supporting),
+            "zone_members": zone_members, "supporting_zones": supporting,
             "distance_from_prior": round(abs(price - prior_price), 4),
-            "conditional_on": None if prior_type is None else {
-                "source_level_type": prior_type, "source_event": "ACCEPTED", "direction": norm_direction,
+            "conditional_on": None if prior_zone is None else {
+                "source_zone_type": prior_zone["representative_type"], "source_event": "ACCEPTED", "direction": norm_direction,
             },
             "transition": evidence,
         })
-        prior_type, prior_price = lvl.level_type, price
+        prior_zone, prior_price = zone, price
 
     return {
-        "ok": True, "version": VERSION, "symbol": ctx.symbol, "spot": resolved_spot,
+        "ok": True, "version": VERSION, "path_intelligence_version": PATH_INTELLIGENCE_VERSION, "symbol": ctx.symbol, "spot": resolved_spot,
         "spot_mode": spot_mode, "spot_session": spot_session,
         "spot_resolution_attempts": spot_attempts, "spot_is_observation_input": False,
         "direction": norm_direction, "context": context, "steps": steps,
+        "path_mode": "INSTITUTIONAL_ZONES", "zone_count": len(steps),
+        "raw_level_count": len(levels), "max_path_distance": _max_path_distance(canonical_brief),
         "level_universe_mode": universe_mode, "level_universe_count": len(levels),
         "source_session_date": source_session, "target_session_date": target_session,
         "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
