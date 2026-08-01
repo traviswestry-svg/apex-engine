@@ -1275,6 +1275,14 @@ STATIC_TICKERS_EXTRA = [x.strip().upper() for x in os.getenv("STATIC_TICKERS_EXT
 DYNAMIC_TICKERS_ENABLED = os.getenv("DYNAMIC_TICKERS_ENABLED", "true").lower() == "true"
 MAX_DYNAMIC_TICKERS = int(os.getenv("MAX_DYNAMIC_TICKERS", "25"))
 
+try:
+    from engine.runtime_health import build_runtime_health as apex65_build_runtime_health
+    APEX65_RUNTIME_HEALTH_AVAILABLE = True
+except Exception as _runtime_health_err:
+    apex65_build_runtime_health = None
+    APEX65_RUNTIME_HEALTH_AVAILABLE = False
+    print(f"APEX 65.2 runtime health import unavailable: {_runtime_health_err}", flush=True)
+
 app = Flask(__name__)
 
 # ── APEX access control — application-wide shared-secret auth ────────────────
@@ -1290,6 +1298,31 @@ except Exception as _auth_err:
     AUTH_LAYER_AVAILABLE = False
     print(f"FATAL: auth layer failed to install: {_auth_err}", flush=True)
     raise  # never boot open — an unauthenticated deploy is worse than no deploy
+
+# APEX 65.2 — in-process component telemetry. This records the outcome of
+# critical intelligence reads without invoking those engines from diagnostics.
+_APEX65_COMPONENT_HEALTH_LOCK = threading.RLock()
+_APEX65_COMPONENT_HEALTH = {
+    "market_memory": {"state": "HEALTHY", "detail": "Available; awaiting runtime evaluation.", "last_checked_at": None, "fallback_used": False},
+    "cross_asset_intelligence": {"state": "HEALTHY", "detail": "Available; awaiting runtime evaluation.", "last_checked_at": None, "fallback_used": False},
+    "strategy_orchestration": {"state": "HEALTHY", "detail": "Available; awaiting runtime evaluation.", "last_checked_at": None, "fallback_used": False},
+}
+
+def _apex65_record_component_health(component, state, *, detail="", fallback_used=False, error_type=None):
+    row = {
+        "state": str(state or "UNAVAILABLE").upper(),
+        "detail": str(detail or ""),
+        "last_checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "fallback_used": bool(fallback_used),
+    }
+    if error_type:
+        row["error_type"] = str(error_type)
+    with _APEX65_COMPONENT_HEALTH_LOCK:
+        _APEX65_COMPONENT_HEALTH[str(component)] = row
+
+def _apex65_component_health_snapshot():
+    with _APEX65_COMPONENT_HEALTH_LOCK:
+        return {k: dict(v) for k, v in _APEX65_COMPONENT_HEALTH.items()}
 
 # APEX 65.0 — request correlation and runtime observability.
 @app.before_request
@@ -8551,9 +8584,11 @@ def api_position_market_memory():
             session = cached.get("session_intelligence") or {}
             snapshot = td12_build_snapshot(pos, monitor, session, now_et().replace(tzinfo=None))
             intelligence = td12_build_intelligence(snapshot, td12_memory_sessions(500), history)
+        _apex65_record_component_health("market_memory", "HEALTHY", detail="Latest evaluation completed.")
         return jsonify({"ok": True, "status": "HEALTHY", "fallback_used": False, "market_memory": intelligence or cached})
     except Exception as exc:
         app.logger.exception("APEX65 market-memory build failed")
+        _apex65_record_component_health("market_memory", "DEGRADED" if cached else "FAILED", detail="Build failed; cached fallback used." if cached else "Build failed with no cached fallback.", fallback_used=bool(cached), error_type=type(exc).__name__)
         return jsonify({"ok": bool(cached), "status": "DEGRADED" if cached else "FAILED", "fallback_used": bool(cached),
                         "component": "market_memory", "error_code": "BUILD_FAILED", "error_type": type(exc).__name__,
                         "market_memory": cached}), (200 if cached else 503)
@@ -8577,9 +8612,11 @@ def api_position_cross_asset_intelligence():
             snapshot = td13_build_snapshot(cached_market, monitor)
             history = td12_memory_sessions(500) if TRADE_DIRECTOR_PHASE12_AVAILABLE else []
             intelligence = td13_build_intelligence(snapshot, monitor, history)
+        _apex65_record_component_health("cross_asset_intelligence", "HEALTHY", detail="Latest evaluation completed.")
         return jsonify({"ok": True, "status": "HEALTHY", "fallback_used": False, "cross_asset_intelligence": intelligence or cached_result})
     except Exception as exc:
         app.logger.exception("APEX65 cross-asset intelligence build failed")
+        _apex65_record_component_health("cross_asset_intelligence", "DEGRADED" if cached_result else "FAILED", detail="Build failed; cached fallback used." if cached_result else "Build failed with no cached fallback.", fallback_used=bool(cached_result), error_type=type(exc).__name__)
         return jsonify({"ok": bool(cached_result), "status": "DEGRADED" if cached_result else "FAILED", "fallback_used": bool(cached_result),
                         "component": "cross_asset_intelligence", "error_code": "BUILD_FAILED", "error_type": type(exc).__name__,
                         "cross_asset_intelligence": cached_result}), (200 if cached_result else 503)
@@ -9456,9 +9493,11 @@ def api_position_strategy_orchestration():
                     app.logger.exception("APEX65 Phase 13 enrichment failed inside strategy orchestration")
             trade_history = td6_trade_history(500) if TRADE_DIRECTOR_PHASE6_AVAILABLE else []
             orchestration = td14_build_orchestration(monitor, trade_history)
+        _apex65_record_component_health("strategy_orchestration", "HEALTHY", detail="Latest evaluation completed.")
         return jsonify({"ok": True, "status": "HEALTHY", "fallback_used": False, "strategy_orchestration": orchestration or cached})
     except Exception as exc:
         app.logger.exception("APEX65 strategy orchestration build failed")
+        _apex65_record_component_health("strategy_orchestration", "DEGRADED" if cached else "FAILED", detail="Build failed; cached fallback used." if cached else "Build failed with no cached fallback.", fallback_used=bool(cached), error_type=type(exc).__name__)
         return jsonify({"ok": bool(cached), "status": "DEGRADED" if cached else "FAILED", "fallback_used": bool(cached),
                         "component": "strategy_orchestration", "error_code": "BUILD_FAILED", "error_type": type(exc).__name__,
                         "strategy_orchestration": cached}), (200 if cached else 503)
@@ -13418,6 +13457,7 @@ def _apex65_route_audit():
         ("GET", "/api/position/strategy-orchestration"),
         ("GET", "/api/evidence/status"),
         ("GET", "/api/command-center/status"),
+        ("GET", "/api/runtime/health"),
         ("POST", "/tv_signal"),
     ]
     missing = [{"method": m, "path": p} for m, p in critical if (m, p) not in route_methods]
@@ -13436,6 +13476,58 @@ def _apex65_route_audit():
 @app.get("/api/runtime/route-audit")
 def api_apex65_route_audit():
     return jsonify(_apex65_route_audit())
+
+
+@app.get("/api/runtime/health")
+def api_apex65_runtime_health():
+    """APEX 65.2 canonical runtime health without triggering engine work."""
+    generated_dt = dt.datetime.now(dt.timezone.utc)
+    generated_at = generated_dt.isoformat()
+    if not APEX65_RUNTIME_HEALTH_AVAILABLE or apex65_build_runtime_health is None:
+        return jsonify({
+            "ok": False, "status": "FAILED", "version": VERSION,
+            "generated_at": generated_at, "tradeable_runtime": False,
+            "blockers": ["Runtime Health Aggregator"],
+            "warnings": [],
+            "components": [],
+            "error": "Runtime health aggregator unavailable",
+        }), 503
+
+    with STATE_LOCK:
+        scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
+        scan_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
+        raw_sources = dict(SCANNER_STATE.get("data_sources") or STATE.get("data_sources") or {})
+        scan_in_progress = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
+        last = dict(STATE.get("last_result") or {})
+    session = session_status()
+    hstate = _resolve_health_state(
+        session=session, scan_in_progress=scan_in_progress, updated_at=scan_updated_at,
+        last_scan_duration=scan_duration, scanner_started=SCANNER_STARTED, now=generated_dt,
+    )
+    engine_rows, engine_counts = _compute_engine_health(last)
+    engine_counts["expected"] = bool(session == "MARKET_OPEN" or last)
+    sources = _source_observability(raw_sources, generated_at)
+    td_health = _apex65_component_health_snapshot()
+    payload = apex65_build_runtime_health(
+        version=VERSION, route_audit=_apex65_route_audit(),
+        scanner={
+            "state": hstate.get("state"), "detail": hstate.get("detail"),
+            "session": session, "data_fresh": hstate.get("data_fresh"),
+            "scanner_expected": hstate.get("scanner_expected"),
+            "scanner_state": hstate.get("scanner_state"),
+            "last_scan_at": scan_updated_at,
+            "last_scan_age_seconds": _iso_age_seconds(scan_updated_at, generated_dt),
+            "last_scan_duration_seconds": scan_duration,
+            "scan_in_progress": scan_in_progress,
+        },
+        sources=sources, engine_health=engine_counts, trade_director=td_health,
+        auth_layer_available=bool(AUTH_LAYER_AVAILABLE), generated_at=generated_at,
+    )
+    payload["engine_health_rows"] = [
+        {"engine": row.get("engine"), "status": row.get("status"), "reason": row.get("reason")}
+        for row in engine_rows
+    ]
+    return jsonify(payload)
 
 _APEX65_STARTUP_ROUTE_AUDIT = _apex65_route_audit()
 if not _APEX65_STARTUP_ROUTE_AUDIT["ok"]:
