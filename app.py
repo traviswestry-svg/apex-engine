@@ -13486,7 +13486,8 @@ def api_apex65_runtime_health():
     if not APEX65_RUNTIME_HEALTH_AVAILABLE or apex65_build_runtime_health is None:
         return jsonify({
             "ok": False, "status": "FAILED", "version": VERSION,
-            "generated_at": generated_at, "tradeable_runtime": False,
+            "generated_at": generated_at, "runtime_ready": False,
+            "tradeable_runtime": False, "tradeability_reason": "RUNTIME_BLOCKED",
             "blockers": ["Runtime Health Aggregator"],
             "warnings": [],
             "components": [],
@@ -13523,8 +13524,14 @@ def api_apex65_runtime_health():
         sources=sources, engine_health=engine_counts, trade_director=td_health,
         auth_layer_available=bool(AUTH_LAYER_AVAILABLE), generated_at=generated_at,
     )
+    engines_expected = bool(engine_counts.get("expected"))
     payload["engine_health_rows"] = [
-        {"engine": row.get("engine"), "status": row.get("status"), "reason": row.get("reason")}
+        {
+            "engine": row.get("engine"),
+            "status": ("STANDBY" if not engines_expected and str(row.get("status") or "").upper() == "RED" else row.get("status")),
+            "raw_status": row.get("status"),
+            "reason": ("Scheduled standby; no live scan required." if not engines_expected and str(row.get("status") or "").upper() == "RED" and not row.get("reason") else row.get("reason")),
+        }
         for row in engine_rows
     ]
     return jsonify(payload)
