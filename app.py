@@ -1283,6 +1283,14 @@ except Exception as _runtime_health_err:
     APEX65_RUNTIME_HEALTH_AVAILABLE = False
     print(f"APEX 65.2 runtime health import unavailable: {_runtime_health_err}", flush=True)
 
+try:
+    from engine.runtime_dependency_map import build_dependency_map as apex65_build_dependency_map
+    APEX65_DEPENDENCY_MAP_AVAILABLE = True
+except Exception as _dependency_map_err:
+    apex65_build_dependency_map = None
+    APEX65_DEPENDENCY_MAP_AVAILABLE = False
+    print(f"APEX 65.3 dependency map import unavailable: {_dependency_map_err}", flush=True)
+
 app = Flask(__name__)
 
 # ── APEX access control — application-wide shared-secret auth ────────────────
@@ -13458,6 +13466,7 @@ def _apex65_route_audit():
         ("GET", "/api/evidence/status"),
         ("GET", "/api/command-center/status"),
         ("GET", "/api/runtime/health"),
+        ("GET", "/api/runtime/dependency-map"),
         ("POST", "/tv_signal"),
     ]
     missing = [{"method": m, "path": p} for m, p in critical if (m, p) not in route_methods]
@@ -13535,6 +13544,27 @@ def api_apex65_runtime_health():
         for row in engine_rows
     ]
     return jsonify(payload)
+
+
+@app.get("/api/runtime/dependency-map")
+def api_apex65_runtime_dependency_map():
+    """APEX 65.3 static runtime/engine dependency inventory."""
+    if not APEX65_DEPENDENCY_MAP_AVAILABLE or apex65_build_dependency_map is None:
+        return jsonify({
+            "ok": False, "status": "FAILED", "schema_version": "65.3",
+            "error": "Runtime dependency mapper unavailable",
+        }), 503
+    try:
+        payload = dict(apex65_build_dependency_map())
+        payload["version"] = VERSION
+        return jsonify(payload)
+    except Exception as exc:
+        app.logger.exception("APEX 65.3 dependency map failed")
+        return jsonify({
+            "ok": False, "status": "FAILED", "schema_version": "65.3",
+            "version": VERSION, "error": type(exc).__name__,
+        }), 500
+
 
 _APEX65_STARTUP_ROUTE_AUDIT = _apex65_route_audit()
 if not _APEX65_STARTUP_ROUTE_AUDIT["ok"]:
