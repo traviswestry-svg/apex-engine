@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from . import historical_level_calibration as hlce
 
-VERSION = "50.6.1_LEVEL_TRANSITION_PROBABILITY"
+VERSION = "50.6.2_LEVEL_TRANSITION_PROBABILITY"
 SCHEMA_VERSION = 1
 
 
@@ -608,6 +608,145 @@ def _latest_persisted_spot(symbol: str, *, path: Optional[str] = None) -> Tuple[
         return None, row["session_date"]
 
 
+def _latest_persisted_levels(symbol: str, *, path: Optional[str] = None) -> Tuple[List[Any], Optional[str]]:
+    """Return latest HLCE level set as a read-only fallback universe."""
+    initialize_transition_store(path)
+    with hlce._connect(path) as conn:
+        row = conn.execute(
+            "SELECT MAX(session_date) AS session_date FROM daily_levels WHERE symbol=?",
+            (_norm(symbol),),
+        ).fetchone()
+        session_date = row["session_date"] if row else None
+        if not session_date:
+            return [], None
+        rows = conn.execute(
+            """SELECT level_type, price, source, confidence
+               FROM daily_levels
+               WHERE symbol=? AND session_date=?
+               ORDER BY price""",
+            (_norm(symbol), session_date),
+        ).fetchall()
+    out: List[Any] = []
+    for row in rows:
+        try:
+            price = float(row["price"])
+        except (TypeError, ValueError):
+            continue
+        if price <= 0:
+            continue
+        out.append(hlce.ExtractedLevel(
+            level_type=str(row["level_type"]), price=price,
+            source=str(row["source"] or "hlce_persisted"), confidence=row["confidence"],
+        ))
+    return out, session_date
+
+
+def _load_latest_morning_brief(symbol: str = "SPX") -> Optional[Dict[str, Any]]:
+    """Read the latest persisted Morning Brief revision without provider/network I/O.
+
+    The revision table is intentionally used instead of only the immutable first
+    forecast snapshot because LTPE's path is a *current read model*.  This lets a
+    corrected next-session level set (for example, after a deterministic hotfix)
+    become visible immediately while leaving forecast-grade archives immutable.
+    """
+    try:
+        from . import evening_recap
+        evening_recap.init_db()
+        with sqlite3.connect(evening_recap.DB_PATH, timeout=5) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT payload_json FROM apex49_morning_revisions
+                   WHERE ticker=? ORDER BY id DESC LIMIT 1""",
+                (_norm(symbol),),
+            ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row["payload_json"] or "{}")
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        # Path construction must remain fail-soft and side-effect free.
+        return None
+
+
+_BRIEF_KIND_MAP = {
+    "em_upper": "expected_move_high",
+    "em_lower": "expected_move_low",
+    "high_volume_node": "hvn",
+    "low_volume_node": "lvn",
+    "or5_high": "or_high",
+    "or15_high": "or_high",
+    "or5_low": "or_low",
+    "or15_low": "or_low",
+    "ib_high": "initial_balance_high",
+    "ib_low": "initial_balance_low",
+    "ib_extension": "initial_balance_extension",
+    "sellside_liquidity": "liquidity_pool",
+    "buyside_liquidity": "liquidity_pool",
+}
+
+
+def _brief_levels(brief: Optional[Mapping[str, Any]]) -> List[Any]:
+    """Convert deterministic Morning Brief levels into canonical HLCE level types."""
+    if not isinstance(brief, Mapping):
+        return []
+    structured = brief.get("structured") if isinstance(brief.get("structured"), Mapping) else {}
+    raw_levels = structured.get("levels") if isinstance(structured.get("levels"), list) else []
+    out: List[Any] = []
+    seen: set[Tuple[str, float]] = set()
+    for item in raw_levels:
+        if not isinstance(item, Mapping):
+            continue
+        raw_price = item.get("price")
+        if raw_price in (None, "", "[FEED REQUIRED]"):
+            continue
+        try:
+            price = float(raw_price)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(price) or price <= 0:
+            continue
+        raw_kind = str(item.get("kind") or "").strip().lower()
+        level_type = _BRIEF_KIND_MAP.get(raw_kind, raw_kind)
+        if not level_type:
+            continue
+        # Future-session OR/IB rows are deliberately [FEED REQUIRED] after
+        # APEX 65.6.4 and therefore never reach this point.  Keep the guard for
+        # older archives as an additional contamination barrier.
+        target_date = str(brief.get("target_session_date") or "")
+        source_date = str(brief.get("source_session_date") or brief.get("session_date") or "")
+        if target_date and source_date and target_date != source_date and level_type in {
+            "or_high", "or_low", "initial_balance_high", "initial_balance_low",
+            "initial_balance_extension",
+        }:
+            continue
+        key = (level_type, round(price, 4))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(hlce.ExtractedLevel(
+            level_type=level_type,
+            price=price,
+            source=str(item.get("source") or "morning_brief"),
+            confidence=item.get("confidence"),
+        ))
+    return out
+
+
+def _brief_spot(brief: Optional[Mapping[str, Any]]) -> Optional[float]:
+    if not isinstance(brief, Mapping):
+        return None
+    structured = brief.get("structured") if isinstance(brief.get("structured"), Mapping) else {}
+    for value in (structured.get("spot"), brief.get("spot")):
+        try:
+            if value not in (None, "", "[FEED REQUIRED]"):
+                x = float(value)
+                if math.isfinite(x) and x > 0:
+                    return x
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def _snapshot_session_date(snapshot: Mapping[str, Any]) -> Optional[str]:
     raw = hlce._nested(
         snapshot,
@@ -618,61 +757,168 @@ def _snapshot_session_date(snapshot: Mapping[str, Any]) -> Optional[str]:
     return str(raw) if raw else None
 
 
+def _brief_session_dates(brief: Optional[Mapping[str, Any]]) -> Tuple[Optional[str], Optional[str]]:
+    if not isinstance(brief, Mapping):
+        return None, None
+    source = brief.get("source_session_date") or brief.get("session_date")
+    target = brief.get("target_session_date") or source
+    return (str(source) if source else None, str(target) if target else None)
+
+
+def _is_closed_or_next_session(snapshot: Mapping[str, Any], brief: Optional[Mapping[str, Any]]) -> bool:
+    sc = brief.get("session_context") if isinstance(brief, Mapping) and isinstance(brief.get("session_context"), Mapping) else {}
+    state = _norm(sc.get("state") or hlce._nested(snapshot, "session_context.state", "session", "market_session"))
+    mode = _norm(sc.get("brief_mode") or hlce._nested(snapshot, "session_context.brief_mode", "brief_mode"))
+    if state in {"CLOSED", "MARKET_CLOSED", "WEEKEND", "AFTER_HOURS", "PREMARKET", "PRE_MARKET"}:
+        return True
+    return mode in {"NEXT_SESSION_PREP", "AFTER_CLOSE", "PREMARKET"}
+
+
+def _canonical_level_universe(snapshot: Mapping[str, Any], ctx: Any, *,
+                              path: Optional[str] = None,
+                              brief: Optional[Mapping[str, Any]] = None) -> Tuple[List[Any], str, Optional[str], Optional[str]]:
+    """Resolve the path's read-only institutional level universe.
+
+    Priority is session-aware rather than simply "first non-empty": live-session
+    levels win while the market is active; next-session Morning Brief levels win
+    while closed because those levels are explicitly prepared for the target
+    session.  Persisted HLCE levels are a last-resort structural fallback.
+    """
+    live_levels = hlce.extract_levels(snapshot)
+    brief_levels = _brief_levels(brief)
+    source_date, target_date = _brief_session_dates(brief)
+    if not _is_closed_or_next_session(snapshot, brief) and live_levels:
+        return live_levels, "LIVE_SESSION_LEVELS", _snapshot_session_date(snapshot), _snapshot_session_date(snapshot)
+    if brief_levels:
+        return brief_levels, "NEXT_SESSION_DAILY_KEY_LEVELS", source_date, target_date
+    if live_levels:
+        return live_levels, "CANONICAL_SNAPSHOT_LEVELS", _snapshot_session_date(snapshot), _snapshot_session_date(snapshot)
+    persisted, session_date = _latest_persisted_levels(ctx.symbol, path=path)
+    if persisted:
+        return persisted, "LAST_HLCE_SESSION_LEVELS", session_date, None
+    return [], "UNAVAILABLE", None, None
+
+
 def _resolve_path_spot(snapshot: Mapping[str, Any], ctx: Any, levels: Sequence[Any], *,
                        explicit_spot: Optional[float] = None,
-                       path: Optional[str] = None) -> Tuple[Optional[float], str, Optional[str]]:
-    """Resolve a display-only spot for path construction. Never writes observations."""
+                       path: Optional[str] = None,
+                       brief: Optional[Mapping[str, Any]] = None) -> Tuple[Optional[float], str, Optional[str], List[Dict[str, Any]]]:
+    """Resolve a display-only spot for path construction with provenance diagnostics."""
+    attempts: List[Dict[str, Any]] = []
     if explicit_spot is not None:
         try:
-            return float(explicit_spot), "EXPLICIT_SPOT", _snapshot_session_date(snapshot)
+            value = float(explicit_spot)
+            if math.isfinite(value) and value > 0:
+                attempts.append({"source": "explicit_spot", "status": "AVAILABLE"})
+                return value, "EXPLICIT_SPOT", _snapshot_session_date(snapshot), attempts
         except (TypeError, ValueError):
-            return None, "INVALID_EXPLICIT_SPOT", _snapshot_session_date(snapshot)
+            pass
+        attempts.append({"source": "explicit_spot", "status": "INVALID"})
+
     if ctx.spot is not None:
-        return float(ctx.spot), "LIVE_SPOT", _snapshot_session_date(snapshot)
+        attempts.append({"source": "canonical_live_snapshot", "status": "AVAILABLE"})
+        return float(ctx.spot), "LIVE_SPOT", _snapshot_session_date(snapshot), attempts
+    attempts.append({"source": "canonical_live_snapshot", "status": "UNAVAILABLE"})
+
+    brief_value = _brief_spot(brief)
+    brief_source, _ = _brief_session_dates(brief)
+    if brief_value is not None:
+        attempts.append({"source": "morning_brief_structured", "status": "AVAILABLE"})
+        return brief_value, "CANONICAL_NEXT_SESSION_SPOT", brief_source, attempts
+    attempts.append({"source": "morning_brief_structured", "status": "UNAVAILABLE"})
 
     persisted, session_date = _latest_persisted_spot(ctx.symbol, path=path)
     if persisted is not None:
-        return persisted, "LAST_SESSION_SPOT", session_date
+        attempts.append({"source": "hlce_persisted_spot", "status": "AVAILABLE"})
+        return persisted, "LAST_SESSION_SPOT", session_date, attempts
+    attempts.append({"source": "hlce_persisted_spot", "status": "UNAVAILABLE"})
 
-    # Last-resort structural context: prior close already present in the level set.
+    # Last-resort structural context: prior close from whichever canonical level
+    # universe was resolved. This remains display-only and never enters learning.
     for lvl in levels:
         if getattr(lvl, "level_type", None) == "prev_close":
             try:
-                return float(lvl.price), "LAST_SESSION_CLOSE", _snapshot_session_date(snapshot)
+                value = float(lvl.price)
+                attempts.append({"source": "canonical_prev_close", "status": "AVAILABLE"})
+                return value, "LAST_SESSION_CLOSE", brief_source or _snapshot_session_date(snapshot), attempts
             except (TypeError, ValueError):
                 break
-    return None, "UNAVAILABLE", _snapshot_session_date(snapshot)
+    attempts.append({"source": "canonical_prev_close", "status": "UNAVAILABLE"})
+    return None, "UNAVAILABLE", brief_source or _snapshot_session_date(snapshot), attempts
+
+
+def _path_context(ctx: Any, brief: Optional[Mapping[str, Any]], spot: float) -> Dict[str, Any]:
+    """Resolve conditional context without inventing an intraday bucket when closed."""
+    gamma = ctx.gamma_regime
+    auction = ctx.auction_regime
+    trend = ctx.trend_regime
+    volatility = ctx.volatility_regime
+    expected_move = ctx.expected_move_regime
+    session_bucket = ctx.session_bucket
+
+    if isinstance(brief, Mapping):
+        structured = brief.get("structured") if isinstance(brief.get("structured"), Mapping) else {}
+        gamma = _norm(structured.get("gamma_regime"), gamma)
+        sc = brief.get("session_context") if isinstance(brief.get("session_context"), Mapping) else {}
+        mode = _norm(sc.get("brief_mode"))
+        state = _norm(sc.get("state"))
+        if mode == "NEXT_SESSION_PREP" or state == "WEEKEND":
+            session_bucket = "NEXT_SESSION_PREP"
+        elif state in {"CLOSED", "MARKET_CLOSED", "AFTER_HOURS"}:
+            session_bucket = "MARKET_CLOSED"
+
+        em = structured.get("expected_move") if isinstance(structured.get("expected_move"), Mapping) else {}
+        try:
+            lo, hi = float(em.get("lower")), float(em.get("upper"))
+            expected_move = "INSIDE_EXPECTED_MOVE" if lo <= spot <= hi else "OUTSIDE_EXPECTED_MOVE"
+        except (TypeError, ValueError):
+            pass
+    return {
+        "gamma_regime": gamma,
+        "auction_regime": auction,
+        "trend_regime": trend,
+        "volatility_regime": volatility,
+        "session_bucket": session_bucket,
+        "expected_move_regime": expected_move,
+    }
 
 
 def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] = None,
                             direction: Optional[str] = None, max_steps: int = 6,
                             spot: Optional[float] = None) -> Dict[str, Any]:
-    """Build an evidence-backed path through currently registered/extracted levels.
+    """Build an evidence-backed path through canonical institutional levels.
 
-    This is a read model only.  It does not claim that a transition will occur;
-    each edge is null-probability until LTPE has observed that exact source /
-    event / direction / target-type combination historically.
+    The resolver is side-effect free: fallback spot/levels are read-model context
+    only and are never written as LTPE observations or statistics.
     """
     initialize_transition_store(path)
     ctx = hlce.extract_context(snapshot)
-    levels = hlce.extract_levels(snapshot)
-    resolved_spot, spot_mode, spot_session = _resolve_path_spot(
-        snapshot, ctx, levels, explicit_spot=spot, path=path
+    brief = _load_latest_morning_brief(ctx.symbol)
+    levels, universe_mode, source_session, target_session = _canonical_level_universe(
+        snapshot, ctx, path=path, brief=brief,
+    )
+    resolved_spot, spot_mode, spot_session, spot_attempts = _resolve_path_spot(
+        snapshot, ctx, levels, explicit_spot=spot, path=path, brief=brief,
     )
     if resolved_spot is None:
         return {
             "ok": False, "version": VERSION, "error": "NO_SPOT", "steps": [],
             "spot_mode": spot_mode, "spot_session": spot_session,
+            "spot_resolution_attempts": spot_attempts,
+            "level_universe_mode": universe_mode,
+            "source_session_date": source_session,
+            "target_session_date": target_session,
         }
     direction = _norm(direction or "UP")
     if direction not in {"UP", "DOWN"}:
         return {"ok": False, "version": VERSION, "error": "INVALID_DIRECTION", "steps": []}
+
     ordered = sorted(levels, key=lambda x: x.price, reverse=(direction == "DOWN"))
     if direction == "UP":
         ordered = [x for x in ordered if x.price > resolved_spot + _min_gap(resolved_spot)]
     else:
         ordered = [x for x in ordered if x.price < resolved_spot - _min_gap(resolved_spot)]
-    # Collapse near-duplicate price clusters.
+
     collapsed: List[Any] = []
     for lvl in ordered:
         if not collapsed or abs(lvl.price - collapsed[-1].price) > _cluster_band(lvl.price):
@@ -684,19 +930,20 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
     steps: List[Dict[str, Any]] = []
     prior_type: Optional[str] = None
     prior_price = resolved_spot
-    context = {
-        "gamma_regime": ctx.gamma_regime, "auction_regime": ctx.auction_regime,
-        "trend_regime": ctx.trend_regime, "volatility_regime": ctx.volatility_regime,
-        "session_bucket": ctx.session_bucket, "expected_move_regime": ctx.expected_move_regime,
-    }
+    context = _path_context(ctx, brief, resolved_spot)
     for i, lvl in enumerate(collapsed):
         if prior_type is None:
             evidence = None
         else:
-            evidence = next_level_probability(ctx.symbol, prior_type, "ACCEPTED", direction,
-                                              target_level_type=lvl.level_type, context=context, path=path)
+            evidence = next_level_probability(
+                ctx.symbol, prior_type, "ACCEPTED", direction,
+                target_level_type=lvl.level_type, context=context, path=path,
+            )
         steps.append({
-            "ordinal": i + 1, "level_type": lvl.level_type, "price": lvl.price,
+            "ordinal": i + 1,
+            "level_type": lvl.level_type,
+            "price": lvl.price,
+            "source": getattr(lvl, "source", None),
             "distance_from_prior": round(abs(lvl.price - prior_price), 4),
             "conditional_on": None if prior_type is None else {
                 "source_level_type": prior_type, "source_event": "ACCEPTED", "direction": direction,
@@ -705,13 +952,23 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
         })
         prior_type, prior_price = lvl.level_type, lvl.price
     return {
-        "ok": True, "version": VERSION, "symbol": ctx.symbol, "spot": resolved_spot,
-        "spot_mode": spot_mode, "spot_session": spot_session,
+        "ok": True,
+        "version": VERSION,
+        "symbol": ctx.symbol,
+        "spot": resolved_spot,
+        "spot_mode": spot_mode,
+        "spot_session": spot_session,
+        "spot_resolution_attempts": spot_attempts,
         "spot_is_observation_input": False,
-        "direction": direction, "context": context, "steps": steps,
+        "direction": direction,
+        "context": context,
+        "steps": steps,
+        "level_universe_mode": universe_mode,
+        "level_universe_count": len(levels),
+        "source_session_date": source_session,
+        "target_session_date": target_session,
         "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
     }
-
 
 def transition_history(*, symbol: Optional[str] = None, source_level_type: Optional[str] = None,
                        limit: int = 200, path: Optional[str] = None) -> Dict[str, Any]:
