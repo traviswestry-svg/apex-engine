@@ -636,10 +636,10 @@ except Exception as _iin_err:
 
 # APEX 11.4-12.3 — Historical Intelligence, Similarity Research, and Governed Learning
 try:
-    from engine.institutional_roadmap_routes import register_institutional_roadmap_routes
+    from engine.institutional_route_registry import register_institutional_compatibility_routes
     INSTITUTIONAL_ROADMAP_AVAILABLE = True
 except Exception as _roadmap_err:
-    register_institutional_roadmap_routes = None  # type: ignore[assignment]
+    register_institutional_compatibility_routes = None  # type: ignore[assignment]
     INSTITUTIONAL_ROADMAP_AVAILABLE = False
     print(f"APEX Institutional Roadmap unavailable (non-fatal): {_roadmap_err}", flush=True)
 
@@ -1297,7 +1297,7 @@ try:
 except Exception as _consolidation_audit_err:
     apex65_build_consolidation_audit = None
     APEX65_CONSOLIDATION_AUDIT_AVAILABLE = False
-    print(f"APEX 65.4 consolidation audit import unavailable: {_consolidation_audit_err}", flush=True)
+    print(f"APEX 65.5 consolidation audit import unavailable: {_consolidation_audit_err}", flush=True)
 
 app = Flask(__name__)
 
@@ -12911,9 +12911,9 @@ def _apex10_capabilities():
     }
 
 try:
-    if INSTITUTIONAL_ROADMAP_AVAILABLE and register_institutional_roadmap_routes is not None:
-        register_institutional_roadmap_routes(app, last_result_provider=_apex10_last_result)
-        print("APEX 11.4-12.3 institutional roadmap routes registered.", flush=True)
+    if INSTITUTIONAL_ROADMAP_AVAILABLE and register_institutional_compatibility_routes is not None:
+        register_institutional_compatibility_routes(app, last_result_provider=_apex10_last_result)
+        print("APEX 65.5 institutional compatibility routes registered through canonical boundary.", flush=True)
 except Exception as e:
     INSTITUTIONAL_ROADMAP_AVAILABLE = False
     print(f"APEX 11.4-12.3 route registration unavailable (non-fatal): {e}", flush=True)
@@ -13560,7 +13560,7 @@ def api_apex65_runtime_dependency_map():
     """APEX 65.3 static runtime/engine dependency inventory."""
     if not APEX65_DEPENDENCY_MAP_AVAILABLE or apex65_build_dependency_map is None:
         return jsonify({
-            "ok": False, "status": "FAILED", "schema_version": "65.4",
+            "ok": False, "status": "FAILED", "schema_version": "65.5",
             "error": "Runtime dependency mapper unavailable",
         }), 503
     try:
@@ -13568,31 +13568,31 @@ def api_apex65_runtime_dependency_map():
         payload["version"] = VERSION
         return jsonify(payload)
     except Exception as exc:
-        app.logger.exception("APEX 65.4 dependency map failed")
+        app.logger.exception("APEX 65.5 dependency map failed")
         return jsonify({
-            "ok": False, "status": "FAILED", "schema_version": "65.4",
+            "ok": False, "status": "FAILED", "schema_version": "65.5",
             "version": VERSION, "error": type(exc).__name__,
         }), 500
 
 
 @app.get("/api/runtime/consolidation")
 def api_apex65_runtime_consolidation():
-    """APEX 65.4 conservative second-level cleanup audit."""
+    """APEX 65.5 conservative second-level cleanup audit."""
     if not APEX65_CONSOLIDATION_AUDIT_AVAILABLE or apex65_build_consolidation_audit is None:
         return jsonify({
-            "ok": False, "status": "FAILED", "schema_version": "65.4",
+            "ok": False, "status": "FAILED", "schema_version": "65.5",
             "version": VERSION, "error": "Runtime consolidation auditor unavailable",
         }), 503
     try:
         payload = dict(apex65_build_consolidation_audit())
         payload["version"] = VERSION
-        payload["stabilization_build"] = "65.4"
+        payload["stabilization_build"] = "65.5"
         payload["composition_boundary"] = "engine.application_composition:create_app"
         return jsonify(payload)
     except Exception as exc:
-        app.logger.exception("APEX 65.4 consolidation audit failed")
+        app.logger.exception("APEX 65.5 consolidation audit failed")
         return jsonify({
-            "ok": False, "status": "FAILED", "schema_version": "65.4",
+            "ok": False, "status": "FAILED", "schema_version": "65.5",
             "version": VERSION, "error": type(exc).__name__,
         }), 500
 
