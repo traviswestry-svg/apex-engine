@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import os
 import datetime as dt
+import threading
+import time
 from typing import Any, Optional
 
 try:
@@ -48,6 +50,19 @@ except Exception:  # pragma: no cover
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 DEFAULT_MODEL = os.getenv("APEX_BRIEF_MODEL", "claude-sonnet-5")
 DEFAULT_AI_TIMEOUT = max(5, min(int(os.getenv("APEX_BRIEF_AI_TIMEOUT_SECONDS", "10")), 45))
+ANTHROPIC_MAX_ATTEMPTS = 2  # initial request + one controlled retry
+ANTHROPIC_RETRY_BACKOFF_SECONDS = max(0.0, min(float(os.getenv("APEX_BRIEF_AI_RETRY_BACKOFF_SECONDS", "0.75")), 5.0))
+ANTHROPIC_CIRCUIT_FAILURE_THRESHOLD = max(1, int(os.getenv("APEX_BRIEF_AI_CIRCUIT_FAILURE_THRESHOLD", "3")))
+ANTHROPIC_CIRCUIT_COOLDOWN_SECONDS = max(10.0, min(float(os.getenv("APEX_BRIEF_AI_CIRCUIT_COOLDOWN_SECONDS", "120")), 1800.0))
+
+_CIRCUIT_LOCK = threading.RLock()
+_CIRCUIT = {
+    "state": "CLOSED",
+    "consecutive_failures": 0,
+    "opened_at_monotonic": None,
+    "last_error": None,
+    "last_success_at": None,
+}
 
 
 def _now_et() -> dt.datetime:
@@ -180,36 +195,218 @@ Keep the response under ~700 words.
 # 3) The single Anthropic call (macro + narrative, with web_search)
 # --------------------------------------------------------------------------- #
 
+def _circuit_snapshot(now_mono: Optional[float] = None) -> dict:
+    now_mono = time.monotonic() if now_mono is None else now_mono
+    with _CIRCUIT_LOCK:
+        state = str(_CIRCUIT["state"])
+        opened = _CIRCUIT.get("opened_at_monotonic")
+        remaining = 0.0
+        if state == "OPEN" and opened is not None:
+            elapsed = max(0.0, now_mono - float(opened))
+            remaining = max(0.0, ANTHROPIC_CIRCUIT_COOLDOWN_SECONDS - elapsed)
+            if remaining <= 0.0:
+                state = "HALF_OPEN"
+        return {
+            "state": state,
+            "consecutive_failures": int(_CIRCUIT["consecutive_failures"]),
+            "failure_threshold": ANTHROPIC_CIRCUIT_FAILURE_THRESHOLD,
+            "cooldown_seconds": ANTHROPIC_CIRCUIT_COOLDOWN_SECONDS,
+            "cooldown_remaining_seconds": round(remaining, 3),
+            "last_error": _CIRCUIT.get("last_error"),
+            "last_success_at": _CIRCUIT.get("last_success_at"),
+        }
+
+
+def _circuit_before_call() -> tuple[bool, dict]:
+    now_mono = time.monotonic()
+    with _CIRCUIT_LOCK:
+        state = str(_CIRCUIT["state"])
+        opened = _CIRCUIT.get("opened_at_monotonic")
+        if state == "OPEN" and opened is not None:
+            elapsed = max(0.0, now_mono - float(opened))
+            if elapsed < ANTHROPIC_CIRCUIT_COOLDOWN_SECONDS:
+                return False, _circuit_snapshot(now_mono)
+            _CIRCUIT["state"] = "HALF_OPEN"
+    return True, _circuit_snapshot(now_mono)
+
+
+def _circuit_record_success() -> dict:
+    with _CIRCUIT_LOCK:
+        _CIRCUIT.update({
+            "state": "CLOSED",
+            "consecutive_failures": 0,
+            "opened_at_monotonic": None,
+            "last_error": None,
+            "last_success_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        })
+    return _circuit_snapshot()
+
+
+def _circuit_record_failure(error: str) -> dict:
+    with _CIRCUIT_LOCK:
+        failures = int(_CIRCUIT["consecutive_failures"]) + 1
+        _CIRCUIT["consecutive_failures"] = failures
+        _CIRCUIT["last_error"] = str(error)[:300]
+        if failures >= ANTHROPIC_CIRCUIT_FAILURE_THRESHOLD:
+            _CIRCUIT["state"] = "OPEN"
+            _CIRCUIT["opened_at_monotonic"] = time.monotonic()
+        elif _CIRCUIT.get("state") == "HALF_OPEN":
+            _CIRCUIT["state"] = "OPEN"
+            _CIRCUIT["opened_at_monotonic"] = time.monotonic()
+    return _circuit_snapshot()
+
+
+def _reset_anthropic_circuit_for_tests() -> None:
+    with _CIRCUIT_LOCK:
+        _CIRCUIT.update({
+            "state": "CLOSED",
+            "consecutive_failures": 0,
+            "opened_at_monotonic": None,
+            "last_error": None,
+            "last_success_at": None,
+        })
+
+
+def _retryable_status(status_code: int) -> bool:
+    return status_code == 429 or status_code >= 500 or status_code in {408, 409}
+
+
 def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
-                   max_tokens: int = 4000, timeout: int = DEFAULT_AI_TIMEOUT) -> tuple[str, Optional[str]]:
-    """Returns (narrative_markdown, error). error is None on success."""
+                   max_tokens: int = 4000, timeout: int = DEFAULT_AI_TIMEOUT):
+    """Return ``(narrative, error, telemetry)``.
+
+    The integration is intentionally bounded: one retry maximum, exponential
+    backoff, and a local circuit breaker. No API key or response body is exposed
+    through telemetry.
+    """
+    telemetry = {
+        "provider": "anthropic",
+        "model": model,
+        "max_attempts": ANTHROPIC_MAX_ATTEMPTS,
+        "timeout_seconds_per_attempt": timeout,
+        "retry_backoff_base_seconds": ANTHROPIC_RETRY_BACKOFF_SECONDS,
+        "attempts": [],
+        "retry_count": 0,
+        "total_duration_ms": 0.0,
+        "circuit": _circuit_snapshot(),
+        "network_io_performed": False,
+    }
     if requests is None:
-        return "", "requests library unavailable"
-    try:
-        resp = requests.post(
-            ANTHROPIC_URL,
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json={
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": [{"role": "user", "content": prompt}],
-                "tools": [{"type": "web_search_20250305", "name": "web_search"}],
-            },
-            timeout=timeout,
-        )
-        if resp.status_code != 200:
-            return "", f"anthropic {resp.status_code}: {resp.text[:200]}"
-        data = resp.json()
-        text = "".join(
-            b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
-        ).strip()
-        return (text, None) if text else ("", "empty narrative")
-    except Exception as e:  # network/timeout/parse
-        return "", f"{type(e).__name__}: {e}"
+        error = "requests library unavailable"
+        telemetry["final_error"] = error
+        return "", error, telemetry
+
+    allowed, circuit = _circuit_before_call()
+    telemetry["circuit"] = circuit
+    if not allowed:
+        error = "Anthropic circuit breaker open; deterministic fallback active"
+        telemetry.update({
+            "final_error": error,
+            "circuit_bypassed_request": True,
+            "outcome": "CIRCUIT_OPEN",
+        })
+        return "", error, telemetry
+
+    total_started = time.perf_counter()
+    final_error = None
+    for attempt_no in range(1, ANTHROPIC_MAX_ATTEMPTS + 1):
+        attempt_started = time.perf_counter()
+        attempt = {
+            "attempt": attempt_no,
+            "status": "UNKNOWN",
+            "duration_ms": 0.0,
+            "retryable": False,
+            "http_status": None,
+            "error_type": None,
+            "error": None,
+        }
+        try:
+            telemetry["network_io_performed"] = True
+            resp = requests.post(
+                ANTHROPIC_URL,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "max_tokens": max_tokens,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                },
+                timeout=timeout,
+            )
+            attempt["http_status"] = int(resp.status_code)
+            if resp.status_code != 200:
+                retryable = _retryable_status(int(resp.status_code))
+                final_error = f"anthropic {resp.status_code}: {resp.text[:200]}"
+                attempt.update({
+                    "status": "HTTP_ERROR",
+                    "retryable": retryable,
+                    "error_type": "HTTPError",
+                    "error": final_error,
+                })
+            else:
+                data = resp.json()
+                text = "".join(
+                    b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
+                ).strip()
+                if text:
+                    attempt["status"] = "SUCCESS"
+                    attempt["duration_ms"] = round((time.perf_counter() - attempt_started) * 1000, 1)
+                    telemetry["attempts"].append(attempt)
+                    telemetry["total_duration_ms"] = round((time.perf_counter() - total_started) * 1000, 1)
+                    telemetry["outcome"] = "SUCCESS"
+                    telemetry["final_error"] = None
+                    telemetry["circuit"] = _circuit_record_success()
+                    return text, None, telemetry
+                final_error = "empty narrative"
+                attempt.update({
+                    "status": "EMPTY_RESPONSE",
+                    "retryable": True,
+                    "error_type": "EmptyResponse",
+                    "error": final_error,
+                })
+        except Exception as exc:  # network / timeout / parse
+            final_error = f"{type(exc).__name__}: {exc}"
+            retryable = False
+            if requests is not None:
+                retryable_types = tuple(
+                    t for t in (
+                        getattr(requests.exceptions, "Timeout", None),
+                        getattr(requests.exceptions, "ConnectionError", None),
+                    ) if t is not None
+                )
+                retryable = bool(retryable_types and isinstance(exc, retryable_types))
+            attempt.update({
+                "status": "EXCEPTION",
+                "retryable": retryable,
+                "error_type": type(exc).__name__,
+                "error": final_error,
+            })
+
+        attempt["duration_ms"] = round((time.perf_counter() - attempt_started) * 1000, 1)
+        telemetry["attempts"].append(attempt)
+        if attempt_no >= ANTHROPIC_MAX_ATTEMPTS or not attempt["retryable"]:
+            break
+
+        delay = ANTHROPIC_RETRY_BACKOFF_SECONDS * (2 ** (attempt_no - 1))
+        telemetry["retry_count"] += 1
+        telemetry["attempts"][-1]["backoff_before_next_attempt_seconds"] = round(delay, 3)
+        if delay > 0:
+            time.sleep(delay)
+
+    telemetry["total_duration_ms"] = round((time.perf_counter() - total_started) * 1000, 1)
+    telemetry["final_error"] = final_error
+    telemetry["outcome"] = "FAILED"
+    breaker_eligible = bool(telemetry["attempts"] and telemetry["attempts"][-1].get("retryable"))
+    telemetry["breaker_failure_counted"] = breaker_eligible
+    telemetry["circuit"] = (
+        _circuit_record_failure(final_error or "unknown anthropic failure")
+        if breaker_eligible else _circuit_snapshot()
+    )
+    return "", final_error, telemetry
 
 
 # --------------------------------------------------------------------------- #
@@ -256,6 +453,7 @@ def generate_morning_brief(
     err = None
     narrative_source = "none"
     narrative_status = "UNAVAILABLE"
+    ai_telemetry = {"provider": "anthropic", "outcome": "NOT_ATTEMPTED", "attempts": [], "circuit": _circuit_snapshot()}
     ncache = narrative_cache if narrative_cache is not None else cache
     cached_narrative = (ncache or {}).get(result_key) if ncache is not None else None
 
@@ -273,14 +471,39 @@ def generate_morning_brief(
         api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "").strip()
         step = time.perf_counter()
         if api_key:
-            narrative, err = _llm(prompt, api_key=api_key, model=model)
+            llm_result = _llm(prompt, api_key=api_key, model=model)
+            if isinstance(llm_result, tuple) and len(llm_result) >= 3:
+                narrative, err, ai_telemetry = llm_result[0], llm_result[1], (llm_result[2] or ai_telemetry)
+            else:
+                narrative, err = llm_result
+                ai_telemetry = {
+                    "provider": "anthropic",
+                    "outcome": "SUCCESS" if narrative else "FAILED",
+                    "attempts": [],
+                    "telemetry_source": "legacy_llm_adapter",
+                    "circuit": _circuit_snapshot(),
+                }
             narrative_source = "anthropic" if narrative else "deterministic_fallback"
             low_err = str(err or "").lower()
-            narrative_status = "FRESH" if narrative else ("TIMEOUT_FALLBACK" if "timeout" in low_err else "ERROR_FALLBACK")
+            if narrative:
+                narrative_status = "FRESH"
+            elif str(ai_telemetry.get("outcome") or "").upper() == "CIRCUIT_OPEN":
+                narrative_status = "CIRCUIT_OPEN_FALLBACK"
+            elif "timeout" in low_err:
+                narrative_status = "TIMEOUT_FALLBACK"
+            else:
+                narrative_status = "ERROR_FALLBACK"
         else:
             narrative, err = "", "no ANTHROPIC_API_KEY set"
             narrative_source = "deterministic_fallback"
             narrative_status = "NO_KEY_FALLBACK"
+            ai_telemetry = {
+                "provider": "anthropic",
+                "outcome": "NO_KEY",
+                "attempts": [],
+                "network_io_performed": False,
+                "circuit": _circuit_snapshot(),
+            }
         timings["ai_call"] = round((time.perf_counter() - step) * 1000, 1)
         # Cache successful narratives only. Timeout/error fallbacks are deterministic
         # response states, not reusable narrative content.
@@ -327,11 +550,15 @@ def generate_morning_brief(
         "session_context": sc,
         "generation_timing": timings,
         "narrative_attempt": {
-            "attempted": narrative_source in {"anthropic", "deterministic_fallback"},
+            "attempted": bool(ai_telemetry.get("network_io_performed")) or narrative_source == "anthropic",
             "duration_ms": timings.get("ai_call", 0.0),
             "status": narrative_status,
             "error": err,
+            "attempt_count": len(ai_telemetry.get("attempts") or []),
+            "retry_count": int(ai_telemetry.get("retry_count") or 0),
+            "circuit_state": (ai_telemetry.get("circuit") or {}).get("state"),
         },
+        "anthropic_telemetry": ai_telemetry,
         "markdown": markdown,
         "structured": dkl.to_dict(),
     }
