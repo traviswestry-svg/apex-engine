@@ -60,7 +60,13 @@ Maybe = Union[float, _FeedRequired]   # a number, or explicitly absent
 
 
 def present(x: Maybe) -> bool:
-    return not isinstance(x, _FeedRequired)
+    """True only for an actually available value.
+
+    ``None`` can enter at provider/session boundaries when a feed is legitimately
+    unavailable (for example a closed-market morning brief). Treat it exactly
+    like ``FEED_REQUIRED`` so downstream arithmetic never sees a null as data.
+    """
+    return x is not None and not isinstance(x, _FeedRequired)
 
 
 def _api_number(value):

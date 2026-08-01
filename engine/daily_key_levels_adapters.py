@@ -97,12 +97,9 @@ class CanonicalMarketDataAdapter:
         self._intraday = list(intraday_1m_bars or [])
         self._overnight = list(overnight_bars or [])
         self._es_daily = list(es_daily_bars or [])
-        # Normalize every optional numeric input at the adapter boundary.
-        # Upstream provider orchestration legitimately uses ``None`` when a feed
-        # is unavailable (especially on closed/weekend sessions), while the
-        # Daily Key Levels core uses FEED_REQUIRED as its sole missing-value
-        # sentinel. Allowing raw None through makes ``present(None)`` true and
-        # can trigger arithmetic TypeErrors in expected-move construction.
+        # Normalize every optional numeric boundary value.  Morning Brief can
+        # legitimately supply None while markets/providers are unavailable; the
+        # Daily Key Levels contract uses FEED_REQUIRED, never raw None.
         self._spot = _f(spot)
         self._straddle = _f(straddle)
         self._iv = _f(iv)
