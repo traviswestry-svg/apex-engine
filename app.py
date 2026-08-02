@@ -10894,6 +10894,7 @@ def api_morning_brief():
                 narrative_cache=_MORNING_NARRATIVE_CACHE,
                 force=force,
                 refresh_narrative=refresh_narrative,
+                async_narrative=True,
                 session_context=session_context,
                 canonical_ms=canonical,
                 flow_snapshot=flow,
@@ -11129,6 +11130,30 @@ def api_morning_brief():
 
 
 
+
+@app.route("/api/morning-brief/narrative-status", methods=["GET"])
+def api_morning_brief_narrative_status():
+    """APEX 50.6.5.3: read persisted asynchronous Anthropic narrative state."""
+    try:
+        from engine.async_narrative import job_key, get_job
+        target = str(request.args.get("target_session_date") or "").strip()
+        mode = str(request.args.get("brief_mode") or "NEXT_SESSION_PREP").strip().upper()
+        if not target:
+            try:
+                from engine.session_intelligence import classify_session
+                sc = classify_session().to_dict()
+                target = str(sc.get("target_session_date") or sc.get("source_session_date") or now_et().date().isoformat())
+                mode = str(sc.get("brief_mode") or mode).upper()
+            except Exception:
+                target = now_et().date().isoformat()
+        key = job_key(target, mode)
+        job = get_job(key)
+        if not job:
+            return jsonify({"ok": True, "status": "NOT_FOUND", "job_key": key, "target_session_date": target, "brief_mode": mode, "version": "50.6.5.3_ASYNC_ANTHROPIC_NARRATIVE"})
+        job["ok"] = True
+        return jsonify(job)
+    except Exception as exc:
+        return jsonify({"ok": False, "status": "UNAVAILABLE", "error": f"{type(exc).__name__}: {exc}", "version": "50.6.5.3_ASYNC_ANTHROPIC_NARRATIVE"}), 200
 
 @app.route("/api/morning-brief/validation", methods=["GET"])
 def api_morning_brief_validation():
