@@ -48,7 +48,7 @@ except Exception:  # pragma: no cover
     requests = None
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_INTEGRATION_VERSION = "50.6.5.1_ANTHROPIC_NARRATIVE_PROTOCOL"
+ANTHROPIC_INTEGRATION_VERSION = "50.6.5.2_ANTHROPIC_ADAPTIVE_FALLBACK"
 DEFAULT_MODEL = os.getenv("APEX_BRIEF_MODEL", "claude-sonnet-5")
 DEFAULT_AI_TIMEOUT = max(5, min(int(os.getenv("APEX_BRIEF_AI_TIMEOUT_SECONDS", "10")), 45))
 ANTHROPIC_MAX_ATTEMPTS = 2  # initial request + one controlled transient retry
@@ -57,9 +57,14 @@ ANTHROPIC_WEB_SEARCH_MAX_USES = max(1, min(int(os.getenv("APEX_BRIEF_AI_WEB_SEAR
 ANTHROPIC_RETRY_BACKOFF_SECONDS = max(0.0, min(float(os.getenv("APEX_BRIEF_AI_RETRY_BACKOFF_SECONDS", "0.75")), 5.0))
 ANTHROPIC_CIRCUIT_FAILURE_THRESHOLD = max(1, int(os.getenv("APEX_BRIEF_AI_CIRCUIT_FAILURE_THRESHOLD", "3")))
 ANTHROPIC_CIRCUIT_COOLDOWN_SECONDS = max(10.0, min(float(os.getenv("APEX_BRIEF_AI_CIRCUIT_COOLDOWN_SECONDS", "120")), 1800.0))
-# 50.6.4.1: hard wall-clock budget across ALL Anthropic attempts + backoff.
-# This intentionally overrides a stale/high per-attempt Render timeout.
-ANTHROPIC_TOTAL_BUDGET_SECONDS = max(5.0, min(float(os.getenv("APEX_BRIEF_AI_TOTAL_BUDGET_SECONDS", "12")), 20.0))
+# 50.6.5.2: give the enriched and degraded narrative attempts independent
+# budgets.  A slow web-search attempt must not consume the no-web fallback's
+# entire opportunity to return useful prose.  A final total cap still prevents
+# the old ~40s failure mode.
+ANTHROPIC_ENRICHED_TIMEOUT_SECONDS = max(3.0, min(float(os.getenv("APEX_BRIEF_AI_ENRICHED_TIMEOUT_SECONDS", "6")), 15.0))
+ANTHROPIC_DEGRADED_TIMEOUT_SECONDS = max(5.0, min(float(os.getenv("APEX_BRIEF_AI_DEGRADED_TIMEOUT_SECONDS", "10")), 20.0))
+ANTHROPIC_TOTAL_BUDGET_SECONDS = max(8.0, min(float(os.getenv("APEX_BRIEF_AI_TOTAL_BUDGET_SECONDS", "18")), 30.0))
+ANTHROPIC_NARRATIVE_MAX_TOKENS = max(700, min(int(os.getenv("APEX_BRIEF_AI_MAX_TOKENS", "1800")), 3000))
 
 _CIRCUIT_LOCK = threading.RLock()
 _CIRCUIT = {
@@ -281,16 +286,15 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
                    max_tokens: int = 4000, timeout: int = DEFAULT_AI_TIMEOUT):
     """Return ``(narrative, error, telemetry)``.
 
-    50.6.5.1 protocol hardening:
-      * one controlled transient retry maximum;
-      * Anthropic server-tool ``pause_turn`` is CONTINUED, not retried from scratch;
-      * web search is bounded to a small number of uses;
-      * if the enriched request times out, the one retry is narrative-only (no web
-        search) so a slow server-side search cannot suppress the entire narrative;
-      * the circuit breaker counts only completed retryable failures.
-
-    No API key, prompt body, search result body, or model response body is exposed
-    through telemetry.
+    50.6.5.2 adaptive narrative policy:
+      * attempt 1 may use bounded server-side web search;
+      * ``pause_turn`` is continued as the same attempt;
+      * one transient retry is allowed and intentionally removes web search;
+      * the retry receives its own timeout budget instead of sharing the first
+        attempt's exhausted deadline;
+      * a final total wall-clock cap prevents runaway latency;
+      * the breaker records one failure per completed Morning Brief generation,
+        never one failure per HTTP attempt.
     """
     telemetry = {
         "provider": "anthropic",
@@ -299,234 +303,186 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
         "max_attempts": ANTHROPIC_MAX_ATTEMPTS,
         "max_pause_continuations": ANTHROPIC_MAX_PAUSE_CONTINUATIONS,
         "web_search_max_uses": ANTHROPIC_WEB_SEARCH_MAX_USES,
-        "timeout_seconds_per_attempt": timeout,
-        "retry_backoff_base_seconds": ANTHROPIC_RETRY_BACKOFF_SECONDS,
+        "enriched_timeout_seconds": ANTHROPIC_ENRICHED_TIMEOUT_SECONDS,
+        "degraded_timeout_seconds": ANTHROPIC_DEGRADED_TIMEOUT_SECONDS,
         "total_budget_seconds": ANTHROPIC_TOTAL_BUDGET_SECONDS,
-        "attempts": [],
-        "retry_count": 0,
-        "pause_turn_count": 0,
-        "network_call_count": 0,
-        "total_duration_ms": 0.0,
-        "circuit": _circuit_snapshot(),
-        "network_io_performed": False,
-        "protocol": "MESSAGES_API_SERVER_TOOL_CONTINUATION",
+        "retry_backoff_base_seconds": ANTHROPIC_RETRY_BACKOFF_SECONDS,
+        "max_tokens": min(int(max_tokens), ANTHROPIC_NARRATIVE_MAX_TOKENS),
+        "attempts": [], "retry_count": 0, "pause_turn_count": 0,
+        "network_call_count": 0, "total_duration_ms": 0.0,
+        "circuit": _circuit_snapshot(), "network_io_performed": False,
+        "protocol": "MESSAGES_API_ADAPTIVE_WEB_SEARCH_FALLBACK",
     }
     if requests is None:
         error = "requests library unavailable"
-        telemetry.update({"final_error": error, "outcome": "CLIENT_UNAVAILABLE"})
+        telemetry.update({"final_error": error, "final_failure_type": "CLIENT_UNAVAILABLE", "outcome": "CLIENT_UNAVAILABLE"})
         return "", error, telemetry
 
     allowed, circuit = _circuit_before_call()
     telemetry["circuit"] = circuit
     if not allowed:
         error = "Anthropic circuit breaker open; deterministic fallback active"
-        telemetry.update({
-            "final_error": error,
-            "circuit_bypassed_request": True,
-            "outcome": "CIRCUIT_OPEN",
-        })
+        telemetry.update({"final_error": error, "final_failure_type": "CIRCUIT_OPEN", "circuit_bypassed_request": True, "outcome": "CIRCUIT_OPEN"})
         return "", error, telemetry
 
     def _tools(enabled: bool):
-        if not enabled:
-            return None
-        return [{
-            "type": "web_search_20250305",
-            "name": "web_search",
-            "max_uses": ANTHROPIC_WEB_SEARCH_MAX_USES,
-        }]
+        return ([{"type": "web_search_20250305", "name": "web_search", "max_uses": ANTHROPIC_WEB_SEARCH_MAX_USES}] if enabled else None)
+
+    def _failure_type(exc=None, status=None, *, budget=False, empty=False, pause=False):
+        if budget: return "BUDGET_EXHAUSTED"
+        if empty: return "EMPTY_RESPONSE"
+        if pause: return "PAUSE_TURN_LIMIT"
+        if status is not None:
+            if status == 429: return "HTTP_429"
+            if status >= 500: return "HTTP_5XX"
+            if status in {401, 403}: return "AUTH_ERROR"
+            if status >= 400: return "HTTP_4XX"
+        if exc is not None:
+            name = type(exc).__name__
+            if name == "ReadTimeout": return "READ_TIMEOUT"
+            if name == "ConnectTimeout": return "CONNECT_TIMEOUT"
+            if "Timeout" in name: return "TIMEOUT"
+            if "Connection" in name: return "CONNECTION_ERROR"
+            return name.upper()
+        return "UNKNOWN"
 
     total_started = time.perf_counter()
     final_error = None
     final_retryable = False
+    final_failure_type = "UNKNOWN"
 
     for attempt_no in range(1, ANTHROPIC_MAX_ATTEMPTS + 1):
-        elapsed = time.perf_counter() - total_started
-        remaining_budget = ANTHROPIC_TOTAL_BUDGET_SECONDS - elapsed
-        if remaining_budget <= 0.05:
+        total_elapsed = time.perf_counter() - total_started
+        total_remaining = ANTHROPIC_TOTAL_BUDGET_SECONDS - total_elapsed
+        if total_remaining <= 0.05:
             final_error = "Anthropic total latency budget exhausted"
+            final_retryable = True
+            final_failure_type = "BUDGET_EXHAUSTED"
             telemetry.update({"outcome": "BUDGET_EXHAUSTED", "budget_exhausted": True})
             break
 
-        # The retry intentionally drops server-side web search after a transient
-        # failure. APEX already provides deterministic market context; this gives
-        # narrative availability priority over repeating a slow enrichment call.
         web_enabled = attempt_no == 1
-        messages = [{"role": "user", "content": prompt}]
+        attempt_budget = ANTHROPIC_ENRICHED_TIMEOUT_SECONDS if web_enabled else ANTHROPIC_DEGRADED_TIMEOUT_SECONDS
+        attempt_budget = max(0.05, min(float(attempt_budget), total_remaining))
         attempt_started = time.perf_counter()
+        degraded_prefix = (
+            "Web search is unavailable for this fallback attempt. Use only the authoritative "
+            "APEX context below. Do not invent macro facts; mark unsupported details [FEED REQUIRED].\n\n"
+            if not web_enabled else ""
+        )
+        messages = [{"role": "user", "content": degraded_prefix + prompt}]
         attempt = {
-            "attempt": attempt_no,
-            "status": "UNKNOWN",
-            "duration_ms": 0.0,
-            "retryable": False,
-            "http_status": None,
-            "error_type": None,
-            "error": None,
-            "web_search_enabled": web_enabled,
+            "attempt": attempt_no, "status": "UNKNOWN", "duration_ms": 0.0,
+            "retryable": False, "http_status": None, "error_type": None,
+            "failure_type": None, "error": None, "web_search_enabled": web_enabled,
             "degraded_retry_without_web_search": attempt_no > 1,
-            "pause_continuations": 0,
-            "network_calls": 0,
-            "stop_reasons": [],
+            "attempt_budget_seconds": round(attempt_budget, 3),
+            "pause_continuations": 0, "network_calls": 0, "stop_reasons": [],
         }
 
         while True:
-            elapsed = time.perf_counter() - total_started
-            remaining_budget = ANTHROPIC_TOTAL_BUDGET_SECONDS - elapsed
-            if remaining_budget <= 0.05:
-                final_error = "Anthropic total latency budget exhausted"
+            attempt_elapsed = time.perf_counter() - attempt_started
+            total_remaining = ANTHROPIC_TOTAL_BUDGET_SECONDS - (time.perf_counter() - total_started)
+            attempt_remaining = attempt_budget - attempt_elapsed
+            if attempt_remaining <= 0.05 or total_remaining <= 0.05:
+                final_error = "Anthropic attempt latency budget exhausted"
                 final_retryable = True
-                attempt.update({
-                    "status": "BUDGET_EXHAUSTED",
-                    "retryable": True,
-                    "error_type": "BudgetExhausted",
-                    "error": final_error,
-                })
-                telemetry.update({"outcome": "BUDGET_EXHAUSTED", "budget_exhausted": True})
+                final_failure_type = "BUDGET_EXHAUSTED"
+                attempt.update({"status": "BUDGET_EXHAUSTED", "retryable": True,
+                                "error_type": "BudgetExhausted", "failure_type": final_failure_type, "error": final_error})
                 break
-
             try:
                 telemetry["network_io_performed"] = True
                 telemetry["network_call_count"] += 1
                 attempt["network_calls"] += 1
-                calls_left = max(1, (ANTHROPIC_MAX_ATTEMPTS - attempt_no + 1))
-                req_timeout = max(0.05, min(float(timeout), remaining_budget / calls_left))
+                req_timeout = max(0.05, min(float(timeout), attempt_remaining, total_remaining))
                 payload = {
                     "model": model,
-                    "max_tokens": max_tokens,
+                    "max_tokens": min(int(max_tokens), ANTHROPIC_NARRATIVE_MAX_TOKENS),
                     "messages": messages,
                 }
                 tools = _tools(web_enabled)
-                if tools:
-                    payload["tools"] = tools
-
-                resp = requests.post(
+                if tools: payload["tools"] = tools
+                response = requests.post(
                     ANTHROPIC_URL,
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json=payload,
-                    timeout=req_timeout,
+                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                    json=payload, timeout=req_timeout,
                 )
-                attempt["http_status"] = int(resp.status_code)
-                if resp.status_code != 200:
-                    retryable = _retryable_status(int(resp.status_code))
-                    final_error = f"anthropic {resp.status_code}: {resp.text[:200]}"
+                attempt["http_status"] = int(response.status_code)
+                if response.status_code >= 400:
+                    retryable = _retryable_status(int(response.status_code))
                     final_retryable = retryable
-                    attempt.update({
-                        "status": "HTTP_ERROR",
-                        "retryable": retryable,
-                        "error_type": "HTTPError",
-                        "error": final_error,
-                    })
+                    final_failure_type = _failure_type(status=int(response.status_code))
+                    final_error = f"Anthropic HTTP {response.status_code}"
+                    attempt.update({"status": "HTTP_ERROR", "retryable": retryable,
+                                    "error_type": "HTTPError", "failure_type": final_failure_type, "error": final_error})
                     break
 
-                data = resp.json()
-                stop_reason = str(data.get("stop_reason") or "").strip().lower()
-                attempt["stop_reasons"].append(stop_reason or "unknown")
-                text = "".join(
-                    b.get("text", "") for b in data.get("content", [])
-                    if isinstance(b, dict) and b.get("type") == "text"
-                ).strip()
+                data = response.json()
+                stop_reason = str(data.get("stop_reason") or "").strip()
+                attempt["stop_reasons"].append(stop_reason or "UNKNOWN")
+                content = data.get("content") or []
+                text_parts = [str(b.get("text")) for b in content if isinstance(b, dict) and b.get("type") == "text" and b.get("text")]
+                text = "\n".join(text_parts).strip()
 
                 if stop_reason == "pause_turn":
                     if not web_enabled:
                         final_error = "Anthropic returned pause_turn without server tools enabled"
-                        final_retryable = True
-                        attempt.update({
-                            "status": "PROTOCOL_ERROR",
-                            "retryable": True,
-                            "error_type": "PauseTurnUnexpected",
-                            "error": final_error,
-                        })
+                        final_retryable = True; final_failure_type = "PAUSE_TURN_UNEXPECTED"
+                        attempt.update({"status":"PAUSE_TURN_UNEXPECTED","retryable":True,"error_type":"PauseTurnUnexpected","failure_type":final_failure_type,"error":final_error})
                         break
                     if attempt["pause_continuations"] >= ANTHROPIC_MAX_PAUSE_CONTINUATIONS:
                         final_error = "Anthropic pause_turn continuation limit reached"
-                        final_retryable = True
-                        attempt.update({
-                            "status": "PAUSE_LIMIT",
-                            "retryable": True,
-                            "error_type": "PauseTurnLimit",
-                            "error": final_error,
-                        })
+                        final_retryable = True; final_failure_type = "PAUSE_TURN_LIMIT"
+                        attempt.update({"status":"PAUSE_LIMIT","retryable":True,"error_type":"PauseTurnLimit","failure_type":final_failure_type,"error":final_error})
                         break
-                    content = data.get("content") or []
-                    messages = [
-                        {"role": "user", "content": prompt},
-                        {"role": "assistant", "content": content},
-                    ]
+                    messages = [{"role":"user","content":prompt},{"role":"assistant","content":content}]
                     attempt["pause_continuations"] += 1
                     telemetry["pause_turn_count"] += 1
                     continue
 
                 if text:
-                    attempt["status"] = "SUCCESS"
-                    attempt["duration_ms"] = round((time.perf_counter() - attempt_started) * 1000, 1)
+                    attempt.update({"status":"SUCCESS", "failure_type":None,
+                                    "duration_ms":round((time.perf_counter()-attempt_started)*1000,1)})
                     telemetry["attempts"].append(attempt)
-                    telemetry["total_duration_ms"] = round((time.perf_counter() - total_started) * 1000, 1)
-                    telemetry["outcome"] = "SUCCESS"
-                    telemetry["final_error"] = None
-                    telemetry["web_search_completed"] = bool(web_enabled)
-                    telemetry["degraded_no_web_search"] = bool(attempt_no > 1)
+                    telemetry["total_duration_ms"] = round((time.perf_counter()-total_started)*1000,1)
+                    telemetry.update({"outcome":"SUCCESS", "final_error":None, "final_failure_type":None,
+                                      "web_search_completed":bool(web_enabled), "degraded_no_web_search":bool(attempt_no>1)})
                     telemetry["circuit"] = _circuit_record_success()
                     return text, None, telemetry
 
-                final_error = "empty narrative"
-                final_retryable = True
-                attempt.update({
-                    "status": "EMPTY_RESPONSE",
-                    "retryable": True,
-                    "error_type": "EmptyResponse",
-                    "error": final_error,
-                })
+                final_error = "empty narrative"; final_retryable = True; final_failure_type = "EMPTY_RESPONSE"
+                attempt.update({"status":"EMPTY_RESPONSE","retryable":True,"error_type":"EmptyResponse","failure_type":final_failure_type,"error":final_error})
                 break
-
-            except Exception as exc:  # network / timeout / parse
+            except Exception as exc:
                 final_error = f"{type(exc).__name__}: {exc}"
-                retryable = False
-                retryable_types = tuple(
-                    t for t in (
-                        getattr(requests.exceptions, "Timeout", None),
-                        getattr(requests.exceptions, "ConnectionError", None),
-                    ) if t is not None
-                )
+                retryable_types = tuple(t for t in (getattr(requests.exceptions,"Timeout",None), getattr(requests.exceptions,"ConnectionError",None)) if t is not None)
                 retryable = bool(retryable_types and isinstance(exc, retryable_types))
                 final_retryable = retryable
-                attempt.update({
-                    "status": "EXCEPTION",
-                    "retryable": retryable,
-                    "error_type": type(exc).__name__,
-                    "error": final_error,
-                })
+                final_failure_type = _failure_type(exc=exc)
+                attempt.update({"status":"EXCEPTION","retryable":retryable,"error_type":type(exc).__name__,
+                                "failure_type":final_failure_type,"error":final_error})
                 break
 
-        attempt["duration_ms"] = round((time.perf_counter() - attempt_started) * 1000, 1)
+        attempt["duration_ms"] = round((time.perf_counter()-attempt_started)*1000,1)
         telemetry["attempts"].append(attempt)
         if attempt_no >= ANTHROPIC_MAX_ATTEMPTS or not attempt.get("retryable"):
             break
-
         delay = ANTHROPIC_RETRY_BACKOFF_SECONDS * (2 ** (attempt_no - 1))
+        total_remaining = ANTHROPIC_TOTAL_BUDGET_SECONDS - (time.perf_counter() - total_started)
+        delay = min(delay, max(0.0, total_remaining - 0.05))
         telemetry["retry_count"] += 1
-        remaining_after_attempt = ANTHROPIC_TOTAL_BUDGET_SECONDS - (time.perf_counter() - total_started)
-        if remaining_after_attempt <= 0.05:
-            final_error = "Anthropic total latency budget exhausted"
-            telemetry.update({"outcome": "BUDGET_EXHAUSTED", "budget_exhausted": True})
-            break
-        delay = min(delay, max(0.0, remaining_after_attempt - 0.05))
-        telemetry["attempts"][-1]["backoff_before_next_attempt_seconds"] = round(delay, 3)
-        if delay > 0:
-            time.sleep(delay)
+        telemetry["attempts"][-1]["backoff_before_next_attempt_seconds"] = round(delay,3)
+        if delay > 0: time.sleep(delay)
 
-    telemetry["total_duration_ms"] = round((time.perf_counter() - total_started) * 1000, 1)
+    telemetry["total_duration_ms"] = round((time.perf_counter()-total_started)*1000,1)
     telemetry["final_error"] = final_error
+    telemetry["final_failure_type"] = final_failure_type
     telemetry.setdefault("outcome", "FAILED")
-    breaker_eligible = bool(final_retryable)
-    telemetry["breaker_failure_counted"] = breaker_eligible
-    telemetry["circuit"] = (
-        _circuit_record_failure(final_error or "unknown anthropic failure")
-        if breaker_eligible else _circuit_snapshot()
-    )
+    # One completed Morning Brief generation contributes at most one failure to
+    # the breaker, regardless of how many HTTP attempts/continuations it used.
+    telemetry["breaker_failure_counted"] = bool(final_retryable)
+    telemetry["circuit"] = _circuit_record_failure(final_error or final_failure_type) if final_retryable else _circuit_snapshot()
     return "", final_error, telemetry
 
 

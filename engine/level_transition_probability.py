@@ -29,6 +29,7 @@ from . import historical_level_calibration as hlce
 
 VERSION = "50.6.2.2_LEVEL_TRANSITION_PROBABILITY"
 PATH_INTELLIGENCE_VERSION = "50.6.5_INSTITUTIONAL_LEVEL_PATH_INTELLIGENCE"
+PATH_RESILIENCE_VERSION = "50.6.5.2_LTPE_EMBEDDED_PATH_RESILIENCE"
 SCHEMA_VERSION = 1
 
 
@@ -1140,22 +1141,28 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
     norm_direction = _norm(direction or "UP")
     if norm_direction not in {"UP", "DOWN"}:
         return _path_failure("INVALID_DIRECTION", stage="INPUT", direction=norm_direction)
+    store_warning = None
     try:
         initialize_transition_store(path)
     except Exception as exc:
-        return _path_failure("TRANSITION_STORE_UNAVAILABLE", stage="STORE_INIT", exc=exc, direction=norm_direction)
+        # Structural path construction is read-only and must remain available even
+        # when the transition-statistics store is temporarily unavailable.
+        store_warning = {"stage": "STORE_INIT", "exception_type": type(exc).__name__}
 
     try:
         ctx = hlce.extract_context(snapshot)
     except Exception as exc:
         return _path_failure("CONTEXT_EXTRACTION_FAILED", stage="SNAPSHOT_CONTEXT", exc=exc, direction=norm_direction)
 
-    # Morning Brief is optional.  The loader itself is fail-soft; this outer
-    # boundary protects against future loader changes.
+    # If the caller already passed a Morning Brief payload, use that exact
+    # structured object before consulting archives.  This prevents the embedded
+    # dashboard path from mixing sessions and removes archive timing races.
+    structured_inline = snapshot.get("structured") if isinstance(snapshot.get("structured"), Mapping) else {}
+    inline_brief = snapshot if isinstance(structured_inline.get("levels"), list) else None
     try:
-        brief = _load_latest_morning_brief(ctx.symbol)
+        brief = inline_brief or _load_latest_morning_brief(ctx.symbol)
     except Exception:
-        brief = None
+        brief = inline_brief
     durable_context = _load_durable_canonical_context(ctx.symbol)
     durable_brief = _durable_context_as_brief(durable_context)
     canonical_brief = brief or durable_brief
@@ -1207,6 +1214,8 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
 
     steps: List[Dict[str, Any]] = []
     evidence_warnings: List[Dict[str, Any]] = []
+    if store_warning is not None:
+        evidence_warnings.append(store_warning)
     prior_zone: Optional[Dict[str, Any]] = None
     prior_price = resolved_spot
     for i, zone in enumerate(zones):
@@ -1239,7 +1248,7 @@ def current_transition_path(snapshot: Mapping[str, Any], *, path: Optional[str] 
         prior_zone, prior_price = zone, price
 
     return {
-        "ok": True, "version": VERSION, "path_intelligence_version": PATH_INTELLIGENCE_VERSION, "symbol": ctx.symbol, "spot": resolved_spot,
+        "ok": True, "version": VERSION, "path_intelligence_version": PATH_INTELLIGENCE_VERSION, "path_resilience_version": PATH_RESILIENCE_VERSION, "symbol": ctx.symbol, "spot": resolved_spot,
         "spot_mode": spot_mode, "spot_session": spot_session,
         "spot_resolution_attempts": spot_attempts, "spot_is_observation_input": False,
         "direction": norm_direction, "context": context, "steps": steps,
