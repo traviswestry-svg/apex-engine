@@ -93,6 +93,7 @@
       <button id="path_down" type="button" style="background:#132339;color:#e7edf7;border:1px solid #3d5675;border-radius:8px;padding:6px 10px">DOWN PATH</button>
     </div>
   </div>
+  <div id="learning_state" class="muted" style="margin-top:10px">Learning state: loading…</div>
   <table id="path_tbl" style="margin-top:12px">
     <tr><th>#</th><th>Level</th><th>Price</th><th>From</th><th>P(next)</th><th>n</th><th>Median Time</th><th>95% CI</th><th>Evidence</th></tr>
   </table>
@@ -175,6 +176,7 @@ async function load(){
   }catch(e){$('collector').textContent='UNAVAILABLE';$('collector').className='pill bad';}
   loadStats();
   loadTransitions();
+  loadLearningStatus();
   loadPath(currentPathDirection);
 }
 
@@ -197,6 +199,17 @@ async function loadStats(){
 
 let currentPathDirection='UP';
 function pct(v){return v==null?'—':Number(v).toFixed(1)+'%';}
+async function loadLearningStatus(){
+  try{
+    const d=await j('/api/level-calibration/transitions/learning-status');
+    const el=$('learning_state');
+    const state=(d.state||'UNKNOWN').replaceAll('_',' ');
+    el.textContent=`Learning state: ${state} · observations ${fmt(d.observations)} · pending outcomes ${fmt(d.eligible_unrecorded_outcomes)} · ungraded interactions ${fmt(d.ungraded_interactions)}`;
+  }catch(e){
+    $('learning_state').textContent='Learning state: unavailable';
+  }
+}
+
 async function loadTransitions(){
   try{
     const d=await j('/api/level-calibration/transitions/statistics');
