@@ -413,36 +413,150 @@ def process_transition_outcomes(*, path: Optional[str] = None,
     return {"ok": True, "version": VERSION, "horizon_seconds": horizon_seconds, **counts}
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Return the columns currently present in a SQLite table.
+
+    Render keeps the calibration DB across deploys, so an older table shape may
+    survive a code upgrade.  Status/readiness code must therefore inspect the
+    live schema instead of assuming CREATE TABLE IF NOT EXISTS migrated it.
+    """
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return {str(row[1]) for row in rows}
+    except sqlite3.DatabaseError:
+        return set()
+
+
+def _safe_scalar(conn: sqlite3.Connection, sql: str, params: Sequence[Any] = (), *,
+                 default: Any = 0, diagnostics: Optional[List[Dict[str, Any]]] = None,
+                 stage: str = "QUERY") -> Any:
+    try:
+        row = conn.execute(sql, tuple(params)).fetchone()
+        return default if row is None or row[0] is None else row[0]
+    except sqlite3.DatabaseError as exc:
+        if diagnostics is not None:
+            diagnostics.append({
+                "stage": stage,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            })
+        return default
+
+
 def learning_status(*, path: Optional[str] = None, now: Optional[float] = None) -> Dict[str, Any]:
     """Operational truth for the live LTPE learning pipeline.
 
-    This is intentionally read-only. It reports whether observations can be
-    produced from the persisted HLCE stream without inventing any probability.
+    This endpoint is deliberately fail-safe.  A persistent Render database can
+    pre-date the current schema; status reporting must never turn a recoverable
+    schema/store issue into Flask's HTML 500 response.  Missing counters are
+    reported as unavailable and the response is marked DEGRADED.
     """
-    initialize_transition_store(path)
-    now = float(now if now is not None else datetime.now(timezone.utc).timestamp())
-    with hlce._connect(path) as conn:
-        ungraded = conn.execute(
-            "SELECT COUNT(*) FROM level_interactions WHERE graded=0 AND interaction_type IN ('FIRST_TOUCH','RETEST')"
-        ).fetchone()[0]
-        matured = 0
-        for row in conn.execute(
-            "SELECT ts FROM level_interactions WHERE graded=0 AND interaction_type IN ('FIRST_TOUCH','RETEST')"
-        ).fetchall():
-            ts = hlce._parse_ts(row[0])
-            if ts is not None and now - ts >= hlce.GRADING_HORIZON_SECONDS:
-                matured += 1
-        eligible = conn.execute(
-            """SELECT COUNT(*)
-               FROM level_outcomes o
-               LEFT JOIN level_transition_observations t ON t.source_outcome_id=o.outcome_id
-               WHERE t.source_outcome_id IS NULL
-                 AND o.classification IN ('BREAK','REACTION','REVERSAL','FAILED_BREAK')"""
-        ).fetchone()[0]
-        observations = conn.execute("SELECT COUNT(*) FROM level_transition_observations").fetchone()[0]
-        stats = conn.execute("SELECT COUNT(*) FROM level_transition_statistics").fetchone()[0]
-        last_obs = conn.execute("SELECT MAX(created_at) FROM level_transition_observations").fetchone()[0]
-        last_outcome = conn.execute("SELECT MAX(graded_at) FROM level_outcomes").fetchone()[0]
+    diagnostics: List[Dict[str, Any]] = []
+    init_ok = True
+    try:
+        initialize_transition_store(path)
+    except (sqlite3.DatabaseError, OSError, ValueError, TypeError) as exc:
+        init_ok = False
+        diagnostics.append({
+            "stage": "STORE_INITIALIZATION",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        })
+
+    try:
+        now_value = float(now if now is not None else datetime.now(timezone.utc).timestamp())
+    except (TypeError, ValueError):
+        now_value = datetime.now(timezone.utc).timestamp()
+        diagnostics.append({
+            "stage": "CLOCK_NORMALIZATION",
+            "error_type": "INVALID_NOW",
+            "error": "Invalid now value; current UTC timestamp used.",
+        })
+
+    ungraded = matured = eligible = observations = stats = 0
+    last_obs = last_outcome = None
+    schema: Dict[str, Any] = {}
+    try:
+        with hlce._connect(path) as conn:
+            interactions_cols = _table_columns(conn, "level_interactions")
+            outcomes_cols = _table_columns(conn, "level_outcomes")
+            obs_cols = _table_columns(conn, "level_transition_observations")
+            stats_cols = _table_columns(conn, "level_transition_statistics")
+            schema = {
+                "level_interactions": sorted(interactions_cols),
+                "level_outcomes": sorted(outcomes_cols),
+                "level_transition_observations": sorted(obs_cols),
+                "level_transition_statistics": sorted(stats_cols),
+            }
+
+            if {"graded", "interaction_type", "ts"}.issubset(interactions_cols):
+                ungraded = int(_safe_scalar(
+                    conn,
+                    "SELECT COUNT(*) FROM level_interactions WHERE graded=0 AND interaction_type IN ('FIRST_TOUCH','RETEST')",
+                    diagnostics=diagnostics, stage="COUNT_UNGRADED_INTERACTIONS"))
+                try:
+                    rows = conn.execute(
+                        "SELECT ts FROM level_interactions WHERE graded=0 AND interaction_type IN ('FIRST_TOUCH','RETEST')"
+                    ).fetchall()
+                    for row in rows:
+                        ts = hlce._parse_ts(row[0])
+                        if ts is not None and now_value - ts >= hlce.GRADING_HORIZON_SECONDS:
+                            matured += 1
+                except sqlite3.DatabaseError as exc:
+                    diagnostics.append({"stage": "COUNT_MATURED_INTERACTIONS", "error_type": type(exc).__name__, "error": str(exc)})
+            else:
+                diagnostics.append({
+                    "stage": "INTERACTION_SCHEMA",
+                    "error_type": "SCHEMA_MISMATCH",
+                    "error": "level_interactions is missing one or more required columns: graded, interaction_type, ts",
+                })
+
+            if {"outcome_id", "classification"}.issubset(outcomes_cols) and "source_outcome_id" in obs_cols:
+                eligible = int(_safe_scalar(
+                    conn,
+                    """SELECT COUNT(*)
+                       FROM level_outcomes o
+                       LEFT JOIN level_transition_observations t ON t.source_outcome_id=o.outcome_id
+                       WHERE t.source_outcome_id IS NULL
+                         AND o.classification IN ('BREAK','REACTION','REVERSAL','FAILED_BREAK')""",
+                    diagnostics=diagnostics, stage="COUNT_ELIGIBLE_OUTCOMES"))
+            else:
+                diagnostics.append({
+                    "stage": "OUTCOME_TRANSITION_SCHEMA",
+                    "error_type": "SCHEMA_MISMATCH",
+                    "error": "Outcome/transition tables are missing columns required for eligibility accounting.",
+                })
+
+            if obs_cols:
+                observations = int(_safe_scalar(conn, "SELECT COUNT(*) FROM level_transition_observations",
+                                                diagnostics=diagnostics, stage="COUNT_OBSERVATIONS"))
+                if "created_at" in obs_cols:
+                    last_obs = _safe_scalar(conn, "SELECT MAX(created_at) FROM level_transition_observations",
+                                            default=None, diagnostics=diagnostics, stage="LAST_OBSERVATION")
+            else:
+                diagnostics.append({"stage": "TRANSITION_OBSERVATION_SCHEMA", "error_type": "TABLE_UNAVAILABLE",
+                                    "error": "level_transition_observations is unavailable."})
+
+            if stats_cols:
+                stats = int(_safe_scalar(conn, "SELECT COUNT(*) FROM level_transition_statistics",
+                                         diagnostics=diagnostics, stage="COUNT_STATISTICS"))
+            else:
+                diagnostics.append({"stage": "TRANSITION_STATISTICS_SCHEMA", "error_type": "TABLE_UNAVAILABLE",
+                                    "error": "level_transition_statistics is unavailable."})
+
+            if "graded_at" in outcomes_cols:
+                last_outcome = _safe_scalar(conn, "SELECT MAX(graded_at) FROM level_outcomes",
+                                            default=None, diagnostics=diagnostics, stage="LAST_OUTCOME")
+            elif outcomes_cols:
+                diagnostics.append({"stage": "OUTCOME_SCHEMA", "error_type": "SCHEMA_MISMATCH",
+                                    "error": "level_outcomes.graded_at is unavailable."})
+    except (sqlite3.DatabaseError, OSError, ValueError, TypeError) as exc:
+        diagnostics.append({
+            "stage": "STORE_READ",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        })
+
     if matured:
         state = "READY_TO_GRADE"
     elif eligible:
@@ -451,8 +565,13 @@ def learning_status(*, path: Optional[str] = None, now: Optional[float] = None) 
         state = "WAITING_FOR_MATURITY"
     else:
         state = "COLLECTING"
+
+    degraded = bool(diagnostics) or not init_ok
     return {
-        "ok": True, "version": LEARNING_VERSION, "state": state,
+        "ok": not degraded,
+        "status": "DEGRADED" if degraded else "HEALTHY",
+        "version": LEARNING_VERSION,
+        "state": state,
         "collector_enabled": bool(hlce.collector_enabled()),
         "grading_horizon_seconds": int(hlce.GRADING_HORIZON_SECONDS),
         "transition_horizon_seconds": int(TRANSITION_HORIZON_SECONDS),
@@ -461,8 +580,12 @@ def learning_status(*, path: Optional[str] = None, now: Optional[float] = None) 
         "eligible_unrecorded_outcomes": int(eligible),
         "observations": int(observations),
         "statistics_rows": int(stats),
-        "last_outcome_at": last_outcome, "last_observation_at": last_obs,
+        "last_outcome_at": last_outcome,
+        "last_observation_at": last_obs,
         "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+        "failure_stage": diagnostics[0]["stage"] if diagnostics else None,
+        "diagnostics": diagnostics,
+        "schema_tables_seen": {k: bool(v) for k, v in schema.items()},
     }
 
 

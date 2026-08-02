@@ -114,14 +114,40 @@ def register_calibration_routes(app, last_result_provider=None):
 
     @app.get("/api/level-calibration/transitions/learning-status")
     def level_transition_learning_status():
-        from .level_transition_probability import learning_status
-        return jsonify(learning_status(path=service.path))
+        # APEX 50.7.0.1: this operational endpoint must never leak Flask's
+        # generic HTML 500 page.  The engine is already schema-aware/fail-safe;
+        # this route boundary is the final containment layer.
+        try:
+            from .level_transition_probability import learning_status
+            return jsonify(learning_status(path=service.path))
+        except Exception as exc:
+            return jsonify({
+                "ok": False,
+                "status": "DEGRADED",
+                "version": "50.7.0.1_LTPE_LEARNING_STATUS_FAILSAFE",
+                "state": "COLLECTING",
+                "failure_stage": "ROUTE_BOUNDARY",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+            }), 200
 
     @app.post("/api/level-calibration/transitions/learn")
     def level_transition_learn():
         # Manual evidence-only catch-up. No provider/network or broker calls.
-        from .level_transition_probability import run_learning_cycle
-        return jsonify(run_learning_cycle(path=service.path))
+        try:
+            from .level_transition_probability import run_learning_cycle
+            return jsonify(run_learning_cycle(path=service.path))
+        except Exception as exc:
+            return jsonify({
+                "ok": False,
+                "status": "DEGRADED",
+                "version": "50.7.0.1_LTPE_LEARNING_STATUS_FAILSAFE",
+                "failure_stage": "LEARNING_CYCLE_ROUTE_BOUNDARY",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+            }), 200
 
     @app.get("/api/level-calibration/transitions/statistics")
     def level_transition_statistics_route():
