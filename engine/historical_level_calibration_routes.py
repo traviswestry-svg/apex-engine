@@ -1,8 +1,7 @@
 """Routes for APEX 50.5.0 Historical Level Calibration Engine (HLCE).
 
-Thin HTTP surface over ``historical_level_calibration``. The collector is
-started here (dormant-safe) using the shared live-result provider so the engine
-observes exactly the same snapshot every other engine consumes.
+Thin HTTP surface over ``historical_level_calibration``. Route registration has
+no process-lifecycle side effects; the dedicated scanner process owns the collector.
 """
 from __future__ import annotations
 
@@ -19,13 +18,6 @@ def register_calibration_routes(app, last_result_provider=None):
             value = last_result_provider()
             return value if isinstance(value, dict) else {}
         return {}
-
-    # Start the background collector once, bound to the live snapshot provider.
-    if callable(last_result_provider):
-        try:
-            service.start(_provider)
-        except Exception as exc:  # never block app startup
-            print(f"[HLCE] collector start failed (non-fatal): {exc}", flush=True)
 
     # ---- Spec section 9 endpoints ---------------------------------------- #
     @app.get("/api/level-calibration/status")

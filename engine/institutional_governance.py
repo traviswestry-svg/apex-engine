@@ -6,6 +6,7 @@ never queries market-data providers, and never promotes a candidate automaticall
 from __future__ import annotations
 import datetime as dt, hashlib, json, math, os, sqlite3, uuid
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from .learning_maturity import maturity_contract
 
 VERSION = "13.0.6"
 SCHEMA_VERSION = 5
@@ -126,7 +127,8 @@ def history_report(minimum:int=MIN_GRADED) -> Dict[str,Any]:
     elif missing_rate>25: status="DEGRADED_HISTORY"
     elif n<minimum: status="INSUFFICIENT_HISTORY"
     else: status="READY_FOR_CALIBRATION"
-    return {"schema_version":"apex.history.status.v1","status":status,"sample_size":n,"minimum_evidence":minimum,"remaining":max(0,minimum-n),"event_count":events,"date_coverage":{"start":row["first_at"],"end":row["last_at"]},"missing_or_unverified_rate_pct":missing_rate,"eligible":status=="READY_FOR_CALIBRATION","limitations":["Metrics remain disabled until threshold and quality gates pass"] if status!="READY_FOR_CALIBRATION" else [],"build_version":VERSION}
+    maturity=maturity_contract(n,minimum,source="GRADED_OUTCOMES",last_observation_at=row["last_at"],degraded=status=="DEGRADED_HISTORY")
+    return {"schema_version":"apex.history.status.v1","status":status,"sample_size":n,"minimum_evidence":minimum,"remaining":max(0,minimum-n),"event_count":events,"date_coverage":{"start":row["first_at"],"end":row["last_at"]},"missing_or_unverified_rate_pct":missing_rate,"eligible":status=="READY_FOR_CALIBRATION","maturity":maturity,"statistically_usable":maturity["statistically_usable"],"limitations":["Metrics remain disabled until threshold and quality gates pass"] if status!="READY_FOR_CALIBRATION" else [],"build_version":VERSION}
 
 def scorecard() -> Dict[str,Any]:
     r=history_report()

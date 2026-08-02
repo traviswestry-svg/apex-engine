@@ -102,6 +102,30 @@ def _category_for_route(route: str) -> str:
     return "dashboard"
 
 
+def _influence_class(route: str, status: str, decision_authority: str) -> str:
+    """Make route existence distinct from production decision influence."""
+    r = route.lower()
+    st = str(status or "").lower()
+    authority = str(decision_authority or "unknown").lower()
+    if st in {"deprecated", "quarantined"}:
+        return "DEPRECATED"
+    if st == "shadow":
+        return "SHADOW"
+    if "/trade/" in r or "/execution-gate/execute" in r:
+        return "EXECUTION_GATE"
+    if "risk" in r or "kill-switch" in r:
+        return "RISK_GATE"
+    if authority in {"canonical", "decision", "authoritative"}:
+        return "DECISION_CORE"
+    if authority == "advisory":
+        return "ADVISORY"
+    if any(x in r for x in ("/learning", "/calibration", "/grader", "/memory")):
+        return "LEARNING_PRODUCER"
+    if r.startswith("/api/"):
+        return "DIAGNOSTIC"
+    return "UI_OR_STATIC"
+
+
 def _routes(app) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     registry = _capability_route_metadata()
@@ -119,6 +143,7 @@ def _routes(app) -> List[Dict[str, Any]]:
             or getattr(view, "login_required", False)
             or any(token in endpoint.lower() for token in ("oauth", "login", "callback"))
         )
+        influence_class = _influence_class(route, cap.get("status", "active"), cap.get("decision_authority", "unknown"))
         rows.append({
             "route": route,
             "methods": methods,
@@ -130,6 +155,9 @@ def _routes(app) -> List[Dict[str, Any]]:
             "capability_version": cap.get("version"),
             "status": cap.get("status", "active" if not route.startswith("/static/") else "system"),
             "decision_authority": cap.get("decision_authority", "unknown"),
+            "influence_class": influence_class,
+            "influences_decision": influence_class == "DECISION_CORE",
+            "can_reach_execution": influence_class in {"EXECUTION_GATE", "RISK_GATE"},
             "auth_required": auth_required,
             "description": description,
             "dynamic": "<" in route,

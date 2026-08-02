@@ -77,6 +77,8 @@ MIN_TARGET_GAP_ABS = _env_float("APEX_LEVEL_TRANSITION_MIN_GAP_ABS", 3.0)
 MIN_TARGET_GAP_PCT = _env_float("APEX_LEVEL_TRANSITION_MIN_GAP_PCT", 0.0003)
 TARGET_CLUSTER_ABS = _env_float("APEX_LEVEL_TRANSITION_CLUSTER_ABS", 2.0)
 FAILURE_FRACTION = _env_float("APEX_LEVEL_TRANSITION_FAILURE_FRACTION", 0.35)
+from .learning_maturity import maturity_contract
+
 MIN_STAT_SAMPLE = _env_int("APEX_LEVEL_TRANSITION_MIN_STAT_SAMPLE", 5)
 
 # APEX 50.6.5 — Institutional Level Path Intelligence
@@ -1320,12 +1322,18 @@ def _zone_probability(symbol: str, source_zone: Mapping[str, Any], target_zone: 
             break
     agg = _aggregate(selected)
     n = int(agg.get("sample_count") or 0)
+    source = "HISTORICAL_ZONE" if n >= MIN_STAT_SAMPLE else ("EARLY_ZONE_HISTORY" if n else "INSUFFICIENT_HISTORY")
+    maturity = maturity_contract(n, MIN_STAT_SAMPLE, source=source)
     return {
-        "ok": True, "version": VERSION, "probability": (float(agg["target_reach_pct"])/100.0) if n else None,
+        "ok": True, "version": VERSION,
+        # Keep the evidence-derived value for audit/research, but explicitly mark
+        # whether downstream/UI consumers may present it as calibrated confidence.
+        "probability": (float(agg["target_reach_pct"])/100.0) if n else None,
         "probability_pct": agg.get("target_reach_pct"), "sample_count": n,
         "median_seconds_to_target": agg.get("median_seconds_to_target"), "avg_mfe": agg.get("avg_mfe"),
         "avg_mae": agg.get("avg_mae"), "ci_low": agg.get("ci_low"), "ci_high": agg.get("ci_high"),
-        "source": "HISTORICAL_ZONE" if n >= MIN_STAT_SAMPLE else ("EARLY_ZONE_HISTORY" if n else "INSUFFICIENT_HISTORY"),
+        "source": source, "maturity": maturity,
+        "statistically_usable": maturity["statistically_usable"],
         "source_zone_types": source_types, "target_zone_types": target_types,
         "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
     }
