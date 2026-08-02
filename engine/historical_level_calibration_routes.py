@@ -112,6 +112,17 @@ def register_calibration_routes(app, last_result_provider=None):
         from .level_transition_probability import status
         return jsonify(status(path=service.path))
 
+    @app.get("/api/level-calibration/transitions/learning-status")
+    def level_transition_learning_status():
+        from .level_transition_probability import learning_status
+        return jsonify(learning_status(path=service.path))
+
+    @app.post("/api/level-calibration/transitions/learn")
+    def level_transition_learn():
+        # Manual evidence-only catch-up. No provider/network or broker calls.
+        from .level_transition_probability import run_learning_cycle
+        return jsonify(run_learning_cycle(path=service.path))
+
     @app.get("/api/level-calibration/transitions/statistics")
     def level_transition_statistics_route():
         from .level_transition_probability import transition_statistics

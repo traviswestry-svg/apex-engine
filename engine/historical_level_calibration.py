@@ -1320,12 +1320,10 @@ class CalibrationService:
             # SQLite store; it performs no provider/network calls.  Import is
             # lazy to keep HLCE backward compatible if the extension is absent.
             try:
-                from .level_transition_probability import (
-                    process_transition_outcomes, rebuild_transition_statistics,
-                )
-                transition = process_transition_outcomes(path=self.path)
-                if transition.get("recorded"):
-                    transition_stats = rebuild_transition_statistics(path=self.path)
+                from .level_transition_probability import run_learning_cycle
+                learning = run_learning_cycle(path=self.path)
+                transition = learning.get("processed", {})
+                transition_stats = learning.get("statistics", {})
             except Exception as exc:
                 transition = {"ok": False, "error": f"{type(exc).__name__}: {exc}", "non_fatal": True}
             if graded.get("graded") and (now - self._last_stats_ts) >= STATS_REBUILD_MIN_INTERVAL:
@@ -1360,7 +1358,20 @@ class CalibrationService:
 
         self._thread = threading.Thread(target=_loop, name="hlce-collector", daemon=True)
         self._thread.start()
-        return {"ok": True, "started": True}
+
+        # APEX 50.7.0: one non-blocking recovery sweep after deploy/restart.
+        # This grades interactions that matured while the process was down and
+        # activates LTPE without waiting for a new live-market interaction.
+        def _learning_bootstrap():
+            try:
+                run_grader(path=self.path)
+                from .level_transition_probability import run_learning_cycle
+                run_learning_cycle(path=self.path)
+            except Exception as exc:
+                print(f"[LTPE] startup learning sweep failed (non-fatal): {exc}", flush=True)
+
+        threading.Thread(target=_learning_bootstrap, name="ltpe-learning-bootstrap", daemon=True).start()
+        return {"ok": True, "started": True, "ltpe_learning_bootstrap": True}
 
     def stop(self):
         self._stop.set()

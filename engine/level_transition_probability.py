@@ -30,6 +30,7 @@ from . import historical_level_calibration as hlce
 VERSION = "50.6.2.2_LEVEL_TRANSITION_PROBABILITY"
 PATH_INTELLIGENCE_VERSION = "50.6.5_INSTITUTIONAL_LEVEL_PATH_INTELLIGENCE"
 PATH_RESILIENCE_VERSION = "50.6.5.2_LTPE_EMBEDDED_PATH_RESILIENCE"
+LEARNING_VERSION = "50.7.0_LEVEL_TRANSITION_LEARNING_ACTIVATION"
 SCHEMA_VERSION = 1
 
 
@@ -410,6 +411,78 @@ def process_transition_outcomes(*, path: Optional[str] = None,
                 counts["errors"] += 1
         conn.commit()
     return {"ok": True, "version": VERSION, "horizon_seconds": horizon_seconds, **counts}
+
+
+def learning_status(*, path: Optional[str] = None, now: Optional[float] = None) -> Dict[str, Any]:
+    """Operational truth for the live LTPE learning pipeline.
+
+    This is intentionally read-only. It reports whether observations can be
+    produced from the persisted HLCE stream without inventing any probability.
+    """
+    initialize_transition_store(path)
+    now = float(now if now is not None else datetime.now(timezone.utc).timestamp())
+    with hlce._connect(path) as conn:
+        ungraded = conn.execute(
+            "SELECT COUNT(*) FROM level_interactions WHERE graded=0 AND interaction_type IN ('FIRST_TOUCH','RETEST')"
+        ).fetchone()[0]
+        matured = 0
+        for row in conn.execute(
+            "SELECT ts FROM level_interactions WHERE graded=0 AND interaction_type IN ('FIRST_TOUCH','RETEST')"
+        ).fetchall():
+            ts = hlce._parse_ts(row[0])
+            if ts is not None and now - ts >= hlce.GRADING_HORIZON_SECONDS:
+                matured += 1
+        eligible = conn.execute(
+            """SELECT COUNT(*)
+               FROM level_outcomes o
+               LEFT JOIN level_transition_observations t ON t.source_outcome_id=o.outcome_id
+               WHERE t.source_outcome_id IS NULL
+                 AND o.classification IN ('BREAK','REACTION','REVERSAL','FAILED_BREAK')"""
+        ).fetchone()[0]
+        observations = conn.execute("SELECT COUNT(*) FROM level_transition_observations").fetchone()[0]
+        stats = conn.execute("SELECT COUNT(*) FROM level_transition_statistics").fetchone()[0]
+        last_obs = conn.execute("SELECT MAX(created_at) FROM level_transition_observations").fetchone()[0]
+        last_outcome = conn.execute("SELECT MAX(graded_at) FROM level_outcomes").fetchone()[0]
+    if matured:
+        state = "READY_TO_GRADE"
+    elif eligible:
+        state = "READY_TO_RECORD"
+    elif ungraded:
+        state = "WAITING_FOR_MATURITY"
+    else:
+        state = "COLLECTING"
+    return {
+        "ok": True, "version": LEARNING_VERSION, "state": state,
+        "collector_enabled": bool(hlce.collector_enabled()),
+        "grading_horizon_seconds": int(hlce.GRADING_HORIZON_SECONDS),
+        "transition_horizon_seconds": int(TRANSITION_HORIZON_SECONDS),
+        "ungraded_interactions": int(ungraded),
+        "matured_interactions": int(matured),
+        "eligible_unrecorded_outcomes": int(eligible),
+        "observations": int(observations),
+        "statistics_rows": int(stats),
+        "last_outcome_at": last_outcome, "last_observation_at": last_obs,
+        "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+    }
+
+
+def run_learning_cycle(*, path: Optional[str] = None, limit: int = 500) -> Dict[str, Any]:
+    """Process all newly matured HLCE outcomes into LTPE evidence.
+
+    Idempotency is guaranteed by the UNIQUE source_outcome_id constraint.
+    Statistics rebuild only when at least one new observation is recorded.
+    """
+    before = learning_status(path=path)
+    processed = process_transition_outcomes(path=path, limit=limit)
+    statistics = {"skipped": True, "reason": "NO_NEW_OBSERVATIONS"}
+    if int(processed.get("recorded") or 0) > 0:
+        statistics = rebuild_transition_statistics(path=path)
+    after = learning_status(path=path)
+    return {
+        "ok": True, "version": LEARNING_VERSION,
+        "before": before, "processed": processed,
+        "statistics": statistics, "after": after,
+    }
 
 
 _SEGMENTS = (
