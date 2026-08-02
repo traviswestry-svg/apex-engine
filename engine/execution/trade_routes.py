@@ -23,6 +23,7 @@ from engine.execution.complex_options import ComplexLeg, ComplexOrderIntent, bui
 from engine.execution.bracket_manager import get_bracket_manager
 from engine.execution import trade_risk_guard as guard
 from engine.execution.trade_audit import audit, read_audit
+from engine.execution.canonical_execution import get_execution_boundary
 
 # Module state (single trader, single active plan in V1).
 _ADAPTER: Optional[ETradeAdapter] = None
@@ -284,9 +285,16 @@ def register_trade_routes(
                              side=contract.get("side", "CALL"), action="BUY_OPEN",
                              quantity=qty, order_type="LIMIT", limit_price=entry, tag="ENTRY")
         r = _adapter().preview_order(intent)
-        audit("PREVIEW_RESPONSE", {"ok": r.ok, "preview_id": (r.data or {}).get("preview_id")})
+        preview_id = (r.data or {}).get("preview_id")
+        if r.ok and preview_id:
+            get_execution_boundary().register_preview(
+                preview_id, contract=contract, quantity=qty, entry_premium=entry,
+                stop_premium=stop, session_state=body.get("session_state", "MARKET_OPEN"),
+                intent=intent,
+            )
+        audit("PREVIEW_RESPONSE", {"ok": r.ok, "preview_id": preview_id})
         data = {"risk": decision.to_dict(), "broker": r.data,
-                "preview_id": (r.data or {}).get("preview_id"), "intent": intent.to_dict()}
+                "preview_id": preview_id, "intent": intent.to_dict()}
         return jsonify(envelope(r.ok, data, mode=r.mode, warnings=decision.warnings, errors=r.errors))
 
     @app.route("/api/trade/spx/place-entry", methods=["POST"])
@@ -301,8 +309,16 @@ def register_trade_routes(
         intent = OrderIntent(symbol="SPX", osi_key=contract.get("osi_key", ""),
                              side=contract.get("side", "CALL"), action="BUY_OPEN",
                              quantity=qty, order_type="LIMIT", limit_price=entry, tag="ENTRY")
-        r = _adapter().place_order(preview_id, intent)
-        _LAST_ORDER_EPOCH["SPX"] = time.time()
+        r = get_execution_boundary().execute_single_leg(
+            adapter=_adapter(), preview_id=preview_id, intent=intent, contract=contract,
+            quantity=qty, entry_premium=entry, stop_premium=body.get("stop_premium"),
+            session_state=body.get("session_state", "MARKET_OPEN"),
+            last_order_epoch=_LAST_ORDER_EPOCH.get("SPX"),
+        )
+        if r.ok:
+            _LAST_ORDER_EPOCH["SPX"] = time.time()
+        elif (r.data or {}).get("risk"):
+            audit("RISK_REJECTION", {"stage": "place_entry", "risk": (r.data or {}).get("risk")})
         bracket = None
         if r.ok:
             bm = get_bracket_manager()
