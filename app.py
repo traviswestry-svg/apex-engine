@@ -10895,6 +10895,7 @@ def api_morning_brief():
                 force=force,
                 refresh_narrative=refresh_narrative,
                 async_narrative=True,
+                defer_async_enqueue=True,
                 session_context=session_context,
                 canonical_ms=canonical,
                 flow_snapshot=flow,
@@ -11099,6 +11100,7 @@ def api_morning_brief():
                 "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
             }
 
+        archive_started = time.perf_counter()
         try:
             from engine.evening_recap import save_morning_snapshot
             payload["forecast_archive"] = save_morning_snapshot(payload, ticker=ticker)
@@ -11108,6 +11110,40 @@ def api_morning_brief():
                 "error": f"{type(recap_store_exc).__name__}: {recap_store_exc}",
             }
             print(f"[APEX49.1] morning snapshot persistence unavailable: {type(recap_store_exc).__name__}: {recap_store_exc}", flush=True)
+        archive_ms = round((time.perf_counter() - archive_started) * 1000, 1)
+
+        # APEX 50.6.5.4: Anthropic persistence + worker scheduling is launched only
+        # after the deterministic payload and official archive are ready, and the
+        # launcher performs no SQLite/network work on this request thread.
+        async_request = payload.pop("_async_narrative_request", None)
+        enqueue_started = time.perf_counter()
+        enqueue_state = None
+        if isinstance(async_request, dict):
+            try:
+                from engine.async_narrative import enqueue_nonblocking
+                enqueue_state = enqueue_nonblocking(**async_request)
+            except Exception as enqueue_exc:
+                enqueue_state = {
+                    "status": "ENQUEUE_FAILED",
+                    "error": f"{type(enqueue_exc).__name__}: {enqueue_exc}",
+                    "nonblocking": True,
+                }
+        async_enqueue_ms = round((time.perf_counter() - enqueue_started) * 1000, 1)
+        if enqueue_state is not None:
+            payload["async_narrative_enqueue"] = enqueue_state
+
+        response_ready_ms = round((time.perf_counter() - validation_started) * 1000, 1)
+        payload["response_timing"] = {
+            "providers_ms": stage_timings.get("providers"),
+            "deterministic_generation_ms": stage_timings.get("brief_generation"),
+            "archive_ms": archive_ms,
+            "async_enqueue_ms": async_enqueue_ms,
+            "response_ready_ms": response_ready_ms,
+            "anthropic_waited_inline": False,
+            "version": "50.6.5.4_NONBLOCKING_MORNING_BRIEF",
+        }
+        if isinstance(payload.get("operational_status"), dict):
+            payload["operational_status"]["latency_ms"] = response_ready_ms
         return jsonify(payload)
     except Exception as exc:
         print(f"[MORNING_BRIEF] generation failed: {type(exc).__name__}: {exc}", flush=True)
@@ -11149,11 +11185,11 @@ def api_morning_brief_narrative_status():
         key = job_key(target, mode)
         job = get_job(key)
         if not job:
-            return jsonify({"ok": True, "status": "NOT_FOUND", "job_key": key, "target_session_date": target, "brief_mode": mode, "version": "50.6.5.3_ASYNC_ANTHROPIC_NARRATIVE"})
+            return jsonify({"ok": True, "status": "NOT_FOUND", "job_key": key, "target_session_date": target, "brief_mode": mode, "version": "50.6.5.4_NONBLOCKING_MORNING_BRIEF"})
         job["ok"] = True
         return jsonify(job)
     except Exception as exc:
-        return jsonify({"ok": False, "status": "UNAVAILABLE", "error": f"{type(exc).__name__}: {exc}", "version": "50.6.5.3_ASYNC_ANTHROPIC_NARRATIVE"}), 200
+        return jsonify({"ok": False, "status": "UNAVAILABLE", "error": f"{type(exc).__name__}: {exc}", "version": "50.6.5.4_NONBLOCKING_MORNING_BRIEF"}), 200
 
 @app.route("/api/morning-brief/validation", methods=["GET"])
 def api_morning_brief_validation():
