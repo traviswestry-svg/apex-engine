@@ -6,17 +6,17 @@ Location: engine/morning_brief.py
 Generates the full brief the dashboard shows before the open:
   * deterministic sections (key levels / trade map / expected move) come straight
     from the Daily Key Levels engine — REAL numbers, never invented
-  * macro + narrative + regime classification come from ONE Anthropic API call
-    with web_search enabled, fed the deterministic data as context so the story
-    is consistent with the actual levels
+  * macro + narrative + regime classification are generated asynchronously by
+    Anthropic after the deterministic brief returns; web_search remains optional
+    enrichment and never blocks the core Morning Readiness response
 
 Design rules carried over from the rest of APEX:
   * The model NARRATES; the engine supplies NUMBERS. The prompt forbids the model
     from inventing numeric levels — the authoritative level sections are appended
     from the engine, not from the model.
   * Anything unavailable renders [FEED REQUIRED], never a fabricated value.
-  * On-demand + cached by ET session date (an LLM+web_search call costs money and
-    ~30-60s; don't regenerate on every dashboard poll). force=True bypasses cache.
+  * On-demand + cached by ET session date. Anthropic runs outside the synchronous
+    request path so slow upstream responses cannot delay deterministic readiness.
   * Degrades gracefully: no ANTHROPIC_API_KEY -> returns the deterministic brief
     with a clear "narrative unavailable" note instead of failing.
 """
@@ -48,7 +48,7 @@ except Exception:  # pragma: no cover
     requests = None
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_INTEGRATION_VERSION = "50.6.5.2_ANTHROPIC_ADAPTIVE_FALLBACK"
+ANTHROPIC_INTEGRATION_VERSION = "50.6.5.3_ASYNC_ANTHROPIC_NARRATIVE"
 DEFAULT_MODEL = os.getenv("APEX_BRIEF_MODEL", "claude-sonnet-5")
 DEFAULT_AI_TIMEOUT = max(5, min(int(os.getenv("APEX_BRIEF_AI_TIMEOUT_SECONDS", "10")), 45))
 ANTHROPIC_MAX_ATTEMPTS = 2  # initial request + one controlled transient retry
@@ -500,6 +500,7 @@ def generate_morning_brief(
     api_key: Optional[str] = None,
     model: str = DEFAULT_MODEL,
     _llm=call_anthropic,
+    async_narrative: bool = False,
     **engine_kwargs,
 ) -> dict:
     """Rebuild deterministic data every request while reusing session narrative.
@@ -547,31 +548,37 @@ def generate_morning_brief(
         timings["prompt_build"] = round((time.perf_counter() - step) * 1000, 1)
         api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "").strip()
         step = time.perf_counter()
-        if api_key:
+        if api_key and async_narrative:
+            from .async_narrative import job_key as _async_job_key, get_job as _get_async_job, schedule as _schedule_async
+            key = _async_job_key(target_date, mode)
+            prior = _get_async_job(key)
+            if prior and prior.get("status") == "COMPLETE" and prior.get("narrative") and not refresh_narrative:
+                narrative = str(prior.get("narrative") or "")
+                err = None
+                ai_telemetry = prior.get("telemetry") or {}
+                narrative_source = "async_persistent_cache"
+                narrative_status = "ASYNC_COMPLETE"
+            else:
+                job = _schedule_async(key=key, prompt=prompt, api_key=api_key, model=model, target_session_date=target_date, brief_mode=mode, force=refresh_narrative)
+                narrative = ""
+                err = None
+                ai_telemetry = {"provider":"anthropic","outcome":"ASYNC_"+str(job.get("status") or "PENDING"),"attempts":[],"network_io_performed":False,"circuit":_circuit_snapshot(),"async_job_key":key,"async_status":job.get("status"),"async_version":job.get("version")}
+                narrative_source = "async_pending"
+                narrative_status = "ASYNC_" + str(job.get("status") or "PENDING")
+        elif api_key:
             llm_result = _llm(prompt, api_key=api_key, model=model)
             if isinstance(llm_result, tuple) and len(llm_result) >= 3:
                 narrative, err, ai_telemetry = llm_result[0], llm_result[1], (llm_result[2] or ai_telemetry)
             else:
                 narrative, err = llm_result
-                ai_telemetry = {
-                    "provider": "anthropic",
-                    "outcome": "SUCCESS" if narrative else "FAILED",
-                    "attempts": [],
-                    "telemetry_source": "legacy_llm_adapter",
-                    "circuit": _circuit_snapshot(),
-                }
+                ai_telemetry = {"provider":"anthropic","outcome":"SUCCESS" if narrative else "FAILED","attempts":[],"telemetry_source":"legacy_llm_adapter","circuit":_circuit_snapshot()}
             narrative_source = "anthropic" if narrative else "deterministic_fallback"
             low_err = str(err or "").lower()
-            if narrative:
-                narrative_status = "FRESH"
-            elif str(ai_telemetry.get("outcome") or "").upper() == "CIRCUIT_OPEN":
-                narrative_status = "CIRCUIT_OPEN_FALLBACK"
-            elif str(ai_telemetry.get("outcome") or "").upper() == "BUDGET_EXHAUSTED":
-                narrative_status = "BUDGET_EXHAUSTED_FALLBACK"
-            elif "timeout" in low_err:
-                narrative_status = "TIMEOUT_FALLBACK"
-            else:
-                narrative_status = "ERROR_FALLBACK"
+            if narrative: narrative_status = "FRESH"
+            elif str(ai_telemetry.get("outcome") or "").upper() == "CIRCUIT_OPEN": narrative_status = "CIRCUIT_OPEN_FALLBACK"
+            elif str(ai_telemetry.get("outcome") or "").upper() == "BUDGET_EXHAUSTED": narrative_status = "BUDGET_EXHAUSTED_FALLBACK"
+            elif "timeout" in low_err: narrative_status = "TIMEOUT_FALLBACK"
+            else: narrative_status = "ERROR_FALLBACK"
         else:
             narrative, err = "", "no ANTHROPIC_API_KEY set"
             narrative_source = "deterministic_fallback"
@@ -629,7 +636,7 @@ def generate_morning_brief(
         "session_context": sc,
         "generation_timing": timings,
         "narrative_attempt": {
-            "attempted": bool(ai_telemetry.get("network_io_performed")) or narrative_source == "anthropic",
+            "attempted": bool(ai_telemetry.get("network_io_performed")) or narrative_source in {"anthropic", "async_pending", "async_persistent_cache"},
             "duration_ms": timings.get("ai_call", 0.0),
             "status": narrative_status,
             "error": err,
