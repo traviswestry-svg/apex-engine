@@ -13,6 +13,7 @@ os.environ["RUN_SCANNER_ON_IMPORT"] = "false"
 
 import app as apex_app  # noqa: E402
 from engine.operational_runtime import write_scanner_heartbeat  # noqa: E402
+from engine.historical_level_calibration import get_service as get_hlce_service  # noqa: E402
 
 _RUNNING = True
 
@@ -26,6 +27,12 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     apex_app.start_background_scanner()
+    # APEX 65.7: the dedicated scanner process is the single owner of HLCE.
+    # Web/Gunicorn route registration must never start recurring collectors.
+    try:
+        get_hlce_service().start(lambda: dict(apex_app.STATE.get("last_result") or {}))
+    except Exception as exc:
+        print(f"[HLCE] scanner-owned collector start failed (non-fatal): {exc}", flush=True)
     while _RUNNING:
         write_scanner_heartbeat({
             "scanner_started": bool(apex_app.SCANNER_STARTED),
