@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt, json, os, sqlite3, threading, time
 from typing import Optional
 
-VERSION = "50.6.5.4_NONBLOCKING_MORNING_BRIEF"
+VERSION = "50.6.5.5_ANTHROPIC_TRANSPORT_DIAGNOSTICS"
 STALE_SECONDS = max(60.0, min(float(os.getenv("APEX_ASYNC_NARRATIVE_STALE_SECONDS", "180")), 1800.0))
 _LOCK = threading.RLock()
 _ACTIVE: set[str] = set()

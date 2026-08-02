@@ -24,9 +24,11 @@ Design rules carried over from the rest of APEX:
 from __future__ import annotations
 
 import os
+import json
 import datetime as dt
 import threading
 import time
+from urllib.parse import urlparse
 from typing import Any, Optional
 
 try:
@@ -48,7 +50,7 @@ except Exception:  # pragma: no cover
     requests = None
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
-ANTHROPIC_INTEGRATION_VERSION = "50.6.5.3_ASYNC_ANTHROPIC_NARRATIVE"
+ANTHROPIC_INTEGRATION_VERSION = "50.6.5.5_ANTHROPIC_TRANSPORT_DIAGNOSTICS"
 DEFAULT_MODEL = os.getenv("APEX_BRIEF_MODEL", "claude-sonnet-5")
 DEFAULT_AI_TIMEOUT = max(5, min(int(os.getenv("APEX_BRIEF_AI_TIMEOUT_SECONDS", "10")), 45))
 ANTHROPIC_MAX_ATTEMPTS = 2  # initial request + one controlled transient retry
@@ -61,10 +63,15 @@ ANTHROPIC_CIRCUIT_COOLDOWN_SECONDS = max(10.0, min(float(os.getenv("APEX_BRIEF_A
 # budgets.  A slow web-search attempt must not consume the no-web fallback's
 # entire opportunity to return useful prose.  A final total cap still prevents
 # the old ~40s failure mode.
-ANTHROPIC_ENRICHED_TIMEOUT_SECONDS = max(3.0, min(float(os.getenv("APEX_BRIEF_AI_ENRICHED_TIMEOUT_SECONDS", "6")), 15.0))
-ANTHROPIC_DEGRADED_TIMEOUT_SECONDS = max(5.0, min(float(os.getenv("APEX_BRIEF_AI_DEGRADED_TIMEOUT_SECONDS", "10")), 20.0))
-ANTHROPIC_TOTAL_BUDGET_SECONDS = max(8.0, min(float(os.getenv("APEX_BRIEF_AI_TOTAL_BUDGET_SECONDS", "18")), 30.0))
-ANTHROPIC_NARRATIVE_MAX_TOKENS = max(700, min(int(os.getenv("APEX_BRIEF_AI_MAX_TOKENS", "1800")), 3000))
+# 50.6.5.5: Anthropic now runs asynchronously, so transport budgets can be realistic
+# without delaying Morning Readiness. Keep connect time short, but allow model inference
+# enough read time to finish instead of manufacturing READ_TIMEOUTs at 6/10 seconds.
+ANTHROPIC_CONNECT_TIMEOUT_SECONDS = max(1.0, min(float(os.getenv("APEX_BRIEF_AI_CONNECT_TIMEOUT_SECONDS", "4")), 10.0))
+ANTHROPIC_ENRICHED_TIMEOUT_SECONDS = max(8.0, min(float(os.getenv("APEX_BRIEF_AI_ENRICHED_TIMEOUT_SECONDS", "22")), 45.0))
+ANTHROPIC_DEGRADED_TIMEOUT_SECONDS = max(8.0, min(float(os.getenv("APEX_BRIEF_AI_DEGRADED_TIMEOUT_SECONDS", "28")), 45.0))
+ANTHROPIC_TOTAL_BUDGET_SECONDS = max(20.0, min(float(os.getenv("APEX_BRIEF_AI_TOTAL_BUDGET_SECONDS", "55")), 90.0))
+ANTHROPIC_NARRATIVE_MAX_TOKENS = max(700, min(int(os.getenv("APEX_BRIEF_AI_MAX_TOKENS", "1400")), 2200))
+ANTHROPIC_DEGRADED_MAX_TOKENS = max(500, min(int(os.getenv("APEX_BRIEF_AI_DEGRADED_MAX_TOKENS", "950")), 1600))
 
 _CIRCUIT_LOCK = threading.RLock()
 _CIRCUIT = {
@@ -152,7 +159,6 @@ _BRIEF_SYSTEM = (
 
 
 def build_prompt(context: dict, sdate: str, session_context: Optional[dict] = None) -> str:
-    import json
     sc = session_context or {"state": "PREMARKET", "brief_mode": "PREMARKET", "label": "Pre-market"}
     mode = str(sc.get("brief_mode") or "PREMARKET").upper()
     framing = {
@@ -203,8 +209,48 @@ Keep the response under ~700 words.
 
 
 # --------------------------------------------------------------------------- #
-# 3) The single Anthropic call (macro + narrative, with web_search)
+# 3) Anthropic transport + narrative resilience
 # --------------------------------------------------------------------------- #
+
+def _degraded_prompt(prompt: str) -> str:
+    """Create a smaller no-web retry prompt without altering APEX facts.
+
+    The deterministic context is already compact. The degraded attempt removes the
+    web-search directive and asks for a shorter narrative so generation can finish
+    with fewer output tokens while preserving all authoritative APEX values.
+    """
+    out = str(prompt)
+    out = out.replace(
+        "Use web_search to gather the most current information for the macro sections:\n"
+        "equity/futures behavior, Treasury yields, the dollar, VIX, the economic calendar,\n"
+        "Fed speakers, and earnings capable of moving SPX. Prioritize the last 24 hours.\n"
+        "Never describe an already-completed event as upcoming.\n",
+        "Do not use external web search on this fallback attempt. Use only the APEX context below.\n"
+        "If a macro detail is absent, write [FEED REQUIRED] rather than infer it.\n"
+    )
+    out = out.replace("Keep the response under ~700 words.", "Keep the response under ~350 words.")
+    return out
+
+
+def _payload_stats(payload: dict) -> dict:
+    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    messages = payload.get("messages") or []
+    prompt_chars = 0
+    for msg in messages:
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if isinstance(content, str):
+            prompt_chars += len(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    prompt_chars += len(block["text"])
+    return {
+        "payload_bytes": len(raw),
+        "message_count": len(messages),
+        "prompt_chars": prompt_chars,
+        "approx_input_tokens": int(round(prompt_chars / 4.0)),
+    }
+
 
 def _circuit_snapshot(now_mono: Optional[float] = None) -> dict:
     now_mono = time.monotonic() if now_mono is None else now_mono
@@ -286,7 +332,7 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
                    max_tokens: int = 4000, timeout: int = DEFAULT_AI_TIMEOUT):
     """Return ``(narrative, error, telemetry)``.
 
-    50.6.5.2 adaptive narrative policy:
+    50.6.5.5 asynchronous transport policy:
       * attempt 1 may use bounded server-side web search;
       * ``pause_turn`` is continued as the same attempt;
       * one transient retry is allowed and intentionally removes web search;
@@ -312,6 +358,15 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
         "network_call_count": 0, "total_duration_ms": 0.0,
         "circuit": _circuit_snapshot(), "network_io_performed": False,
         "protocol": "MESSAGES_API_ADAPTIVE_WEB_SEARCH_FALLBACK",
+        "endpoint": {
+            "host": urlparse(ANTHROPIC_URL).hostname,
+            "path": urlparse(ANTHROPIC_URL).path,
+            "scheme": urlparse(ANTHROPIC_URL).scheme,
+        },
+        "connect_timeout_seconds": ANTHROPIC_CONNECT_TIMEOUT_SECONDS,
+        "prompt_chars": len(str(prompt)),
+        "prompt_utf8_bytes": len(str(prompt).encode("utf-8")),
+        "approx_prompt_tokens": int(round(len(str(prompt)) / 4.0)),
     }
     if requests is None:
         error = "requests library unavailable"
@@ -365,12 +420,8 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
         attempt_budget = ANTHROPIC_ENRICHED_TIMEOUT_SECONDS if web_enabled else ANTHROPIC_DEGRADED_TIMEOUT_SECONDS
         attempt_budget = max(0.05, min(float(attempt_budget), total_remaining))
         attempt_started = time.perf_counter()
-        degraded_prefix = (
-            "Web search is unavailable for this fallback attempt. Use only the authoritative "
-            "APEX context below. Do not invent macro facts; mark unsupported details [FEED REQUIRED].\n\n"
-            if not web_enabled else ""
-        )
-        messages = [{"role": "user", "content": degraded_prefix + prompt}]
+        effective_prompt = prompt if web_enabled else _degraded_prompt(prompt)
+        messages = [{"role": "user", "content": effective_prompt}]
         attempt = {
             "attempt": attempt_no, "status": "UNKNOWN", "duration_ms": 0.0,
             "retryable": False, "http_status": None, "error_type": None,
@@ -378,6 +429,9 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
             "degraded_retry_without_web_search": attempt_no > 1,
             "attempt_budget_seconds": round(attempt_budget, 3),
             "pause_continuations": 0, "network_calls": 0, "stop_reasons": [],
+            "requests": [],
+            "effective_prompt_chars": len(effective_prompt),
+            "approx_effective_input_tokens": int(round(len(effective_prompt) / 4.0)),
         }
 
         while True:
@@ -396,18 +450,41 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
                 telemetry["network_call_count"] += 1
                 attempt["network_calls"] += 1
                 req_timeout = max(0.05, min(float(timeout), attempt_remaining, total_remaining))
+                output_cap = min(
+                    int(max_tokens),
+                    ANTHROPIC_NARRATIVE_MAX_TOKENS if web_enabled else ANTHROPIC_DEGRADED_MAX_TOKENS,
+                )
                 payload = {
                     "model": model,
-                    "max_tokens": min(int(max_tokens), ANTHROPIC_NARRATIVE_MAX_TOKENS),
+                    "max_tokens": output_cap,
                     "messages": messages,
                 }
                 tools = _tools(web_enabled)
                 if tools: payload["tools"] = tools
+                stats = _payload_stats(payload)
+                call_started = time.perf_counter()
+                request_meta = {
+                    "call": telemetry["network_call_count"],
+                    "web_search_enabled": web_enabled,
+                    "timeout_connect_seconds": round(min(ANTHROPIC_CONNECT_TIMEOUT_SECONDS, req_timeout), 3),
+                    "timeout_read_seconds": round(req_timeout, 3),
+                    "max_tokens": output_cap,
+                    **stats,
+                }
+                attempt["requests"].append(request_meta)
                 response = requests.post(
                     ANTHROPIC_URL,
                     headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                    json=payload, timeout=req_timeout,
+                    json=payload,
+                    timeout=(min(ANTHROPIC_CONNECT_TIMEOUT_SECONDS, req_timeout), req_timeout),
                 )
+                request_meta["duration_ms"] = round((time.perf_counter() - call_started) * 1000, 1)
+                request_meta["http_status"] = int(response.status_code)
+                headers = getattr(response, "headers", {}) or {}
+                request_meta["request_id"] = headers.get("request-id") or headers.get("x-request-id")
+                elapsed = getattr(response, "elapsed", None)
+                if elapsed is not None and hasattr(elapsed, "total_seconds"):
+                    request_meta["response_elapsed_ms"] = round(float(elapsed.total_seconds()) * 1000, 1)
                 attempt["http_status"] = int(response.status_code)
                 if response.status_code >= 400:
                     retryable = _retryable_status(int(response.status_code))
@@ -455,6 +532,11 @@ def call_anthropic(prompt: str, *, api_key: str, model: str = DEFAULT_MODEL,
                 attempt.update({"status":"EMPTY_RESPONSE","retryable":True,"error_type":"EmptyResponse","failure_type":final_failure_type,"error":final_error})
                 break
             except Exception as exc:
+                if attempt.get("requests"):
+                    req_meta = attempt["requests"][-1]
+                    req_meta.setdefault("duration_ms", round((time.perf_counter() - call_started) * 1000, 1) if "call_started" in locals() else None)
+                    req_meta["failure_type"] = _failure_type(exc=exc)
+                    req_meta["exception_type"] = type(exc).__name__
                 final_error = f"{type(exc).__name__}: {exc}"
                 retryable_types = tuple(t for t in (getattr(requests.exceptions,"Timeout",None), getattr(requests.exceptions,"ConnectionError",None)) if t is not None)
                 retryable = bool(retryable_types and isinstance(exc, retryable_types))
