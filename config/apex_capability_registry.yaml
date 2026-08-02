@@ -91,3 +91,21 @@ capabilities:
     api_routes: [/api/evidence-pipeline/readiness, /api/evidence-pipeline/backfill]
     decision_authority: none
     guardrails: [no_proxy_outcomes, immutable_pre_decision_features, terminal_economics_required]
+
+  canonical_execution_boundary_65_7:
+    canonical_module: engine.execution.canonical_execution
+    status: active
+    version: "65.7.0"
+    inputs: [broker_preview_id, current_order_intent, current_risk_state]
+    outputs: [risk_revalidated_broker_submission, duplicate_submission_block]
+    api_routes: [/api/trade/spx/place-entry]
+    decision_authority: execution
+
+  hlce_single_owner_65_7:
+    canonical_module: engine.historical_level_calibration
+    status: active
+    version: "65.7.0"
+    inputs: [scanner_process, institutional_os_snapshot]
+    outputs: [historical_level_observations, transition_learning]
+    api_routes: [/api/level-calibration/status, /api/level-calibration/statistics, /api/level-calibration/probabilities]
+    decision_authority: advisory
