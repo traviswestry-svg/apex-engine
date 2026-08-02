@@ -1505,22 +1505,51 @@
 <script>
 (function loadInstitutionalWorkspace(){
  function t(id,v){var e=document.getElementById(id);if(e)e.textContent=(v===null||v===undefined||v==='')?'—':v;}
- Promise.all([fetch('/api/institutional-workspace/status',{cache:'no-store'}).then(r=>r.json()),fetch('/api/mission-control-v2/status',{cache:'no-store'}).then(r=>r.json())]).then(function(v){
-  var w=v[0]||{},m=v[1]||{},b=w.decision_banner||{},r=w.execution_readiness||{},x=((w.workspace||{}).execution_plan)||{},vp=((w.workspace||{}).volume_profile)||{},sum=vp.summary||{};
+ // APEX 50.7.1.1: the hero must never wait on heavyweight supporting
+ // diagnostics.  Institutional Workspace is the canonical fast read model.
+ fetch('/api/institutional-workspace/status',{cache:'no-store'}).then(function(r){
+  if(!r.ok)throw new Error('workspace HTTP '+r.status); return r.json();
+ }).then(function(w){
+  w=w||{};var b=w.decision_banner||{},r=w.execution_readiness||{},x=((w.workspace||{}).execution_plan)||{},vp=((w.workspace||{}).volume_profile)||{},sum=vp.summary||{};
   t('iwDecision',(b.decision||'WARMING').replaceAll('_',' '));t('iwHeadline',b.headline||'Institutional decision unavailable');t('iwBias',b.bias);t('iwConfidence',Math.round(b.confidence||0)+'/100');t('iwGrade',r.grade);t('iwStrategy',(b.preferred_strategy||'—').replaceAll('_',' '));t('iwReadiness',Math.round(r.score||0)+'/100');
   var banner=document.getElementById('iwBanner');if(banner)banner.className='iw-banner '+(b.bias||'NEUTRAL');
   t('iwGreen',sum.active_green||0);t('iwRed',sum.stalled_red||0);t('iwHeat',(sum.heat_state||'BALANCED').replaceAll('_',' '));
-  t('iwEntry',((x.entry_zone||{}).anchor));t('iwStop',x.invalidation);t('iwTp1',((x.targets||{}).tp1));t('iwMcState',m.state);t('iwMcExec',((m.groups||{}).EXECUTION||{}).summary);
- }).catch(function(){t('iwDecision','UNAVAILABLE');t('iwMcState','WARNING');});
+  t('iwEntry',((x.entry_zone||{}).anchor));t('iwStop',x.invalidation);t('iwTp1',((x.targets||{}).tp1));
+  // Supporting Mission Control is intentionally lazy.  Use the already-loaded
+  // execution plan as the initial non-blocking summary.
+  t('iwMcState','ON DEMAND');t('iwMcExec',x.state||r.grade||'—');
+ }).catch(function(){t('iwDecision','UNAVAILABLE');t('iwHeadline','Institutional workspace unavailable');t('iwMcState','ON DEMAND');});
 })();
-</script>
 
-
-<script>
-fetch('/api/market-memory/status',{cache:'no-store'}).then(r=>r.json()).then(x=>{
- const a=document.getElementById('mmState'),b=document.getElementById('mmSessions'),c=document.getElementById('mmLearning');
- if(a)a.textContent=x.state||'DORMANT'; if(b)b.textContent=String(x.sessions||0); if(c)c.textContent=x.learning_ready?'READY':'LOCKED';
-}).catch(()=>{});
+(function lazySupportingContext(){
+ const details=document.querySelector('details.workflow-details');
+ if(!details)return;
+ let loaded=false,loading=false;
+ function t(id,v){var e=document.getElementById(id);if(e)e.textContent=(v===null||v===undefined||v==='')?'—':v;}
+ function getJson(url,timeoutMs){
+  const controller=new AbortController();
+  const timer=setTimeout(function(){controller.abort();},timeoutMs||4500);
+  return fetch(url,{cache:'no-store',signal:controller.signal}).then(function(r){
+   if(!r.ok)throw new Error('HTTP '+r.status); return r.json();
+  }).finally(function(){clearTimeout(timer);});
+ }
+ async function load(){
+  if(loaded||loading)return;loading=true;
+  t('iwMcState','LOADING');t('mmState','LOADING');
+  const results=await Promise.allSettled([
+   getJson('/api/mission-control-v2/status',4500),
+   getJson('/api/market-memory/status',3500)
+  ]);
+  const mc=results[0],mm=results[1];
+  if(mc.status==='fulfilled'){const m=mc.value||{};t('iwMcState',m.state||'UNKNOWN');t('iwMcExec',(((m.groups||{}).EXECUTION||{}).summary)||'—');}
+  else{t('iwMcState',mc.reason&&mc.reason.name==='AbortError'?'TIMEOUT':'UNAVAILABLE');}
+  if(mm.status==='fulfilled'){const x=mm.value||{};t('mmState',x.state||'DORMANT');t('mmSessions',String(x.sessions||0));t('mmLearning',x.learning_ready?'READY':'LOCKED');}
+  else{t('mmState',mm.reason&&mm.reason.name==='AbortError'?'TIMEOUT':'UNAVAILABLE');}
+  loaded=true;loading=false;
+ }
+ details.addEventListener('toggle',function(){if(details.open)load();});
+ if(details.open)load();
+})();
 </script>
 <script src="{{ url_for('static', filename='js/trader_workflow.js') }}?v={{ asset_version or version }}"></script>
 </body>
