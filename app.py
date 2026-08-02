@@ -11211,6 +11211,28 @@ def api_data_quality():
         "missing": [],
     })})
 
+@app.route("/api/morning-brief/history", methods=["GET"])
+def api_morning_brief_history():
+    """Review index for immutable Morning Brief forecasts."""
+    try:
+        from engine.evening_recap import morning_history
+        return jsonify(morning_history(request.args.get("limit", 60)))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}", "version": VERSION}), 500
+
+@app.route("/api/morning-brief/archive/<session_date>", methods=["GET"])
+def api_morning_brief_archive_detail(session_date):
+    """Return the immutable official Morning Brief for a historical session."""
+    try:
+        dt.date.fromisoformat(session_date)
+        from engine.evening_recap import get_morning_snapshot
+        payload = get_morning_snapshot(session_date)
+        if payload is None:
+            return jsonify({"ok": False, "status": "NOT_FOUND", "session_date": session_date}), 404
+        return jsonify({**payload, "cached": True, "archive_review": True})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}", "version": VERSION}), 400
+
 @app.route("/api/morning-brief/archive-status", methods=["GET"])
 def api_morning_brief_archive_status():
     """Return whether an immutable official forecast exists for a session."""
