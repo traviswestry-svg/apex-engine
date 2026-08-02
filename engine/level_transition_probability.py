@@ -16,6 +16,7 @@ database.  No network/provider calls are made here.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import math
 import os
@@ -25,12 +26,35 @@ from datetime import datetime, timezone
 from statistics import median
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from . import historical_level_calibration as hlce
+class _LazyHLCEProxy:
+    """Resolve HLCE only when LTPE actually needs it.
+
+    APEX 50.7.0.2: HLCE owns the collector and can import LTPE from startup
+    and live-cycle hooks. Importing HLCE eagerly here creates a reverse module
+    dependency and can expose a partially initialized LTPE module under
+    threaded Gunicorn startup. This proxy keeps LTPE import-complete before
+    resolving the shared HLCE store/helpers.
+    """
+    _module = None
+
+    def _resolve(self):
+        module = self._module
+        if module is None:
+            module = importlib.import_module(".historical_level_calibration", __package__)
+            self._module = module
+        return module
+
+    def __getattr__(self, name):
+        return getattr(self._resolve(), name)
+
+
+hlce = _LazyHLCEProxy()
 
 VERSION = "50.6.2.2_LEVEL_TRANSITION_PROBABILITY"
 PATH_INTELLIGENCE_VERSION = "50.6.5_INSTITUTIONAL_LEVEL_PATH_INTELLIGENCE"
 PATH_RESILIENCE_VERSION = "50.6.5.2_LTPE_EMBEDDED_PATH_RESILIENCE"
 LEARNING_VERSION = "50.7.0_LEVEL_TRANSITION_LEARNING_ACTIVATION"
+CIRCULAR_IMPORT_REPAIR_VERSION = "50.7.0.2_LTPE_CIRCULAR_IMPORT_REPAIR"
 SCHEMA_VERSION = 1
 
 
