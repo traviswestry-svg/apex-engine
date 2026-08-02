@@ -45,6 +45,10 @@ def register_execution_os_routes(
     def readiness_dashboard():
         return render_template('execution_os.html', version=VERSION, initial_tab='readiness')
 
+    @app.get('/apex_os/report-archive')
+    def report_archive_dashboard():
+        return render_template('report_archive.html', version=VERSION)
+
     @app.get('/api/execution/score')
     @app.get('/api/execution/quality')
     @app.get('/api/execution/liquidity')
@@ -87,8 +91,28 @@ def register_execution_os_routes(
     @app.get('/api/readiness/providers')
     @app.get('/api/readiness/report')
     def readiness():
-        return jsonify(readiness_payload())
+        payload = readiness_payload()
+        try:
+            from .report_archive import archive_readiness
+            payload['report_archive'] = archive_readiness(payload)
+        except Exception as exc:
+            payload['report_archive'] = {'archived': False, 'error': f'{type(exc).__name__}: {exc}'}
+        return jsonify(payload)
 
     @app.get('/api/readiness/history')
     def readiness_history():
-        return jsonify({'ok': True, 'version': VERSION, 'status': 'COLLECTING', 'history': [], 'note': 'History starts after deployment; no values are fabricated.'})
+        from .report_archive import readiness_history
+        return jsonify(readiness_history())
+
+    @app.get('/api/readiness/archive/<session_date>')
+    def readiness_archive_detail(session_date):
+        from .report_archive import get_readiness
+        payload = get_readiness(session_date)
+        if payload is None:
+            return jsonify({'ok': False, 'status': 'NOT_FOUND', 'session_date': session_date}), 404
+        return jsonify(payload)
+
+    @app.get('/api/report-archive')
+    def report_archive_catalog():
+        from .report_archive import report_catalog
+        return jsonify(report_catalog())

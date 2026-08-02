@@ -150,6 +150,17 @@ def morning_archive_status(session_date: str) -> dict:
         "version": VERSION,
     }
 
+def morning_history(limit: int = 60) -> dict:
+    init_db()
+    limit = max(1, min(int(limit), 365))
+    with sqlite3.connect(DB_PATH, timeout=10) as c:
+        rows = c.execute("""SELECT s.session_date,s.generated_at,s.ticker,s.version,
+                            (SELECT COUNT(*) FROM apex49_morning_revisions r WHERE r.session_date=s.session_date)
+                            FROM apex49_morning_snapshots s ORDER BY s.session_date DESC LIMIT ?""", (limit,)).fetchall()
+    return {"ok": True, "count": len(rows), "items": [
+        {"session_date": r[0], "official_generated_at": r[1], "ticker": r[2], "archive_version": r[3], "revision_count": int(r[4])}
+        for r in rows], "version": VERSION}
+
 def get_morning_snapshot(session_date: str) -> Optional[dict]:
     init_db()
     with sqlite3.connect(DB_PATH, timeout=10) as c:
