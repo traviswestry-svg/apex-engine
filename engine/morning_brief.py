@@ -501,6 +501,7 @@ def generate_morning_brief(
     model: str = DEFAULT_MODEL,
     _llm=call_anthropic,
     async_narrative: bool = False,
+    defer_async_enqueue: bool = False,
     **engine_kwargs,
 ) -> dict:
     """Rebuild deterministic data every request while reusing session narrative.
@@ -532,6 +533,7 @@ def generate_morning_brief(
     narrative_source = "none"
     narrative_status = "UNAVAILABLE"
     ai_telemetry = {"provider": "anthropic", "outcome": "NOT_ATTEMPTED", "attempts": [], "circuit": _circuit_snapshot()}
+    deferred_async_request = None
     ncache = narrative_cache if narrative_cache is not None else cache
     cached_narrative = (ncache or {}).get(result_key) if ncache is not None else None
 
@@ -549,22 +551,49 @@ def generate_morning_brief(
         api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "").strip()
         step = time.perf_counter()
         if api_key and async_narrative:
-            from .async_narrative import job_key as _async_job_key, get_job as _get_async_job, schedule as _schedule_async
+            from .async_narrative import job_key as _async_job_key
             key = _async_job_key(target_date, mode)
-            prior = _get_async_job(key)
-            if prior and prior.get("status") == "COMPLETE" and prior.get("narrative") and not refresh_narrative:
-                narrative = str(prior.get("narrative") or "")
-                err = None
-                ai_telemetry = prior.get("telemetry") or {}
-                narrative_source = "async_persistent_cache"
-                narrative_status = "ASYNC_COMPLETE"
-            else:
-                job = _schedule_async(key=key, prompt=prompt, api_key=api_key, model=model, target_session_date=target_date, brief_mode=mode, force=refresh_narrative)
+            if defer_async_enqueue:
+                # APEX 50.6.5.4: strict request-path isolation. Do not touch the
+                # narrative SQLite store or start the Anthropic worker while the
+                # Morning Brief response is being assembled. app.py pops this
+                # private request descriptor after deterministic archive work and
+                # launches it via enqueue_nonblocking().
                 narrative = ""
                 err = None
-                ai_telemetry = {"provider":"anthropic","outcome":"ASYNC_"+str(job.get("status") or "PENDING"),"attempts":[],"network_io_performed":False,"circuit":_circuit_snapshot(),"async_job_key":key,"async_status":job.get("status"),"async_version":job.get("version")}
+                ai_telemetry = {
+                    "provider": "anthropic",
+                    "outcome": "ASYNC_DEFERRED",
+                    "attempts": [],
+                    "network_io_performed": False,
+                    "circuit": _circuit_snapshot(),
+                    "async_job_key": key,
+                    "async_status": "PENDING",
+                    "async_version": "50.6.5.4_NONBLOCKING_MORNING_BRIEF",
+                }
                 narrative_source = "async_pending"
-                narrative_status = "ASYNC_" + str(job.get("status") or "PENDING")
+                narrative_status = "ASYNC_PENDING"
+                deferred_async_request = {
+                    "key": key, "prompt": prompt, "api_key": api_key, "model": model,
+                    "target_session_date": target_date, "brief_mode": mode,
+                    "force": bool(refresh_narrative),
+                }
+            else:
+                from .async_narrative import get_job as _get_async_job, schedule as _schedule_async
+                prior = _get_async_job(key)
+                if prior and prior.get("status") == "COMPLETE" and prior.get("narrative") and not refresh_narrative:
+                    narrative = str(prior.get("narrative") or "")
+                    err = None
+                    ai_telemetry = prior.get("telemetry") or {}
+                    narrative_source = "async_persistent_cache"
+                    narrative_status = "ASYNC_COMPLETE"
+                else:
+                    job = _schedule_async(key=key, prompt=prompt, api_key=api_key, model=model, target_session_date=target_date, brief_mode=mode, force=refresh_narrative)
+                    narrative = ""
+                    err = None
+                    ai_telemetry = {"provider":"anthropic","outcome":"ASYNC_"+str(job.get("status") or "PENDING"),"attempts":[],"network_io_performed":False,"circuit":_circuit_snapshot(),"async_job_key":key,"async_status":job.get("status"),"async_version":job.get("version")}
+                    narrative_source = "async_pending"
+                    narrative_status = "ASYNC_" + str(job.get("status") or "PENDING")
         elif api_key:
             llm_result = _llm(prompt, api_key=api_key, model=model)
             if isinstance(llm_result, tuple) and len(llm_result) >= 3:
@@ -649,6 +678,9 @@ def generate_morning_brief(
         "markdown": markdown,
         "structured": dkl.to_dict(),
     }
+    if deferred_async_request is not None:
+        result["_async_narrative_request"] = deferred_async_request
+
     if cache is not None:
         cache[result_key] = result
     return result

@@ -3,10 +3,11 @@ from __future__ import annotations
 import datetime as dt, json, os, sqlite3, threading, time
 from typing import Optional
 
-VERSION = "50.6.5.3_ASYNC_ANTHROPIC_NARRATIVE"
+VERSION = "50.6.5.4_NONBLOCKING_MORNING_BRIEF"
 STALE_SECONDS = max(60.0, min(float(os.getenv("APEX_ASYNC_NARRATIVE_STALE_SECONDS", "180")), 1800.0))
 _LOCK = threading.RLock()
 _ACTIVE: set[str] = set()
+_ENQUEUE_ACTIVE: set[str] = set()
 
 
 def _db_path() -> str:
@@ -88,3 +89,38 @@ def schedule(*, key:str, prompt:str, api_key:str, model:str, target_session_date
             with _LOCK: _ACTIVE.discard(key)
     threading.Thread(target=worker,name=f'apex-narrative-{abs(hash(key))%10000}',daemon=True).start()
     return get_job(key) or {'job_key':key,'status':'PENDING','version':VERSION}
+
+
+def enqueue_nonblocking(*, key:str, prompt:str, api_key:str, model:str, target_session_date:str, brief_mode:str, force:bool=False) -> dict:
+    """Launch persistence + worker scheduling without blocking the HTTP request.
+
+    This function intentionally performs no SQLite access on the caller thread.
+    The dashboard may observe NOT_FOUND for the first polling cycle; the launcher
+    creates PENDING/RUNNING state asynchronously.
+    """
+    with _LOCK:
+        if key in _ENQUEUE_ACTIVE or key in _ACTIVE:
+            return {"job_key": key, "status": "ALREADY_QUEUED", "version": VERSION, "nonblocking": True}
+        _ENQUEUE_ACTIVE.add(key)
+
+    def launcher():
+        try:
+            schedule(
+                key=key, prompt=prompt, api_key=api_key, model=model,
+                target_session_date=target_session_date, brief_mode=brief_mode,
+                force=force,
+            )
+        except Exception:
+            # schedule() persists detailed worker errors when it reaches the store.
+            # If even the store is unavailable, narrative-status reports UNAVAILABLE.
+            pass
+        finally:
+            with _LOCK:
+                _ENQUEUE_ACTIVE.discard(key)
+
+    threading.Thread(
+        target=launcher,
+        name=f'apex-narrative-enqueue-{abs(hash(key))%10000}',
+        daemon=True,
+    ).start()
+    return {"job_key": key, "status": "ENQUEUED", "version": VERSION, "nonblocking": True}
