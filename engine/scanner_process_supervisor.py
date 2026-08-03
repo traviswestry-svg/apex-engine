@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 
 from .operational_runtime import persistent_path, read_scanner_heartbeat
 
-VERSION = "65.7.3_SCANNER_STARTUP_HEARTBEAT"
+VERSION = "65.7.4_GUNICORN_LIFECYCLE_BOOTSTRAP"
 _TRUE = {"1", "true", "yes", "on"}
 _LOCK = threading.RLock()
 _PROCESS: Optional[subprocess.Popen] = None
@@ -37,6 +37,9 @@ _RUNTIME: Dict[str, Any] = {
     "launches": 0,
     "last_error": None,
     "child_pid": None,
+    "ensure_calls": 0,
+    "lease_acquired": False,
+    "lease_error": None,
 }
 
 
@@ -79,8 +82,13 @@ def _acquire_supervisor_lease() -> bool:
         handle.write(str(os.getpid()))
         handle.flush()
         _SUPERVISOR_LEASE_HANDLE = handle
+        _RUNTIME.update({"lease_acquired": True, "lease_error": None})
         return True
-    except Exception:
+    except Exception as exc:
+        _RUNTIME.update({
+            "lease_acquired": False,
+            "lease_error": f"{type(exc).__name__}: {exc}",
+        })
         return False
 
 
@@ -102,11 +110,11 @@ def _launch_locked() -> Optional[subprocess.Popen]:
             "last_error": None,
             "child_pid": _PROCESS.pid,
         })
-        print(f"APEX 65.7.3: WSGI supervisor launched scanner_worker.py pid={_PROCESS.pid}", flush=True)
+        print(f"APEX 65.7.4: WSGI supervisor launched scanner_worker.py pid={_PROCESS.pid}", flush=True)
         return _PROCESS
     except Exception as exc:
         _RUNTIME.update({"last_error": f"{type(exc).__name__}: {exc}", "child_pid": None})
-        print(f"APEX 65.7.3: scanner subprocess launch failed: {exc}", flush=True)
+        print(f"APEX 65.7.4: scanner subprocess launch failed: {exc}", flush=True)
         return None
 
 
@@ -131,6 +139,8 @@ def ensure_scanner_process() -> Dict[str, Any]:
     therefore skip this fallback.  Direct Gunicorn launches use the fallback.
     """
     global _WATCHDOG
+    with _LOCK:
+        _RUNTIME["ensure_calls"] = int(_RUNTIME.get("ensure_calls") or 0) + 1
     explicit = os.getenv("APEX_WSGI_ENSURE_SCANNER")
     production_default = bool(
         _truthy("RENDER")
@@ -148,17 +158,21 @@ def ensure_scanner_process() -> Dict[str, Any]:
         return dict(_RUNTIME)
 
     with _LOCK:
-        if not _acquire_supervisor_lease():
-            _RUNTIME.update({"owner": False})
-            return dict(_RUNTIME)
-        _RUNTIME.update({"owner": True, "managed_externally": False})
+        lease_owned = _acquire_supervisor_lease()
+        _RUNTIME.update({"owner": bool(lease_owned), "managed_externally": False})
 
-        # A fresh scanner heartbeat may belong to a sibling/old worker during a
-        # rolling restart.  Respect it rather than launching a competitor.
+        # A fresh scanner heartbeat always wins.  If no heartbeat exists, do not
+        # let a supervisor-lease anomaly strand production at launches=0.  It is
+        # safe for more than one web worker to make a launch attempt because
+        # scanner_worker.py acquires the canonical cross-process scanner lease
+        # *before* importing app.py; losing children exit before collector start.
         if not _heartbeat_fresh():
             _launch_locked()
 
-        if _WATCHDOG is None or not _WATCHDOG.is_alive():
+        # Only the supervisor-lease owner runs a persistent watchdog.  Non-owner
+        # workers still provide first-request bootstrap above, which closes the
+        # Gunicorn preload/fork gap without creating multiple watchdog loops.
+        if lease_owned and (_WATCHDOG is None or not _WATCHDOG.is_alive()):
             _WATCHDOG = threading.Thread(
                 target=_watchdog_loop,
                 name="apex-scanner-process-supervisor",
