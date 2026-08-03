@@ -88,6 +88,41 @@ def register_calibration_routes(app, last_result_provider=None):
         payload["web_scanner_supervisor"] = supervisor_status()
         return jsonify(payload)
 
+
+    @app.get("/api/level-calibration/interactions/diagnostics")
+    def level_calibration_interaction_diagnostics():
+        """Read-only proof of whether zero interactions are legitimate or missed."""
+        hb = read_scanner_heartbeat()
+        fresh = bool(hb.get("available")) and float(hb.get("age_seconds") or 1e9) <= 60.0
+        database = service.status().get("database") or {}
+        counts = database.get("counts") or {}
+        diagnostics = hb.get("hlce_interaction_diagnostics") if fresh else None
+        collector_stats = hb.get("hlce_collector_stats") if fresh else None
+        if not isinstance(diagnostics, dict):
+            diagnostics = {
+                "state": "SCANNER_DIAGNOSTICS_UNAVAILABLE",
+                "reason": "SCANNER_HEARTBEAT_STALE_OR_MISSING" if not fresh else "NO_DIAGNOSTICS_YET",
+            }
+        return jsonify({
+            "ok": True,
+            "version": "65.9.0_INTERACTION_DETECTION_LIFECYCLE",
+            "read_only": True,
+            "decision_influence": "NONE",
+            "execution_influence": "NONE",
+            "scanner_heartbeat_fresh": fresh,
+            "collector_running": bool(fresh and hb.get("hlce_collector_running")),
+            "collector_stats": collector_stats or {},
+            "diagnostics": diagnostics,
+            "database_counts": counts,
+            "interpretation": (
+                "ZERO_INTERACTIONS_EXPLAINED_BY_DISTANCE"
+                if counts.get("interactions", 0) == 0
+                and diagnostics.get("state") == "NO_QUALIFYING_INTERACTION"
+                else "INTERACTIONS_PRESENT_OR_DIAGNOSTICS_PENDING"
+            ),
+            "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+        })
+
     @app.get("/api/level-calibration/dashboard")
     def level_calibration_dashboard_data():
         return jsonify(service.dashboard())

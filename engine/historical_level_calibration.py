@@ -35,6 +35,7 @@ from statistics import median
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 VERSION = "50.5.0_HISTORICAL_LEVEL_CALIBRATION"
+INTERACTION_DETECTION_VERSION = "65.9.0_INTERACTION_DETECTION_LIFECYCLE"
 SCHEMA_VERSION = 1
 
 # --------------------------------------------------------------------------- #
@@ -663,6 +664,7 @@ class _Track:
     touch_count: int = 0
     broke: bool = False
     max_penetration: float = 0.0
+    near_recorded: bool = False
 
 
 class Collector:
@@ -675,18 +677,39 @@ class Collector:
         self._session_date: Optional[str] = None
         self._symbol: Optional[str] = None
         self._last_sample_ts: float = 0.0
-        self.stats = {"events": 0, "samples": 0, "write_failures": 0, "dropped": 0}
+        self.stats = {
+            "events": 0, "samples": 0, "write_failures": 0, "dropped": 0,
+            "observations": 0, "first_touches": 0, "near_touches": 0,
+            "retests": 0, "crossing_touches": 0, "breaks": 0, "reclaims": 0,
+        }
         self.last_event: Optional[Dict[str, Any]] = None
         self.last_write_ts: Optional[str] = None
+        self.last_interaction_diagnostics: Dict[str, Any] = {
+            "version": INTERACTION_DETECTION_VERSION,
+            "state": "NO_OBSERVATION",
+        }
 
     def _reset_for_session(self, session_date: str, symbol: str):
         self._tracks = {}
         self._session_date = session_date
         self._symbol = symbol
+        self._sync_tracks(session_date, symbol)
+
+    def _sync_tracks(self, session_date: str, symbol: str) -> int:
+        """Load newly registered levels without destroying in-session touch state."""
+        added = 0
         rows = active_levels(session_date, symbol, path=self.path)
         for r in rows:
-            self._tracks[r["level_id"]] = _Track(
-                level_id=r["level_id"], level_type=r["level_type"], level_price=float(r["price"]))
+            level_id = r["level_id"]
+            if level_id in self._tracks:
+                continue
+            self._tracks[level_id] = _Track(
+                level_id=level_id, level_type=r["level_type"], level_price=float(r["price"]))
+            added += 1
+        return added
+
+    def interaction_diagnostics(self) -> Dict[str, Any]:
+        return dict(self.last_interaction_diagnostics)
 
     def _record_event(self, conn, ctx: SnapshotContext, track: _Track, interaction_type: str,
                       touch_price: float, approach: str, distance_traveled: Optional[float],
@@ -707,6 +730,15 @@ class Collector:
                  ctx.gamma_regime, ctx.trend_regime, ctx.session_bucket, ctx.expected_move_regime),
             )
             self.stats["events"] += 1
+            event_key = {
+                "FIRST_TOUCH": "first_touches",
+                "NEAR_TOUCH": "near_touches",
+                "RETEST": "retests",
+                "BREAK": "breaks",
+                "RECLAIM": "reclaims",
+            }.get(interaction_type)
+            if event_key:
+                self.stats[event_key] = int(self.stats.get(event_key) or 0) + 1
             self.last_event = {"type": interaction_type, "level_type": track.level_type,
                                "price": touch_price, "at": _utc_now()}
         except sqlite3.DatabaseError:
@@ -734,16 +766,30 @@ class Collector:
         now = now if now is not None else _now_ts()
         ctx = extract_context(snapshot)
         session_date = datetime.fromtimestamp(now, timezone.utc).date().isoformat()
+        self.stats["observations"] = int(self.stats.get("observations") or 0) + 1
         if ctx.spot is None:
             self.stats["dropped"] += 1
+            self.last_interaction_diagnostics = {
+                "version": INTERACTION_DETECTION_VERSION,
+                "state": "NO_SPOT",
+                "at": _utc_now(),
+            }
             return {"ok": False, "reason": "NO_SPOT"}
 
-        # (Re)load tracks when the session or symbol rolls.
-        if self._session_date != session_date or self._symbol != ctx.symbol or not self._tracks:
-            register_daily_levels(snapshot, path=self.path, session_date=session_date)
+        # Register/sync on every real snapshot. INSERT OR IGNORE keeps static
+        # levels idempotent, while this allows opening-range / initial-balance /
+        # later canonical levels to join the live track set after session start.
+        registration = register_daily_levels(snapshot, path=self.path, session_date=session_date)
+        if self._session_date != session_date or self._symbol != ctx.symbol:
             self._reset_for_session(session_date, ctx.symbol)
+        else:
+            self._sync_tracks(session_date, ctx.symbol)
 
         events = 0
+        crossing_touches_this_observation = 0
+        candidates_in_band = 0
+        candidates_near_band = 0
+        nearest: Optional[Dict[str, Any]] = None
         with _connect(self.path) as conn:
             self._sample_price(conn, ctx, now)
             for track in self._tracks.values():
@@ -759,41 +805,69 @@ class Collector:
                     distance_traveled = p - track.last_price
                     velocity = distance_traveled / dt
 
-                approach = "FROM_ABOVE" if (track.prior_side or side) > 0 else "FROM_BELOW"
-
-                # NEAR / FIRST touch
+                if nearest is None or dist < nearest["distance"]:
+                    nearest = {
+                        "level_id": track.level_id, "level_type": track.level_type,
+                        "level_price": x, "distance": dist, "touch_band": band,
+                        "distance_in_bands": (dist / band) if band else None,
+                    }
                 if dist <= band:
-                    if not track.touched:
-                        track.touched = True
-                        track.touch_count = 1
-                        self._record_event(conn, ctx, track, "FIRST_TOUCH", p, approach,
-                                            distance_traveled, velocity, now)
-                        events += 1
-                    elif track.last_price is not None and abs(track.last_price - x) > band:
-                        # returned to the band after leaving -> a retest / another touch
-                        track.touch_count += 1
-                        self._record_event(conn, ctx, track, "RETEST", p, approach,
-                                            distance_traveled, velocity, now)
-                        events += 1
-                elif dist <= 2 * band and not track.touched:
+                    candidates_in_band += 1
+                elif dist <= 2 * band:
+                    candidates_near_band += 1
+
+                previous_side = None
+                crossed_between_samples = False
+                if track.last_price is not None:
+                    prev_delta = track.last_price - x
+                    current_delta = p - x
+                    previous_side = 1 if prev_delta >= 0 else -1
+                    # Opposite observed sides prove that price crossed the level
+                    # sometime between the two real samples. This closes the
+                    # sparse-sampling blind spot without fabricating a touch.
+                    crossed_between_samples = (prev_delta * current_delta) < 0
+
+                approach_side = track.prior_side if track.prior_side is not None else (previous_side or side)
+                approach = "FROM_ABOVE" if approach_side > 0 else "FROM_BELOW"
+
+                # FIRST touch can be observed directly inside the band or proven
+                # by consecutive real samples bracketing the level.
+                direct_touch = dist <= band
+                if not track.touched and (direct_touch or crossed_between_samples):
+                    track.touched = True
+                    track.touch_count = 1
+                    touch_price = p if direct_touch else x
+                    self._record_event(conn, ctx, track, "FIRST_TOUCH", touch_price, approach,
+                                       distance_traveled, velocity, now)
+                    events += 1
+                    if crossed_between_samples and not direct_touch:
+                        crossing_touches_this_observation += 1
+                        self.stats["crossing_touches"] = int(self.stats.get("crossing_touches") or 0) + 1
+                elif track.touched and direct_touch and track.last_price is not None and abs(track.last_price - x) > band:
+                    track.touch_count += 1
+                    self._record_event(conn, ctx, track, "RETEST", p, approach,
+                                       distance_traveled, velocity, now)
+                    events += 1
+                elif dist <= 2 * band and not track.touched and not track.near_recorded:
+                    # Near-touch is diagnostic evidence, not a gradeable outcome.
+                    # Record it once per level rather than once every 15 seconds.
+                    track.near_recorded = True
                     self._record_event(conn, ctx, track, "NEAR_TOUCH", p, approach,
-                                        distance_traveled, velocity, now)
+                                       distance_traveled, velocity, now)
                     events += 1
 
-                # BREAK / FAILED BREAK / SWEEP — only meaningful after a touch and
-                # once the side flips relative to the approach.
+                # BREAK / RECLAIM — meaningful after a real or crossing-proven touch.
                 if track.touched and track.prior_side is not None and side != track.prior_side:
                     penetration = dist
                     track.max_penetration = max(track.max_penetration, penetration)
                     if not track.broke and penetration >= 2 * band:
                         track.broke = True
                         self._record_event(conn, ctx, track, "BREAK", p, approach,
-                                            distance_traveled, velocity, now)
+                                           distance_traveled, velocity, now)
                         events += 1
                 elif track.broke and side == track.prior_side and dist <= band:
-                    # came back across the level after breaking -> reclaim/retest
                     self._record_event(conn, ctx, track, "RECLAIM", p, approach,
-                                        distance_traveled, velocity, now)
+                                       distance_traveled, velocity, now)
                     events += 1
                     track.broke = False
 
@@ -803,8 +877,33 @@ class Collector:
                     track.prior_side = side
             conn.commit()
             self.last_write_ts = _utc_now()
-        return {"ok": True, "events": events, "levels": len(self._tracks), "spot": ctx.spot,
-                "session_date": session_date, "symbol": ctx.symbol}
+
+        state = "INTERACTION_RECORDED" if events else "NO_QUALIFYING_INTERACTION"
+        if nearest and nearest["distance"] <= nearest["touch_band"]:
+            state = "TOUCH_BAND_REACHED" if not events else state
+        self.last_interaction_diagnostics = {
+            "version": INTERACTION_DETECTION_VERSION,
+            "state": state,
+            "at": _utc_now(),
+            "spot": ctx.spot,
+            "symbol": ctx.symbol,
+            "session_date": session_date,
+            "tracked_levels": len(self._tracks),
+            "new_levels_registered": registration.get("registered", 0),
+            "levels_seen_in_snapshot": registration.get("levels_seen", 0),
+            "candidates_in_touch_band": candidates_in_band,
+            "candidates_in_near_band": candidates_near_band,
+            "crossing_touches_this_observation": crossing_touches_this_observation,
+            "events_this_observation": events,
+            "nearest_level": nearest,
+            "touch_policy": "DIRECT_BAND_OR_PROVEN_SAMPLE_CROSSING",
+            "fabrication_allowed": False,
+        }
+        return {
+            "ok": True, "events": events, "levels": len(self._tracks), "spot": ctx.spot,
+            "session_date": session_date, "symbol": ctx.symbol,
+            "interaction_diagnostics": dict(self.last_interaction_diagnostics),
+        }
 
 
 # --------------------------------------------------------------------------- #
