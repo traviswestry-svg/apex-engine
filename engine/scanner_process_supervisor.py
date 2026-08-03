@@ -1,4 +1,4 @@
-"""APEX 65.7.3 — production scanner subprocess supervisor.
+"""APEX 65.7.5 — production scanner subprocess supervisor.
 
 Render can launch APEX either through ``start_render.sh`` (preferred) or through
 an overridden direct Gunicorn command.  A direct Gunicorn launch historically
@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 
 from .operational_runtime import persistent_path, read_scanner_heartbeat
 
-VERSION = "65.7.4_GUNICORN_LIFECYCLE_BOOTSTRAP"
+VERSION = "65.7.5_APP_ENTRYPOINT_BOOTSTRAP"
 _TRUE = {"1", "true", "yes", "on"}
 _LOCK = threading.RLock()
 _PROCESS: Optional[subprocess.Popen] = None
@@ -40,6 +40,9 @@ _RUNTIME: Dict[str, Any] = {
     "ensure_calls": 0,
     "lease_acquired": False,
     "lease_error": None,
+    "last_ensure_source": None,
+    "last_ensure_pid": None,
+    "skipped_scanner_child": False,
 }
 
 
@@ -99,7 +102,8 @@ def _launch_locked() -> Optional[subprocess.Popen]:
 
     env = dict(os.environ)
     env["RUN_SCANNER_ON_IMPORT"] = "false"
-    env["APEX_SCANNER_BOOTSTRAP_SOURCE"] = "wsgi_supervisor"
+    env["APEX_SCANNER_BOOTSTRAP_SOURCE"] = str(_RUNTIME.get("last_ensure_source") or "process_supervisor")
+    env["APEX_SCANNER_PROCESS"] = "true"
     # The child is the scanner owner.  This flag applies only to Gunicorn's
     # decision about whether *it* should launch a child; scanner_worker ignores it.
     cmd = [sys.executable, "scanner_worker.py"]
@@ -132,7 +136,7 @@ def _watchdog_loop() -> None:
             _launch_locked()
 
 
-def ensure_scanner_process() -> Dict[str, Any]:
+def ensure_scanner_process(*, source: str = "unspecified") -> Dict[str, Any]:
     """Ensure a separate scanner process exists for this deployment.
 
     Preferred shell launchers set ``APEX_SCANNER_MANAGED_EXTERNALLY=true`` and
@@ -141,6 +145,14 @@ def ensure_scanner_process() -> Dict[str, Any]:
     global _WATCHDOG
     with _LOCK:
         _RUNTIME["ensure_calls"] = int(_RUNTIME.get("ensure_calls") or 0) + 1
+        _RUNTIME["last_ensure_source"] = str(source or "unspecified")
+        _RUNTIME["last_ensure_pid"] = os.getpid()
+
+    # scanner_worker.py imports app.py for the legacy scanner functions. Never
+    # let that child recursively supervise/spawn another scanner.
+    if _truthy("APEX_SCANNER_PROCESS"):
+        _RUNTIME.update({"skipped_scanner_child": True, "owner": False})
+        return dict(_RUNTIME)
     explicit = os.getenv("APEX_WSGI_ENSURE_SCANNER")
     production_default = bool(
         _truthy("RENDER")
