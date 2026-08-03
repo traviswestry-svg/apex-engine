@@ -515,6 +515,36 @@ def extract_levels(snapshot: Mapping[str, Any]) -> List[ExtractedLevel]:
         seen[key] = price
         out.append(ExtractedLevel(level_type=level_type, price=price, source=source, confidence=conf))
 
+    # APEX 65.7.1: scanner-owned HLCE may receive the durable canonical
+    # session level universe instead of the web process' in-memory IOS object.
+    # Accept that canonical list directly so cross-process collection does not
+    # require an expensive duplicate full Institutional OS composition.
+    canonical_levels = snapshot.get("canonical_levels")
+    if isinstance(canonical_levels, (list, tuple)):
+        aliases = {
+            "pdh": "prev_day_high", "previous_day_high": "prev_day_high",
+            "pdl": "prev_day_low", "previous_day_low": "prev_day_low",
+            "previous_close": "prev_close", "previous_open": "prev_open",
+            "onh": "overnight_high", "onl": "overnight_low",
+            "or5_high": "or_high", "or15_high": "or_high",
+            "or5_low": "or_low", "or15_low": "or_low",
+            "ib_high": "initial_balance_high", "ib_low": "initial_balance_low",
+            "expected_move_upper": "expected_move_high",
+            "expected_move_lower": "expected_move_low",
+            "em_high": "expected_move_high", "em_low": "expected_move_low",
+            "gammaflip": "gamma_flip", "callwall": "call_wall", "putwall": "put_wall",
+        }
+        for row in canonical_levels:
+            if not isinstance(row, Mapping):
+                continue
+            raw_kind = str(row.get("kind") or row.get("level_type") or row.get("type") or "").strip().lower()
+            kind = aliases.get(raw_kind, raw_kind)
+            if not kind:
+                continue
+            add(kind, row.get("price") if row.get("price") is not None else row.get("value"),
+                str(row.get("source") or "canonical_session_context"),
+                _safe_float(row.get("confidence")))
+
     # --- gamma / dealer structure ---
     add("call_wall", gm.get("call_wall") or ms.get("call_wall") or flow.get("call_wall"), "gamma_provider")
     add("put_wall", gm.get("put_wall") or ms.get("put_wall") or flow.get("put_wall"), "gamma_provider")
