@@ -201,7 +201,44 @@ def test_6574_missing_heartbeat_launches_even_if_supervisor_lease_unavailable(mo
 def test_6574_supervisor_exposes_bootstrap_diagnostics():
     from pathlib import Path
     src = Path("engine/scanner_process_supervisor.py").read_text()
-    assert 'VERSION = "65.7.4_GUNICORN_LIFECYCLE_BOOTSTRAP"' in src
+    assert 'VERSION = "65.7.5_APP_ENTRYPOINT_BOOTSTRAP"' in src
     assert '"ensure_calls": 0' in src
     assert '"lease_acquired": False' in src
     assert '"lease_error": None' in src
+
+
+def test_6575_app_module_is_unavoidable_scanner_bootstrap_boundary():
+    from pathlib import Path
+    src = Path("app.py").read_text()
+    assert '_apex6575_ensure_scanner_process(source="app_module_import")' in src
+    assert 'app.config["APEX_SCANNER_SUPERVISOR"]' in src
+    # The bootstrap is registered before direct-execution handling, so app:app,
+    # wsgi:app, factories, and python app.py all cross the same boundary.
+    assert src.index('_apex6575_ensure_scanner_process(source="app_module_import")') < src.index('if __name__ == "__main__":')
+
+
+def test_6575_scanner_marks_process_before_importing_app():
+    from pathlib import Path
+    src = Path("scanner_worker.py").read_text()
+    marker = src.index('os.environ["APEX_SCANNER_PROCESS"] = "true"')
+    app_import = src.index("import app as apex_app")
+    assert marker < app_import
+
+
+def test_6575_supervisor_skips_recursive_scanner_child(monkeypatch):
+    import engine.scanner_process_supervisor as sps
+    monkeypatch.setenv("APEX_SCANNER_PROCESS", "true")
+    called = {"launch": 0}
+    monkeypatch.setattr(sps, "_launch_locked", lambda: called.__setitem__("launch", called["launch"] + 1))
+    out = sps.ensure_scanner_process(source="scanner_child_test")
+    assert called["launch"] == 0
+    assert out["skipped_scanner_child"] is True
+    assert out["last_ensure_source"] == "scanner_child_test"
+
+
+def test_6575_supervisor_child_env_marks_scanner(monkeypatch):
+    from pathlib import Path
+    src = Path("engine/scanner_process_supervisor.py").read_text()
+    assert 'env["APEX_SCANNER_PROCESS"] = "true"' in src
+    assert 'VERSION = "65.7.5_APP_ENTRYPOINT_BOOTSTRAP"' in src
+    assert '"last_ensure_source": None' in src
