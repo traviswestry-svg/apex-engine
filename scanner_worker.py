@@ -14,6 +14,7 @@ cross-process ingestion gap without enabling a duplicate full IOS composition.
 from __future__ import annotations
 
 import datetime as dt
+from zoneinfo import ZoneInfo
 import os
 import signal
 import time
@@ -63,7 +64,7 @@ from engine.historical_level_calibration import (  # noqa: E402
     extract_context as hlce_extract_context,
     get_service as get_hlce_service,
 )
-from engine.canonical_session_context import latest as latest_canonical_context  # noqa: E402
+from engine.canonical_session_context import latest as latest_canonical_context, active_levels as canonical_active_levels  # noqa: E402
 
 _RUNNING = True
 _HLCE_PROVIDER_CACHE: Dict[str, Any] = {"at": 0.0, "snapshot": {}}
@@ -121,8 +122,24 @@ def _live_spx_snapshot_price() -> Optional[float]:
 
 
 def _canonical_level_snapshot(spot: float) -> Dict[str, Any]:
-    ctx = latest_canonical_context(apex_app.ASSISTANT_TICKER) or {}
-    levels = ctx.get("levels") if isinstance(ctx.get("levels"), list) else []
+    target_session = dt.datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    ctx = latest_canonical_context(apex_app.ASSISTANT_TICKER, target_session_date=target_session) or {}
+    registry_rows = canonical_active_levels(apex_app.ASSISTANT_TICKER, target_session_date=target_session)
+    levels = []
+    for row in registry_rows:
+        levels.append({
+            "canonical_level_id": row.get("canonical_level_id"),
+            "kind": row.get("kind"),
+            "price": row.get("price"),
+            "source": row.get("source"),
+            "instrument": row.get("instrument"),
+            "normalized": bool(row.get("normalized")),
+            "revision": row.get("revision"),
+            "observed_at": row.get("observed_at"),
+            "active": True,
+        })
+    if not levels:
+        levels = ctx.get("levels") if isinstance(ctx.get("levels"), list) else []
     snapshot: Dict[str, Any] = {
         "ticker": apex_app.ASSISTANT_TICKER,
         "symbol": apex_app.ASSISTANT_TICKER,
@@ -131,8 +148,10 @@ def _canonical_level_snapshot(spot: float) -> Dict[str, Any]:
         "market_state": {"price": spot},
         "canonical_levels": levels,
         "hlce_source": "scanner_durable_context_plus_live_spot",
-        "canonical_context_target_session": ctx.get("target_session_date"),
+        "canonical_context_target_session": ctx.get("target_session_date") or target_session,
         "canonical_context_generated_at": ctx.get("generated_at"),
+        "active_level_registry_count": len(levels),
+        "active_level_registry_source": "canonical_active_levels" if registry_rows else "canonical_session_context_fallback",
     }
     # Promote common level kinds into the legacy fields as well. This keeps all
     # existing HLCE extractors/backward-compatible consumers working unchanged.
