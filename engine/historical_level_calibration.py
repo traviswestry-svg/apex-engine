@@ -34,7 +34,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-VERSION = "50.5.0_HISTORICAL_LEVEL_CALIBRATION"
+VERSION = "66.0.0_CANONICAL_ACTIVE_LEVEL_REGISTRY"
 INTERACTION_DETECTION_VERSION = "65.9.0_INTERACTION_DETECTION_LIFECYCLE"
 SCHEMA_VERSION = 1
 
@@ -96,17 +96,38 @@ _BLEND_SCHEDULE: Sequence[Tuple[int, float]] = (
 # Canonical level kinds we register from the live snapshot -> maps to the
 # LevelKind vocabulary already used by daily_key_levels.
 LEVEL_TYPES = (
-    "prev_day_high", "prev_day_low", "prev_close", "prev_open",
-    "overnight_high", "overnight_low", "overnight_vwap",
-    "or_high", "or_low", "initial_balance_high", "initial_balance_low",
+    "prev_day_high", "prev_day_low", "prev_close", "prev_open", "prev_settlement",
+    "overnight_high", "overnight_low", "overnight_mid", "overnight_vwap",
+    "or5_high", "or5_low", "or15_high", "or15_low",
+    "initial_balance_high", "initial_balance_low", "ib_extension",
     "expected_move_high", "expected_move_low",
     "gamma_flip", "zero_gamma", "call_wall", "put_wall",
     "high_gamma_strike", "low_gamma_strike", "volatility_trigger",
     "poc", "developing_poc", "prev_poc", "composite_poc",
     "vah", "val", "composite_vah", "composite_val",
-    "hvn", "lvn", "equal_highs", "equal_lows",
-    "liquidity_pool", "swing_high", "swing_low", "fair_value_gap",
+    "hvn", "lvn", "naked_poc", "virgin_poc",
+    "buyside_liquidity", "sellside_liquidity", "equal_highs", "equal_lows",
+    "liquidity_pool", "swing_high", "swing_low", "fair_value_gap", "unfilled_gap",
+    "large_option_strike", "dealer_hedge_zone",
 )
+
+
+_LEVEL_KIND_ALIASES = {
+    "pdh":"prev_day_high", "previous_day_high":"prev_day_high",
+    "pdl":"prev_day_low", "previous_day_low":"prev_day_low",
+    "previous_close":"prev_close", "previous_open":"prev_open",
+    "onh":"overnight_high", "onl":"overnight_low",
+    "ib_high":"initial_balance_high", "ib_low":"initial_balance_low",
+    "expected_move_upper":"expected_move_high", "expected_move_lower":"expected_move_low",
+    "em_high":"expected_move_high", "em_low":"expected_move_low",
+    "em_upper":"expected_move_high", "em_lower":"expected_move_low",
+    "high_volume_node":"hvn", "low_volume_node":"lvn",
+    "gammaflip":"gamma_flip", "callwall":"call_wall", "putwall":"put_wall",
+}
+
+def canonicalize_level_type(value: Any) -> str:
+    raw=str(value or "").strip().lower()
+    return _LEVEL_KIND_ALIASES.get(raw, raw)
 
 # Level kinds that primarily act as magnets vs. rejection points — used to seed
 # the MAGNET classification bias when price loiters at the level.
@@ -217,7 +238,12 @@ CREATE TABLE IF NOT EXISTS daily_levels (
     trend_regime TEXT,
     expected_move_regime TEXT,
     volatility_regime TEXT,
-    registered_at TEXT NOT NULL
+    registered_at TEXT NOT NULL,
+    canonical_level_id TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    revision INTEGER NOT NULL DEFAULT 1,
+    valid_from TEXT,
+    valid_to TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_daily_levels_dedup
     ON daily_levels(session_date, symbol, level_type, price);
@@ -357,6 +383,15 @@ CREATE INDEX IF NOT EXISTS ix_replays_session ON trade_replays(session_date, sym
 def initialize_store(path: Optional[str] = None) -> None:
     with _connect(path) as conn:
         conn.executescript(_SCHEMA)
+        cols={r[1] for r in conn.execute("PRAGMA table_info(daily_levels)").fetchall()}
+        migrations={
+            "canonical_level_id":"TEXT", "active":"INTEGER NOT NULL DEFAULT 1",
+            "revision":"INTEGER NOT NULL DEFAULT 1", "valid_from":"TEXT", "valid_to":"TEXT",
+        }
+        for name,ddl in migrations.items():
+            if name not in cols:
+                conn.execute(f"ALTER TABLE daily_levels ADD COLUMN {name} {ddl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_daily_levels_active ON daily_levels(session_date,symbol,active,level_type)")
         conn.commit()
 
 
@@ -506,6 +541,7 @@ def extract_levels(snapshot: Mapping[str, Any]) -> List[ExtractedLevel]:
     seen: Dict[str, float] = {}
 
     def add(level_type: str, value: Any, source: str, conf: Optional[float] = None):
+        level_type = canonicalize_level_type(level_type)
         price = _safe_float(value)
         if price is None or price <= 0:
             return
@@ -522,24 +558,12 @@ def extract_levels(snapshot: Mapping[str, Any]) -> List[ExtractedLevel]:
     # require an expensive duplicate full Institutional OS composition.
     canonical_levels = snapshot.get("canonical_levels")
     if isinstance(canonical_levels, (list, tuple)):
-        aliases = {
-            "pdh": "prev_day_high", "previous_day_high": "prev_day_high",
-            "pdl": "prev_day_low", "previous_day_low": "prev_day_low",
-            "previous_close": "prev_close", "previous_open": "prev_open",
-            "onh": "overnight_high", "onl": "overnight_low",
-            "or5_high": "or_high", "or15_high": "or_high",
-            "or5_low": "or_low", "or15_low": "or_low",
-            "ib_high": "initial_balance_high", "ib_low": "initial_balance_low",
-            "expected_move_upper": "expected_move_high",
-            "expected_move_lower": "expected_move_low",
-            "em_high": "expected_move_high", "em_low": "expected_move_low",
-            "gammaflip": "gamma_flip", "callwall": "call_wall", "putwall": "put_wall",
-        }
+        aliases = _LEVEL_KIND_ALIASES
         for row in canonical_levels:
             if not isinstance(row, Mapping):
                 continue
             raw_kind = str(row.get("kind") or row.get("level_type") or row.get("type") or "").strip().lower()
-            kind = aliases.get(raw_kind, raw_kind)
+            kind = canonicalize_level_type(raw_kind)
             if not kind:
                 continue
             add(kind, row.get("price") if row.get("price") is not None else row.get("value"),
@@ -612,38 +636,45 @@ def register_daily_levels(snapshot: Mapping[str, Any], *, path: Optional[str] = 
     ctx = extract_context(snapshot)
     levels = extract_levels(snapshot)
     session_date = session_date or datetime.now(timezone.utc).date().isoformat()
-    registered, skipped = 0, 0
+    registered, reused, retired = 0, 0, 0
+    now_iso=_utc_now()
+    # The current snapshot is authoritative for the active level universe.
+    desired={(lvl.level_type, round(lvl.price,4)) for lvl in levels}
+    canonical_ids={}
+    for row in snapshot.get("canonical_levels") or []:
+        if isinstance(row, Mapping):
+            k=canonicalize_level_type(row.get("kind") or row.get("level_type") or row.get("type"))
+            pr=_safe_float(row.get("price") if row.get("price") is not None else row.get("value"))
+            if k and pr is not None:
+                canonical_ids[(k,round(pr,4))]=row.get("canonical_level_id")
+    initialize_store(path)
     with _connect(path) as conn:
+        active_rows=conn.execute("SELECT level_id,level_type,price FROM daily_levels WHERE session_date=? AND symbol=? AND active=1",(session_date,ctx.symbol)).fetchall()
+        for row in active_rows:
+            key=(canonicalize_level_type(row["level_type"]),round(float(row["price"]),4))
+            if key not in desired:
+                conn.execute("UPDATE daily_levels SET active=0,valid_to=? WHERE level_id=?",(now_iso,row["level_id"]))
+                retired+=1
         for lvl in levels:
-            distance = (lvl.price - ctx.spot) if (ctx.spot is not None) else None
-            level_id = str(uuid.uuid4())
-            try:
-                cur = conn.execute(
-                    """INSERT OR IGNORE INTO daily_levels
-                       (level_id, session_date, symbol, level_type, price, source, confidence,
-                        spot_price, distance_from_spot, gamma_regime, auction_regime, trend_regime,
-                        expected_move_regime, volatility_regime, registered_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (level_id, session_date, ctx.symbol, lvl.level_type, lvl.price, lvl.source,
-                     lvl.confidence, ctx.spot, distance, ctx.gamma_regime, ctx.auction_regime,
-                     ctx.trend_regime, ctx.expected_move_regime, ctx.volatility_regime, _utc_now()),
-                )
-                if cur.rowcount and cur.rowcount > 0:
-                    registered += 1
-                else:
-                    skipped += 1
-            except sqlite3.DatabaseError:
-                skipped += 1
+            key=(lvl.level_type,round(lvl.price,4))
+            existing=conn.execute("""SELECT level_id,revision FROM daily_levels WHERE session_date=? AND symbol=? AND level_type=? AND ABS(price-?)<0.0001 ORDER BY revision DESC LIMIT 1""",(session_date,ctx.symbol,lvl.level_type,lvl.price)).fetchone()
+            distance=(lvl.price-ctx.spot) if ctx.spot is not None else None
+            if existing:
+                conn.execute("""UPDATE daily_levels SET active=1,valid_to=NULL,source=?,confidence=?,spot_price=?,distance_from_spot=?,gamma_regime=?,auction_regime=?,trend_regime=?,expected_move_regime=?,volatility_regime=?,canonical_level_id=COALESCE(?,canonical_level_id) WHERE level_id=?""",
+                    (lvl.source,lvl.confidence,ctx.spot,distance,ctx.gamma_regime,ctx.auction_regime,ctx.trend_regime,ctx.expected_move_regime,ctx.volatility_regime,canonical_ids.get(key),existing["level_id"]))
+                reused+=1
+            else:
+                rev=conn.execute("SELECT COALESCE(MAX(revision),0)+1 FROM daily_levels WHERE session_date=? AND symbol=? AND level_type=?",(session_date,ctx.symbol,lvl.level_type)).fetchone()[0]
+                conn.execute("""INSERT INTO daily_levels(level_id,session_date,symbol,level_type,price,source,confidence,spot_price,distance_from_spot,gamma_regime,auction_regime,trend_regime,expected_move_regime,volatility_regime,registered_at,canonical_level_id,active,revision,valid_from) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)""",
+                    (str(uuid.uuid4()),session_date,ctx.symbol,lvl.level_type,lvl.price,lvl.source,lvl.confidence,ctx.spot,distance,ctx.gamma_regime,ctx.auction_regime,ctx.trend_regime,ctx.expected_move_regime,ctx.volatility_regime,now_iso,canonical_ids.get(key),int(rev),now_iso))
+                registered+=1
         conn.commit()
-    return {"registered": registered, "skipped": skipped, "session_date": session_date,
-            "symbol": ctx.symbol, "levels_seen": len(levels)}
-
+    return {"registered":registered,"reused":reused,"skipped":reused,"retired":retired,"session_date":session_date,"symbol":ctx.symbol,"levels_seen":len(levels),"active_count":len(desired)}
 
 def active_levels(session_date: str, symbol: str, *, path: Optional[str] = None) -> List[sqlite3.Row]:
+    initialize_store(path)
     with _connect(path) as conn:
-        return conn.execute(
-            "SELECT * FROM daily_levels WHERE session_date=? AND symbol=?",
-            (session_date, symbol)).fetchall()
+        return conn.execute("SELECT * FROM daily_levels WHERE session_date=? AND symbol=? AND active=1",(session_date,symbol)).fetchall()
 
 
 # --------------------------------------------------------------------------- #
@@ -699,6 +730,10 @@ class Collector:
         """Load newly registered levels without destroying in-session touch state."""
         added = 0
         rows = active_levels(session_date, symbol, path=self.path)
+        active_ids={r["level_id"] for r in rows}
+        for level_id in list(self._tracks):
+            if level_id not in active_ids:
+                self._tracks.pop(level_id, None)
         for r in rows:
             level_id = r["level_id"]
             if level_id in self._tracks:
@@ -1515,7 +1550,9 @@ class CalibrationService:
         session_date = datetime.now(timezone.utc).date().isoformat()
         with _connect(self.path) as conn:
             today_levels = conn.execute(
-                "SELECT COUNT(*) FROM daily_levels WHERE session_date=?", (session_date,)).fetchone()[0]
+                "SELECT COUNT(*) FROM daily_levels WHERE session_date=? AND active=1", (session_date,)).fetchone()[0]
+            today_retired = conn.execute(
+                "SELECT COUNT(*) FROM daily_levels WHERE session_date=? AND active=0", (session_date,)).fetchone()[0]
             today_touches = conn.execute(
                 "SELECT COUNT(*) FROM level_interactions WHERE session_date=?", (session_date,)).fetchone()[0]
             today_outcomes = conn.execute(
@@ -1535,7 +1572,7 @@ class CalibrationService:
             "collector_enabled": collector_enabled(),
             "collector_running": self.collector_running(),
             "database": health,
-            "today": {"levels": today_levels, "touches": today_touches, "outcomes": today_outcomes},
+            "today": {"levels": today_levels, "retired_levels": today_retired, "touches": today_touches, "outcomes": today_outcomes},
             "historical_sample_count": total_samples,
             "calibration_progress": round(progress, 3),
             "last_collector_event": self.collector.last_event,
@@ -1594,7 +1631,8 @@ class CalibrationService:
 
     def levels(self, session_date: Optional[str] = None, symbol: Optional[str] = None) -> Dict[str, Any]:
         session_date = session_date or datetime.now(timezone.utc).date().isoformat()
-        query = "SELECT * FROM daily_levels WHERE session_date=?"
+        initialize_store(self.path)
+        query = "SELECT * FROM daily_levels WHERE session_date=? AND active=1"
         params: List[Any] = [session_date]
         if symbol:
             query += " AND symbol=?"

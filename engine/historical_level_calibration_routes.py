@@ -123,6 +123,37 @@ def register_calibration_routes(app, last_result_provider=None):
             "probability_policy": "EVIDENCE_ONLY_NO_FABRICATION",
         })
 
+
+    @app.get("/api/level-calibration/active-levels/diagnostics")
+    def level_calibration_active_levels_diagnostics():
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from .canonical_session_context import active_levels as registry_active_levels, latest as latest_context
+        target = request.args.get("session_date") or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        symbol = request.args.get("symbol", "SPX").upper()
+        registry = registry_active_levels(symbol, target_session_date=target)
+        hlce = service.levels(session_date=target, symbol=symbol)
+        ctx = latest_context(symbol, target_session_date=target)
+        registry_keys={(str(r.get("kind")), round(float(r.get("price")),4)) for r in registry}
+        hlce_keys={(str(r.get("level_type")), round(float(r.get("price")),4)) for r in hlce.get("levels",[]) if r.get("price") is not None}
+        return jsonify({
+            "ok": True,
+            "version": "66.0.0_CANONICAL_ACTIVE_LEVEL_REGISTRY",
+            "session_date": target,
+            "symbol": symbol,
+            "canonical_context_present": bool(ctx),
+            "canonical_context_generated_at": (ctx or {}).get("generated_at"),
+            "registry_active_count": len(registry),
+            "hlce_active_count": len(hlce_keys),
+            "registry_only": [{"kind":k,"price":p} for k,p in sorted(registry_keys-hlce_keys)],
+            "hlce_only": [{"kind":k,"price":p} for k,p in sorted(hlce_keys-registry_keys)],
+            "in_sync": registry_keys == hlce_keys,
+            "levels": registry,
+            "read_only": True,
+            "decision_influence": "NONE",
+            "execution_influence": "NONE",
+        })
+
     @app.get("/api/level-calibration/dashboard")
     def level_calibration_dashboard_data():
         return jsonify(service.dashboard())
