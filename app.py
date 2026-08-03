@@ -1185,6 +1185,15 @@ except Exception as _hlce_err:
     HLCE_AVAILABLE = False
     print(f"APEX Historical Level Calibration unavailable (non-fatal): {_hlce_err}", flush=True)
 
+# APEX 65.8 — Evidence Accumulation Observatory (read-only).
+try:
+    from engine.evidence_accumulation_routes import register_evidence_accumulation_routes
+    EVIDENCE_ACCUMULATION_AVAILABLE = True
+except Exception as _ea658_err:
+    register_evidence_accumulation_routes = None  # type: ignore[assignment]
+    EVIDENCE_ACCUMULATION_AVAILABLE = False
+    print(f"APEX 65.8 Evidence Accumulation Observatory unavailable (non-fatal): {_ea658_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -13212,6 +13221,10 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_market_structure_routes(app, last_result_provider=_ims_last_result)
         print("APEX 19.1 Institutional Market Structure routes registered.", flush=True)
+
+    if EVIDENCE_ACCUMULATION_AVAILABLE and register_evidence_accumulation_routes is not None:
+        register_evidence_accumulation_routes(app)
+        print("APEX 65.8 Evidence Accumulation Observatory routes registered.", flush=True)
 
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)
