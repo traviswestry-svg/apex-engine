@@ -243,26 +243,24 @@ def publish_live_levels(
     mutable_kinds: Optional[set] = None,
     authoritative_kinds: Optional[set] = None,
     source: str = "live_active_level_publisher",
-    component_version: str = "66.1.0_LIVE_ACTIVE_LEVEL_PUBLICATION",
+    component_version: str = "66.1.1_ACTIVE_LEVEL_RECONCILIATION",
     path: Optional[str] = None,
 ) -> dict:
-    """Selectively refresh mutable intraday levels without churning static rows.
+    """Reconcile mutable intraday levels by set-diff, preserving stable lifecycle state.
 
-    The supplied publication is authoritative only for the mutable kinds that are
-    present in ``mutable_kinds``.  Existing static levels remain active.  For each
-    mutable kind, all prior active rows are retired and the current set is
-    reactivated/created.  This is important for multi-node kinds such as HVN/LVN:
-    the whole *set* is replaced, not just one price.
-
-    No probabilities, decisions, execution state, or historical outcomes are
-    changed here; this is a durable level-state publication boundary only.
+    For each authoritative mutable kind, current active rows are compared with the
+    newly published set. Matching rows remain active and are refreshed in place;
+    only missing rows are retired, only previously inactive matching rows are
+    reactivated, and genuinely new prices create a new revision. Static kinds are
+    untouched. This prevents artificial retire/reactivate churn on every cycle.
     """
     p = init_db(path)
     symbol = symbol.upper()
     observed_at = observed_at or datetime.now(timezone.utc).isoformat()
     allowed = {normalize_level_kind(k) for k in (mutable_kinds or LIVE_MUTABLE_LEVEL_KINDS)}
 
-    normalized_rows = []
+    # Normalize and de-duplicate a publication by canonical (kind, price).
+    by_key = {}
     for row in levels or []:
         if not isinstance(row, Mapping):
             continue
@@ -273,22 +271,21 @@ def publish_live_levels(
         price = _num(row.get("price") if row.get("price") is not None else row.get("value"))
         if not kind or price is None:
             continue
-        normalized_rows.append({
+        key = (kind, round(float(price), 4))
+        by_key[key] = {
             "kind": kind,
             "raw_kind": raw,
-            "price": price,
+            "price": float(price),
             "source": str(row.get("source") or source),
             "instrument": str(row.get("instrument") or symbol),
             "normalized": 1 if bool(row.get("normalized")) else 0,
             "metadata": dict(row),
-        })
+        }
+    normalized_rows = list(by_key.values())
 
     published_kinds = {r["kind"] for r in normalized_rows}
     scope_kinds = {normalize_level_kind(k) for k in (authoritative_kinds or published_kinds)}
     scope_kinds &= allowed
-    # Only retire domains for which the caller confirms an authoritative live
-    # provider. This lets an empty live set retire stale FVG/HVN/etc. rows while
-    # a provider outage preserves the previous known-good state.
     if not scope_kinds:
         return {
             "ok": False,
@@ -304,29 +301,70 @@ def publish_live_levels(
     created = 0
     reactivated = 0
     retired = 0
+    refreshed = 0
+    unchanged = 0
     with sqlite3.connect(p, timeout=10) as c:
+        c.row_factory = sqlite3.Row
+        new_by_kind = {}
+        for row in normalized_rows:
+            new_by_kind.setdefault(row["kind"], {})[round(float(row["price"]), 4)] = row
+
+        # True set-diff: retire only active rows that disappeared from an
+        # authoritative domain. Rows still present never transition lifecycle.
         for kind in sorted(scope_kinds):
-            cur = c.execute(
-                """UPDATE canonical_active_levels SET active=0,valid_to=?
+            active_rows = c.execute(
+                """SELECT canonical_level_id,price FROM canonical_active_levels
                    WHERE symbol=? AND target_session_date=? AND kind=? AND active=1""",
-                (observed_at, symbol, target_session_date, kind),
-            )
-            retired += int(cur.rowcount or 0)
+                (symbol, target_session_date, kind),
+            ).fetchall()
+            new_prices = set(new_by_kind.get(kind, {}))
+            for existing in active_rows:
+                if round(float(existing["price"]), 4) not in new_prices:
+                    cur = c.execute(
+                        "UPDATE canonical_active_levels SET active=0,valid_to=? WHERE canonical_level_id=? AND active=1",
+                        (observed_at, existing["canonical_level_id"]),
+                    )
+                    retired += int(cur.rowcount or 0)
 
         for row in normalized_rows:
-            existing = c.execute(
-                """SELECT canonical_level_id,revision FROM canonical_active_levels
-                   WHERE symbol=? AND target_session_date=? AND kind=? AND ABS(price-?)<0.0001
+            key_price = round(float(row["price"]), 4)
+            payload = json.dumps(row["metadata"], separators=(",", ":"), default=str)
+            active_existing = c.execute(
+                """SELECT canonical_level_id,revision,source,instrument,normalized,raw_kind,metadata_json
+                   FROM canonical_active_levels
+                   WHERE symbol=? AND target_session_date=? AND kind=? AND active=1 AND ABS(price-?)<0.0001
                    ORDER BY revision DESC LIMIT 1""",
                 (symbol, target_session_date, row["kind"], row["price"]),
             ).fetchone()
-            payload = json.dumps(row["metadata"], separators=(",", ":"), default=str)
-            if existing:
+            if active_existing:
+                # Stay active: refresh observation/provider metadata in place.
+                c.execute(
+                    """UPDATE canonical_active_levels
+                       SET observed_at=?,source=?,instrument=?,normalized=?,raw_kind=?,metadata_json=?
+                       WHERE canonical_level_id=?""",
+                    (observed_at, row["source"], row["instrument"], row["normalized"], row["raw_kind"], payload, active_existing["canonical_level_id"]),
+                )
+                refreshed += 1
+                if (str(active_existing["source"] or "") == row["source"] and
+                    str(active_existing["instrument"] or "") == row["instrument"] and
+                    int(active_existing["normalized"] or 0) == row["normalized"] and
+                    str(active_existing["raw_kind"] or "") == row["raw_kind"] and
+                    str(active_existing["metadata_json"] or "") == payload):
+                    unchanged += 1
+                continue
+
+            inactive_existing = c.execute(
+                """SELECT canonical_level_id,revision FROM canonical_active_levels
+                   WHERE symbol=? AND target_session_date=? AND kind=? AND active=0 AND ABS(price-?)<0.0001
+                   ORDER BY revision DESC LIMIT 1""",
+                (symbol, target_session_date, row["kind"], row["price"]),
+            ).fetchone()
+            if inactive_existing:
                 c.execute(
                     """UPDATE canonical_active_levels
                        SET active=1,valid_to=NULL,observed_at=?,source=?,instrument=?,normalized=?,raw_kind=?,metadata_json=?
                        WHERE canonical_level_id=?""",
-                    (observed_at, row["source"], row["instrument"], row["normalized"], row["raw_kind"], payload, existing[0]),
+                    (observed_at, row["source"], row["instrument"], row["normalized"], row["raw_kind"], payload, inactive_existing["canonical_level_id"]),
                 )
                 reactivated += 1
             else:
@@ -343,9 +381,6 @@ def publish_live_levels(
                 )
                 created += 1
 
-        # Refresh the durable context from the complete active registry. This is
-        # the bridge that makes legacy canonical-context consumers see the same
-        # current universe as HLCE without regenerating a Morning Brief.
         active_payload = _registry_rows_as_level_payload(c, symbol=symbol, target_session_date=target_session_date)
         prior = c.execute(
             "SELECT source_session_date,prev_close,reference_spot FROM canonical_session_context WHERE symbol=? AND target_session_date=?",
@@ -369,7 +404,7 @@ def publish_live_levels(
 
     return {
         "ok": True,
-        "state": "LIVE_LEVELS_PUBLISHED",
+        "state": "LIVE_LEVELS_RECONCILED",
         "symbol": symbol,
         "target_session_date": target_session_date,
         "observed_at": observed_at,
@@ -379,6 +414,8 @@ def publish_live_levels(
         "created": created,
         "reactivated": reactivated,
         "retired": retired,
+        "refreshed": refreshed,
+        "unchanged": unchanged,
         "active_count": len(active_levels(symbol, target_session_date=target_session_date, path=p)),
         "source": source,
         "version": component_version,
