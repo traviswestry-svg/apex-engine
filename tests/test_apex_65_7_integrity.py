@@ -71,3 +71,35 @@ def test_runtime_db_files_are_ignored():
     from pathlib import Path
     ignore = Path(".gitignore").read_text()
     assert "*.db" in ignore
+
+
+def test_hlce_accepts_durable_canonical_level_list(tmp_path):
+    from engine.historical_level_calibration import Collector, initialize_store
+    db = str(tmp_path / "calibration.db")
+    initialize_store(db)
+    collector = Collector(db)
+    snapshot = {
+        "ticker": "SPX",
+        "spot": 7543.76,
+        "market_state": {"price": 7543.76},
+        "canonical_levels": [
+            {"kind": "prev_day_high", "price": 7512.04, "source": "polygon"},
+            {"kind": "expected_move_high", "price": 7567.01, "source": "computed"},
+            {"kind": "call_wall", "price": 7550.0, "source": "gamma_provider"},
+        ],
+    }
+    out = collector.observe(snapshot, now=1785765600.0)
+    assert out["ok"] is True
+    import sqlite3
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT COUNT(*) FROM daily_levels").fetchone()[0] == 3
+        assert c.execute("SELECT COUNT(*) FROM level_price_samples").fetchone()[0] == 1
+
+
+def test_scanner_hlce_provider_no_longer_uses_raw_last_result_lambda():
+    from pathlib import Path
+    scanner = Path("scanner_worker.py").read_text()
+    assert "get_hlce_service().start(_hlce_snapshot_provider)" in scanner
+    assert 'start(lambda: dict(apex_app.STATE.get("last_result") or {}))' not in scanner
+    assert "latest_canonical_context" in scanner
+    assert "ticker.any_of=I:SPX" in scanner
