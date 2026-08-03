@@ -131,3 +131,45 @@ def test_6572_status_reports_scanner_owned_collector():
     assert 'payload["local_web_collector_running"]' in src
     assert 'payload["collector_status_source"]' in src
     assert "read_scanner_heartbeat" in src
+    assert "supervisor_status" in src
+
+
+def test_6573_wsgi_has_direct_gunicorn_scanner_fallback():
+    from pathlib import Path
+    src = Path("wsgi.py").read_text()
+    assert "ensure_scanner_process" in src
+    assert 'app.config["APEX_SCANNER_SUPERVISOR"]' in src
+    supervisor = Path("engine/scanner_process_supervisor.py").read_text()
+    assert 'cmd = [sys.executable, "scanner_worker.py"]' in supervisor
+    assert "APEX_SCANNER_MANAGED_EXTERNALLY" in supervisor
+    assert "_watchdog_loop" in supervisor
+
+
+def test_6573_shell_launcher_disables_wsgi_duplicate_launcher():
+    from pathlib import Path
+    src = Path("start_render.sh").read_text()
+    assert "export APEX_SCANNER_MANAGED_EXTERNALLY=true" in src
+    assert "python scanner_worker.py &" in src
+
+
+def test_6573_scanner_takes_process_lease_before_app_import_and_bootstraps_heartbeat():
+    from pathlib import Path
+    src = Path("scanner_worker.py").read_text()
+    lease_pos = src.index("_PROCESS_LEASE = acquire_scanner_lease()")
+    app_pos = src.index("import app as apex_app")
+    assert lease_pos < app_pos
+    assert '"phase": "IMPORTING_APP"' in src
+    assert '"phase": "APP_IMPORT_FAILED"' in src
+    assert '"phase": "RUNNING"' in src
+    assert '"bootstrap_source"' in src
+
+
+def test_6573_supervisor_respects_external_management(monkeypatch):
+    import engine.scanner_process_supervisor as sps
+    monkeypatch.setenv("APEX_SCANNER_MANAGED_EXTERNALLY", "true")
+    monkeypatch.setenv("APEX_WSGI_ENSURE_SCANNER", "true")
+    called = {"launch": 0}
+    monkeypatch.setattr(sps, "_launch_locked", lambda: called.__setitem__("launch", called["launch"] + 1))
+    out = sps.ensure_scanner_process()
+    assert out["managed_externally"] is True
+    assert called["launch"] == 0
