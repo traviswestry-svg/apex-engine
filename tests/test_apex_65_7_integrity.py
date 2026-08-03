@@ -173,3 +173,35 @@ def test_6573_supervisor_respects_external_management(monkeypatch):
     out = sps.ensure_scanner_process()
     assert out["managed_externally"] is True
     assert called["launch"] == 0
+
+
+def test_6574_wsgi_has_serving_worker_request_bootstrap():
+    from pathlib import Path
+    src = Path("wsgi.py").read_text()
+    assert "@app.before_request" in src
+    assert "_apex_6574_scanner_lifecycle_guard" in src
+    assert "_ensure_scanner_after_worker_init()" in src
+
+
+def test_6574_missing_heartbeat_launches_even_if_supervisor_lease_unavailable(monkeypatch):
+    import engine.scanner_process_supervisor as sps
+    monkeypatch.delenv("APEX_SCANNER_MANAGED_EXTERNALLY", raising=False)
+    monkeypatch.setenv("APEX_WSGI_ENSURE_SCANNER", "true")
+    monkeypatch.delenv("DISABLE_BACKGROUND_SCANNER", raising=False)
+    called = {"launch": 0}
+    monkeypatch.setattr(sps, "_heartbeat_fresh", lambda *a, **k: False)
+    monkeypatch.setattr(sps, "_acquire_supervisor_lease", lambda: False)
+    monkeypatch.setattr(sps, "_launch_locked", lambda: called.__setitem__("launch", called["launch"] + 1))
+    out = sps.ensure_scanner_process()
+    assert called["launch"] == 1
+    assert out["owner"] is False
+    assert out["ensure_calls"] >= 1
+
+
+def test_6574_supervisor_exposes_bootstrap_diagnostics():
+    from pathlib import Path
+    src = Path("engine/scanner_process_supervisor.py").read_text()
+    assert 'VERSION = "65.7.4_GUNICORN_LIFECYCLE_BOOTSTRAP"' in src
+    assert '"ensure_calls": 0' in src
+    assert '"lease_acquired": False' in src
+    assert '"lease_error": None' in src
