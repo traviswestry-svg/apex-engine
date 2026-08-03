@@ -130,3 +130,74 @@ def test_revisions_preserve_history_while_only_latest_is_active(tmp_path):
     assert [r[0] for r in rows] == [7499.0, 7505.0, 7510.0, 7515.0]
     assert [r[1] for r in rows] == [0, 0, 0, 1]
     assert [r[2] for r in rows] == [1, 2, 3, 4]
+
+
+def test_unchanged_active_rows_are_refreshed_without_retire_reactivate_churn(tmp_path):
+    db = str(tmp_path / "ctx.db")
+    csc.save_from_morning_brief(_brief([
+        {"kind": "call_wall", "price": 7610.0, "source": "gamma"},
+        {"kind": "high_volume_node", "price": 7606.0, "source": "vp"},
+    ]), path=db)
+
+    before = csc.active_levels("SPX", target_session_date="2026-08-03", path=db)
+    ids = {(r["kind"], r["price"]): (r["canonical_level_id"], r["revision"], r["valid_from"]) for r in before}
+    out = csc.publish_live_levels([
+        {"kind": "call_wall", "price": 7610.0, "source": "gamma"},
+        {"kind": "high_volume_node", "price": 7606.0, "source": "vp"},
+    ], symbol="SPX", target_session_date="2026-08-03",
+       observed_at="2026-08-03T15:33:25-04:00",
+       authoritative_kinds={"call_wall", "hvn"}, path=db)
+
+    assert out["created"] == 0
+    assert out["reactivated"] == 0
+    assert out["retired"] == 0
+    assert out["refreshed"] == 2
+    after = csc.active_levels("SPX", target_session_date="2026-08-03", path=db)
+    for r in after:
+        old = ids[(r["kind"], r["price"])]
+        assert r["canonical_level_id"] == old[0]
+        assert r["revision"] == old[1]
+        assert r["valid_from"] == old[2]
+        assert r["valid_to"] is None
+        assert r["observed_at"] == "2026-08-03T15:33:25-04:00"
+
+
+def test_set_diff_only_retires_removed_and_creates_new_rows(tmp_path):
+    db = str(tmp_path / "ctx.db")
+    csc.save_from_morning_brief(_brief([
+        {"kind": "high_volume_node", "price": 7600.0, "source": "vp"},
+        {"kind": "high_volume_node", "price": 7601.0, "source": "vp"},
+        {"kind": "high_volume_node", "price": 7602.0, "source": "vp"},
+    ]), path=db)
+    out = csc.publish_live_levels([
+        {"kind": "high_volume_node", "price": 7601.0, "source": "vp"},
+        {"kind": "high_volume_node", "price": 7602.0, "source": "vp"},
+        {"kind": "high_volume_node", "price": 7603.0, "source": "vp"},
+    ], symbol="SPX", target_session_date="2026-08-03",
+       observed_at="2026-08-03T15:34:25-04:00",
+       authoritative_kinds={"hvn"}, path=db)
+
+    assert out["retired"] == 1
+    assert out["created"] == 1
+    assert out["reactivated"] == 0
+    assert out["refreshed"] == 2
+    active = csc.active_levels("SPX", target_session_date="2026-08-03", path=db)
+    assert sorted(r["price"] for r in active if r["kind"] == "hvn") == [7601.0, 7602.0, 7603.0]
+
+
+def test_previously_retired_price_reactivates_only_when_it_reappears(tmp_path):
+    db = str(tmp_path / "ctx.db")
+    csc.save_from_morning_brief(_brief([
+        {"kind": "call_wall", "price": 7550.0, "source": "gamma"},
+    ]), path=db)
+    csc.publish_live_levels([
+        {"kind": "call_wall", "price": 7610.0, "source": "gamma"},
+    ], symbol="SPX", target_session_date="2026-08-03", observed_at="2026-08-03T14:00:00-04:00",
+       authoritative_kinds={"call_wall"}, path=db)
+    out = csc.publish_live_levels([
+        {"kind": "call_wall", "price": 7550.0, "source": "gamma"},
+    ], symbol="SPX", target_session_date="2026-08-03", observed_at="2026-08-03T15:00:00-04:00",
+       authoritative_kinds={"call_wall"}, path=db)
+    assert out["retired"] == 1
+    assert out["reactivated"] == 1
+    assert out["created"] == 0
