@@ -20,6 +20,10 @@ import time
 from typing import Any, Dict, Mapping, Optional
 
 os.environ["RUN_SCANNER_ON_IMPORT"] = "false"
+# Mark this interpreter before app.py is imported. APEX 65.7.5 uses app.py as
+# the unavoidable production bootstrap boundary; this marker prevents recursive
+# scanner spawning when the dedicated scanner imports the legacy application.
+os.environ["APEX_SCANNER_PROCESS"] = "true"
 
 from engine.operational_runtime import write_scanner_heartbeat  # noqa: E402
 from engine.pre23_hardening import acquire_scanner_lease  # noqa: E402

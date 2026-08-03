@@ -17,7 +17,7 @@ app = create_app()
 def _ensure_scanner_after_worker_init() -> None:
     """Idempotently ensure the scanner exists in the *serving* worker process."""
     try:
-        app.config["APEX_SCANNER_SUPERVISOR"] = ensure_scanner_process()
+        app.config["APEX_SCANNER_SUPERVISOR"] = ensure_scanner_process(source="wsgi_lifecycle")
     except Exception as exc:  # fail web-open, but surface diagnostics
         app.config["APEX_SCANNER_SUPERVISOR_ERROR"] = f"{type(exc).__name__}: {exc}"
 

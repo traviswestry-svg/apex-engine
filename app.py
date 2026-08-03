@@ -13808,6 +13808,27 @@ def api_apex65_monday_readiness():
         }), 500
 
 
+# APEX 65.7.5 — unavoidable production process bootstrap.
+#
+# Render may override render.yaml/start_render.sh and may bypass wsgi.py. Every
+# production serving path observed in APEX still imports this legacy app module,
+# because it owns the Flask application and route registry. Ensure the dedicated
+# scanner subprocess here, after route registration, so scanner startup no longer
+# depends on a particular Gunicorn target or Flask request hook. The scanner child
+# sets APEX_SCANNER_PROCESS=true before importing this module, preventing recursion.
+try:
+    from engine.scanner_process_supervisor import ensure_scanner_process as _apex6575_ensure_scanner_process
+    _APEX6575_SCANNER_BOOTSTRAP = _apex6575_ensure_scanner_process(source="app_module_import")
+    app.config["APEX_SCANNER_SUPERVISOR"] = _APEX6575_SCANNER_BOOTSTRAP
+except Exception as _apex6575_scanner_bootstrap_err:
+    _APEX6575_SCANNER_BOOTSTRAP = {
+        "enabled": True,
+        "last_ensure_source": "app_module_import",
+        "last_error": f"{type(_apex6575_scanner_bootstrap_err).__name__}: {_apex6575_scanner_bootstrap_err}",
+    }
+    app.config["APEX_SCANNER_SUPERVISOR_ERROR"] = _APEX6575_SCANNER_BOOTSTRAP["last_error"]
+    print(f"APEX 65.7.5 scanner bootstrap failed open for web: {_apex6575_scanner_bootstrap_err}", flush=True)
+
 _APEX65_STARTUP_ROUTE_AUDIT = _apex65_route_audit()
 if not _APEX65_STARTUP_ROUTE_AUDIT["ok"]:
     app.logger.warning("APEX65 runtime route audit degraded: %s", _APEX65_STARTUP_ROUTE_AUDIT)
