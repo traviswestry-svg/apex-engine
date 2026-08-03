@@ -3,7 +3,7 @@
 Runs beside Gunicorn in the same Render service so both processes share the
 mounted /data volume while the web process remains free of import-time jobs.
 
-APEX 65.7.2: HLCE remains scanner-owned. Lifecycle supervision and provider fallbacks
+APEX 65.7.3: HLCE remains scanner-owned. Lifecycle supervision and provider fallbacks
 ensure the scanner cannot appear healthy while calibration ingestion is dead. The
 provider no longer depends on
 the web-only ``STATE['last_result']`` bus.  The provider prefers a valid local
@@ -21,8 +21,40 @@ from typing import Any, Dict, Mapping, Optional
 
 os.environ["RUN_SCANNER_ON_IMPORT"] = "false"
 
-import app as apex_app  # noqa: E402
 from engine.operational_runtime import write_scanner_heartbeat  # noqa: E402
+from engine.pre23_hardening import acquire_scanner_lease  # noqa: E402
+
+# APEX 65.7.3: take the process lease *before* importing the large application.
+# This prevents duplicate scanner/HLCE owners even if both start_render.sh and
+# a direct-Gunicorn WSGI fallback are accidentally active during deployment.
+_PROCESS_LEASE = acquire_scanner_lease()
+_APEX_IMPORT_ERROR = None
+if _PROCESS_LEASE.get("acquired"):
+    try:
+        write_scanner_heartbeat({
+            "scanner_started": False,
+            "phase": "IMPORTING_APP",
+            "bootstrap_source": os.getenv("APEX_SCANNER_BOOTSTRAP_SOURCE", "start_render"),
+            "scanner_lease": _PROCESS_LEASE,
+        })
+    except Exception:
+        pass
+    try:
+        import app as apex_app  # noqa: E402
+    except Exception as exc:  # make import-time scanner failures observable
+        _APEX_IMPORT_ERROR = exc
+        try:
+            write_scanner_heartbeat({
+                "scanner_started": False,
+                "phase": "APP_IMPORT_FAILED",
+                "bootstrap_source": os.getenv("APEX_SCANNER_BOOTSTRAP_SOURCE", "start_render"),
+                "startup_error": f"{type(exc).__name__}: {exc}",
+            })
+        finally:
+            raise
+else:
+    apex_app = None  # type: ignore[assignment]
+
 from engine.historical_level_calibration import (  # noqa: E402
     extract_context as hlce_extract_context,
     get_service as get_hlce_service,
@@ -165,6 +197,23 @@ def _ensure_hlce_running() -> None:
 def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
+
+    if not _PROCESS_LEASE.get("acquired"):
+        # Another process is already the canonical scanner owner. Exiting here
+        # is safe and avoids starting a second HLCE collector. Do not overwrite
+        # the owner's heartbeat.
+        print(
+            f"APEX scanner standby: process lease unavailable ({_PROCESS_LEASE.get('reason')}); exiting duplicate worker.",
+            flush=True,
+        )
+        return 0
+
+    write_scanner_heartbeat({
+        "scanner_started": False,
+        "phase": "STARTING",
+        "bootstrap_source": os.getenv("APEX_SCANNER_BOOTSTRAP_SOURCE", "start_render"),
+        "scanner_lease": _PROCESS_LEASE,
+    })
     apex_app.start_background_scanner()
     try:
         _ensure_hlce_running()
@@ -186,6 +235,9 @@ def main() -> int:
         db = service.status().get("database") or {}
         write_scanner_heartbeat({
             "scanner_started": bool(apex_app.SCANNER_STARTED),
+            "phase": "RUNNING",
+            "bootstrap_source": os.getenv("APEX_SCANNER_BOOTSTRAP_SOURCE", "start_render"),
+            "scanner_lease": _PROCESS_LEASE,
             "thread_alive": bool(apex_app.STATE.get("scanner_thread_alive", False)),
             "last_scan_at": apex_app.SCANNER_STATE.get("updated_at") or apex_app.STATE.get("updated_at"),
             "last_error": apex_app.STATE.get("last_error"),

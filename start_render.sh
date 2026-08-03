@@ -2,6 +2,10 @@
 set -euo pipefail
 
 export RUN_SCANNER_ON_IMPORT=false
+# Tell wsgi.py that this launcher already owns scanner_worker.py. This prevents
+# the WSGI fallback from spawning a second scanner while preserving direct-
+# Gunicorn resilience when Render has an overriding Start Command.
+export APEX_SCANNER_MANAGED_EXTERNALLY=true
 
 python scanner_worker.py &
 SCANNER_PID=$!
@@ -15,9 +19,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# APEX 65.7.2: both processes are required. Previously scanner_worker.py ran in
-# the background and could die while Gunicorn stayed healthy indefinitely.
-# Treat loss of either process as a service failure so Render restarts the pair.
+# Both processes are required. If either process exits, fail the service so
+# Render restarts the pair instead of leaving a web-only zombie deployment.
 while true; do
   if ! kill -0 "$SCANNER_PID" 2>/dev/null; then
     wait "$SCANNER_PID" || rc=$?
