@@ -251,6 +251,10 @@ def main() -> int:
             "hlce_provider_source": (_HLCE_PROVIDER_CACHE.get("snapshot") or {}).get("hlce_source"),
             "hlce_db_path": str(service.path),
             "hlce_counts": db.get("counts") or {},
+            "hlce_collector_stats": dict(service.collector.stats),
+            "hlce_interaction_diagnostics": service.collector.interaction_diagnostics(),
+            "hlce_last_event": service.collector.last_event,
+            "hlce_last_database_write": service.collector.last_write_ts,
             "hlce_restart_count": int(_HLCE_RUNTIME.get("restart_count") or 0),
         })
         time.sleep(max(5, int(os.getenv("APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS", "15"))))
