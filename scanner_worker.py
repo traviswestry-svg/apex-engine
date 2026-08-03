@@ -65,10 +65,16 @@ from engine.historical_level_calibration import (  # noqa: E402
     get_service as get_hlce_service,
 )
 from engine.canonical_session_context import latest as latest_canonical_context, active_levels as canonical_active_levels  # noqa: E402
+from engine.live_active_level_publisher import LiveActiveLevelPublisher  # noqa: E402
 
 _RUNNING = True
 _HLCE_PROVIDER_CACHE: Dict[str, Any] = {"at": 0.0, "snapshot": {}}
 _HLCE_RUNTIME: Dict[str, Any] = {"provider_ok": False, "provider_error": None, "restart_count": 0, "last_tick": None}
+_LIVE_LEVEL_PUBLISHER = LiveActiveLevelPublisher(
+    apex_app,
+    symbol=getattr(apex_app, "ASSISTANT_TICKER", "SPX"),
+    interval_seconds=int(os.getenv("APEX_LIVE_LEVEL_PUBLISH_SECONDS", "60")),
+) if apex_app is not None else None
 
 
 def _stop(_signum, _frame):
@@ -240,6 +246,8 @@ def main() -> int:
     apex_app.start_background_scanner()
     try:
         _ensure_hlce_running()
+        if _LIVE_LEVEL_PUBLISHER is not None:
+            _LIVE_LEVEL_PUBLISHER.start()
     except Exception as exc:
         # Lifecycle failure is fatal for the dedicated scanner process.
         # start_render.sh supervises this process and will restart the service
@@ -275,8 +283,11 @@ def main() -> int:
             "hlce_last_event": service.collector.last_event,
             "hlce_last_database_write": service.collector.last_write_ts,
             "hlce_restart_count": int(_HLCE_RUNTIME.get("restart_count") or 0),
+            "live_active_level_publisher": _LIVE_LEVEL_PUBLISHER.diagnostics() if _LIVE_LEVEL_PUBLISHER is not None else {"state": "UNAVAILABLE"},
         })
         time.sleep(max(5, int(os.getenv("APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS", "15"))))
+    if _LIVE_LEVEL_PUBLISHER is not None:
+        _LIVE_LEVEL_PUBLISHER.stop()
     get_hlce_service().stop()
     write_scanner_heartbeat({"scanner_started": False, "stopped": True, "hlce_collector_running": False})
     return 0
