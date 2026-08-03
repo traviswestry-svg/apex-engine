@@ -9,6 +9,7 @@ from flask import jsonify, render_template, request
 
 from .historical_level_calibration import get_service, VERSION
 from .operational_runtime import read_scanner_heartbeat
+from .scanner_process_supervisor import supervisor_status
 
 
 def register_calibration_routes(app, last_result_provider=None):
@@ -33,6 +34,7 @@ def register_calibration_routes(app, last_result_provider=None):
         # Gunicorn-local singleton. Preserve the local value explicitly above.
         payload["collector_running"] = bool(fresh and hb.get("hlce_collector_running"))
         payload["collector_status_source"] = "scanner_heartbeat" if fresh else "scanner_heartbeat_stale_or_missing"
+        payload["web_scanner_supervisor"] = supervisor_status()
         return jsonify(payload)
 
     @app.get("/api/level-calibration/statistics")
@@ -83,6 +85,7 @@ def register_calibration_routes(app, last_result_provider=None):
         payload["scanner_heartbeat_age_seconds"] = hb.get("age_seconds")
         payload["provider_ok"] = hb.get("hlce_provider_ok") if fresh else None
         payload["provider_error"] = hb.get("hlce_provider_error") if fresh else "SCANNER_HEARTBEAT_STALE_OR_MISSING"
+        payload["web_scanner_supervisor"] = supervisor_status()
         return jsonify(payload)
 
     @app.get("/api/level-calibration/dashboard")
