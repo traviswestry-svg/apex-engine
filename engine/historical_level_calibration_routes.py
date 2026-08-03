@@ -8,6 +8,7 @@ from __future__ import annotations
 from flask import jsonify, render_template, request
 
 from .historical_level_calibration import get_service, VERSION
+from .operational_runtime import read_scanner_heartbeat
 
 
 def register_calibration_routes(app, last_result_provider=None):
@@ -22,7 +23,17 @@ def register_calibration_routes(app, last_result_provider=None):
     # ---- Spec section 9 endpoints ---------------------------------------- #
     @app.get("/api/level-calibration/status")
     def level_calibration_status():
-        return jsonify(service.status())
+        payload = service.status()
+        hb = read_scanner_heartbeat()
+        fresh = bool(hb.get("available")) and float(hb.get("age_seconds") or 1e9) <= 60.0
+        payload["collector_owner"] = "scanner_process"
+        payload["local_web_collector_running"] = bool(payload.get("collector_running"))
+        payload["scanner_heartbeat"] = hb
+        # Public status reports the canonical owner, not the intentionally idle
+        # Gunicorn-local singleton. Preserve the local value explicitly above.
+        payload["collector_running"] = bool(fresh and hb.get("hlce_collector_running"))
+        payload["collector_status_source"] = "scanner_heartbeat" if fresh else "scanner_heartbeat_stale_or_missing"
+        return jsonify(payload)
 
     @app.get("/api/level-calibration/statistics")
     def level_calibration_statistics():
@@ -63,7 +74,16 @@ def register_calibration_routes(app, last_result_provider=None):
     # ---- Operational / integration surface ------------------------------- #
     @app.get("/api/level-calibration/health")
     def level_calibration_health():
-        return jsonify(service.health())
+        payload = service.health()
+        hb = read_scanner_heartbeat()
+        fresh = bool(hb.get("available")) and float(hb.get("age_seconds") or 1e9) <= 60.0
+        payload["collector_owner"] = "scanner_process"
+        payload["local_web_collector_running"] = bool(payload.get("collector_running"))
+        payload["collector_running"] = bool(fresh and hb.get("hlce_collector_running"))
+        payload["scanner_heartbeat_age_seconds"] = hb.get("age_seconds")
+        payload["provider_ok"] = hb.get("hlce_provider_ok") if fresh else None
+        payload["provider_error"] = hb.get("hlce_provider_error") if fresh else "SCANNER_HEARTBEAT_STALE_OR_MISSING"
+        return jsonify(payload)
 
     @app.get("/api/level-calibration/dashboard")
     def level_calibration_dashboard_data():
