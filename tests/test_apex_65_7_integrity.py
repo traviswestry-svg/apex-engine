@@ -64,7 +64,7 @@ def test_hlce_route_registration_has_no_collector_start_side_effect():
     src = Path("engine/historical_level_calibration_routes.py").read_text()
     assert "service.start(" not in src
     scanner = Path("scanner_worker.py").read_text()
-    assert "get_hlce_service().start(" in scanner
+    assert "service.start(_hlce_snapshot_provider)" in scanner
 
 
 def test_runtime_db_files_are_ignored():
@@ -99,7 +99,35 @@ def test_hlce_accepts_durable_canonical_level_list(tmp_path):
 def test_scanner_hlce_provider_no_longer_uses_raw_last_result_lambda():
     from pathlib import Path
     scanner = Path("scanner_worker.py").read_text()
-    assert "get_hlce_service().start(_hlce_snapshot_provider)" in scanner
+    assert "service.start(_hlce_snapshot_provider)" in scanner
     assert 'start(lambda: dict(apex_app.STATE.get("last_result") or {}))' not in scanner
     assert "latest_canonical_context" in scanner
     assert "ticker.any_of=I:SPX" in scanner
+
+
+def test_6572_render_supervises_scanner_process():
+    from pathlib import Path
+    src = Path("start_render.sh").read_text()
+    assert "SCANNER_PID=$!" in src
+    assert "WEB_PID=$!" in src
+    assert 'kill -0 "$SCANNER_PID"' in src
+    assert "scanner process exited" in src
+
+
+def test_6572_scanner_has_live_bar_fallback_and_self_heal():
+    from pathlib import Path
+    src = Path("scanner_worker.py").read_text()
+    assert "get_intraday_bars" in src
+    assert "def _ensure_hlce_running" in src
+    assert "service.collector_running()" in src
+    assert "hlce_provider_ok" in src
+    assert "hlce_counts" in src
+
+
+def test_6572_status_reports_scanner_owned_collector():
+    from pathlib import Path
+    src = Path("engine/historical_level_calibration_routes.py").read_text()
+    assert 'payload["collector_owner"] = "scanner_process"' in src
+    assert 'payload["local_web_collector_running"]' in src
+    assert 'payload["collector_status_source"]' in src
+    assert "read_scanner_heartbeat" in src
