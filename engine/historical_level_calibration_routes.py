@@ -136,18 +136,24 @@ def register_calibration_routes(app, last_result_provider=None):
         ctx = latest_context(symbol, target_session_date=target)
         registry_keys={(str(r.get("kind")), round(float(r.get("price")),4)) for r in registry}
         hlce_keys={(str(r.get("level_type")), round(float(r.get("price")),4)) for r in hlce.get("levels",[]) if r.get("price") is not None}
+        hb = read_scanner_heartbeat()
+        fresh = bool(hb.get("available")) and float(hb.get("age_seconds") or 1e9) <= 60.0
+        publisher = hb.get("live_active_level_publisher") if fresh and isinstance(hb.get("live_active_level_publisher"), dict) else {}
         return jsonify({
             "ok": True,
-            "version": "66.0.0_CANONICAL_ACTIVE_LEVEL_REGISTRY",
+            "version": "66.1.0_LIVE_ACTIVE_LEVEL_PUBLICATION",
             "session_date": target,
             "symbol": symbol,
             "canonical_context_present": bool(ctx),
             "canonical_context_generated_at": (ctx or {}).get("generated_at"),
+            "canonical_context_source": (ctx or {}).get("source"),
             "registry_active_count": len(registry),
             "hlce_active_count": len(hlce_keys),
             "registry_only": [{"kind":k,"price":p} for k,p in sorted(registry_keys-hlce_keys)],
             "hlce_only": [{"kind":k,"price":p} for k,p in sorted(hlce_keys-registry_keys)],
             "in_sync": registry_keys == hlce_keys,
+            "live_publisher": publisher,
+            "live_publisher_heartbeat_fresh": fresh,
             "levels": registry,
             "read_only": True,
             "decision_influence": "NONE",
