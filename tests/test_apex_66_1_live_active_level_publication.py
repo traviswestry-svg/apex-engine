@@ -126,10 +126,12 @@ def test_revisions_preserve_history_while_only_latest_is_active(tmp_path):
     active = csc.active_levels("SPX", target_session_date="2026-08-03", path=db)
     assert [(r["kind"], r["price"]) for r in active] == [("developing_poc", 7515.0)]
     with sqlite3.connect(db) as conn:
-        rows = conn.execute("select price,active,revision from canonical_active_levels where kind='developing_poc' order by revision").fetchall()
-    assert [r[0] for r in rows] == [7499.0, 7505.0, 7510.0, 7515.0]
-    assert [r[1] for r in rows] == [0, 0, 0, 1]
-    assert [r[2] for r in rows] == [1, 2, 3, 4]
+        rows = conn.execute("select canonical_level_id,price,active,revision from canonical_active_levels where kind='developing_poc'").fetchall()
+        migrations = conn.execute("select old_price,new_price from canonical_level_migrations where kind='developing_poc' order by migration_id").fetchall()
+    # 66.1.2 preserves the entity UUID and stores price evolution separately.
+    assert len(rows) == 1
+    assert rows[0][1:] == (7515.0, 1, 4)
+    assert migrations == [(7499.0, 7505.0), (7505.0, 7510.0), (7510.0, 7515.0)]
 
 
 def test_unchanged_active_rows_are_refreshed_without_retire_reactivate_churn(tmp_path):
@@ -201,3 +203,26 @@ def test_previously_retired_price_reactivates_only_when_it_reappears(tmp_path):
     assert out["retired"] == 1
     assert out["reactivated"] == 1
     assert out["created"] == 0
+
+
+def test_6612_dynamic_poc_migrates_with_stable_identity(tmp_path):
+    db=str(tmp_path/'ctx.db')
+    csc.save_from_morning_brief(_brief([{"kind":"developing_poc","price":7600.0,"source":"vp"}]),path=db)
+    before=csc.active_levels('SPX',target_session_date='2026-08-03',path=db)[0]
+    out=csc.publish_live_levels([{"kind":"developing_poc","price":7608.0,"source":"vp"}],symbol='SPX',target_session_date='2026-08-03',observed_at='2026-08-03T15:52:00-04:00',authoritative_kinds={'developing_poc'},path=db)
+    after=csc.active_levels('SPX',target_session_date='2026-08-03',path=db)[0]
+    assert out['migrated']==1 and out['created']==0 and out['retired']==0
+    assert after['canonical_level_id']==before['canonical_level_id']
+    assert after['price']==7608.0 and after['revision']==before['revision']+1
+    hist=csc.level_migration_history(after['canonical_level_id'],path=db)
+    assert hist[-1]['old_price']==7600.0 and hist[-1]['new_price']==7608.0
+
+
+def test_6612_hvn_nearest_neighbor_identity_is_one_to_one(tmp_path):
+    db=str(tmp_path/'ctx.db')
+    csc.save_from_morning_brief(_brief([{"kind":"hvn","price":7601.0},{"kind":"hvn","price":7604.0}]),path=db)
+    before={r['price']:r['canonical_level_id'] for r in csc.active_levels('SPX',target_session_date='2026-08-03',path=db)}
+    out=csc.publish_live_levels([{"kind":"hvn","price":7601.8},{"kind":"hvn","price":7604.7}],symbol='SPX',target_session_date='2026-08-03',observed_at='2026-08-03T15:53:00-04:00',authoritative_kinds={'hvn'},path=db)
+    after={r['price']:r['canonical_level_id'] for r in csc.active_levels('SPX',target_session_date='2026-08-03',path=db)}
+    assert out['migrated']==2 and out['created']==0 and out['retired']==0
+    assert after[7601.8]==before[7601.0] and after[7604.7]==before[7604.0]
