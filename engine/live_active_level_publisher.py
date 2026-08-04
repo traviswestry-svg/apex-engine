@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from .canonical_session_context import LIVE_MUTABLE_LEVEL_KINDS, normalize_level_kind, publish_live_levels
 from .daily_key_levels_adapters import build_daily_key_levels, intraday_time_to_close_frac
 
-VERSION = "66.1.1_ACTIVE_LEVEL_RECONCILIATION"
+VERSION = "66.1.2_DYNAMIC_LEVEL_IDENTITY"
 _ET = ZoneInfo("America/New_York")
 
 PROFILE_KINDS = {"developing_poc", "vah", "val", "hvn", "lvn"}

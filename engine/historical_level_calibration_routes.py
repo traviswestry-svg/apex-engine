@@ -141,7 +141,7 @@ def register_calibration_routes(app, last_result_provider=None):
         publisher = hb.get("live_active_level_publisher") if fresh and isinstance(hb.get("live_active_level_publisher"), dict) else {}
         return jsonify({
             "ok": True,
-            "version": "66.1.0_LIVE_ACTIVE_LEVEL_PUBLICATION",
+            "version": "66.1.2_DYNAMIC_LEVEL_IDENTITY",
             "session_date": target,
             "symbol": symbol,
             "canonical_context_present": bool(ctx),
