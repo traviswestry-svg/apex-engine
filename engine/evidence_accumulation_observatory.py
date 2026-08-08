@@ -180,9 +180,9 @@ def _level_family(level_type: Any) -> str:
 def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_date: Optional[str] = None) -> Dict[str, Any]:
     """Read-only per-family HLCE lifecycle coverage for a resolved evidence session.
 
-    Counts are evidence-backed only. `unavailable` means no active level from that
-    family reached HLCE for the effective session; it does not synthesize or infer
-    a level. Explicit historical session overrides are honored exactly.
+    Counts are evidence-backed only. `unavailable` means no level from that family
+    was registered in HLCE for the effective session; it does not synthesize or
+    infer a level. Explicit historical session overrides are honored exactly.
     """
     families = [
         "EXPECTED_MOVE", "GAMMA", "VOLUME_PROFILE", "PRIOR_SESSION",
@@ -191,8 +191,10 @@ def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_
     from .historical_level_calibration import resolve_evidence_session_date
     session = resolve_evidence_session_date(path=path, symbol=symbol, requested_date=session_date)
     target = session["effective_session_date"]
-    blank = {k: 0 for k in ("registered", "active", "touched", "crossed", "rejected",
-                              "accepted", "broken", "reclaimed", "graded", "pending", "stale")}
+    blank = {k: 0 for k in ("registered", "registered_for_session", "active",
+                              "active_during_session", "currently_active", "retired_after_session",
+                              "touched", "crossed", "rejected", "accepted", "broken",
+                              "reclaimed", "graded", "pending", "stale")}
     result = {name: dict(blank, unavailable=True) for name in families}
     if not path or not Path(path).exists():
         return {"symbol": symbol.upper(), "session_date": target, **session, "state": "STORE_UNAVAILABLE", "families": result}
@@ -208,8 +210,16 @@ def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_
             for row in levels:
                 fam = _level_family(row["level_type"]); by_id[str(row["level_id"])] = fam
                 result[fam]["registered"] += 1
-                if int(row["active"] or 0): result[fam]["active"] += 1
-                else: result[fam]["stale"] += 1
+                result[fam]["registered_for_session"] += 1
+                # Every persisted daily_levels row was active at some point in the
+                # session; `active` remains the backward-compatible current-state alias.
+                result[fam]["active_during_session"] += 1
+                if int(row["active"] or 0):
+                    result[fam]["active"] += 1
+                    result[fam]["currently_active"] += 1
+                else:
+                    result[fam]["stale"] += 1
+                    result[fam]["retired_after_session"] += 1
             interactions = conn.execute(
                 "SELECT level_id,interaction_type,graded FROM level_interactions WHERE session_date=? AND symbol=?",
                 (target, symbol.upper()),
@@ -240,7 +250,7 @@ def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_
             for fam in families:
                 result[fam]["graded"] = len(graded[fam]); result[fam]["accepted"] = len(accepted[fam])
                 result[fam]["rejected"] = len(rejected[fam]); result[fam]["broken"] = len(broken[fam])
-                result[fam]["unavailable"] = result[fam]["active"] == 0
+                result[fam]["unavailable"] = result[fam]["registered_for_session"] == 0
         return {"symbol": symbol.upper(), "session_date": target, **session, "state": "READY", "families": result,
                 "definitions": {
                     "touched": "distinct levels with FIRST_TOUCH or RETEST",
@@ -250,8 +260,12 @@ def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_
                     "broken": "graded levels with broke=1 or BREAK classification",
                     "reclaimed": "distinct levels with a persisted RECLAIM interaction",
                     "pending": "distinct levels with ungraded FIRST_TOUCH/RETEST",
-                    "stale": "registered levels retired from the active HLCE universe",
-                    "unavailable": "no active level from this family reached HLCE for the session",
+                    "registered_for_session": "levels persisted by HLCE for the effective session",
+                    "active_during_session": "levels known to have been active at some point because they were registered for the session",
+                    "currently_active": "session levels whose current HLCE active flag remains 1",
+                    "retired_after_session": "session levels whose current HLCE active flag is 0",
+                    "stale": "backward-compatible alias for retired_after_session",
+                    "unavailable": "no level from this family was registered in HLCE for the session",
                 }}
     except Exception as exc:
         return {"symbol": symbol.upper(), "session_date": target, **session, "state": "ERROR", "families": result,

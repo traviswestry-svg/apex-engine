@@ -127,7 +127,7 @@ def register_calibration_routes(app, last_result_provider=None):
     @app.get("/api/level-calibration/active-levels/diagnostics")
     def level_calibration_active_levels_diagnostics():
         from .canonical_session_context import active_levels as registry_active_levels, latest as latest_context
-        from .historical_level_calibration import resolve_evidence_session_date
+        from .historical_level_calibration import compare_session_level_identity, resolve_evidence_session_date, session_levels
         symbol = request.args.get("symbol", "SPX").upper()
         try:
             session = resolve_evidence_session_date(
@@ -139,27 +139,37 @@ def register_calibration_routes(app, last_result_provider=None):
             return jsonify({"ok": False, "error": str(exc)}), 400
         target = session["effective_session_date"]
         registry = registry_active_levels(symbol, target_session_date=target)
-        hlce = service.levels(session_date=target, symbol=symbol)
+        hlce_rows = [dict(r) for r in session_levels(target, symbol, path=service.path)]
         ctx = latest_context(symbol, target_session_date=target)
-        registry_keys={(str(r.get("kind")), round(float(r.get("price")),4)) for r in registry}
-        hlce_keys={(str(r.get("level_type")), round(float(r.get("price")),4)) for r in hlce.get("levels",[]) if r.get("price") is not None}
+
+        lifecycle = compare_session_level_identity(registry, hlce_rows)
+        registry_only_rows = lifecycle["registry_only_rows"]
+        hlce_only_rows = lifecycle["hlce_only_rows"]
+
         hb = read_scanner_heartbeat()
         fresh = bool(hb.get("available")) and float(hb.get("age_seconds") or 1e9) <= 60.0
         publisher = hb.get("live_active_level_publisher") if fresh and isinstance(hb.get("live_active_level_publisher"), dict) else {}
         return jsonify({
             "ok": True,
-            "version": "66.1.2_DYNAMIC_LEVEL_IDENTITY",
+            "version": "66.2.2_HISTORICAL_LEVEL_LIFECYCLE",
             "session_date": target,
             **session,
             "symbol": symbol,
             "canonical_context_present": bool(ctx),
             "canonical_context_generated_at": (ctx or {}).get("generated_at"),
             "canonical_context_source": (ctx or {}).get("source"),
-            "registry_active_count": len(registry),
-            "hlce_active_count": len(hlce_keys),
-            "registry_only": [{"kind":k,"price":p} for k,p in sorted(registry_keys-hlce_keys)],
-            "hlce_only": [{"kind":k,"price":p} for k,p in sorted(hlce_keys-registry_keys)],
-            "in_sync": registry_keys == hlce_keys,
+            "registry_active_count": len(registry),  # backward-compatible field name
+            "hlce_active_count": lifecycle["hlce_currently_active"],  # backward-compatible live-state field
+            "registry_registered_for_session": lifecycle["registry_registered_for_session"],
+            "hlce_registered_for_session": lifecycle["hlce_registered_for_session"],
+            "hlce_currently_active": lifecycle["hlce_currently_active"],
+            "hlce_retired_after_session": lifecycle["hlce_retired_after_session"],
+            "historical_identity_matches": lifecycle["historical_identity_matches"],
+            "registry_only": [{"kind": str(r.get("kind")), "price": round(float(r.get("price")), 4)} for r in registry_only_rows if r.get("price") is not None],
+            "hlce_only": [{"kind": str(r.get("level_type")), "price": round(float(r.get("price")), 4)} for r in hlce_only_rows if r.get("price") is not None],
+            "in_sync": lifecycle["historical_sync"],
+            "historical_sync": lifecycle["historical_sync"],
+            "sync_semantics": "SESSION_REGISTRATION_IDENTITY",
             "live_publisher": publisher,
             "live_publisher_heartbeat_fresh": fresh,
             "levels": registry,

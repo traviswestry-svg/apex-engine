@@ -800,6 +800,60 @@ def active_levels(session_date: str, symbol: str, *, path: Optional[str] = None)
         return conn.execute("SELECT * FROM daily_levels WHERE session_date=? AND symbol=? AND active=1",(session_date,symbol)).fetchall()
 
 
+def session_levels(session_date: str, symbol: str, *, path: Optional[str] = None) -> List[sqlite3.Row]:
+    """Return the complete persisted HLCE level lifecycle for a session.
+
+    Unlike :func:`active_levels`, this intentionally includes retired rows.  It is
+    for read-only historical diagnostics/replay and must not be used by the live
+    collector as its active universe.
+    """
+    initialize_store(path)
+    with _connect(path) as conn:
+        return conn.execute(
+            "SELECT * FROM daily_levels WHERE session_date=? AND symbol=? ORDER BY registered_at, level_type, price",
+            (session_date, symbol),
+        ).fetchall()
+
+
+def compare_session_level_identity(registry_levels: Sequence[Mapping[str, Any]], hlce_levels: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Compare historical registry and HLCE session levels without using live active flags.
+
+    Canonical level IDs are authoritative when present on both sides.  Kind/price
+    matching is retained only for legacy rows that predate canonical IDs.
+    """
+    registry = [dict(r) for r in registry_levels]
+    hlce = [dict(r) for r in hlce_levels]
+    registry_by_id = {str(r.get("canonical_level_id")): r for r in registry if r.get("canonical_level_id")}
+    hlce_by_id = {str(r.get("canonical_level_id")): r for r in hlce if r.get("canonical_level_id")}
+    matched_ids = set(registry_by_id) & set(hlce_by_id)
+
+    def _key(row: Mapping[str, Any], kind_field: str):
+        price = row.get("price")
+        if price is None:
+            return None
+        return (str(row.get(kind_field) or ""), round(float(price), 4))
+
+    registry_unmatched = [r for r in registry if not r.get("canonical_level_id") or str(r.get("canonical_level_id")) not in matched_ids]
+    hlce_unmatched = [r for r in hlce if not r.get("canonical_level_id") or str(r.get("canonical_level_id")) not in matched_ids]
+    registry_fallback = {_key(r, "kind"): r for r in registry_unmatched if _key(r, "kind") is not None}
+    hlce_fallback = {_key(r, "level_type"): r for r in hlce_unmatched if _key(r, "level_type") is not None}
+    fallback_matches = set(registry_fallback) & set(hlce_fallback)
+
+    registry_only = [r for r in registry_unmatched if _key(r, "kind") not in fallback_matches]
+    hlce_only = [r for r in hlce_unmatched if _key(r, "level_type") not in fallback_matches]
+    currently_active = sum(1 for r in hlce if int(r.get("active") or 0) == 1)
+    return {
+        "registry_registered_for_session": len(registry),
+        "hlce_registered_for_session": len(hlce),
+        "hlce_currently_active": currently_active,
+        "hlce_retired_after_session": len(hlce) - currently_active,
+        "historical_identity_matches": len(matched_ids) + len(fallback_matches),
+        "registry_only_rows": registry_only,
+        "hlce_only_rows": hlce_only,
+        "historical_sync": not registry_only and not hlce_only and len(registry) == len(hlce),
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Collector — live interaction detection + price sampling
 # --------------------------------------------------------------------------- #
