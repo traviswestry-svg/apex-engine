@@ -242,3 +242,58 @@ def test_6575_supervisor_child_env_marks_scanner(monkeypatch):
     assert 'env["APEX_SCANNER_PROCESS"] = "true"' in src
     assert 'VERSION = "65.7.5_APP_ENTRYPOINT_BOOTSTRAP"' in src
     assert '"last_ensure_source": None' in src
+
+
+def _complex_intent_for_boundary():
+    from engine.execution.complex_options import ComplexLeg, ComplexOrderIntent
+    legs = (
+        ComplexLeg("BUY_OPEN", "PUT", 7490, "2099-01-01", 1, osi_key="P7490", bid=1.0, ask=1.1, quote_age_seconds=1),
+        ComplexLeg("SELL_OPEN", "PUT", 7500, "2099-01-01", 1, osi_key="P7500", bid=1.5, ask=1.6, quote_age_seconds=1),
+    )
+    return ComplexOrderIntent("SPX", "PUT_CREDIT_SPREAD", legs, 1, "NET_CREDIT", 0.4)
+
+
+def test_6576_complex_order_uses_canonical_boundary(monkeypatch):
+    import engine.execution.canonical_execution as ce
+    monkeypatch.setattr(ce.guard, "validate_complex_entry", lambda **kwargs: Mock(allow=True, reasons=[], warnings=[], to_dict=lambda: {"allow": True}))
+    boundary = CanonicalExecutionBoundary()
+    adapter = Mock(mode="sandbox", trading_enabled=False)
+    adapter.place_complex_order.return_value = BrokerResult(ok=True, mode="sandbox", data={"order_id": "cx1"})
+    intent = _complex_intent_for_boundary()
+    boundary.register_complex_preview("cp1", intent=intent, economics={"max_loss": 960.0}, session_state="MARKET_OPEN")
+    assert boundary.execute_complex(adapter=adapter, preview_id="cp1", intent=intent, economics={"max_loss": 960.0}, session_state="MARKET_OPEN", last_order_epoch=None).ok
+    assert not boundary.execute_complex(adapter=adapter, preview_id="cp1", intent=intent, economics={"max_loss": 960.0}, session_state="MARKET_OPEN", last_order_epoch=None).ok
+    assert adapter.place_complex_order.call_count == 1
+
+
+def test_6576_complex_order_rejects_intent_mutation_after_preview():
+    boundary = CanonicalExecutionBoundary()
+    adapter = Mock(mode="sandbox", trading_enabled=False)
+    intent = _complex_intent_for_boundary()
+    boundary.register_complex_preview("cp2", intent=intent, economics={"max_loss": 960.0}, session_state="MARKET_OPEN")
+    from dataclasses import replace
+    changed = replace(intent, limit_price=0.5)
+    out = boundary.execute_complex(adapter=adapter, preview_id="cp2", intent=changed, economics={"max_loss": 950.0}, session_state="MARKET_OPEN", last_order_epoch=None)
+    assert out.ok is False
+    adapter.place_complex_order.assert_not_called()
+
+
+def test_6576_change_order_revalidates_at_mutation_boundary(monkeypatch):
+    from engine.execution.broker_interface import ChangeIntent
+    import engine.execution.canonical_execution as ce
+    boundary = CanonicalExecutionBoundary()
+    adapter = Mock(mode="sandbox", trading_enabled=False)
+    adapter.place_change_order.return_value = BrokerResult(ok=True, mode="sandbox", data={"order_id": "o1"})
+    ci = ChangeIntent(order_id="o1", new_stop_price=8.0, tag="STOP")
+    ctx = {"line":"STOP","new_price":8.0,"entry_premium":10.0,"current_premium":10.5,"levels":{"TP1":12.0,"STOP":7.5},"side":"CALL","position_qty":1,"exit_qty":None,"breakeven_armed":False}
+    boundary.register_change_preview("ch1", order_id="o1", change_intent=ci, risk_context=ctx)
+    bad = dict(ctx, new_price=13.0)
+    out = boundary.execute_change(adapter=adapter, preview_id="ch1", order_id="o1", change_intent=ci, risk_context=bad)
+    assert out.ok is False
+    adapter.place_change_order.assert_not_called()
+
+
+def test_6576_runtime_db_gitignore_is_real_file():
+    from pathlib import Path
+    ignore = Path(".gitignore").read_text()
+    assert "*.db" in ignore and "*.db-wal" in ignore and "*.db-shm" in ignore
