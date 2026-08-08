@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 48.1.0
+apex_version: 66.2.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: 48.1.0
+    version: 66.2.0
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -95,7 +95,7 @@ capabilities:
   canonical_execution_boundary_65_7:
     canonical_module: engine.execution.canonical_execution
     status: active
-    version: "65.7.0"
+    version: "66.2.0"
     inputs: [broker_preview_id, current_order_intent, current_risk_state]
     outputs: [risk_revalidated_broker_submission, duplicate_submission_block]
     api_routes: [/api/trade/spx/place-entry]

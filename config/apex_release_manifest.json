@@ -1,17 +1,18 @@
 {
-  "apex_version": "48.2.0",
-  "build_name": "Decision Evidence Pipeline",
-  "release_series": "APEX 48",
+  "apex_version": "66.2.0",
+  "build_name": "Execution Integrity & Level-Source Coverage",
+  "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-07-26",
+  "released_at": "2026-08-08",
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
     "fabricates_outcomes": false,
-    "requires_governed_terminal_outcomes": true
+    "requires_governed_terminal_outcomes": true,
+    "canonical_execution_boundary_required": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
