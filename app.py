@@ -8505,6 +8505,12 @@ def api_position_execution_control_prepare():
             return jsonify({"ok": False, "error": "Broker preview failed", "broker": result.to_dict()}), 502
         preview_data = dict(result.data or {})
         broker_quantity_before = int((readiness.get("order_intent") or {}).get("held_quantity") or 0)
+        broker_preview_id = str(preview_data.get("preview_id") or "")
+        if not broker_preview_id:
+            return jsonify({"ok": False, "error": "Broker preview did not return a preview_id"}), 502
+        from engine.execution.canonical_execution import get_execution_boundary
+        get_execution_boundary().register_management_preview(
+            broker_preview_id, intent=intent, held_quantity=broker_quantity_before)
     record = td10_create_order_record(readiness, preview_data, mode)
     record["broker_quantity_before"] = broker_quantity_before
     record["broker_status"] = status
@@ -8544,7 +8550,14 @@ def api_position_execution_control_confirm():
             return jsonify({"ok": False, "error": "SANDBOX mode requires ETRADE_ENV=sandbox"}), 409
         if mode == "LIVE_CONFIRMATION" and not (adapter.mode == "production" and os.getenv("APEX_TD10_ALLOW_LIVE", "false").lower() == "true"):
             return jsonify({"ok": False, "error": "Live execution is not explicitly armed"}), 409
-        result = adapter.place_order(str(record.get("broker_preview_id") or ""), intent)
+        from engine.execution.canonical_execution import get_execution_boundary
+        result = get_execution_boundary().execute_management_exit(
+            adapter=adapter,
+            preview_id=str(record.get("broker_preview_id") or ""),
+            intent=intent,
+            held_quantity=int(record.get("broker_quantity_before") or 0),
+            confirmed=True,
+        )
         submission = result.to_dict()
         record["state"] = "ACCEPTED" if result.ok else "REJECTED"
     record["submission"] = submission
