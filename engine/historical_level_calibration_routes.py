@@ -301,6 +301,24 @@ def register_calibration_routes(app, last_result_provider=None):
             }
         return jsonify(payload)
 
+    @app.get("/api/level-calibration/evidence-audit")
+    def level_calibration_evidence_audit():
+        """Read-only proof of persistent HLCE/LTPE and forecast archive evidence."""
+        try:
+            from .evidence_audit import evidence_audit
+            return jsonify(evidence_audit(calibration_path=service.path))
+        except Exception as exc:
+            return jsonify({
+                "ok": False,
+                "status": "DEGRADED",
+                "version": "50.7.2_EVIDENCE_AUDIT",
+                "read_only": True,
+                "failure_stage": "EVIDENCE_AUDIT_ROUTE_BOUNDARY",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "evidence_policy": "EVIDENCE_ONLY_NO_FABRICATION",
+            }), 200
+
     @app.get("/api/level-calibration/transitions/history")
     def level_transition_history():
         from .level_transition_probability import transition_history

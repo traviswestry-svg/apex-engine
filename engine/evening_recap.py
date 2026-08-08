@@ -333,11 +333,11 @@ def render_deterministic_markdown(session_date: str, comparison: dict) -> str:
         lines.append(f"Actual regime: **{comparison['actual_regime']}**. Morning projected: **{comparison['projected_regime']}**.")
     else:
         lines.append("Completed-session bars are unavailable; no outcome was fabricated.")
-    lines += ["", "## Key-Level Reactions", "", "| Level | Price | Tests | Outcome |", "|---|---:|---:|---|"]
+    lines += ["", "## Key-Level Reactions", "", "| Level | Price | Bar Touches | Outcome |", "|---|---:|---:|---|"]
     for x in [v for v in comparison["levels"] if v["touched"]][:15]:
         lines.append(f"| {x['label']} | {x['price']:.2f} | {x['touch_count']} | {x['outcome'].replace('_',' ')} |")
     if not any(v["touched"] for v in comparison["levels"]):
-        lines.append("| No tracked level was tested | — | — | — |")
+        lines.append("| No tracked level was touched | — | — | — |")
     return "\n".join(lines) + "\n"
 
 
