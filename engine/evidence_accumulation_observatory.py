@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -155,6 +156,106 @@ def _store(path: Optional[str], kind: str) -> Dict[str, Any]:
     return out
 
 
+
+def _level_family(level_type: Any) -> str:
+    k = str(level_type or "").strip().lower()
+    if not k:
+        return "OTHER_CANONICAL"
+    if "expected_move" in k or k.startswith("em_"):
+        return "EXPECTED_MOVE"
+    if any(t in k for t in ("gamma", "call_wall", "put_wall", "volatility_trigger", "dealer")):
+        return "GAMMA"
+    if any(t in k for t in ("poc", "vah", "val", "hvn", "lvn", "volume_profile")):
+        return "VOLUME_PROFILE"
+    if any(t in k for t in ("prev_", "prior_", "previous_")):
+        return "PRIOR_SESSION"
+    if any(t in k for t in ("overnight", "onh", "onl")):
+        return "OVERNIGHT"
+    if any(t in k for t in ("opening_range", "or5", "or15", "initial_balance", "ib_")):
+        return "OPENING_RANGE"
+    if any(t in k for t in ("auction", "excess", "single_print", "poor_high", "poor_low")):
+        return "AUCTION"
+    return "OTHER_CANONICAL"
+
+
+def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_date: Optional[str] = None) -> Dict[str, Any]:
+    """Read-only per-family HLCE lifecycle coverage for the active NY session.
+
+    Counts are evidence-backed only. `unavailable` means no active level from that
+    family reached HLCE for the session; it does not synthesize or infer a level.
+    """
+    families = [
+        "EXPECTED_MOVE", "GAMMA", "VOLUME_PROFILE", "PRIOR_SESSION",
+        "OVERNIGHT", "OPENING_RANGE", "AUCTION", "OTHER_CANONICAL",
+    ]
+    target = session_date or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    blank = {k: 0 for k in ("registered", "active", "touched", "crossed", "rejected",
+                              "accepted", "broken", "reclaimed", "graded", "pending", "stale")}
+    result = {name: dict(blank, unavailable=True) for name in families}
+    if not path or not Path(path).exists():
+        return {"symbol": symbol, "session_date": target, "state": "STORE_UNAVAILABLE", "families": result}
+    try:
+        uri = f"file:{Path(path).resolve()}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+            conn.row_factory = sqlite3.Row
+            levels = conn.execute(
+                "SELECT level_id,level_type,active FROM daily_levels WHERE session_date=? AND symbol=?",
+                (target, symbol.upper()),
+            ).fetchall()
+            by_id: Dict[str, str] = {}
+            for row in levels:
+                fam = _level_family(row["level_type"]); by_id[str(row["level_id"])] = fam
+                result[fam]["registered"] += 1
+                if int(row["active"] or 0): result[fam]["active"] += 1
+                else: result[fam]["stale"] += 1
+            interactions = conn.execute(
+                "SELECT level_id,interaction_type,graded FROM level_interactions WHERE session_date=? AND symbol=?",
+                (target, symbol.upper()),
+            ).fetchall()
+            seen = {name: {"touched": set(), "crossed": set(), "reclaimed": set(), "pending": set()} for name in families}
+            for row in interactions:
+                lid = str(row["level_id"]); fam = by_id.get(lid)
+                if not fam: continue
+                typ = str(row["interaction_type"] or "").upper()
+                if typ in {"FIRST_TOUCH", "RETEST"}: seen[fam]["touched"].add(lid)
+                if typ == "BREAK": seen[fam]["crossed"].add(lid)
+                if typ == "RECLAIM": seen[fam]["reclaimed"].add(lid)
+                if typ in {"FIRST_TOUCH", "RETEST"} and not int(row["graded"] or 0): seen[fam]["pending"].add(lid)
+            for fam in families:
+                for key in seen[fam]: result[fam][key] = len(seen[fam][key])
+            outcomes = conn.execute(
+                "SELECT level_id,classification,reacted,broke,accepted FROM level_outcomes WHERE session_date=? AND symbol=?",
+                (target, symbol.upper()),
+            ).fetchall()
+            graded = {name: set() for name in families}; accepted = {name: set() for name in families}; rejected = {name: set() for name in families}; broken = {name: set() for name in families}
+            for row in outcomes:
+                lid = str(row["level_id"]); fam = by_id.get(lid)
+                if not fam: continue
+                graded[fam].add(lid)
+                if int(row["accepted"] or 0): accepted[fam].add(lid)
+                if int(row["broke"] or 0) or str(row["classification"] or "").upper() == "BREAK": broken[fam].add(lid)
+                if int(row["reacted"] or 0) and not int(row["accepted"] or 0): rejected[fam].add(lid)
+            for fam in families:
+                result[fam]["graded"] = len(graded[fam]); result[fam]["accepted"] = len(accepted[fam])
+                result[fam]["rejected"] = len(rejected[fam]); result[fam]["broken"] = len(broken[fam])
+                result[fam]["unavailable"] = result[fam]["active"] == 0
+        return {"symbol": symbol.upper(), "session_date": target, "state": "READY", "families": result,
+                "definitions": {
+                    "touched": "distinct levels with FIRST_TOUCH or RETEST",
+                    "crossed": "distinct levels with a persisted BREAK interaction",
+                    "rejected": "graded levels with reacted=1 and accepted=0",
+                    "accepted": "graded levels with accepted=1",
+                    "broken": "graded levels with broke=1 or BREAK classification",
+                    "reclaimed": "distinct levels with a persisted RECLAIM interaction",
+                    "pending": "distinct levels with ungraded FIRST_TOUCH/RETEST",
+                    "stale": "registered levels retired from the active HLCE universe",
+                    "unavailable": "no active level from this family reached HLCE for the session",
+                }}
+    except Exception as exc:
+        return {"symbol": symbol.upper(), "session_date": target, "state": "ERROR", "families": result,
+                "error": f"{type(exc).__name__}: {exc}"}
+
+
 def build_observatory() -> Dict[str, Any]:
     paths = _resolved_paths()
     stores = {
@@ -177,12 +278,15 @@ def build_observatory() -> Dict[str, Any]:
     else:
         state = "ACCUMULATING"
 
+    level_source_coverage = _level_source_coverage(paths["calibration"])
+
     return {
-        "ok": not errors,
+        "ok": not errors and level_source_coverage.get("state") != "ERROR",
         "schema_version": SCHEMA_VERSION,
         "version": VERSION,
         "state": state,
         "stores": stores,
+        "level_source_coverage": level_source_coverage,
         "summary": {
             "store_count": len(stores),
             "accumulating": accumulating,
