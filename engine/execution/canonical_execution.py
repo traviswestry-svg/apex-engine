@@ -57,12 +57,21 @@ class ChangePreviewRecord:
     consumed: bool = False
 
 
+@dataclass
+class ManagementPreviewRecord:
+    created_at: float
+    intent: OrderIntent
+    held_quantity: int
+    consumed: bool = False
+
+
 class CanonicalExecutionBoundary:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._previews: Dict[str, PreviewRecord] = {}
         self._complex_previews: Dict[str, ComplexPreviewRecord] = {}
         self._change_previews: Dict[str, ChangePreviewRecord] = {}
+        self._management_previews: Dict[str, ManagementPreviewRecord] = {}
 
     def register_preview(self, preview_id: str, *, contract: Dict[str, Any], quantity: int,
                          entry_premium: float, stop_premium: float, session_state: str,
@@ -122,6 +131,63 @@ class CanonicalExecutionBoundary:
         if not result.ok:
             with self._lock:
                 self._complex_previews.pop(str(preview_id), None)
+        return result
+
+
+    def register_management_preview(self, preview_id: str, *, intent: OrderIntent,
+                                    held_quantity: int) -> None:
+        """Bind a risk-reducing management/exit intent to a broker preview."""
+        if not preview_id:
+            return
+        with self._lock:
+            self._management_previews[str(preview_id)] = ManagementPreviewRecord(
+                created_at=time.time(), intent=intent, held_quantity=int(held_quantity or 0),
+            )
+
+    def execute_management_exit(self, *, adapter: Any, preview_id: str, intent: OrderIntent,
+                                held_quantity: int, confirmed: bool) -> BrokerResult:
+        """Canonical boundary for SELL_CLOSE / risk-reducing position management.
+
+        Management exits intentionally do not inherit new-entry time/cooldown rules,
+        but they still require a live bound preview, exact intent immutability,
+        configured human confirmation, quantity validation, duplicate protection, and
+        a final risk-reduction check immediately before broker I/O.
+        """
+        limits = guard.RiskLimits.from_env()
+        if limits.require_confirmation and not confirmed:
+            return BrokerResult(ok=False, mode=_mode(adapter), errors=["Explicit human confirmation is required."])
+        if not preview_id:
+            return BrokerResult(ok=False, mode=_mode(adapter), errors=["Missing preview_id; management order must be previewed before placement."])
+        if str(getattr(intent, "action", "")).upper() != "SELL_CLOSE":
+            return BrokerResult(ok=False, mode=_mode(adapter), errors=["Management boundary only accepts SELL_CLOSE intents."])
+        now_epoch = time.time()
+        with self._lock:
+            rec = self._management_previews.get(str(preview_id))
+            if rec is None:
+                return BrokerResult(ok=False, mode=_mode(adapter), errors=["Unknown management preview_id; create a fresh broker preview."])
+            if rec.consumed:
+                return BrokerResult(ok=False, mode=_mode(adapter), errors=["Management preview already consumed; duplicate submission blocked."])
+            if now_epoch - rec.created_at > _preview_ttl():
+                self._management_previews.pop(str(preview_id), None)
+                return BrokerResult(ok=False, mode=_mode(adapter), errors=["Management preview expired; create a fresh broker preview."])
+            if rec.intent.to_dict() != intent.to_dict():
+                return BrokerResult(ok=False, mode=_mode(adapter), errors=["Management intent changed after preview; create a fresh broker preview."])
+            if int(rec.held_quantity) != int(held_quantity or 0):
+                return BrokerResult(ok=False, mode=_mode(adapter), errors=["Held quantity changed after preview; create a fresh broker preview."])
+
+        decision = guard.validate_exit_quantity(int(getattr(intent, "quantity", 0) or 0), int(held_quantity or 0))
+        if not decision.allow:
+            return BrokerResult(ok=False, mode=_mode(adapter), data={"risk": decision.to_dict()},
+                                errors=decision.reasons, warnings=decision.warnings)
+        with self._lock:
+            rec = self._management_previews.get(str(preview_id))
+            if rec is None or rec.consumed:
+                return BrokerResult(ok=False, mode=_mode(adapter), errors=["Management preview is no longer executable."])
+            rec.consumed = True
+        result = adapter.place_order(preview_id, intent)
+        if not result.ok:
+            with self._lock:
+                self._management_previews.pop(str(preview_id), None)
         return result
 
     def register_change_preview(self, preview_id: str, *, order_id: str, change_intent: ChangeIntent,
