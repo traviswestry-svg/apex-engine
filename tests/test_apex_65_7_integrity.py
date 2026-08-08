@@ -297,3 +297,44 @@ def test_6576_runtime_db_gitignore_is_real_file():
     from pathlib import Path
     ignore = Path(".gitignore").read_text()
     assert "*.db" in ignore and "*.db-wal" in ignore and "*.db-shm" in ignore
+
+
+def test_662_phase10_management_exit_uses_canonical_boundary(monkeypatch):
+    boundary = CanonicalExecutionBoundary()
+    adapter = Mock(mode="sandbox", trading_enabled=False)
+    adapter.place_order.return_value = BrokerResult(ok=True, mode="sandbox", data={"order_id": "exit1"})
+    intent = OrderIntent(symbol="SPX", osi_key="SPXW TEST", side="CALL",
+                         action="SELL_CLOSE", quantity=1, limit_price=10.0, tag="EXIT")
+    boundary.register_management_preview("mx1", intent=intent, held_quantity=2)
+    out = boundary.execute_management_exit(adapter=adapter, preview_id="mx1", intent=intent,
+                                           held_quantity=2, confirmed=True)
+    assert out.ok is True
+    assert boundary.execute_management_exit(adapter=adapter, preview_id="mx1", intent=intent,
+                                            held_quantity=2, confirmed=True).ok is False
+    assert adapter.place_order.call_count == 1
+
+
+def test_662_management_exit_blocks_changed_held_quantity():
+    boundary = CanonicalExecutionBoundary()
+    adapter = Mock(mode="sandbox", trading_enabled=False)
+    intent = OrderIntent(symbol="SPX", osi_key="SPXW TEST", side="CALL",
+                         action="SELL_CLOSE", quantity=1, limit_price=10.0, tag="EXIT")
+    boundary.register_management_preview("mx2", intent=intent, held_quantity=2)
+    out = boundary.execute_management_exit(adapter=adapter, preview_id="mx2", intent=intent,
+                                           held_quantity=1, confirmed=True)
+    assert out.ok is False
+    adapter.place_order.assert_not_called()
+
+
+def test_662_no_direct_broker_mutation_outside_canonical_boundary():
+    from pathlib import Path
+    mutation_tokens = (".place_order(", ".place_complex_order(", ".place_change_order(", ".cancel_order(")
+    offenders = []
+    for path in [Path("app.py"), *Path("engine").rglob("*.py")]:
+        if path.as_posix() in {"engine/execution/canonical_execution.py", "engine/brokers/etrade_adapter.py"}:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for token in mutation_tokens:
+            if token in text:
+                offenders.append((path.as_posix(), token))
+    assert offenders == []
