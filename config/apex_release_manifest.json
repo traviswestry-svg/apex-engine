@@ -1,6 +1,6 @@
 {
-  "apex_version": "66.2.1",
-  "build_name": "Session-Aware Evidence Diagnostics",
+  "apex_version": "66.2.2",
+  "build_name": "Historical Level Lifecycle Semantics",
   "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
