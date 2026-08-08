@@ -3,6 +3,6 @@ from engine.release_manager import APPLICATION_VERSION, SEMANTIC_VERSION
 
 
 def test_current_manifest_is_canonical_release():
-    assert RELEASE_MANIFEST["apex_version"] == "66.2.0"
-    assert APPLICATION_VERSION == "66.2.0"
-    assert SEMANTIC_VERSION == "66.2.0"
+    assert RELEASE_MANIFEST["apex_version"] == "66.2.1"
+    assert APPLICATION_VERSION == "66.2.1"
+    assert SEMANTIC_VERSION == "66.2.1"
