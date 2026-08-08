@@ -2,9 +2,11 @@
 from __future__ import annotations
 import datetime as dt, hashlib, json, os, sqlite3
 from typing import Any
+from .persistent_store import persistent_sqlite_path
+from .session_intelligence import classify_session
 
 VERSION = "50.7.1_REPORT_REVIEW_ARCHIVE"
-DB_PATH = os.getenv("APEX_GOVERNANCE_DB", os.path.join(os.path.dirname(os.path.dirname(__file__)), "apex_governance.db"))
+DB_PATH = persistent_sqlite_path("APEX_GOVERNANCE_DB", "apex_governance.db")
 
 def _json(v: Any) -> str:
     return json.dumps(v, sort_keys=True, separators=(",", ":"), default=str)
@@ -14,7 +16,7 @@ def _today(payload: dict) -> str:
         v = payload.get(key)
         if v:
             return str(v)[:10]
-    return dt.datetime.now(dt.timezone.utc).date().isoformat()
+    return classify_session().target_session_date
 
 def init_db() -> None:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)

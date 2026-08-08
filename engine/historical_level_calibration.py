@@ -29,8 +29,10 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from .persistent_store import persistent_sqlite_path
+from .session_intelligence import classify_session
 from statistics import median
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -67,7 +69,22 @@ def collector_enabled() -> bool:
 
 
 def _db_path() -> str:
-    return os.getenv("APEX_CALIBRATION_DB", "apex_calibration.db")
+    return persistent_sqlite_path("APEX_CALIBRATION_DB", "apex_calibration.db")
+
+
+def _canonical_learning_session_date(now_epoch: Optional[float] = None) -> str:
+    """Return the canonical US/Eastern evidence session, never a weekend date.
+
+    HLCE evidence belongs to the trading session supplying the observed SPX
+    state.  During weekend/after-hours next-session preparation this is the
+    most recently completed trading session, not the UTC calendar date.
+    """
+    if now_epoch is None:
+        ctx = classify_session()
+    else:
+        moment = datetime.fromtimestamp(float(now_epoch), timezone.utc)
+        ctx = classify_session(moment)
+    return str(ctx.source_session_date)
 
 
 # Interaction detection thresholds. Bands are the larger of an absolute floor
@@ -392,7 +409,47 @@ def initialize_store(path: Optional[str] = None) -> None:
             if name not in cols:
                 conn.execute(f"ALTER TABLE daily_levels ADD COLUMN {name} {ddl}")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_daily_levels_active ON daily_levels(session_date,symbol,active,level_type)")
+        _repair_weekend_session_dates(conn)
         conn.commit()
+
+
+def _repair_weekend_session_dates(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """Best-effort one-time repair for legacy UTC-derived weekend buckets.
+
+    Rows previously written after 20:00 ET on Friday could be stamped as
+    Saturday because HLCE used UTC calendar dates.  Weekend evidence is moved
+    back to the most recent weekday only when doing so cannot collide with an
+    already-populated target session in the same table.
+    """
+    tables = (
+        "daily_levels", "level_interactions", "level_outcomes",
+        "level_price_samples", "trade_replays",
+    )
+    repaired = 0
+    skipped = []
+    for table in tables:
+        cols = {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if "session_date" not in cols:
+            continue
+        dates = [str(r[0]) for r in conn.execute(f"SELECT DISTINCT session_date FROM {table} WHERE session_date IS NOT NULL").fetchall()]
+        for raw in dates:
+            try:
+                day = datetime.fromisoformat(raw[:10]).date()
+            except Exception:
+                continue
+            if day.weekday() < 5:
+                continue
+            target = day
+            while target.weekday() >= 5:
+                target = target - timedelta(days=1)
+            target_s = target.isoformat()
+            existing = int(conn.execute(f"SELECT COUNT(*) FROM {table} WHERE session_date=?", (target_s,)).fetchone()[0] or 0)
+            if existing:
+                skipped.append({"table": table, "from": raw, "to": target_s, "reason": "TARGET_SESSION_ALREADY_POPULATED"})
+                continue
+            cur = conn.execute(f"UPDATE {table} SET session_date=? WHERE session_date=?", (target_s, raw))
+            repaired += int(cur.rowcount or 0)
+    return {"repaired_rows": repaired, "skipped": skipped}
 
 
 # --------------------------------------------------------------------------- #
@@ -635,7 +692,7 @@ def register_daily_levels(snapshot: Mapping[str, Any], *, path: Optional[str] = 
                           session_date: Optional[str] = None) -> Dict[str, Any]:
     ctx = extract_context(snapshot)
     levels = extract_levels(snapshot)
-    session_date = session_date or datetime.now(timezone.utc).date().isoformat()
+    session_date = session_date or _canonical_learning_session_date()
     registered, reused, retired = 0, 0, 0
     now_iso=_utc_now()
     # The current snapshot is authoritative for the active level universe.
@@ -800,7 +857,7 @@ class Collector:
     def observe(self, snapshot: Mapping[str, Any], *, now: Optional[float] = None) -> Dict[str, Any]:
         now = now if now is not None else _now_ts()
         ctx = extract_context(snapshot)
-        session_date = datetime.fromtimestamp(now, timezone.utc).date().isoformat()
+        session_date = _canonical_learning_session_date(now)
         self.stats["observations"] = int(self.stats.get("observations") or 0) + 1
         if ctx.spot is None:
             self.stats["dropped"] += 1
@@ -1342,7 +1399,7 @@ def record_trade_replay(snapshot: Mapping[str, Any], trade_result: Optional[Mapp
                         *, trade_id: Optional[str] = None, path: Optional[str] = None) -> Dict[str, Any]:
     ctx = extract_context(snapshot)
     levels = extract_levels(snapshot)
-    session_date = datetime.now(timezone.utc).date().isoformat()
+    session_date = _canonical_learning_session_date()
     calib_snapshot = {}
     for lt in {l.level_type for l in levels}:
         calib_snapshot[lt] = calibrated_probabilities(ctx.symbol, lt, context=ctx.__dict__, path=path)
@@ -1547,7 +1604,7 @@ class CalibrationService:
     # --- read APIs backing the routes ---
     def status(self) -> Dict[str, Any]:
         health = db_health(path=self.path)
-        session_date = datetime.now(timezone.utc).date().isoformat()
+        session_date = _canonical_learning_session_date()
         with _connect(self.path) as conn:
             today_levels = conn.execute(
                 "SELECT COUNT(*) FROM daily_levels WHERE session_date=? AND active=1", (session_date,)).fetchone()[0]
@@ -1630,7 +1687,7 @@ class CalibrationService:
         return {"graded_last_24h": recent}
 
     def levels(self, session_date: Optional[str] = None, symbol: Optional[str] = None) -> Dict[str, Any]:
-        session_date = session_date or datetime.now(timezone.utc).date().isoformat()
+        session_date = session_date or _canonical_learning_session_date()
         initialize_store(self.path)
         query = "SELECT * FROM daily_levels WHERE session_date=? AND active=1"
         params: List[Any] = [session_date]

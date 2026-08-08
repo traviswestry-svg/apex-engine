@@ -1,6 +1,7 @@
 """Routes and dashboard for APEX 11.1 Institutional Execution OS."""
 from __future__ import annotations
 from typing import Any, Callable, Mapping
+import threading
 from flask import jsonify, render_template
 from .institutional_execution_os import VERSION, build_execution_snapshot, build_morning_readiness
 from .operations_routes import _all_checks
@@ -13,6 +14,18 @@ def register_execution_os_routes(
     session_provider: Callable[[], Any] | None = None,
     risk_config_provider: Callable[[], Mapping[str, Any]] | None = None,
 ) -> None:
+    # APEX 50.7.2.1: initialize review/archive schemas off the request thread.
+    # This guarantees evidence-audit visibility without adding startup latency.
+    def _archive_schema_bootstrap():
+        try:
+            from .evening_recap import init_db as init_evening_archive
+            from .report_archive import init_db as init_readiness_archive
+            init_evening_archive()
+            init_readiness_archive()
+        except Exception as exc:
+            print(f"[APEX50.7.2.1] archive schema bootstrap failed (non-fatal): {exc}", flush=True)
+
+    threading.Thread(target=_archive_schema_bootstrap, name="apex-archive-schema-bootstrap", daemon=True).start()
     def current():
         try:
             value = last_result_provider() or {}

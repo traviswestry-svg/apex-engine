@@ -12,6 +12,7 @@ import os
 import re
 import sqlite3
 from typing import Any, Iterable, Optional
+from .persistent_store import persistent_sqlite_path
 
 try:
     from zoneinfo import ZoneInfo
@@ -20,7 +21,7 @@ except Exception:  # pragma: no cover
     ET = dt.timezone(dt.timedelta(hours=-5))
 
 VERSION = "49.1.0_FORECAST_ARCHIVE_INTEGRITY"
-DB_PATH = os.getenv("APEX_GOVERNANCE_DB", os.path.join(os.path.dirname(os.path.dirname(__file__)), "apex_governance.db"))
+DB_PATH = persistent_sqlite_path("APEX_GOVERNANCE_DB", "apex_governance.db")
 FEED_REQUIRED = "[FEED REQUIRED]"
 REGIMES = ("EVENT DRIVEN", "MEAN REVERSION", "HIGH VOLATILITY", "LOW VOLATILITY", "BALANCED AUCTION", "COMPRESSION", "EXPANSION", "TREND")
 

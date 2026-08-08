@@ -10,6 +10,7 @@ import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
+from .persistent_store import persistent_sqlite_path
 
 VERSION = "50.7.2_EVIDENCE_AUDIT"
 
@@ -104,10 +105,7 @@ def evidence_audit(*, calibration_path: Optional[str] = None,
         from .historical_level_calibration import _db_path
         calibration_path = _db_path()
     if not governance_path:
-        governance_path = os.getenv(
-            "APEX_GOVERNANCE_DB",
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "apex_governance.db"),
-        )
+        governance_path = persistent_sqlite_path("APEX_GOVERNANCE_DB", "apex_governance.db")
 
     calibration = _inspect_store(calibration_path, CALIBRATION_TABLES)
     governance = _inspect_store(governance_path, GOVERNANCE_TABLES)
