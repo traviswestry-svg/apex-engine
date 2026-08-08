@@ -10,7 +10,6 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
@@ -179,21 +178,24 @@ def _level_family(level_type: Any) -> str:
 
 
 def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_date: Optional[str] = None) -> Dict[str, Any]:
-    """Read-only per-family HLCE lifecycle coverage for the active NY session.
+    """Read-only per-family HLCE lifecycle coverage for a resolved evidence session.
 
     Counts are evidence-backed only. `unavailable` means no active level from that
-    family reached HLCE for the session; it does not synthesize or infer a level.
+    family reached HLCE for the effective session; it does not synthesize or infer
+    a level. Explicit historical session overrides are honored exactly.
     """
     families = [
         "EXPECTED_MOVE", "GAMMA", "VOLUME_PROFILE", "PRIOR_SESSION",
         "OVERNIGHT", "OPENING_RANGE", "AUCTION", "OTHER_CANONICAL",
     ]
-    target = session_date or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    from .historical_level_calibration import resolve_evidence_session_date
+    session = resolve_evidence_session_date(path=path, symbol=symbol, requested_date=session_date)
+    target = session["effective_session_date"]
     blank = {k: 0 for k in ("registered", "active", "touched", "crossed", "rejected",
                               "accepted", "broken", "reclaimed", "graded", "pending", "stale")}
     result = {name: dict(blank, unavailable=True) for name in families}
     if not path or not Path(path).exists():
-        return {"symbol": symbol, "session_date": target, "state": "STORE_UNAVAILABLE", "families": result}
+        return {"symbol": symbol.upper(), "session_date": target, **session, "state": "STORE_UNAVAILABLE", "families": result}
     try:
         uri = f"file:{Path(path).resolve()}?mode=ro"
         with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
@@ -239,7 +241,7 @@ def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_
                 result[fam]["graded"] = len(graded[fam]); result[fam]["accepted"] = len(accepted[fam])
                 result[fam]["rejected"] = len(rejected[fam]); result[fam]["broken"] = len(broken[fam])
                 result[fam]["unavailable"] = result[fam]["active"] == 0
-        return {"symbol": symbol.upper(), "session_date": target, "state": "READY", "families": result,
+        return {"symbol": symbol.upper(), "session_date": target, **session, "state": "READY", "families": result,
                 "definitions": {
                     "touched": "distinct levels with FIRST_TOUCH or RETEST",
                     "crossed": "distinct levels with a persisted BREAK interaction",
@@ -252,11 +254,11 @@ def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_
                     "unavailable": "no active level from this family reached HLCE for the session",
                 }}
     except Exception as exc:
-        return {"symbol": symbol.upper(), "session_date": target, "state": "ERROR", "families": result,
+        return {"symbol": symbol.upper(), "session_date": target, **session, "state": "ERROR", "families": result,
                 "error": f"{type(exc).__name__}: {exc}"}
 
 
-def build_observatory() -> Dict[str, Any]:
+def build_observatory(*, symbol: str = "SPX", session_date: Optional[str] = None) -> Dict[str, Any]:
     paths = _resolved_paths()
     stores = {
         "calibration": _calibration(paths["calibration"]),
@@ -278,7 +280,7 @@ def build_observatory() -> Dict[str, Any]:
     else:
         state = "ACCUMULATING"
 
-    level_source_coverage = _level_source_coverage(paths["calibration"])
+    level_source_coverage = _level_source_coverage(paths["calibration"], symbol=symbol, session_date=session_date)
 
     return {
         "ok": not errors and level_source_coverage.get("state") != "ERROR",

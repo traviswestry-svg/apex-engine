@@ -126,11 +126,18 @@ def register_calibration_routes(app, last_result_provider=None):
 
     @app.get("/api/level-calibration/active-levels/diagnostics")
     def level_calibration_active_levels_diagnostics():
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
         from .canonical_session_context import active_levels as registry_active_levels, latest as latest_context
-        target = request.args.get("session_date") or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        from .historical_level_calibration import resolve_evidence_session_date
         symbol = request.args.get("symbol", "SPX").upper()
+        try:
+            session = resolve_evidence_session_date(
+                path=service.path,
+                symbol=symbol,
+                requested_date=request.args.get("session_date"),
+            )
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        target = session["effective_session_date"]
         registry = registry_active_levels(symbol, target_session_date=target)
         hlce = service.levels(session_date=target, symbol=symbol)
         ctx = latest_context(symbol, target_session_date=target)
@@ -143,6 +150,7 @@ def register_calibration_routes(app, last_result_provider=None):
             "ok": True,
             "version": "66.1.2_DYNAMIC_LEVEL_IDENTITY",
             "session_date": target,
+            **session,
             "symbol": symbol,
             "canonical_context_present": bool(ctx),
             "canonical_context_generated_at": (ctx or {}).get("generated_at"),

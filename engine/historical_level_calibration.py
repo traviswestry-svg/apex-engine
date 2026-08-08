@@ -87,6 +87,72 @@ def _canonical_learning_session_date(now_epoch: Optional[float] = None) -> str:
     return str(ctx.source_session_date)
 
 
+def resolve_evidence_session_date(
+    *,
+    path: Optional[str] = None,
+    symbol: str = "SPX",
+    requested_date: Optional[str] = None,
+    now_epoch: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Resolve the read-only evidence session used by HLCE diagnostics.
+
+    An explicit ``requested_date`` is honored exactly so operators can inspect
+    any historical session.  Without an override, diagnostics use the canonical
+    learning session and then prefer the most recent persisted HLCE session on
+    or before that date.  This prevents weekends/holidays from presenting a
+    misleading all-zero current-calendar-day view while never inventing levels.
+    """
+    from zoneinfo import ZoneInfo
+
+    if now_epoch is None:
+        wall_moment = datetime.now(ZoneInfo("America/New_York"))
+    else:
+        wall_moment = datetime.fromtimestamp(float(now_epoch), timezone.utc).astimezone(ZoneInfo("America/New_York"))
+    wall_date = wall_moment.date().isoformat()
+    canonical = _canonical_learning_session_date(now_epoch)
+    market_session_today = canonical == wall_date
+    if requested_date:
+        try:
+            normalized = datetime.strptime(str(requested_date), "%Y-%m-%d").date().isoformat()
+        except (TypeError, ValueError) as exc:
+            raise ValueError("session_date must use YYYY-MM-DD") from exc
+        return {
+            "requested_date": normalized,
+            "effective_session_date": normalized,
+            "session_resolution": "EXPLICIT_OVERRIDE",
+            "market_session_today": market_session_today,
+        }
+
+    effective = canonical
+    resolution = "CURRENT_TRADING_SESSION" if canonical == wall_date else "CANONICAL_SOURCE_SESSION"
+    db = path or _db_path()
+    try:
+        if db and Path(db).exists():
+            uri = f"file:{Path(db).resolve()}?mode=ro"
+            with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+                row = conn.execute(
+                    "SELECT MAX(session_date) FROM daily_levels WHERE symbol=? AND session_date<=?",
+                    (_norm(symbol), canonical),
+                ).fetchone()
+            latest = str(row[0]) if row and row[0] else None
+            if latest:
+                effective = latest
+                if latest != wall_date:
+                    resolution = "MOST_RECENT_REGISTERED_TRADING_SESSION"
+    except Exception:
+        # Diagnostics must remain available even when the read-only history
+        # lookup cannot be completed; canonical session intelligence remains
+        # the safe fallback.
+        pass
+
+    return {
+        "requested_date": wall_date,
+        "effective_session_date": effective,
+        "session_resolution": resolution,
+        "market_session_today": market_session_today,
+    }
+
+
 # Interaction detection thresholds. Bands are the larger of an absolute floor
 # and a fraction of price, so they scale from SPY (~600) to SPX/NDX (~6000+).
 def _touch_band(price: float) -> float:
