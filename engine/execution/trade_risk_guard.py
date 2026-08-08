@@ -265,3 +265,55 @@ def validate_exit_quantity(exit_qty: int, position_qty: int) -> RiskDecision:
     if exit_qty > position_qty:
         return RiskDecision.deny(f"Sell-to-close qty {exit_qty} exceeds position {position_qty}.")
     return RiskDecision(allow=True)
+
+# ── Complex strategy entry validation ────────────────────────────────────────
+def validate_complex_entry(*, intent: Any, economics: Dict[str, Any],
+                           limits: Optional[RiskLimits] = None,
+                           session_state: str = "MARKET_OPEN",
+                           now: Optional[dt.datetime] = None,
+                           last_order_epoch: Optional[float] = None,
+                           now_epoch: Optional[float] = None,
+                           live_trading_enabled: bool = False) -> RiskDecision:
+    """Fail-closed validation for defined-risk multi-leg option entries."""
+    limits = limits or RiskLimits.from_env()
+    reasons: List[str] = []
+    symbol = str(getattr(intent, "symbol", "") or "").upper()
+    qty = int(getattr(intent, "quantity", 0) or 0)
+    legs = tuple(getattr(intent, "legs", ()) or ())
+    if symbol not in limits.symbol_whitelist:
+        reasons.append(f"Only {'/'.join(limits.symbol_whitelist)} permitted (got {symbol or 'unknown'}).")
+    if not (2 <= len(legs) <= 4):
+        reasons.append("Complex entry must contain 2 to 4 option legs.")
+    if qty <= 0 or qty > limits.max_contracts:
+        reasons.append(f"Strategy quantity must be between 1 and {limits.max_contracts}.")
+    for leg in legs:
+        if not getattr(leg, "osi_key", ""):
+            reasons.append("Every strategy leg requires a resolved OSI key.")
+            break
+        age = getattr(leg, "quote_age_seconds", None)
+        if age is not None and float(age) > limits.max_quote_age_seconds:
+            reasons.append(f"Strategy contains stale quote ({float(age):.0f}s > {limits.max_quote_age_seconds:.0f}s).")
+            break
+        if getattr(leg, "bid", None) is None or getattr(leg, "ask", None) is None:
+            reasons.append("Every strategy leg requires a complete bid/ask quote.")
+            break
+    max_loss = (economics or {}).get("max_loss")
+    if max_loss is None:
+        reasons.append("Defined maximum loss is required for complex entry.")
+    else:
+        try:
+            if float(max_loss) > limits.max_risk_per_trade:
+                reasons.append(f"Strategy risk ${float(max_loss):,.0f} exceeds max ${limits.max_risk_per_trade:,.0f}.")
+        except Exception:
+            reasons.append("Strategy maximum loss is invalid.")
+    if session_state != "MARKET_OPEN":
+        reasons.append("Market is not in RTH — no new strategy entries.")
+    else:
+        mins = _now_et_minutes(now)
+        if mins >= _hhmm_to_min(limits.no_new_trades_after_et):
+            reasons.append(f"Past the no-new-trades cutoff ({limits.no_new_trades_after_et} ET).")
+    if last_order_epoch is not None and now_epoch is not None and now_epoch - last_order_epoch < limits.cooldown_seconds:
+        reasons.append(f"Cooldown active ({limits.cooldown_seconds}s between orders).")
+    if live_trading_enabled and not _envb("ETRADE_ENABLE_TRADING", False):
+        reasons.append("Live trading requested but ETRADE_ENABLE_TRADING is not true — refusing.")
+    return RiskDecision(allow=not reasons, reasons=reasons, requires_confirmation=True)

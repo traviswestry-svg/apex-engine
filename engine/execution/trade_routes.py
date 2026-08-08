@@ -379,9 +379,14 @@ def register_trade_routes(
             return jsonify(envelope(False, {"state": "ARMED_EXECUTION_BLOCKED"}, errors=errors))
         intent = _complex_intent(body)
         r = _adapter().preview_complex_order(intent)
+        preview_id = (r.data or {}).get("preview_id")
+        if r.ok and preview_id:
+            get_execution_boundary().register_complex_preview(
+                str(preview_id), intent=intent, economics=body.get("economics") or {},
+                session_state=body.get("session_state", "MARKET_OPEN"))
         data = {"state": "PREVIEWED" if r.ok else "ARMED_EXECUTION_BLOCKED",
                 "intent": intent.to_dict(), "broker": r.data,
-                "preview_id": (r.data or {}).get("preview_id"), "economics": body.get("economics") or {}}
+                "preview_id": preview_id, "economics": body.get("economics") or {}}
         audit("COMPLEX_PREVIEW_RESPONSE", {"ok": r.ok, "strategy": intent.strategy,
                                            "preview_id": data.get("preview_id"), "legs": len(intent.legs)})
         return jsonify(envelope(r.ok, data, mode=r.mode, warnings=r.warnings, errors=r.errors))
@@ -397,7 +402,11 @@ def register_trade_routes(
         if errors:
             return jsonify(envelope(False, errors=errors))
         intent = _complex_intent(body)
-        r = _adapter().place_complex_order(str(body.get("preview_id")), intent)
+        r = get_execution_boundary().execute_complex(
+            adapter=_adapter(), preview_id=str(body.get("preview_id")), intent=intent,
+            economics=body.get("economics") or {},
+            session_state=body.get("session_state", "MARKET_OPEN"),
+            last_order_epoch=_LAST_ORDER_EPOCH.get("SPX"))
         if r.ok:
             _LAST_ORDER_EPOCH["SPX"] = time.time()
         audit("COMPLEX_ORDER_PLACED", {"ok": r.ok, "strategy": intent.strategy,
@@ -436,8 +445,19 @@ def register_trade_routes(
                           new_limit_price=new_price if line != "STOP" else None,
                           new_stop_price=new_price if line == "STOP" else None, tag=line)
         r = _adapter().preview_change_order(order_id, ci) if order_id else None
+        preview_id = ((r.data or {}).get("preview_id") if r else None)
+        risk_context = {
+            "line": line, "new_price": new_price,
+            "entry_premium": body.get("entry_premium"), "current_premium": body.get("current_premium"),
+            "levels": body.get("levels") or {}, "side": body.get("side", "CALL"),
+            "position_qty": int(body.get("position_qty") or 0), "exit_qty": body.get("exit_qty"),
+            "breakeven_armed": bool(body.get("breakeven_armed")),
+        }
+        if r and r.ok and preview_id and order_id:
+            get_execution_boundary().register_change_preview(
+                str(preview_id), order_id=str(order_id), change_intent=ci, risk_context=risk_context)
         data = {"risk": decision.to_dict(),
-                "broker": (r.data if r else {}), "preview_id": ((r.data or {}).get("preview_id") if r else None),
+                "broker": (r.data if r else {}), "preview_id": preview_id,
                 "change": ci.to_dict()}
         ok = decision.allow and (r.ok if r else True)
         return jsonify(envelope(ok, data, warnings=decision.warnings,
@@ -455,7 +475,16 @@ def register_trade_routes(
         ci = ChangeIntent(order_id=order_id or "",
                           new_limit_price=new_price if line != "STOP" else None,
                           new_stop_price=new_price if line == "STOP" else None, tag=line)
-        r = _adapter().place_change_order(order_id, preview_id, ci)
+        risk_context = {
+            "line": line, "new_price": new_price,
+            "entry_premium": body.get("entry_premium"), "current_premium": body.get("current_premium"),
+            "levels": body.get("levels") or {}, "side": body.get("side", "CALL"),
+            "position_qty": int(body.get("position_qty") or 0), "exit_qty": body.get("exit_qty"),
+            "breakeven_armed": bool(body.get("breakeven_armed")),
+        }
+        r = get_execution_boundary().execute_change(
+            adapter=_adapter(), preview_id=str(preview_id or ""), order_id=str(order_id or ""),
+            change_intent=ci, risk_context=risk_context)
         audit("CHANGE_ORDER", {"ok": r.ok, "line": line, "new_price": new_price, "order_id": order_id})
         return jsonify(envelope(r.ok, {"broker": r.data}, mode=r.mode, errors=r.errors))
 
@@ -465,7 +494,9 @@ def register_trade_routes(
         order_id = body.get("order_id")
         if not order_id:
             return jsonify(envelope(False, errors=["order_id required"]))
-        r = _adapter().cancel_order(order_id)
+        if not body.get("confirmed") and guard.RiskLimits.from_env().require_confirmation:
+            return jsonify(envelope(False, errors=["Confirmation required to cancel an order (confirmed=true)."]))
+        r = get_execution_boundary().execute_cancel(adapter=_adapter(), order_id=str(order_id))
         audit("CANCEL_ORDER", {"ok": r.ok, "order_id": order_id})
         return jsonify(envelope(r.ok, {"broker": r.data}, mode=r.mode, errors=r.errors))
 
