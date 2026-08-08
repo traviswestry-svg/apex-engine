@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 66.2.0
+apex_version: 66.2.1
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: 66.2.0
+    version: 66.2.1
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]

@@ -1,6 +1,6 @@
 {
-  "apex_version": "66.2.0",
-  "build_name": "Execution Integrity & Level-Source Coverage",
+  "apex_version": "66.2.1",
+  "build_name": "Session-Aware Evidence Diagnostics",
   "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
