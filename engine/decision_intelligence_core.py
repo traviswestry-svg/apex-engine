@@ -129,9 +129,9 @@ def _evidence_rows(decision: Mapping[str, Any]) -> list[dict[str, Any]]:
         dominant = str(consensus.get("dominant_direction") or "NEUTRAL").upper()
         polarity = "SUPPORTING" if direction == dominant and dominant != "NEUTRAL" else ("CONFLICTING" if direction not in {"NEUTRAL", dominant} else "NEUTRAL")
         rows.append({
-            "category": str(source.get("source") or "CONSENSUS").upper(),
+            "category": str(source.get("engine_name") or source.get("source") or "CONSENSUS").upper(),
             "polarity": polarity,
-            "source_name": source.get("source"),
+            "source_name": source.get("engine_name") or source.get("source"),
             "observed_at": decision.get("timestamp") or _now(),
             "evidence": dict(source),
             "provenance": {"origin": "institutional_consensus.sources", "post_hoc": False},
