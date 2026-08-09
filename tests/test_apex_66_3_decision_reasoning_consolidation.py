@@ -12,7 +12,7 @@ def test_missing_data_abstains_not_neutral_or_disagreement():
     assert all(o['direction'] == 'ABSTAIN' for o in opinions)
     c = build_correlation_aware_consensus(opinions)
     assert c['status'] == 'UNAVAILABLE'
-    assert c['direction'] == 'NEUTRAL'
+    assert c['direction'] == 'UNKNOWN'
     assert c['contradicting_engines'] == []
     assert len(c['abstaining_engines']) == len(opinions)
 
