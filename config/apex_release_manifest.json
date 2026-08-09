@@ -1,6 +1,6 @@
 {
-  "apex_version": "66.3.1",
-  "build_name": "Decision Adapter & State Semantics Hardening",
+  "apex_version": "66.3.2",
+  "build_name": "Stateful Thesis Persistence & Structured Invalidation Lifecycle",
   "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -17,7 +17,12 @@
     "calibrated_conviction_requires_approved_history": true,
     "production_schema_adapters": true,
     "zero_evidence_resolves_unknown": true,
-    "closed_session_propagation": true
+    "closed_session_propagation": true,
+    "stateful_thesis_persistence": true,
+    "structured_invalidation_lifecycle": true,
+    "thesis_replay_persistence": true,
+    "hard_invalidation_requires_explicit_input": true,
+    "closed_session_junk_persistence_blocked": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

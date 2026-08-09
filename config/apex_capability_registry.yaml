@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 66.3.1
+apex_version: 66.3.2
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: 66.3.1
+    version: 66.3.2
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -28,12 +28,21 @@ capabilities:
   canonical_institutional_decision:
     canonical_module: engine.institutional_decision_object
     status: active
-    version: 66.3.1
-    inputs: [normalized_engine_opinions, normalized_acceptance, correlation_aware_consensus, raw_conviction, graded_history_maturity, execution_intelligence]
+    version: 66.3.2
+    inputs: [normalized_engine_opinions, normalized_acceptance, correlation_aware_consensus, raw_conviction, graded_history_maturity, execution_intelligence, thesis_lifecycle]
     outputs: [institutional_decision_v3, institutional_thesis, evidence_conflict_matrix]
-    api_routes: [/api/institutional-decision, /api/institutional-consensus, /api/institutional-conviction, /api/institutional-narrative]
+    api_routes: [/api/institutional-decision, /api/institutional-consensus, /api/institutional-conviction, /api/institutional-narrative, /api/institutional-thesis, /api/institutional-thesis/history]
     decision_authority: canonical
     compatibility: Legacy decision/narrative modules may adapt to this contract but must not independently synthesize authoritative consensus or conviction.
+  institutional_thesis_lifecycle:
+    canonical_module: engine.thesis_lifecycle
+    status: active
+    version: 66.3.2
+    inputs: [canonical_institutional_thesis_candidate, explicit_invalidation_inputs, current_market_price, session_state]
+    outputs: [persisted_thesis_state, thesis_transition_events, structured_invalidation_evaluation]
+    api_routes: [/api/institutional-thesis, /api/institutional-thesis/history]
+    decision_authority: none
+    guardrails: [no_direction_synthesis, no_conviction_synthesis, explicit_hard_invalidation_only, ambiguous_soft_triggers_fail_closed, append_only_transition_events, no_closed_weekend_junk_records]
   decision_reasoning_normalization:
     canonical_module: engine.decision_reasoning_contracts
     status: active
