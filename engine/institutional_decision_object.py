@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional
 from .institutional_narrative import build_institutional_narrative
 
-VERSION = "66.3.0"
+VERSION = "66.3.1"
 SCHEMA_VERSION = "apex.institutional_decision.v3"
 
 def _d(value: Any) -> Dict[str, Any]: return dict(value) if isinstance(value, Mapping) else {}
@@ -29,12 +29,12 @@ def build_canonical_institutional_decision(last_result: Mapping[str, Any], *, re
                                            session_state: Optional[str] = None) -> Dict[str, Any]:
     last=_d(last_result); narrative=build_institutional_narrative(last,session_state=session_state); consensus=narrative['consensus']; conviction=narrative['conviction']; thesis=_d(narrative.get('thesis')); acceptance=_d(narrative.get('acceptance'))
     market=_d(last.get('market_state')); execution=_d(last.get('execution_intelligence') or last.get('execution_os')); position=_d(last.get('position_quality') or last.get('position_quality_snapshot')); recommendation=_d(last.get('recommendation') or last.get('premium_strategy')); provider=_d(last.get('provider_health')); ledger=_d(last.get('recommendation_ledger'))
-    direction=consensus.get('dominant_direction',consensus.get('direction','NEUTRAL')); action=recommendation.get('action') or recommendation.get('state') or last.get('decision_state') or 'NO_TRADE'
-    actionable=bool(narrative['trade_guidance_enabled'] and direction!='NEUTRAL' and conviction.get('score',0)>=55 and not conviction.get('blocking_conditions'))
+    direction=consensus.get('dominant_direction',consensus.get('direction','UNKNOWN')); action=recommendation.get('action') or recommendation.get('state') or last.get('decision_state') or 'NO_TRADE'
+    actionable=bool(narrative['trade_guidance_enabled'] and direction in {'BULLISH','BEARISH'} and conviction.get('score',0)>=55 and not conviction.get('blocking_conditions'))
     if not actionable: action='NO_TRADE'
     return {
       'schema_version':SCHEMA_VERSION,'engine_version':VERSION,'recommendation_id':recommendation_id,'timestamp':narrative['generated_at'],'generated_at':narrative['generated_at'],
-      'ticker':last.get('ticker') or market.get('ticker') or 'SPX','instrument':last.get('instrument') or last.get('ticker') or market.get('ticker') or 'SPX','market_state':market,'strategy':recommendation.get('strategy') or recommendation.get('name'),'action':action,'decision_state':action,'direction':direction,'status':'ACTIONABLE' if actionable else 'FAIL_CLOSED','actionable':actionable,
+      'ticker':last.get('ticker') or market.get('ticker') or 'SPX','instrument':last.get('instrument') or last.get('ticker') or market.get('ticker') or 'SPX','market_state':market,'strategy':recommendation.get('strategy') or recommendation.get('name'),'action':action,'decision_state':action,'direction':direction,'status':'ACTIONABLE' if actionable else 'MARKET_CLOSED' if narrative.get('data_quality',{}).get('closed') else 'FAIL_CLOSED','actionable':actionable,
       'authoritative_contract':True,'decision_authority':'institutional_decision_object','market_narrative':narrative,'narrative':narrative,'primary_thesis':narrative.get('primary_thesis'),'alternate_thesis':narrative.get('alternate_thesis'),'institutional_thesis':thesis,'thesis':thesis,'acceptance':acceptance,'engine_opinions':narrative.get('engine_opinions') or [],'institutional_consensus':consensus,'consensus':consensus,'raw_conviction':conviction.get('raw_conviction'),'calibrated_conviction':conviction.get('calibrated_conviction'),'calibration_state':conviction.get('calibration_state'),'conviction':conviction,'evidence_conflict_matrix':narrative.get('evidence_conflict_matrix') or [],'evidence_graph':narrative.get('evidence_graph') or {},'confidence_attribution':_confidence_attribution(last,narrative),
       'execution_score':execution.get('execution_score') or execution.get('score'),'execution_snapshot':execution,'position_quality':position.get('position_quality_score') or position.get('score'),'position_quality_snapshot':position,'liquidity_and_fill_conditions':{'liquidity_score':execution.get('liquidity_score'),'fill_probability':execution.get('fill_probability'),'fill_probability_label':'HEURISTIC_UNLESS_CALIBRATED','expected_slippage':execution.get('expected_slippage'),'estimated_time_to_fill':execution.get('estimated_time_to_fill')},
       'risks':narrative['risk_drivers'],'invalidation':narrative['invalidation_conditions'],'invalidations':narrative['invalidation_conditions'],'targets_and_decision_levels':_d(recommendation.get('levels') or last.get('decision_levels')),'institutional_checklist':_l(execution.get('checklist') or last.get('institutional_checklist')),

@@ -16,7 +16,7 @@ from .decision_reasoning_contracts import (
     build_reasoning_evidence_graph,
 )
 
-VERSION = "66.3.0"
+VERSION = "66.3.1"
 SCHEMA_VERSION = "apex.institutional_narrative.v2"
 REQUIRED_LIVE_DOMAINS = ("market_state", "institutional_intelligence")
 
@@ -46,6 +46,32 @@ def _utcnow() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def resolve_session_state(last: Mapping[str, Any], explicit: Optional[str] = None) -> str:
+    """Resolve the canonical market session from existing APEX state, then clock fallback."""
+    market = _dict(last.get("market_state"))
+    ii = _dict(last.get("institutional_intelligence"))
+    session_obj = _dict(last.get("session"))
+    market_status = _dict(last.get("market_status"))
+    runtime = _dict(last.get("runtime_health"))
+    candidates = [
+        explicit,
+        last.get("session") if isinstance(last.get("session"), str) else None,
+        session_obj.get("session_state") or session_obj.get("session") or session_obj.get("state"),
+        market.get("session_state") or market.get("session"),
+        ii.get("session_state"),
+        market_status.get("session_state") or market_status.get("session") or market_status.get("state"),
+        runtime.get("session"),
+    ]
+    for value in candidates:
+        if value not in (None, ""):
+            return _text(value, "UNKNOWN").upper()
+    try:
+        from .live_operations import session_state as _live_session_state
+        return _text(_live_session_state(), "UNKNOWN").upper()
+    except Exception:
+        return "UNKNOWN"
+
+
 def _direction(value: Any) -> str:
     s = _text(value).upper().replace(" ", "_")
     if any(x in s for x in ("BULL", "CALL", "UP", "LONG", "BUY")):
@@ -60,7 +86,7 @@ def _quality(last: Mapping[str, Any], session_state: str) -> Dict[str, Any]:
     market = _dict(last.get("market_state"))
     stale = bool(market.get("data_stale") or last.get("data_stale"))
     price = _num(market.get("price") or last.get("price"))
-    closed = session_state in {"CLOSED", "AFTER_HOURS", "WEEKEND", "HOLIDAY", "MARKET_CLOSED"}
+    closed = session_state in {"CLOSED", "AFTER_HOURS", "WEEKEND", "HOLIDAY", "MARKET_CLOSED", "OVERNIGHT"}
     flags: List[str] = []
     if missing:
         flags.append("REQUIRED_NORMALIZED_OUTPUT_MISSING")
@@ -122,7 +148,7 @@ def build_institutional_narrative(last_result: Mapping[str, Any], *, session_sta
     last = _dict(last_result)
     market = _dict(last.get("market_state"))
     ii = _dict(last.get("institutional_intelligence"))
-    session = _text(session_state or last.get("session") or market.get("session_state"), "UNKNOWN").upper()
+    session = resolve_session_state(last, session_state)
     quality = _quality(last, session)
     opinions = build_engine_opinions(last)
     consensus = build_correlation_aware_consensus(opinions)
@@ -131,7 +157,7 @@ def build_institutional_narrative(last_result: Mapping[str, Any], *, session_sta
     reasoning_graph = build_reasoning_evidence_graph(opinions, consensus, acceptance)
     price = _num(market.get("price") or last.get("price"))
     regime = _text(ii.get("market_regime") or market.get("regime") or last.get("regime"), "UNCONFIRMED")
-    bias = consensus.get("direction", "NEUTRAL")
+    bias = consensus.get("direction", "UNKNOWN")
     risks: List[str] = []
     invalidations: List[Dict[str, Any]] = []
 
@@ -194,7 +220,7 @@ def build_institutional_narrative(last_result: Mapping[str, Any], *, session_sta
             "supporting_engines": consensus.get("supporting_engines", []),
             "contradicting_engines": consensus.get("contradicting_engines", []),
             "abstaining_engines": consensus.get("abstaining_engines", []),
-            "known_unknowns": [o.get("abstain_reason") for o in opinions if o.get("abstain") and o.get("abstain_reason")],
+            "known_unknowns": sorted({o.get("abstain_reason") for o in opinions if o.get("abstain") and o.get("abstain_reason")}),
             "expected_next_event": next_event, "consensus": consensus.get("effective_consensus"),
             "raw_conviction": conviction.get("raw_conviction"), "calibrated_conviction": conviction.get("calibrated_conviction"),
             "hard_invalidation": [], "soft_invalidation": invalidations,
