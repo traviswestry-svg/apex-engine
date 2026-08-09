@@ -4,7 +4,6 @@ import ast
 ROOT = Path(__file__).resolve().parents[1]
 APP = (ROOT / 'app.py').read_text(encoding='utf-8')
 ROADMAP = (ROOT / 'engine' / 'institutional_roadmap_routes.py').read_text(encoding='utf-8')
-V245 = (ROOT / 'engine' / 'institutional_command_center_v245_routes.py').read_text(encoding='utf-8')
 
 
 def test_apex65_monday_critical_endpoints_fail_soft():
@@ -20,9 +19,9 @@ def test_phase31_evidence_status_is_canonical():
     assert "@app.get('/api/evidence/status')" not in ROADMAP
 
 
-def test_legacy_command_center_does_not_claim_canonical_status():
-    assert "@app.get('/api/command-center/v245/status')" in V245
-    assert "@app.get('/api/command-center/status')" not in V245
+def test_legacy_command_center_stays_deleted_after_consolidation():
+    assert not (ROOT / 'engine' / 'institutional_command_center_v245_routes.py').exists()
+    assert not (ROOT / 'engine' / 'institutional_command_center_v245.py').exists()
 
 
 def test_request_observability_installed():
