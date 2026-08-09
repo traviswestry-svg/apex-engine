@@ -6,7 +6,7 @@ from . import recommendation_ledger as ledger
 from .institutional_decision_object import build_canonical_institutional_decision
 
 VERSION = "11.3.0"
-SNAPSHOT_EVENTS = {"STATE_CHANGE", "NARRATIVE_SNAPSHOT", "CONSENSUS_SNAPSHOT", "CONVICTION_SNAPSHOT", "EXECUTION_SNAPSHOT", "POSITION_QUALITY_SNAPSHOT", "RISK_CHANGE", "INVALIDATION_CHANGE", "MARKET_PROGRESS"}
+SNAPSHOT_EVENTS = {"STATE_CHANGE", "NARRATIVE_SNAPSHOT", "CONSENSUS_SNAPSHOT", "CONVICTION_SNAPSHOT", "EXECUTION_SNAPSHOT", "POSITION_QUALITY_SNAPSHOT", "THESIS_SNAPSHOT", "RISK_CHANGE", "INVALIDATION_CHANGE", "MARKET_PROGRESS"}
 
 
 def _d(v: Any) -> Dict[str, Any]: return dict(v) if isinstance(v, Mapping) else {}
@@ -19,7 +19,7 @@ def record_decision_snapshot(recommendation_id: str, last_result: Mapping[str, A
         "STATE_CHANGE": {"decision_state": obj["decision_state"], "direction": obj["direction"], "actionable": obj["actionable"]},
         "NARRATIVE_SNAPSHOT": obj["narrative"], "CONSENSUS_SNAPSHOT": obj["consensus"],
         "CONVICTION_SNAPSHOT": obj["conviction"], "EXECUTION_SNAPSHOT": obj["execution_snapshot"],
-        "POSITION_QUALITY_SNAPSHOT": obj["position_quality_snapshot"],
+        "POSITION_QUALITY_SNAPSHOT": obj["position_quality_snapshot"], "THESIS_SNAPSHOT": obj.get("thesis") or {},
         "RISK_CHANGE": {"risks": obj["risks"]}, "INVALIDATION_CHANGE": {"invalidations": obj["invalidations"]},
     }
     existing = ledger.get_recommendation(recommendation_id)

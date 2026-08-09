@@ -52,7 +52,7 @@ def _canonical_from_ledger(rec:Mapping[str,Any])->Dict[str,Any]:
       'recommendation_id':rec.get('recommendation_id'),'timestamp':rec.get('captured_at'),'ticker':rec.get('ticker'),
       'strategy':rec.get('strategy'),'status':rec.get('state'),'confidence':rec.get('final_live_confidence'),
       'market_narrative':inst.get('market_narrative') or snap.get('narrative') or {},
-      'primary_thesis':inst.get('primary_thesis'),'alternate_thesis':inst.get('alternate_thesis'),
+      'primary_thesis':inst.get('primary_thesis'),'alternate_thesis':inst.get('alternate_thesis'),'institutional_thesis':inst.get('institutional_thesis') or inst.get('thesis') or {},'thesis_lifecycle':inst.get('thesis_lifecycle') or {},
       'institutional_consensus':inst.get('institutional_consensus') or {},'conviction':inst.get('conviction') or {},
       'confidence_attribution':inst.get('confidence_attribution') or {},'execution':inst.get('execution') or {},
       'position_quality':inst.get('position_quality') or {},'liquidity':inst.get('liquidity') or {},
@@ -67,7 +67,7 @@ def build_package(recommendation_id:str)->Dict[str,Any]:
     if not rec: return {'ok':False,'status':'UNAVAILABLE','error':'recommendation_not_found'}
     decision=_canonical_from_ledger(rec)
     pkg={'schema_version':'apex.evidence.package.v1','recommendation_id':recommendation_id,'captured_at':rec.get('captured_at'),'canonical_decision':decision,
-         'snapshots':{'narrative':decision['market_narrative'],'consensus':decision['institutional_consensus'],'conviction':decision['conviction'],'confidence_attribution':decision['confidence_attribution'],'execution':decision['execution'],'position_quality':decision['position_quality'],'liquidity':decision['liquidity'],'provider_health':decision['provider_health'],'data_freshness':decision['data_freshness']},
+         'snapshots':{'narrative':decision['market_narrative'],'thesis':decision['institutional_thesis'],'thesis_lifecycle':decision['thesis_lifecycle'],'consensus':decision['institutional_consensus'],'conviction':decision['conviction'],'confidence_attribution':decision['confidence_attribution'],'execution':decision['execution'],'position_quality':decision['position_quality'],'liquidity':decision['liquidity'],'provider_health':decision['provider_health'],'data_freshness':decision['data_freshness']},
          'versions':decision['provenance'],'provenance':decision['provenance'],'immutable':True,'build_version':VERSION}
     return {'ok':True,'status':'READY','package':pkg,'integrity_hash':_hash(pkg)}
 

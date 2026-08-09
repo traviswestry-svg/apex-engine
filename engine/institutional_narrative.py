@@ -16,7 +16,7 @@ from .decision_reasoning_contracts import (
     build_reasoning_evidence_graph,
 )
 
-VERSION = "66.3.1"
+VERSION = "66.3.2"
 SCHEMA_VERSION = "apex.institutional_narrative.v2"
 REQUIRED_LIVE_DOMAINS = ("market_state", "institutional_intelligence")
 
@@ -164,7 +164,40 @@ def build_institutional_narrative(last_result: Mapping[str, Any], *, session_sta
     for key, label in (("vah", "value-area high"), ("val", "value-area low"), ("poc", "point of control")):
         level = _num(market.get(key))
         if level is not None:
-            invalidations.append({"level": level, "label": label, "condition": f"Sustained acceptance through {level:.2f} changes the active thesis.", "trigger_type": "PRICE_ACCEPTANCE", "operator": "THROUGH_REFERENCE_LEVEL", "reference_price": level, "acceptance_required": True, "severity": "SOFT", "machine_evaluable": True})
+            invalidations.append({"level": level, "label": label, "condition": f"Sustained acceptance through {level:.2f} changes the active thesis.", "trigger_type": "PRICE_ACCEPTANCE", "operator": "THROUGH_REFERENCE_LEVEL", "reference_price": level, "acceptance_required": True, "severity": "SOFT", "machine_evaluable": False})
+
+    # Hard invalidation is only created from explicit existing risk/stop inputs.
+    # APEX must never infer a hard stop from nearby reference levels or prose.
+    recommendation = _dict(last.get("recommendation") or last.get("premium_strategy"))
+    decision_levels = _dict(last.get("decision_levels") or recommendation.get("levels"))
+    explicit_hard: List[Dict[str, Any]] = []
+    for source_name, source in (("recommendation", recommendation), ("decision_levels", decision_levels), ("market_state", market), ("institutional_intelligence", ii)):
+        for field in ("hard_invalidation", "hard_invalidation_level", "invalidation_level", "stop_price", "stop_loss", "stop"):
+            raw = source.get(field)
+            if isinstance(raw, Mapping):
+                level = _num(raw.get("level") or raw.get("price") or raw.get("value"))
+                operator = _text(raw.get("operator"), "").upper()
+            else:
+                level = _num(raw); operator = ""
+            if level is None:
+                continue
+            if not operator:
+                if bias == "BULLISH": operator = "AT_OR_BELOW"
+                elif bias == "BEARISH": operator = "AT_OR_ABOVE"
+                else: continue
+            if operator not in {"LT","LTE","BELOW","AT_OR_BELOW","GT","GTE","ABOVE","AT_OR_ABOVE","CROSSES_BELOW","CROSSES_ABOVE"}:
+                continue
+            explicit_hard.append({
+                "level": level, "label": field, "condition": f"Explicit {field} from {source_name} invalidates the thesis.",
+                "trigger_type": "EXPLICIT_HARD_INVALIDATION", "operator": operator, "severity": "HARD",
+                "machine_evaluable": True, "source": source_name, "source_field": field,
+            })
+    # De-duplicate identical explicit triggers while preserving provenance.
+    seen_hard=set(); hard_invalidations=[]
+    for row in explicit_hard:
+        key=(row.get("operator"), round(float(row.get("level")),8))
+        if key in seen_hard: continue
+        seen_hard.add(key); hard_invalidations.append(row)
     if consensus.get("conflict_score", 0) >= 45:
         risks.append("Material cross-engine disagreement reduces decision quality.")
     event = _dict(last.get("event_intelligence") or last.get("event_risk"))
@@ -214,7 +247,7 @@ def build_institutional_narrative(last_result: Mapping[str, Any], *, session_sta
         "engine_opinions": opinions, "acceptance": acceptance,
         "consensus": consensus, "conviction": conviction,
         "thesis": {
-            "schema_version": "apex.institutional_thesis.v1",
+            "schema_version": "apex.institutional_thesis.v2",
             "state": thesis_state, "current_thesis": primary if quality["live_ok"] or quality["closed"] else "NO_LIVE_THESIS",
             "alternative_thesis": alternate, "dominant_direction": bias, "market_regime": regime,
             "supporting_engines": consensus.get("supporting_engines", []),
@@ -223,7 +256,7 @@ def build_institutional_narrative(last_result: Mapping[str, Any], *, session_sta
             "known_unknowns": sorted({o.get("abstain_reason") for o in opinions if o.get("abstain") and o.get("abstain_reason")}),
             "expected_next_event": next_event, "consensus": consensus.get("effective_consensus"),
             "raw_conviction": conviction.get("raw_conviction"), "calibrated_conviction": conviction.get("calibrated_conviction"),
-            "hard_invalidation": [], "soft_invalidation": invalidations,
+            "hard_invalidation": hard_invalidations, "soft_invalidation": invalidations,
             "provenance": {"source": "institutional_narrative", "engine_version": VERSION},
         },
         "evidence_conflict_matrix": consensus.get("conflict_matrix", []),
