@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 66.2.2
+apex_version: 66.3.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: 66.2.2
+    version: 66.3.0
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -25,6 +25,32 @@ capabilities:
     outputs: [canonical_decision_snapshot, feature_vector]
     api_routes: [/api/decision-snapshot/latest]
     decision_authority: advisory
+  canonical_institutional_decision:
+    canonical_module: engine.institutional_decision_object
+    status: active
+    version: 66.3.0
+    inputs: [normalized_engine_opinions, normalized_acceptance, correlation_aware_consensus, raw_conviction, graded_history_maturity, execution_intelligence]
+    outputs: [institutional_decision_v3, institutional_thesis, evidence_conflict_matrix]
+    api_routes: [/api/institutional-decision, /api/institutional-consensus, /api/institutional-conviction, /api/institutional-narrative]
+    decision_authority: canonical
+    compatibility: Legacy decision/narrative modules may adapt to this contract but must not independently synthesize authoritative consensus or conviction.
+  decision_reasoning_normalization:
+    canonical_module: engine.decision_reasoning_contracts
+    status: active
+    version: 66.3.0
+    inputs: [primitive_engine_outputs]
+    outputs: [engine_opinions, acceptance_result, correlation_aware_consensus]
+    decision_authority: none
+    guardrails: [missing_data_abstains, neutral_not_abstain, unknown_not_neutral, configured_decorrelation_not_historical_claim]
+  legacy_institutional_decision_adapter:
+    canonical_module: engine.institutional_decision_engine
+    status: compatibility
+    version: 13.0.0_INSTITUTIONAL_DECISION_ENGINE
+    inputs: [canonical_institutional_decision, legacy_component_diagnostics]
+    outputs: [legacy_institutional_decision_response]
+    api_routes: [/api/institutional-decision/status, /api/institutional-decision/diagnostics, /api/institutional-decision/scenarios, /api/institutional-decision/evidence, /api/institutional-decision/strategy]
+    decision_authority: none
+    note: Legacy response shape retained; authoritative consensus, conviction, thesis and actionability come from engine.institutional_decision_object.
   evidence_readiness:
     canonical_module: engine.evidence_pipeline
     status: active
@@ -48,7 +74,7 @@ capabilities:
     inputs: [canonical_decision_snapshot]
     outputs: [market_narrative]
     decision_authority: advisory
-    replaces: [engine.institutional_narrative, engine.decision_narrative]
+    note: Legacy/advisory narrative surface; authoritative institutional reasoning is engine.institutional_decision_object via engine.institutional_narrative normalization.
   adaptive_learning:
     canonical_module: engine.adaptive_learning
     status: shadow
