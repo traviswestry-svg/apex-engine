@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 66.3.0
+apex_version: 66.3.1
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: 66.3.0
+    version: 66.3.1
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -28,7 +28,7 @@ capabilities:
   canonical_institutional_decision:
     canonical_module: engine.institutional_decision_object
     status: active
-    version: 66.3.0
+    version: 66.3.1
     inputs: [normalized_engine_opinions, normalized_acceptance, correlation_aware_consensus, raw_conviction, graded_history_maturity, execution_intelligence]
     outputs: [institutional_decision_v3, institutional_thesis, evidence_conflict_matrix]
     api_routes: [/api/institutional-decision, /api/institutional-consensus, /api/institutional-conviction, /api/institutional-narrative]
@@ -37,7 +37,7 @@ capabilities:
   decision_reasoning_normalization:
     canonical_module: engine.decision_reasoning_contracts
     status: active
-    version: 66.3.0
+    version: 66.3.1
     inputs: [primitive_engine_outputs]
     outputs: [engine_opinions, acceptance_result, correlation_aware_consensus]
     decision_authority: none

@@ -1,6 +1,6 @@
 {
-  "apex_version": "66.3.0",
-  "build_name": "Decision Reasoning Consolidation Foundation",
+  "apex_version": "66.3.1",
+  "build_name": "Decision Adapter & State Semantics Hardening",
   "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -14,7 +14,10 @@
     "requires_governed_terminal_outcomes": true,
     "canonical_execution_boundary_required": true,
     "correlation_aware_consensus": true,
-    "calibrated_conviction_requires_approved_history": true
+    "calibrated_conviction_requires_approved_history": true,
+    "production_schema_adapters": true,
+    "zero_evidence_resolves_unknown": true,
+    "closed_session_propagation": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
