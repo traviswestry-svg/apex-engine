@@ -1,1 +1,105 @@
+name: APEX CI
 
+# Runs on every push and PR. Two jobs are REQUIRED (they must pass before you
+# merge/deploy): `smoke` proves the app still imports, `tests` runs the whole
+# suite minus a tracked known-failing baseline (see ci/known_failures.txt).
+# `full-suite` is non-blocking and exists only to keep the baseline visible so
+# you can burn it down. Deploys go straight to Render, so this is the safety
+# net that catches a broken import or a regression before it reaches prod.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same ref so fast iteration doesn't queue up.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  # Keep every runtime DB and background job out of the picture during CI.
+  # Relative paths land in the workspace (always writable; *.db is gitignored),
+  # so CI never depends on a /data mount that doesn't exist on the runner.
+  APEX_AUTH_TOKEN: ci-only-token-not-a-secret-1234567890
+  APEX_CALIBRATION_DB: .ci-tmp/apex_calibration.db
+  APEX_EVIDENCE_DB: .ci-tmp/apex_evidence.db
+  APEX_GOVERNANCE_DB: .ci-tmp/apex_governance.db
+  APEX_SIMILARITY_DB: .ci-tmp/apex_similarity.db
+  APEX_MARKET_MEMORY_DB: .ci-tmp/apex_market_memory.db
+  APEX_RESEARCH_DB: .ci-tmp/apex_research.db
+  DB_PATH: .ci-tmp/apex_tracking.db
+  WARM_IOS_ON_IMPORT: "false"
+  RUN_SCANNER_ON_IMPORT: "false"
+
+jobs:
+  # ── REQUIRED: the app must still import and register its routes ────────────
+  smoke:
+    name: Boot smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install runtime dependencies
+        run: pip install -r requirements.txt
+      - run: mkdir -p .ci-tmp
+      - name: Import app and count routes
+        # Fails the build on any import-time error — the exact class of failure
+        # that today only surfaces after a Render deploy.
+        run: |
+          python - <<'PY'
+          import app
+          n = len(list(app.app.url_map.iter_rules()))
+          assert n > 500, f"route count collapsed to {n} — likely a broken registration"
+          print(f"boot OK — {n} routes registered")
+          PY
+
+  # ── REQUIRED: full suite minus the tracked known-failing baseline ─────────
+  tests:
+    name: Test suite (ratcheted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install runtime + test dependencies
+        run: pip install -r requirements.txt pytest
+      - run: mkdir -p .ci-tmp
+      - name: Run pytest (excluding ci/known_failures.txt)
+        run: |
+          DESELECT=""
+          if [ -f ci/known_failures.txt ]; then
+            while IFS= read -r line; do
+              case "$line" in ''|\#*) continue ;; esac
+              DESELECT="$DESELECT --deselect $line"
+            done < ci/known_failures.txt
+          fi
+          echo "Deselecting $(printf '%s' "$DESELECT" | grep -o -- '--deselect' | wc -l) baseline test(s)."
+          python -m pytest -q $DESELECT
+
+  # ── NON-BLOCKING: run everything so the baseline stays visible ────────────
+  full-suite:
+    name: Full suite (visibility only, non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install runtime + test dependencies
+        run: pip install -r requirements.txt pytest
+      - run: mkdir -p .ci-tmp
+      - name: Run entire suite (failures here do not block the merge)
+        run: python -m pytest -q -ra
