@@ -50,3 +50,22 @@ def test_chop_avoids():
 def test_pyramid_has_four_tiers():
     d = _panel({**_BASE, "institutional_bias": "BULLISH", "ici_score": 55})
     assert len(d["confidence_pyramid"]) == 4
+
+
+def test_structured_evidence_is_normalized_for_dashboard():
+    d = _panel({**_BASE,
+                "institutional_bias": "BULLISH",
+                "flow_bias": "BULLISH",
+                "ici_score": 55,
+                "evidence": [
+                    {"label": "Flow supports upside", "score": 0.72},
+                    {"reason": "Price accepted above VWAP", "strength": 0.61},
+                    {"driver": "Dealer positioning", "state": "supportive"},
+                ]})
+    why = next(q for q in d["questions"] if q["question"] == "Why?")["answer"]
+    assert why[:3] == [
+        "Flow supports upside",
+        "Price accepted above VWAP",
+        "Dealer positioning",
+    ]
+    assert all("[object Object]" not in item for item in why)
