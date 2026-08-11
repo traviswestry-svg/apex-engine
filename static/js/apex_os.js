@@ -24,8 +24,11 @@ const fmt  = v  => v != null ? Number(v).toLocaleString('en-US', { minimumFracti
 const fmtI = v  => v != null ? Number(v).toFixed(0) : '--';
 const fmtM = v  => { const n = Number(v); if (!isFinite(n)) return '--'; if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M'; if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(0) + 'K'; return n.toFixed(0); };
 const clr  = (v, hi, lo) => v >= hi ? 'var(--green)' : v <= lo ? 'var(--red)' : 'var(--amber)';
-const html = s => s != null ? String(s) : '--';
-const esc  = s => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const displayText = (v, f='--') => window.APEXDisplay ? window.APEXDisplay.toText(v, f) : (v == null ? f : (typeof v === 'object' ? f : String(v)));
+const displayToken = (v, f='UNKNOWN') => window.APEXDisplay ? window.APEXDisplay.token(v, f) : displayText(v, f);
+const evidenceText = (v, f='') => window.APEXDisplay ? window.APEXDisplay.evidence(v, f) : displayText(v, f);
+const html = s => displayText(s, '--');
+const esc  = s => window.APEXDisplay ? window.APEXDisplay.escapeHtml(s, '') : displayText(s, '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 /* ── Clock ────────────────────────────────────────────────────────────────── */
 (function clock() {
@@ -3203,15 +3206,15 @@ function renderDCC(d) {
   const dp    = d.dealer_positioning || {};
   const md    = d.market_drivers || {};
 
-  const decision     = (ii && ii.decision_state)  || d.decision_state || 'NO_TRADE';
-  const instBias     = (ii && ii.institutional_bias) || 'NEUTRAL';
-  const dealerBias   = (ii && ii.delta_bias) || (dp.delta || {}).bias || 'NEUTRAL';
-  const gammaRegime  = (ii && ii.gamma_regime) || (dp.gamma || {}).regime || 'NEUTRAL_GAMMA';
-  const sessionState = (ii && ii.session_state) || d.session?.session_state || '';
+  const decision     = displayToken((ii && ii.decision_state) || d.decision_state, 'NO_TRADE').toUpperCase();
+  const instBias     = displayToken((ii && ii.institutional_bias) || d.institutional_bias, 'NEUTRAL').toUpperCase();
+  const dealerBias   = displayToken((ii && ii.delta_bias) || (dp.delta || {}).bias, 'NEUTRAL').toUpperCase();
+  const gammaRegime  = displayToken((ii && ii.gamma_regime) || (dp.gamma || {}).regime, 'NEUTRAL_GAMMA').toUpperCase();
+  const sessionState = displayToken((ii && ii.session_state) || d.session?.session_state, '').toUpperCase();
   const iciScore     = Number((ici.ici) || 0);
-  const pocMig       = (ii && ii.poc_migration) || ms.poc_migration || 'STABLE';
-  const flowBias     = (ii && ii.flow_bias) || 'MIXED';
-  const flowUrgency  = (ii && ii.flow_urgency) || 'LOW';
+  const pocMig       = displayToken((ii && ii.poc_migration) || ms.poc_migration, 'STABLE').toUpperCase();
+  const flowBias     = displayToken((ii && ii.flow_bias), 'MIXED').toUpperCase();
+  const flowUrgency  = displayToken((ii && ii.flow_urgency), 'LOW').toUpperCase();
   const pineConf     = (ii && ii.pine_confirmed) || false;
   const pinProb      = Number((ii && ii.pin_probability) || 0);
   const momProb      = Number((ii && ii.momentum_probability) || 0);
@@ -3272,13 +3275,13 @@ function renderDCC(d) {
   const execEl = $('dccExecSummary');
   if (execEl) {
     // Prefer institutional_intelligence executive_summary, then story, then playbook
-    const exec = (ii && ii.executive_summary) ||
+    const exec = displayText((ii && ii.executive_summary) ||
                  story.executive_summary ||
-                 (pb.primary_scenario || {}).path || '';
+                 (pb.primary_scenario || {}).path, '');
 
     if (sessionState === 'OVERNIGHT' || sessionState === 'PREMARKET') {
       const onPlan = d.overnight_game_plan || {};
-      const onBias = onPlan.bias || 'NEUTRAL';
+      const onBias = displayToken(onPlan.bias, 'NEUTRAL').toUpperCase();
       const biasC  = onBias.includes('BULL') ? 'var(--green)' : onBias.includes('BEAR') ? 'var(--red)' : 'var(--amber)';
       execEl.innerHTML = `
         <div style="margin-bottom:6px">
@@ -3351,8 +3354,11 @@ function renderDCC(d) {
 
     // From evidence chain
     evidence.slice(0, 4).forEach(ev => {
-      const ok = ev.direction === instBias || ev.direction === 'BULLISH' && instBias === 'BULLISH' || ev.direction === 'BEARISH' && instBias === 'BEARISH';
-      bullets.push({ ok: ok && ev.strength !== 'LOW', label: ev.source.replace(/_/g, ' ') + ': ' + ev.note.slice(0, 55) });
+      const evDirection = displayToken(ev && (ev.direction || ev.bias), 'UNKNOWN').toUpperCase();
+      const evStrength = displayToken(ev && ev.strength, 'UNKNOWN').toUpperCase();
+      const ok = evDirection === instBias || evDirection === 'BULLISH' && instBias === 'BULLISH' || evDirection === 'BEARISH' && instBias === 'BEARISH';
+      const label = evidenceText(ev, 'Evidence available');
+      bullets.push({ ok: ok && evStrength !== 'LOW', label: label.slice(0, 90) });
     });
 
     // Append key gates
@@ -3377,10 +3383,10 @@ function renderDCC(d) {
   // ── Invalidation ─────────────────────────────────────────────────────────
   const invEl = $('dccInvalidation');
   if (invEl) {
-    const inv = (pb && pb.invalidation) ||
+    const inv = displayText((pb && pb.invalidation) ||
                 (ii && ii.primary_risk)  ||
-                (tc && tc.invalidation)  ||
-                'Monitoring for changes in flow, POC direction, or dealer positioning.';
+                (tc && tc.invalidation),
+                'Monitoring for changes in flow, POC direction, or dealer positioning.');
     invEl.textContent = inv;
   }
 
