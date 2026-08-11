@@ -924,9 +924,11 @@ def _load_latest_morning_brief(symbol: str = "SPX") -> Optional[Dict[str, Any]]:
     become visible immediately while leaving forecast-grade archives immutable.
     """
     try:
-        from . import evening_recap
-        evening_recap.init_db()
-        with sqlite3.connect(evening_recap.DB_PATH, timeout=5) as conn:
+        from .evening_archive_schema import init_evening_archive_db
+        from .persistent_store import persistent_sqlite_path
+        recap_db = persistent_sqlite_path("APEX_GOVERNANCE_DB", "apex_governance.db")
+        init_evening_archive_db(recap_db)
+        with sqlite3.connect(recap_db, timeout=5) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """SELECT payload_json FROM apex49_morning_revisions
