@@ -280,12 +280,31 @@
         evEl.textContent='◆ '+d.event_regime.replace(/_/g,' ')+(d.event_headline?(' — '+d.event_headline):'');
       } else { evEl.textContent=''; }
       // six questions
+      // Evidence can arrive as either strings or structured objects. Never rely on
+      // JavaScript's implicit object-to-string conversion ("[object Object]").
+      function answerText(x){
+        if(x==null)return '';
+        if(typeof x==='string'||typeof x==='number'||typeof x==='boolean')return String(x);
+        if(Array.isArray(x))return x.map(answerText).filter(Boolean).join('; ');
+        if(typeof x==='object'){
+          var keys=['label','text','reason','explanation','summary','signal','driver','name'];
+          for(var i=0;i<keys.length;i++){var v=x[keys[i]];if(v!=null&&typeof v!=='object'&&String(v).trim())return String(v).trim();}
+          var parts=[];
+          Object.keys(x).some(function(k){
+            var v=x[k];
+            if(v!=null&&typeof v!=='object'&&String(v).trim()){parts.push(k.replace(/_/g,' ')+': '+String(v).trim());}
+            return parts.length>=3;
+          });
+          return parts.join(' · ');
+        }
+        return String(x);
+      }
       var g=document.getElementById('diGrid');g.innerHTML='';
       (d.questions||[]).forEach(function(q){
         var ans;
         if(Array.isArray(q.answer)){
-          ans='<ul>'+q.answer.slice(0,4).map(function(x){return '<li>'+esc(x)+'</li>';}).join('')+'</ul>';
-        } else { ans=esc(q.answer); }
+          ans='<ul>'+q.answer.slice(0,4).map(function(x){return '<li>'+esc(answerText(x))+'</li>';}).join('')+'</ul>';
+        } else { ans=esc(answerText(q.answer)); }
         g.innerHTML+='<div class="di-q"><div class="di-q-q">'+esc(q.question)+'</div><div class="di-q-a">'+ans+'</div></div>';
       });
       // confidence pyramid
