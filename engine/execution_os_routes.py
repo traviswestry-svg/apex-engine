@@ -18,9 +18,11 @@ def register_execution_os_routes(
     # This guarantees evidence-audit visibility without adding startup latency.
     def _archive_schema_bootstrap():
         try:
-            from .evening_recap import init_db as init_evening_archive
+            from .evening_archive_schema import init_evening_archive_db
+            from .persistent_store import persistent_sqlite_path
             from .report_archive import init_db as init_readiness_archive
-            init_evening_archive()
+            recap_db = persistent_sqlite_path("APEX_GOVERNANCE_DB", "apex_governance.db")
+            init_evening_archive_db(recap_db)
             init_readiness_archive()
         except Exception as exc:
             print(f"[APEX50.7.2.1] archive schema bootstrap failed (non-fatal): {exc}", flush=True)

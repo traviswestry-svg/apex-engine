@@ -13,6 +13,7 @@ import re
 import sqlite3
 from typing import Any, Iterable, Optional
 from .persistent_store import persistent_sqlite_path
+from .evening_archive_schema import init_evening_archive_db
 
 try:
     from zoneinfo import ZoneInfo
@@ -54,37 +55,8 @@ def _num(v: Any) -> Optional[float]:
 
 
 def init_db() -> None:
-    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
-        c.executescript("""
-        CREATE TABLE IF NOT EXISTS apex49_morning_snapshots(
-          session_date TEXT PRIMARY KEY,
-          generated_at TEXT NOT NULL,
-          ticker TEXT NOT NULL,
-          payload_json TEXT NOT NULL,
-          version TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS apex49_morning_revisions(
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          session_date TEXT NOT NULL,
-          generated_at TEXT NOT NULL,
-          ticker TEXT NOT NULL,
-          payload_json TEXT NOT NULL,
-          version TEXT NOT NULL,
-          is_official INTEGER NOT NULL DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS apex49_evening_recaps(
-          session_date TEXT PRIMARY KEY,
-          generated_at TEXT NOT NULL,
-          ticker TEXT NOT NULL,
-          payload_json TEXT NOT NULL,
-          score REAL,
-          grade TEXT NOT NULL,
-          version TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_apex49_recap_generated ON apex49_evening_recaps(generated_at);
-        CREATE INDEX IF NOT EXISTS idx_apex49_morning_revision_date ON apex49_morning_revisions(session_date, generated_at);
-        """)
+    """Ensure the recap archive schema exists without any reverse service import."""
+    init_evening_archive_db(DB_PATH)
 
 
 def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
