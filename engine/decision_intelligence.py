@@ -43,6 +43,37 @@ def _sf(v: Any, d: float = 0.0) -> float:
         return d
 
 
+def _evidence_text(item: Any) -> str:
+    """Convert structured evidence into a stable human-readable dashboard bullet."""
+    if item is None:
+        return ""
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, (int, float, bool)):
+        return str(item)
+    if isinstance(item, dict):
+        for key in ("label", "text", "reason", "explanation", "summary", "signal", "driver", "name"):
+            value = item.get(key)
+            if value is not None and not isinstance(value, (dict, list, tuple, set)):
+                text = str(value).strip()
+                if text:
+                    return text
+        parts = []
+        for key, value in item.items():
+            if value is None or isinstance(value, (dict, list, tuple, set)):
+                continue
+            text = str(value).strip()
+            if text:
+                parts.append(f"{str(key).replace('_', ' ').title()}: {text}")
+            if len(parts) >= 3:
+                break
+        return " · ".join(parts)
+    if isinstance(item, (list, tuple, set)):
+        parts = [_evidence_text(v) for v in item]
+        return "; ".join(v for v in parts if v)
+    return str(item).strip()
+
+
 def build_decision_intelligence(
     last_result: Dict[str, Any],
     confluence: Optional[Dict[str, Any]] = None,
@@ -112,7 +143,9 @@ def build_decision_intelligence(
             why = list(conf.get("short_evidence") or [])
         if not why:
             why = list(inst.get("evidence") or [])[:5]
-        q5 = {"question": "Why?", "answer": why or ["No confirming evidence assembled this cycle."]}
+        why_text = [_evidence_text(item) for item in why]
+        why_text = [item for item in why_text if item]
+        q5 = {"question": "Why?", "answer": why_text or ["No confirming evidence assembled this cycle."]}
 
         # Q6 — What invalidates it?
         invalidation: List[str] = list(rng.get("invalidation") or [])
