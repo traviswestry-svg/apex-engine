@@ -1,12 +1,12 @@
 {
-  "apex_version": "66.3.2",
-  "build_name": "Stateful Thesis Persistence & Structured Invalidation Lifecycle",
+  "apex_version": "66.4.0",
+  "build_name": "Trade Horizon Intelligence & Canonical Decision Execution Governance",
   "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-08",
+  "released_at": "2026-08-12",
   "guardrails": {
     "changes_trade_decisions": true,
     "changes_execution_authority": false,
@@ -22,7 +22,10 @@
     "structured_invalidation_lifecycle": true,
     "thesis_replay_persistence": true,
     "hard_invalidation_requires_explicit_input": true,
-    "closed_session_junk_persistence_blocked": true
+    "closed_session_junk_persistence_blocked": true,
+    "trade_horizon_intelligence": true,
+    "horizon_classification_is_advisory": true,
+    "canonical_decision_governs_opening_risk": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
