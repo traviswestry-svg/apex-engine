@@ -16,8 +16,8 @@ from . import institutional_data_quality as quality
 from . import institutional_governance as governance
 from . import recommendation_ledger as ledger
 
-VERSION = "13.0.3"
-SCHEMA_VERSION = "apex.history.readiness.v1"
+VERSION = "66.4.0"
+SCHEMA_VERSION = "apex.history.readiness.v2"
 MIN_GRADED = int(os.getenv("APEX_HISTORY_MIN_GRADED", str(governance.MIN_GRADED)))
 MIN_ELIGIBLE = int(os.getenv("APEX_HISTORY_MIN_ELIGIBLE", "25"))
 MIN_DATE_DAYS = int(os.getenv("APEX_HISTORY_MIN_DATE_DAYS", "20"))
@@ -98,7 +98,119 @@ def _coverage(counter: Counter, total: int) -> Dict[str, Any]:
     }
 
 
-def build_report() -> Dict[str, Any]:
+def _latest_quality_map() -> Dict[str, Dict[str, Any]]:
+    """Latest assessment per recommendation. Kept separate for diagnostics/tests."""
+    return _quality_rows()
+
+
+def reconcile(limit: int = 500) -> Dict[str, Any]:
+    """Idempotently repair the persisted readiness pipeline without fabricating outcomes.
+
+    Repairs only evidence/quality bookkeeping that can be derived from the immutable
+    recommendation ledger. Real outcomes are bridged only when the ledger already
+    contains an explicit terminal outcome label.
+    """
+    evidence.init_db(); quality.init_db(); governance.init_db()
+    recs = _recommendations(limit=max(1, min(int(limit or 500), 500)))
+    qrows = _latest_quality_map()
+    outcomes = _outcomes()
+    stats = Counter()
+    errors = []
+    for rec in recs:
+        rid = str(rec.get("recommendation_id") or "").strip()
+        if not rid:
+            stats["skipped_missing_id"] += 1
+            continue
+        try:
+            if evidence.get(rid) is None:
+                cap = evidence.capture(rid)
+                if cap.get("ok"):
+                    stats["evidence_captured"] += 1
+                else:
+                    stats["evidence_capture_failed"] += 1
+                    errors.append({"recommendation_id": rid, "stage": "evidence", "error": cap.get("error") or cap.get("status")})
+                    continue
+            else:
+                stats["evidence_already_present"] += 1
+
+            # Reassess when no assessment exists. Existing immutable assessments are
+            # left intact; operator can explicitly reassess from the data-quality API.
+            if rid not in qrows:
+                assessed = quality.assess(rid)
+                if assessed.get("ok"):
+                    stats["quality_assessed"] += 1
+                    qrows[rid] = assessed
+                else:
+                    stats["quality_assessment_failed"] += 1
+                    errors.append({"recommendation_id": rid, "stage": "quality", "error": assessed.get("error") or assessed.get("status")})
+            else:
+                stats["quality_already_assessed"] += 1
+
+            # Bridge only explicit persisted real outcomes from the ledger. Never infer
+            # WIN/LOSS from age, direction, price, or strategy.
+            outcome_status = str(rec.get("outcome_status") or "").upper()
+            outcome_label = str(rec.get("outcome_label") or "").strip().upper()
+            if rid not in outcomes and outcome_label and outcome_status in {"GRADED", "SETTLED", "CLOSED", "FINAL"}:
+                q = qrows.get(rid) or {}
+                contract = {
+                    "recommendation_id": rid,
+                    "outcome_label": outcome_label,
+                    "realized_pnl": rec.get("realized_pnl"),
+                    "realized_r": rec.get("realized_r"),
+                    "family": rec.get("strategy"),
+                    "confidence": rec.get("final_live_confidence"),
+                    "data_quality": "VERIFIED" if bool(q.get("eligible") or q.get("eligible_for_research")) else "UNKNOWN",
+                    "source": "RECOMMENDATION_LEDGER",
+                    "graded_at": rec.get("outcome_at") or rec.get("updated_at"),
+                }
+                bridged = governance.ingest_outcome(contract)
+                if bridged.get("ok"):
+                    stats["outcomes_bridged"] += 1
+                    outcomes[rid] = contract
+                else:
+                    stats["outcome_bridge_failed"] += 1
+                    errors.append({"recommendation_id": rid, "stage": "outcome", "error": bridged.get("error") or bridged.get("status")})
+            elif rid in outcomes:
+                stats["outcome_already_present"] += 1
+            else:
+                stats["awaiting_real_outcome"] += 1
+        except Exception as exc:
+            stats["errors"] += 1
+            errors.append({"recommendation_id": rid, "stage": "reconcile", "error": f"{type(exc).__name__}: {exc}"})
+    return {
+        "ok": not errors,
+        "status": "PASS" if not errors else "DEGRADED",
+        "build_version": VERSION,
+        "processed": len(recs),
+        "repairs": dict(stats),
+        "errors": errors[:50],
+        "guardrails": {
+            "fabricates_outcomes": False,
+            "provider_calls": False,
+            "broker_calls": False,
+            "idempotent": True,
+        },
+    }
+
+
+def diagnostic(limit: int = 100) -> Dict[str, Any]:
+    """Explain exactly where each recommendation sits in the learning pipeline."""
+    report = build_report(include_records=True, record_limit=limit)
+    records = report.get("diagnostic", {}).get("records", [])
+    blockers = Counter(r.get("pipeline_state") or "UNKNOWN" for r in records)
+    return {
+        "ok": True,
+        "status": report.get("status"),
+        "build_version": VERSION,
+        "counts": report.get("counts", {}),
+        "quality": report.get("quality", {}),
+        "pipeline_blockers": dict(blockers),
+        "records": records,
+        "next_action": report.get("diagnostic", {}).get("next_action"),
+        "guardrails": {"read_only": True, "fabricates_outcomes": False},
+    }
+
+def build_report(*, include_records: bool = False, record_limit: int = 100) -> Dict[str, Any]:
     evidence.init_db(); quality.init_db(); governance.init_db()
     recs = _recommendations()
     qrows = _quality_rows()
@@ -123,6 +235,7 @@ def build_report() -> Dict[str, Any]:
     strategy = Counter(); regime = Counter(); session = Counter(); weekday = Counter(); ticker = Counter()
     eligible_ids = []
     timestamps = []
+    diagnostic_records = []
 
     for rid in ids:
         rec = rec_by_id.get(rid, {})
@@ -139,24 +252,58 @@ def build_report() -> Dict[str, Any]:
             counts["graded"] += 1
         else:
             counts["pending"] += 1
+        assessed = q is not None
         eligible = bool(q and int(q.get("eligible") or 0) == 1)
-        if eligible:
+        if not assessed:
+            counts["unassessed"] += 1
+            exclusions["NOT_ASSESSED"] += 1
+        elif eligible:
             counts["eligible"] += 1
             eligible_ids.append(rid)
         else:
             counts["excluded"] += 1
-            if not q:
-                exclusions["NOT_ASSESSED"] += 1
+            defects = q.get("defects") or []
+            if defects:
+                for defect in defects:
+                    if isinstance(defect, Mapping):
+                        exclusions[str(defect.get("code") or defect.get("type") or "QUALITY_DEFECT")] += 1
+                    else:
+                        exclusions[str(defect)] += 1
             else:
-                defects = q.get("defects") or []
-                if defects:
-                    for defect in defects:
-                        if isinstance(defect, Mapping):
-                            exclusions[str(defect.get("code") or defect.get("type") or "QUALITY_DEFECT")] += 1
-                        else:
-                            exclusions[str(defect)] += 1
-                else:
-                    exclusions["QUALITY_GATE_CLOSED"] += 1
+                exclusions["QUALITY_GATE_CLOSED"] += 1
+
+        if include_records and len(diagnostic_records) < max(1, min(int(record_limit or 100), 500)):
+            reasons = []
+            if not package_row:
+                state = "MISSING_EVIDENCE"
+                reasons = ["MISSING_EVIDENCE_PACKAGE"]
+            elif not assessed:
+                state = "UNASSESSED"
+                reasons = ["NOT_ASSESSED"]
+            elif not eligible:
+                state = "QUALITY_EXCLUDED"
+                reasons = [str((d.get("code") if isinstance(d, Mapping) else d) or "QUALITY_DEFECT") for d in (q.get("defects") or [])]
+                if not reasons:
+                    reasons = ["QUALITY_GATE_CLOSED"]
+            elif not outcome:
+                state = "AWAITING_REAL_OUTCOME"
+                reasons = ["NO_GRADED_OUTCOME"]
+            else:
+                state = "LEARNING_ELIGIBLE"
+            diagnostic_records.append({
+                "recommendation_id": rid,
+                "captured_at": (package_row or {}).get("created_at") or rec.get("captured_at"),
+                "ticker": _dimension(rec, package, "ticker"),
+                "strategy": _dimension(rec, package, "strategy"),
+                "evidence": bool(package_row),
+                "assessed": assessed,
+                "quality_grade": q.get("grade") if q else None,
+                "eligible": eligible,
+                "graded": bool(outcome),
+                "outcome_label": outcome.get("outcome_label") if outcome else rec.get("outcome_label"),
+                "pipeline_state": state,
+                "reasons": reasons,
+            })
         strategy[_dimension(rec, package, "strategy")] += 1
         regime[_dimension(rec, package, "regime")] += 1
         session[_dimension(rec, package, "session")] += 1
@@ -166,22 +313,26 @@ def build_report() -> Dict[str, Any]:
             timestamps.append(at)
             weekday[at.strftime("%A").upper()] += 1
 
+    for key in ("collected", "evidence_packages", "missing_evidence", "graded", "pending", "eligible", "excluded", "unassessed"):
+        counts[key] += 0
+
     start = min(timestamps).isoformat() if timestamps else None
     end = max(timestamps).isoformat() if timestamps else None
     span_days = (max(timestamps).date() - min(timestamps).date()).days + 1 if timestamps else 0
     collected = counts["collected"]
-    exclusion_rate = round(counts["excluded"] / collected * 100, 2) if collected else 0.0
+    assessed_total = counts["eligible"] + counts["excluded"]
+    exclusion_rate = round(counts["excluded"] / assessed_total * 100, 2) if assessed_total else 0.0
 
     gates = {
         "minimum_graded": {"required": MIN_GRADED, "actual": counts["graded"], "passed": counts["graded"] >= MIN_GRADED},
         "minimum_quality_eligible": {"required": MIN_ELIGIBLE, "actual": counts["eligible"], "passed": counts["eligible"] >= MIN_ELIGIBLE},
         "minimum_date_coverage_days": {"required": MIN_DATE_DAYS, "actual": span_days, "passed": span_days >= MIN_DATE_DAYS},
-        "maximum_exclusion_rate_pct": {"required_max": MAX_EXCLUSION_RATE, "actual": exclusion_rate, "passed": collected > 0 and exclusion_rate <= MAX_EXCLUSION_RATE},
+        "maximum_exclusion_rate_pct": {"required_max": MAX_EXCLUSION_RATE, "actual": exclusion_rate, "passed": assessed_total > 0 and exclusion_rate <= MAX_EXCLUSION_RATE},
         "immutable_outcomes_only": {"required": True, "actual": True, "passed": True},
     }
     if collected == 0:
         status = "COLLECTING"
-    elif exclusion_rate > MAX_EXCLUSION_RATE:
+    elif assessed_total > 0 and exclusion_rate > MAX_EXCLUSION_RATE:
         status = "DEGRADED_HISTORY"
     elif not gates["minimum_graded"]["passed"] or not gates["minimum_date_coverage_days"]["passed"]:
         status = "INSUFFICIENT_HISTORY"
@@ -211,12 +362,24 @@ def build_report() -> Dict[str, Any]:
             "ticker": _coverage(ticker, collected),
         },
         "quality": {
+            "assessed": assessed_total,
+            "unassessed": counts["unassessed"],
             "exclusion_rate_pct": exclusion_rate,
+            "exclusion_rate_denominator": "ASSESSED_ONLY",
             "exclusion_reasons": dict(exclusions),
             "eligible_recommendation_ids": eligible_ids,
         },
         "readiness_gates": gates,
         "feature_unlocks": unlocks,
+        "diagnostic": {
+            "records": diagnostic_records if include_records else [],
+            "next_action": (
+                "RECONCILE_EVIDENCE_AND_QUALITY" if counts["missing_evidence"] or counts["unassessed"]
+                else "WAIT_FOR_REAL_OUTCOMES" if counts["pending"]
+                else "ACCUMULATE_MORE_ELIGIBLE_HISTORY" if status != "READY_FOR_CALIBRATION"
+                else "READY_FOR_CALIBRATION"
+            ),
+        },
         "limitations": [
             "No performance metric is activated by this report.",
             "Pending recommendations are not graded or inferred.",
