@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 
 from engine.execution.broker_interface import BrokerResult, OrderIntent, ChangeIntent
 from engine.execution import trade_risk_guard as guard
+from engine.execution import canonical_governance as gov
 
 
 def _mode(adapter: Any) -> str:
@@ -27,6 +28,27 @@ def _preview_ttl() -> float:
         return 30.0
 
 
+def _governance_enabled() -> bool:
+    # APEX 66.4.0 — canonical decision governs OPENING risk. Default on; the
+    # escape hatch exists for controlled rollout, never for weakening exits.
+    return os.getenv("APEX_EXECUTION_GOVERNANCE_ENABLED", "true").strip().lower() != "false"
+
+
+def _decision_max_age_seconds() -> float:
+    try:
+        return max(1.0, float(os.getenv("APEX_CANONICAL_DECISION_MAX_AGE_SECONDS", "180")))
+    except Exception:
+        return 180.0
+
+
+def _governance_rejection(adapter: Any, result: "gov.GovernanceResult") -> BrokerResult:
+    return BrokerResult(
+        ok=False, mode=_mode(adapter),
+        data={"governance": result.to_dict()},
+        errors=[f"{b['code']}: {b['detail']}" for b in result.blockers],
+    )
+
+
 @dataclass
 class PreviewRecord:
     created_at: float
@@ -37,6 +59,7 @@ class PreviewRecord:
     session_state: str
     intent: OrderIntent
     consumed: bool = False
+    governance: Optional[Dict[str, Any]] = None  # APEX 66.4.0 open-risk snapshot
 
 
 @dataclass
@@ -46,6 +69,7 @@ class ComplexPreviewRecord:
     economics: Dict[str, Any]
     session_state: str
     consumed: bool = False
+    governance: Optional[Dict[str, Any]] = None  # APEX 66.4.0 open-risk snapshot
 
 
 @dataclass
@@ -75,7 +99,7 @@ class CanonicalExecutionBoundary:
 
     def register_preview(self, preview_id: str, *, contract: Dict[str, Any], quantity: int,
                          entry_premium: float, stop_premium: float, session_state: str,
-                         intent: OrderIntent) -> None:
+                         intent: OrderIntent, governance: Optional[Dict[str, Any]] = None) -> None:
         if not preview_id:
             return
         with self._lock:
@@ -83,17 +107,19 @@ class CanonicalExecutionBoundary:
                 created_at=time.time(), contract=dict(contract), quantity=int(quantity),
                 entry_premium=float(entry_premium), stop_premium=float(stop_premium),
                 session_state=str(session_state), intent=intent,
+                governance=dict(governance) if governance else None,
             )
 
 
     def register_complex_preview(self, preview_id: str, *, intent: Any, economics: Dict[str, Any],
-                                 session_state: str) -> None:
+                                 session_state: str, governance: Optional[Dict[str, Any]] = None) -> None:
         if not preview_id:
             return
         with self._lock:
             self._complex_previews[str(preview_id)] = ComplexPreviewRecord(
                 created_at=time.time(), intent=intent, economics=dict(economics or {}),
                 session_state=str(session_state),
+                governance=dict(governance) if governance else None,
             )
 
     def execute_complex(self, *, adapter: Any, preview_id: str, intent: Any,
@@ -122,6 +148,22 @@ class CanonicalExecutionBoundary:
         if not decision.allow:
             return BrokerResult(ok=False, mode=_mode(adapter), data={"risk": decision.to_dict()},
                                 errors=decision.reasons, warnings=decision.warnings)
+
+        # APEX 66.4.0 — canonical decision governs OPENING new risk (multi-leg).
+        # Direction agreement is only enforced when the strategy expresses a
+        # direction; delta-neutral structures still require an ACTIONABLE thesis.
+        if _governance_enabled():
+            proposed_dir = (economics.get("direction") if isinstance(economics, dict) else None) \
+                or getattr(intent, "direction", None)
+            g = gov.evaluate_open_risk(
+                getattr(rec, "governance", None),
+                proposed_side=proposed_dir,
+                now_epoch=now_epoch, max_age_seconds=_decision_max_age_seconds(),
+            )
+            if not g.allow:
+                self._complex_previews.pop(str(preview_id), None)
+                return _governance_rejection(adapter, g)
+
         with self._lock:
             rec = self._complex_previews.get(str(preview_id))
             if rec is None or rec.consumed:
@@ -272,6 +314,19 @@ class CanonicalExecutionBoundary:
             return BrokerResult(ok=False, mode=getattr(adapter, "mode", "sandbox"),
                                 data={"risk": decision.to_dict()}, errors=decision.reasons,
                                 warnings=decision.warnings)
+
+        # APEX 66.4.0 — canonical decision governs OPENING new risk. This is the
+        # risk-opening executor, so the reasoning layer's NO_TRADE is authoritative
+        # here. Risk-reducing / protective executors never reach this gate.
+        if _governance_enabled():
+            g = gov.evaluate_open_risk(
+                getattr(rec, "governance", None),
+                proposed_side=getattr(intent, "side", None),
+                now_epoch=now_epoch, max_age_seconds=_decision_max_age_seconds(),
+            )
+            if not g.allow:
+                self._previews.pop(str(preview_id), None)
+                return _governance_rejection(adapter, g)
 
         with self._lock:
             rec = self._previews.get(str(preview_id))

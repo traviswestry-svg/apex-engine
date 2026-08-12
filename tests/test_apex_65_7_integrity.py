@@ -46,6 +46,8 @@ def test_canonical_boundary_revalidates_risk_at_placement(monkeypatch):
 
 def test_canonical_boundary_blocks_duplicate_submit(monkeypatch):
     import engine.execution.canonical_execution as ce
+    # This test asserts idempotency, orthogonal to 66.4.0 open-risk governance.
+    monkeypatch.setenv("APEX_EXECUTION_GOVERNANCE_ENABLED", "false")
     monkeypatch.setattr(ce.guard, "validate_entry", lambda **kwargs: Mock(allow=True, reasons=[], warnings=[], to_dict=lambda: {"allow": True}))
     boundary = CanonicalExecutionBoundary()
     adapter = Mock(mode="sandbox", trading_enabled=False)
@@ -255,6 +257,8 @@ def _complex_intent_for_boundary():
 
 def test_6576_complex_order_uses_canonical_boundary(monkeypatch):
     import engine.execution.canonical_execution as ce
+    # This test asserts boundary routing/idempotency, orthogonal to 66.4.0 governance.
+    monkeypatch.setenv("APEX_EXECUTION_GOVERNANCE_ENABLED", "false")
     monkeypatch.setattr(ce.guard, "validate_complex_entry", lambda **kwargs: Mock(allow=True, reasons=[], warnings=[], to_dict=lambda: {"allow": True}))
     boundary = CanonicalExecutionBoundary()
     adapter = Mock(mode="sandbox", trading_enabled=False)

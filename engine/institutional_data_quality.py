@@ -30,7 +30,7 @@ def _load(v: Any, default=None):
     except Exception: return {} if default is None else default
 def _hash(v: Any) -> str: return hashlib.sha256(_json(v).encode()).hexdigest()
 def _conn():
-    path = os.getenv("APEX_EVIDENCE_DB", DB_PATH)
+    path = DB_PATH  # APEX: honor module DB_PATH like sibling modules (env captured at import)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     c = sqlite3.connect(path); c.row_factory = sqlite3.Row
     c.execute("PRAGMA journal_mode=WAL"); return c
