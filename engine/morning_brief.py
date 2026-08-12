@@ -146,6 +146,77 @@ def build_deterministic(**kwargs) -> tuple[Any, str, dict]:
     return dkl, sections, context
 
 
+def _canonical_event_context(display_date: str, session_context: Optional[dict] = None) -> dict:
+    """Return the single APEX scheduled-event contract for the brief date.
+
+    Morning Readiness must consume the same event_calendar state as Institutional
+    OS.  Missing event data is represented as unavailable, never as "no events".
+    """
+    try:
+        from .event_calendar import build_event_intelligence, EASTERN
+        target = dt.date.fromisoformat(str(display_date))
+        now = _now_et()
+        event_now = now if target == now.date() else dt.datetime.combine(target, dt.time(0, 0), tzinfo=EASTERN)
+        payload = build_event_intelligence(now=event_now)
+        payload["source"] = "engine.event_calendar"
+        payload["canonical"] = True
+        return payload
+    except Exception as exc:
+        return {
+            "available": False, "canonical": True, "source": "engine.event_calendar",
+            "as_of": str(display_date), "today_events": [], "upcoming": [],
+            "event_regime": "UNKNOWN", "data_stale": True,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _event_status(event: dict, display_date: str) -> str:
+    """Session-aware status for a canonical scheduled event."""
+    release = str(event.get("release_time_et") or "").strip()
+    if not release:
+        return "SCHEDULED"
+    try:
+        target = dt.date.fromisoformat(str(display_date))
+        hh, mm = [int(x) for x in release.split(":", 1)]
+        release_dt = dt.datetime.combine(target, dt.time(hh, mm), tzinfo=_now_et().tzinfo)
+        return "COMPLETED" if _now_et() >= release_dt else "PRE_RELEASE"
+    except Exception:
+        return "SCHEDULED"
+
+
+def _render_canonical_events(events: dict, display_date: str) -> str:
+    """Deterministic Section 2. AI prose is not authoritative for the calendar."""
+    if not bool(events.get("available")):
+        return ("## SECTION 2 — TODAY'S EVENTS\n"
+                "**EVENT DATA UNAVAILABLE** — APEX could not resolve the canonical scheduled-event contract. "
+                "Do not interpret this as a no-event session.")
+    today = list(events.get("today_events") or [])
+    if not today:
+        return ("## SECTION 2 — TODAY'S EVENTS\n"
+                f"No scheduled macro/economic catalysts are present in the canonical APEX event calendar for {display_date}.")
+    lines = ["## SECTION 2 — TODAY'S EVENTS"]
+    for e in today:
+        label = str(e.get("label") or e.get("key") or "Scheduled event")
+        impact = str(e.get("impact") or "UNKNOWN")
+        release = str(e.get("release_time_et") or "time unavailable")
+        status = _event_status(e, display_date)
+        lines.append(f"- **{label}** — {release} ET · {impact} impact · **{status}**")
+    lines.append("\nSource: canonical `engine.event_calendar` contract used across APEX.")
+    return "\n".join(lines)
+
+
+def _enforce_canonical_event_section(narrative: str, canonical_section: str) -> str:
+    """Replace model-authored Section 2 so cached/AI prose cannot contradict APEX."""
+    import re
+    text = str(narrative or "")
+    if not text:
+        return text
+    pattern = re.compile(r"(?ims)^##\s+SECTION\s+2\s+—\s+TODAY['’]S\s+EVENTS\s*.*?(?=^##\s+SECTION\s+\d+\s+—|\Z)")
+    if pattern.search(text):
+        return pattern.sub(canonical_section + "\n\n", text, count=1).rstrip()
+    return (text.rstrip() + "\n\n" + canonical_section).strip()
+
+
 # --------------------------------------------------------------------------- #
 # 2) Prompt — the model gets the real data + strict guardrails
 # --------------------------------------------------------------------------- #
@@ -610,6 +681,11 @@ def generate_morning_brief(
     )
     timings["deterministic"] = round((time.perf_counter() - step) * 1000, 1)
 
+    # APEX 66.5: one authoritative scheduled-event state for Morning Readiness.
+    canonical_events = _canonical_event_context(display_date, sc)
+    context["scheduled_events"] = canonical_events
+    canonical_event_section = _render_canonical_events(canonical_events, display_date)
+
     narrative = ""
     err = None
     narrative_source = "none"
@@ -716,6 +792,7 @@ def generate_morning_brief(
 
     step = time.perf_counter()
     if narrative:
+        narrative = _enforce_canonical_event_section(narrative, canonical_event_section)
         head = narrative
         has_narrative = True
     else:
@@ -727,6 +804,7 @@ def generate_morning_brief(
         head = (f"# {title} — {display_date}\n\n"
                 "_AI narrative unavailable — deterministic institutional analysis "
                 "is active. Technical failure details are available in diagnostics._\n")
+        head = head.rstrip() + "\n\n" + canonical_event_section
         has_narrative = False
 
     markdown = f"{head}\n\n---\n\n{sections}\n"
@@ -758,7 +836,14 @@ def generate_morning_brief(
         "anthropic_integration_version": ANTHROPIC_INTEGRATION_VERSION,
         "anthropic_telemetry": ai_telemetry,
         "markdown": markdown,
-        "structured": dkl.to_dict(),
+        "structured": {**dkl.to_dict(), "scheduled_events": canonical_events},
+        "scheduled_events": canonical_events,
+        "event_integrity": {
+            "canonical_source": "engine.event_calendar",
+            "available": bool(canonical_events.get("available")),
+            "data_stale": bool(canonical_events.get("data_stale")),
+            "today_event_count": len(canonical_events.get("today_events") or []),
+        },
     }
     if deferred_async_request is not None:
         result["_async_narrative_request"] = deferred_async_request
