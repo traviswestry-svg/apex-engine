@@ -24,6 +24,7 @@ from engine.execution.bracket_manager import get_bracket_manager
 from engine.execution import trade_risk_guard as guard
 from engine.execution.trade_audit import audit, read_audit
 from engine.execution.canonical_execution import get_execution_boundary
+from engine.execution import canonical_governance as _gov
 
 # Module state (single trader, single active plan in V1).
 _ADAPTER: Optional[ETradeAdapter] = None
@@ -54,11 +55,26 @@ def register_trade_routes(
     spot_provider: Optional[Callable[[], float]] = None,
     expected_path_provider: Optional[Callable[[], Optional[float]]] = None,
     spx_candles_provider: Optional[Callable[[int, int], Any]] = None,
+    decision_provider: Optional[Callable[[], Any]] = None,
 ) -> None:
     """Attach all trade routes. Optional hooks let app.py inject its existing
     QuantData / Polygon chain fetchers and SPX spot; failover order is
     QuantData → Polygon/Massive → E*TRADE."""
     bus = _bus()
+
+    def _governance_snapshot() -> Optional[Dict[str, Any]]:
+        # APEX 66.4.0 — capture the current canonical decision governance summary
+        # at PREVIEW time so the boundary can enforce it at placement. Returns an
+        # explicit unavailable snapshot (not None) when no decision can be built,
+        # so the boundary fails closed on opening new risk rather than silently
+        # skipping governance.
+        if decision_provider is None:
+            return None
+        try:
+            return _gov.governance_snapshot_from_decision(decision_provider())
+        except Exception:
+            return {"available": False}
+
     if quantdata_chain_fetcher:
         bus.register("quantdata", quantdata_chain_fetcher)
     if polygon_chain_fetcher:
@@ -290,7 +306,7 @@ def register_trade_routes(
             get_execution_boundary().register_preview(
                 preview_id, contract=contract, quantity=qty, entry_premium=entry,
                 stop_premium=stop, session_state=body.get("session_state", "MARKET_OPEN"),
-                intent=intent,
+                intent=intent, governance=_governance_snapshot(),
             )
         audit("PREVIEW_RESPONSE", {"ok": r.ok, "preview_id": preview_id})
         data = {"risk": decision.to_dict(), "broker": r.data,
@@ -383,7 +399,8 @@ def register_trade_routes(
         if r.ok and preview_id:
             get_execution_boundary().register_complex_preview(
                 str(preview_id), intent=intent, economics=body.get("economics") or {},
-                session_state=body.get("session_state", "MARKET_OPEN"))
+                session_state=body.get("session_state", "MARKET_OPEN"),
+                governance=_governance_snapshot())
         data = {"state": "PREVIEWED" if r.ok else "ARMED_EXECUTION_BLOCKED",
                 "intent": intent.to_dict(), "broker": r.data,
                 "preview_id": preview_id, "economics": body.get("economics") or {}}

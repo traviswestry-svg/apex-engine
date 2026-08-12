@@ -12615,6 +12615,23 @@ try:
         except Exception:
             return []
 
+    def _canonical_decision_for_governance():
+        # APEX 66.4.0 — build the current authoritative canonical decision from the
+        # warm institutional bus so entry previews carry a governance snapshot.
+        # Returns None when no snapshot/decision is available; the execution
+        # boundary then fails closed on opening new risk.
+        try:
+            with STATE_LOCK:
+                last = dict(STATE.get("last_result") or {})
+            if not last:
+                return None
+            from engine.institutional_decision_object import build_canonical_institutional_decision
+            return build_canonical_institutional_decision(
+                last, session_state=(last.get("session") or (last.get("market_state") or {}).get("session_state")))
+        except Exception as _gov_err:
+            print(f"APEX 66.4.0 governance decision unavailable (non-fatal): {_gov_err}", flush=True)
+            return None
+
     register_trade_routes(
         app,
         spot_provider=_spx_spot_provider,
@@ -12622,6 +12639,7 @@ try:
         spx_candles_provider=_spx_candles_provider,
         polygon_chain_fetcher=_poly_chain_fetcher,
         polygon_expirations_provider=_poly_expirations_provider,
+        decision_provider=_canonical_decision_for_governance,
     )
     print("APEX Trade Command Center routes registered (sandbox).", flush=True)
 except Exception as e:

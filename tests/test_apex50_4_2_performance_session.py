@@ -22,9 +22,12 @@ def test_premarket_session_classification():
     assert ctx["brief_mode"] == "PREMARKET"
 
 
-def test_version_is_5042():
+def test_morning_brief_version_tracks_application_version():
+    # MORNING_BRIEF_VERSION is now aliased to APPLICATION_VERSION, so this asserts
+    # the wiring is intact rather than pinning a historical sprint string.
     from engine import version as mod
-    assert mod.MORNING_BRIEF_VERSION == "50.4.2_PERFORMANCE_SESSION_INTELLIGENCE"
+    assert mod.MORNING_BRIEF_VERSION == mod.APPLICATION_VERSION
+    assert isinstance(mod.MORNING_BRIEF_VERSION, str) and mod.MORNING_BRIEF_VERSION
 
 
 def test_app_contains_narrative_cache_and_gamma_guard():
