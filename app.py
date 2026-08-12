@@ -147,6 +147,15 @@ except Exception as _td17_err:
     TRADE_DIRECTOR_PHASE17_AVAILABLE = False
     print(f"Trade Director Phase 17 unavailable: {_td17_err}", flush=True)
 
+# APEX 66.4.0 — canonical Trade Horizon Intelligence
+try:
+    from engine.trade_horizon_intelligence import build_trade_horizon_intelligence
+    TRADE_HORIZON_INTELLIGENCE_AVAILABLE = True
+except Exception as _thi_err:
+    TRADE_HORIZON_INTELLIGENCE_AVAILABLE = False
+    build_trade_horizon_intelligence = None
+    print(f"Trade Horizon Intelligence unavailable: {_thi_err}", flush=True)
+
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
     from engine.trade_director_flow_intelligence import (
@@ -7921,6 +7930,20 @@ def api_institutional_os():
             except Exception as _al46_err:
                 print(f"Adaptive learning error (non-fatal): {_al46_err}", flush=True)
 
+            # APEX 66.4.0 — Trade Horizon Intelligence. Read-only classification
+            # layer; it labels SCALP / INTRADAY / SWING context but has no
+            # execution authority and cannot bypass existing decision gates.
+            if TRADE_HORIZON_INTELLIGENCE_AVAILABLE and build_trade_horizon_intelligence is not None:
+                try:
+                    result["trade_horizon_intelligence"] = build_trade_horizon_intelligence(
+                        result, daily_bars=daily_bars, intraday_bars=intraday_bars
+                    )
+                except Exception as _thi_build_err:
+                    result["trade_horizon_intelligence"] = {
+                        "ok": False, "version": "66.4.0", "status": "DATA_LIMITED",
+                        "error": str(_thi_build_err), "execution_authority": "NONE"
+                    }
+
             # APEX 45 — Institutional Market Narrative Engine. Explainability,
             # contradiction detection, readiness checklist, and advisory context.
             try:
@@ -8023,6 +8046,27 @@ def compose_institutional_os_headless(ticker: str = ASSISTANT_TICKER) -> bool:
         print(f"Headless IOS compose failed (non-fatal): {e}", flush=True)
         return False
 
+
+
+@app.route("/api/trade-horizon-intelligence", methods=["GET"])
+def api_trade_horizon_intelligence():
+    """Latest canonical SCALP / INTRADAY / SWING classification.
+
+    Read-only and advisory. The endpoint never fetches providers or mutates
+    execution state; it returns the latest composed object or a fail-closed
+    classification from cached APEX state.
+    """
+    with STATE_LOCK:
+        latest = dict(STATE.get("last_result") or {})
+    payload = latest.get("trade_horizon_intelligence")
+    if isinstance(payload, dict):
+        return jsonify(payload)
+    if TRADE_HORIZON_INTELLIGENCE_AVAILABLE and build_trade_horizon_intelligence is not None:
+        return jsonify(build_trade_horizon_intelligence(latest))
+    return jsonify({
+        "ok": False, "version": "66.4.0", "status": "UNAVAILABLE",
+        "execution_authority": "NONE", "horizons": {}
+    }), 503
 
 
 @app.route("/api/adaptive-learning", methods=["GET"])
