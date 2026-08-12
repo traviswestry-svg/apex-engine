@@ -62,6 +62,33 @@ function initTabs() {
    SPRINT 6.0.3 — RIBBON, ICI, TRADE COACH, ENGINE MATRIX
    ════════════════════════════════════════════════════════════════════════════ */
 
+/* ── APEX 66.4.0 Trade Horizon Intelligence ─────────────────────────────── */
+function renderTradeHorizons(d) {
+  const thi = d && d.trade_horizon_intelligence;
+  if (!thi || !thi.horizons) return;
+  const map = {
+    SCALP: ['thiScalpTrend','thiScalpTrade','thiScalpConfidence','thiScalpStatus'],
+    INTRADAY: ['thiIntradayTrend','thiIntradayTrade','thiIntradayConfidence','thiIntradayStatus'],
+    SWING: ['thiSwingTrend','thiSwingTrade','thiSwingConfidence','thiSwingStatus']
+  };
+  Object.entries(map).forEach(([name, ids]) => {
+    const h = thi.horizons[name] || {};
+    const trend = String(h.trend || 'UNKNOWN').toUpperCase();
+    const card = document.querySelector(`.thi-card[data-horizon="${name}"]`);
+    if (card) { card.classList.remove('BULLISH','BEARISH','NEUTRAL'); card.classList.add(['BULLISH','BEARISH','NEUTRAL'].includes(trend) ? trend : 'NEUTRAL'); }
+    if ($(ids[0])) $(ids[0]).textContent = trend;
+    if ($(ids[1])) $(ids[1]).textContent = h.trade_focus || 'NO TRADE';
+    if ($(ids[2])) $(ids[2]).textContent = h.confidence != null ? Math.round(Number(h.confidence)) + '% confidence' : '—';
+    if ($(ids[3])) $(ids[3]).textContent = String(h.status || 'DATA_LIMITED').replace(/_/g,' ');
+  });
+  const rel = $('thiRelation');
+  if (rel) {
+    const r = thi.relationship || {};
+    const prefix = r.scalp_classification && r.scalp_classification !== 'UNRESOLVED' ? r.scalp_classification.replace(/_/g,' ') + ' · ' : '';
+    rel.textContent = prefix + (r.interpretation || 'Horizon relationship unresolved.');
+  }
+}
+
 /* ── Ribbon ───────────────────────────────────────────────────────────────── */
 function renderRibbon(d) {
   const el = $('ribbon');
@@ -1631,6 +1658,7 @@ async function _renderAll(data) {
   const _ra = async (fn) => { try { await fn(); } catch(e) { console.warn('Async render error:', e.message); } };
   try {
     // 6.0.3 panels
+    _r(renderTradeHorizons, data);
     _r(renderRibbon, data);
     _r(renderICI, data);
     _r(renderDecision, data);
