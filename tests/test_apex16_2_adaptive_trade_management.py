@@ -20,5 +20,10 @@ def test_immutable_record(tmp_path,monkeypatch):
 
 def test_routes_present():
     from pathlib import Path
-    s=(Path(__file__).parents[1]/'engine/institutional_roadmap_routes.py').read_text()
-    assert '/api/trade-management/evaluate' in s and '/api/trade-management/record' in s
+    # Routes may live in any route module (evaluate moved to the execution suite;
+    # record stayed in roadmap). Assert they're defined somewhere in the route
+    # layer rather than pinning one file, so reorganization doesn't break this.
+    engine_dir = Path(__file__).parents[1] / 'engine'
+    src = "\n".join(p.read_text() for p in engine_dir.glob('*routes*.py'))
+    assert '/api/trade-management/evaluate' in src
+    assert '/api/trade-management/record' in src
