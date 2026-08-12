@@ -361,6 +361,18 @@ def register_institutional_roadmap_routes(app, *, last_result_provider):
     @app.get('/api/historical-readiness/coverage')
     @app.get('/api/historical-readiness/gates')
     def historical_readiness_report(): return jsonify({'ok':True,**historical_readiness.build_report()})
+    @app.get('/api/historical-readiness/diagnostic')
+    def historical_readiness_diagnostic():
+        try: limit=int(request.args.get('limit',100))
+        except (TypeError,ValueError): limit=100
+        return jsonify(historical_readiness.diagnostic(limit=max(1,min(limit,500))))
+    @app.post('/api/historical-readiness/reconcile')
+    def historical_readiness_reconcile():
+        body=request.get_json(silent=True) or {}
+        try: limit=int(body.get('limit',500))
+        except (TypeError,ValueError): limit=500
+        payload=historical_readiness.reconcile(limit=max(1,min(limit,500)))
+        return jsonify(payload), (200 if payload.get('ok') else 207)
     @app.get('/apex_os/historical_readiness')
     def historical_readiness_dashboard(): return render_template('historical_readiness_dashboard.html')
 
