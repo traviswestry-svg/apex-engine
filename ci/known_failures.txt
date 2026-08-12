@@ -1,37 +1,14 @@
 # APEX CI — known-failing baseline (the "ratchet").
-#
-# Every test listed here is currently RED on main. CI deselects them so the
-# gate is green today and blocks all NEW breakage immediately. The goal is to
-# DELETE lines from this file over time — when the last line is gone, flip the
-# `tests` job to run with no deselect and delete this file. Do not ADD lines
-# except to quarantine a genuinely-flaky test with a dated note.
-#
-# Generated from a full run on the 66.3.2 build: 1786 passed, 17 failed.
-
-# ── Group A: your own architecture guardrails firing on real drift ───────────
-# These are high-signal. They fail because the repo drifted from its own rules:
-# dead re-export shims, a root-level library module, and versioned-filename
-# sprawl. Fixing these is the same "prune the sprawl" work — deleting the dead
-# modules makes these go green AND shrinks the codebase.
+# Delete lines as you fix them. These 10 remain because they need file
+# deletions/edits (Group A hygiene + two version tests) not yet applied, plus
+# two un-triaged functional tests and the real env-registry-drift finding.
 tests/test_repository_architecture.py::test_repository_architecture_has_no_findings
 tests/test_consolidation_guard.py::test_no_dead_engine_modules
 tests/test_consolidation_guard.py::test_versioned_filename_freeze
 tests/test_consolidation_guard.py::test_sprint1_deletions_stay_deleted
 tests/test_apex65_stabilization_static.py::test_legacy_command_center_stays_deleted_after_consolidation
-tests/test_pre23_hardening.py::test_registry_has_no_production_env_drift
-
-# ── Group B: functional / contract failures to triage ────────────────────────
-# These assert on behavior or version strings that no longer match the code.
-# Triage each: fix the code, or update the test if the contract intentionally
-# changed. Do NOT leave these parked indefinitely.
-tests/test_historical_readiness.py::test_report_collects_real_counts_and_remains_insufficient
-tests/test_historical_readiness.py::test_empty_state_is_collecting
-tests/test_historical_readiness.py::test_degraded_history_when_exclusion_rate_is_high
-tests/test_historical_readiness.py::test_routes_and_dashboard
-tests/test_institutional_research.py::test_research_generates_descriptive_finding_only_when_gated
-tests/test_institutional_research.py::test_research_run_is_reproducible_and_deduplicated
-tests/test_institutional_research.py::test_comparisons_report_sample_and_no_policy_effect
-tests/test_institutional_roadmap.py::test_conviction_blocking_condition
-tests/test_apex16_2_adaptive_trade_management.py::test_routes_present
 tests/test_apex50_4_2_performance_session.py::test_version_is_5042
 tests/test_apex50_4_stability_validation.py::test_validation_state_is_json_safe_and_persistent
+tests/test_institutional_roadmap.py::test_conviction_blocking_condition
+tests/test_apex16_2_adaptive_trade_management.py::test_routes_present
+tests/test_pre23_hardening.py::test_registry_has_no_production_env_drift
