@@ -46,3 +46,23 @@ def test_routes_and_dashboard(isolated):
     c=apex_app.app.test_client()
     for path in ['/api/historical-readiness/status','/api/historical-readiness/report','/api/historical-readiness/coverage','/api/historical-readiness/gates','/apex_os/historical_readiness']:
         assert c.get(path).status_code==200,path
+
+def test_unassessed_is_not_misreported_as_excluded_or_degraded(isolated, monkeypatch):
+    package={'canonical_decision':{'strategy':'CALL'},'snapshots':{}}
+    with sqlite3.connect(ev.DB_PATH) as c:
+        c.execute("INSERT INTO evidence_packages VALUES(?,?,?,?,?,?,?,?,?)",('p3','r3','2026-07-03T14:00:00+00:00','v1','13','READY',json.dumps(package),'h3',None))
+    monkeypatch.setattr(hr,'MAX_EXCLUSION_RATE',25)
+    r=hr.build_report()
+    assert r['counts']['unassessed'] == 1
+    assert r['counts']['excluded'] == 0
+    assert r['quality']['exclusion_rate_pct'] == 0.0
+    assert r['status'] == 'INSUFFICIENT_HISTORY'
+
+
+def test_diagnostic_exposes_pipeline_state(isolated):
+    package={'canonical_decision':{'strategy':'CALL'},'snapshots':{}}
+    with sqlite3.connect(ev.DB_PATH) as c:
+        c.execute("INSERT INTO evidence_packages VALUES(?,?,?,?,?,?,?,?,?)",('p4','r4','2026-07-04T14:00:00+00:00','v1','13','READY',json.dumps(package),'h4',None))
+    d=hr.diagnostic()
+    assert d['records'][0]['pipeline_state'] == 'UNASSESSED'
+    assert d['pipeline_blockers']['UNASSESSED'] == 1
