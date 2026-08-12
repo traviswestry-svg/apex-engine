@@ -1,12 +1,12 @@
 {
-  "apex_version": "66.3.2",
-  "build_name": "Stateful Thesis Persistence & Structured Invalidation Lifecycle",
+  "apex_version": "66.4.0",
+  "build_name": "Trade Horizon Intelligence & Dashboard Classification",
   "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-08",
+  "released_at": "2026-08-12",
   "guardrails": {
     "changes_trade_decisions": true,
     "changes_execution_authority": false,
