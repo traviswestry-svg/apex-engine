@@ -1,0 +1,16 @@
+--- a/engine/institutional_data_quality.py
++++ b/engine/institutional_data_quality.py
+@@ -30,7 +30,12 @@
+     except Exception: return {} if default is None else default
+ def _hash(v: Any) -> str: return hashlib.sha256(_json(v).encode()).hexdigest()
+ def _conn():
+-    path = os.getenv("APEX_EVIDENCE_DB", DB_PATH)
++    # Use the module DB_PATH (already initialized from APEX_EVIDENCE_DB at import),
++    # matching institutional_evidence/institutional_governance. Reading the env var
++    # again here diverged from callers that read DB_PATH directly (e.g.
++    # historical_readiness._quality_rows), creating "no such table" when the two
++    # resolved to different files, and silently defeating DB_PATH reassignment.
++    path = DB_PATH
+     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+     c = sqlite3.connect(path); c.row_factory = sqlite3.Row
+     c.execute("PRAGMA journal_mode=WAL"); return c
