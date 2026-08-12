@@ -68,7 +68,7 @@ def test_consensus_disagreement_and_too_few_fail_closed():
 def test_conviction_blocking_condition():
     out=build_conviction({'institutional_intelligence':{'confidence':90}})
     assert out['fail_closed'] is True
-    assert 'INSUFFICIENT_RELIABLE_ENGINES' in out['blocking_conditions']
+    assert 'INSUFFICIENT_INDEPENDENT_EVIDENCE' in out['blocking_conditions']
 
 def test_api_and_dashboard_smoke(isolated, monkeypatch):
     import app as apex_app

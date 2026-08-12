@@ -1,14 +1,22 @@
 """Tests for APEX 7.5.7 Decision Intelligence."""
+import datetime as dt
 from engine.confluence import build_confluence
-from engine.event_calendar import build_event_intelligence
+from engine.event_calendar import build_event_intelligence, EASTERN
 from engine.decision_intelligence import build_decision_intelligence
+
+# Pin a deterministic non-event session (a Saturday -> CLEAR / NORMAL_SESSION) so
+# these verdict tests exercise the confluence->verdict mapping in isolation, not
+# whatever the live economic calendar happens to say on the day CI runs. Without
+# this, an EVENT_DAY/EVENT_DISCOVERY session correctly forces WATCH and the
+# TRADE/AVOID assertions flake.
+_NON_EVENT_NOW = dt.datetime(2026, 1, 3, 10, 0, tzinfo=EASTERN)
 
 
 def _panel(ii, inval=None):
     bus = {"institutional_intelligence": ii, "market_state": {"price": 7531},
            "range_intelligence": {"range_intelligence": {"invalidation": inval or []}}}
     return build_decision_intelligence(bus, confluence=build_confluence(bus),
-                                       events=build_event_intelligence())
+                                       events=build_event_intelligence(now=_NON_EVENT_NOW))
 
 
 _BASE = dict(gamma_regime="POSITIVE_GAMMA", dealer_bias="NEUTRAL", pin_probability=50,
