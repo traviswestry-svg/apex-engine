@@ -89,6 +89,21 @@ function renderTradeHorizons(d) {
   }
 }
 
+function renderBreadthRegime(d) {
+  const b = d && d.breadth_regime;
+  if (!b) return;
+  const state = String(b.state || 'DATA_LIMITED');
+  const band = $('breadthBand');
+  if (band) band.className = 'bre-band ' + state;
+  if ($('breHeadline')) $('breHeadline').textContent = b.headline || 'Breadth unavailable';
+  if ($('breInterpretation')) $('breInterpretation').textContent = b.interpretation || 'No signal is inferred.';
+  if ($('breValue')) $('breValue').textContent = b.bpspx == null ? '—' : Number(b.bpspx).toFixed(2) + ' · ' + String(b.direction || 'UNKNOWN');
+  if ($('breState')) $('breState').textContent = state.replace(/_/g, ' ');
+  const hi = b.horizon_influence || {};
+  if ($('breScalp')) $('breScalp').textContent = String((hi.SCALP || {}).effect || 'CONTEXT_ONLY').replace(/_/g, ' ');
+  if ($('breSwing')) $('breSwing').textContent = String((hi.SWING || {}).effect || '—').replace(/_/g, ' ');
+}
+
 /* ── Ribbon ───────────────────────────────────────────────────────────────── */
 function renderRibbon(d) {
   const el = $('ribbon');
@@ -1659,6 +1674,7 @@ async function _renderAll(data) {
   try {
     // 6.0.3 panels
     _r(renderTradeHorizons, data);
+    _r(renderBreadthRegime, data);
     _r(renderRibbon, data);
     _r(renderICI, data);
     _r(renderDecision, data);
