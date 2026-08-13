@@ -156,6 +156,17 @@ except Exception as _thi_err:
     build_trade_horizon_intelligence = None
     print(f"Trade Horizon Intelligence unavailable: {_thi_err}", flush=True)
 
+# APEX 66.5.0 — Breadth Exhaustion & Recovery Engine
+try:
+    from engine.breadth_regime import build_breadth_regime
+    from engine.breadth_regime_routes import register_breadth_regime_routes
+    BREADTH_REGIME_AVAILABLE = True
+except Exception as _bre_err:
+    BREADTH_REGIME_AVAILABLE = False
+    build_breadth_regime = None
+    register_breadth_regime_routes = None
+    print(f"Breadth Regime Engine unavailable: {_bre_err}", flush=True)
+
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
     from engine.trade_director_flow_intelligence import (
@@ -6142,6 +6153,28 @@ def tv_signal():
         print(f"WEBHOOK REJECTED (bad secret): received len={len(secret)}, expected len={len(WEBHOOK_SECRET)}, ticker={payload.get('ticker')!r}, source={payload.get('source', payload.get('system'))!r}", flush=True)
         return jsonify({"ok": False, "error": "bad secret"}), 403
 
+    # APEX 66.5.0 — a dedicated TradingView BPSPX alert may update daily
+    # breadth without being misclassified as an executable trade signal.
+    bpspx_value = safe_float(payload.get("bpspx"), -1.0)
+    if str(payload.get("source") or "").upper() in {"APEX_BREADTH", "BPSPX"} and 0 <= bpspx_value <= 100:
+        observed_at = dt.datetime.now(dt.timezone.utc).isoformat()
+        with STATE_LOCK:
+            observations = list(SCANNER_STATE.get("bpspx_history") or [])
+            previous = safe_float(SCANNER_STATE.get("bpspx"), -1.0)
+            observations.append(bpspx_value)
+            SCANNER_STATE["bpspx"] = bpspx_value
+            SCANNER_STATE["bpspx_previous"] = previous if previous >= 0 else None
+            SCANNER_STATE["bpspx_history"] = observations[-100:]
+            SCANNER_STATE["bpspx_observed_at"] = observed_at
+        breadth = build_breadth_regime({
+            "bpspx": bpspx_value,
+            "bpspx_previous": previous if previous >= 0 else None,
+            "bpspx_history": observations,
+            "bpspx_source": "tradingview_bpspx",
+            "bpspx_observed_at": observed_at,
+        }) if BREADTH_REGIME_AVAILABLE and build_breadth_regime is not None else {}
+        return jsonify({"ok": True, "version": VERSION, "accepted": "BPSPX", "breadth_regime": breadth})
+
     ticker = normalize_signal_ticker(str(payload.get("ticker", ASSISTANT_TICKER)))
     side   = str(payload.get("signal", payload.get("side", "NONE"))).upper()
 
@@ -7942,6 +7975,26 @@ def api_institutional_os():
                     result["trade_horizon_intelligence"] = {
                         "ok": False, "version": "66.4.0", "status": "DATA_LIMITED",
                         "error": str(_thi_build_err), "execution_authority": "NONE"
+                    }
+
+            # APEX 66.5.0 — daily breadth is a horizon-aware context input. It
+            # cannot create an entry or override execution/risk governance.
+            if BREADTH_REGIME_AVAILABLE and build_breadth_regime is not None:
+                try:
+                    with STATE_LOCK:
+                        _breadth_input = {
+                            "bpspx": SCANNER_STATE.get("bpspx"),
+                            "bpspx_previous": SCANNER_STATE.get("bpspx_previous"),
+                            "bpspx_history": list(SCANNER_STATE.get("bpspx_history") or []),
+                            "bpspx_observed_at": SCANNER_STATE.get("bpspx_observed_at"),
+                            "bpspx_source": "tradingview_bpspx",
+                        }
+                    result["breadth_regime"] = build_breadth_regime({**result, **_breadth_input})
+                except Exception as _bre_build_err:
+                    result["breadth_regime"] = {
+                        "ok": False, "version": "66.5.0", "status": "DATA_LIMITED",
+                        "state": "DATA_LIMITED", "bpspx": None,
+                        "error": str(_bre_build_err), "execution_authority": "NONE"
                     }
 
             # APEX 45 — Institutional Market Narrative Engine. Explainability,
@@ -13224,6 +13277,14 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_regime_intelligence_routes(app, last_result_provider=_iri_last_result)
         print("APEX 23.1 Institutional Regime Intelligence routes registered.", flush=True)
+
+    if BREADTH_REGIME_AVAILABLE and register_breadth_regime_routes is not None:
+        def _bre_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_breadth_regime_routes(app, last_result_provider=_bre_last_result)
+        print("APEX 66.5.0 Breadth Regime Engine routes registered.", flush=True)
 
     if INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE and register_institutional_forecast_routes is not None:
         def _ife_last_result():
