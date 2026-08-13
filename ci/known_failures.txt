@@ -1,5 +1,0 @@
-# APEX CI — known-failing baseline (the "ratchet").
-# EMPTY: the baseline is fully burned down. All previously-parked tests are
-# fixed at the source (decision_intelligence event determinism, roadmap blocker
-# rename, adaptive route-location robustness, and 31 env vars registered).
-# Add a line here only to quarantine a genuinely-flaky test with a dated note.
