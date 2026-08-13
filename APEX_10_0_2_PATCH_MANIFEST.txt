@@ -1,0 +1,8 @@
+APEX 10.0.2 Release Manager patch
+
+Apply from repository root:
+  git apply --check apex-10.0.2-release-manager.patch
+  git apply apex-10.0.2-release-manager.patch
+
+The patch adds release-manager modules/tests/docs, updates app.py, and deletes
+stale engine/contracts.py and engine/persistence.py forks.

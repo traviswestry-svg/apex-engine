@@ -1,0 +1,5 @@
+test_db_resilience.py
+  Removed duplicate root copy. Canonical file remains at tests/test_db_resilience.py.
+
+test_trade_director_phase19.py
+  Relocated from repository root to tests/test_trade_director_phase19.py.

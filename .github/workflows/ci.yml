@@ -1,0 +1,104 @@
+name: APEX CI
+
+# Runs on every push and PR. Two jobs are REQUIRED (they must pass before you
+# merge/deploy): `smoke` proves the app still imports, `tests` runs the whole
+# suite minus a tracked known-failing baseline (see ci/known_failures.txt).
+# `full-suite` is purely informational and can never fail the run. Deploys go
+# straight to Render, so this is the safety net that catches a broken import or
+# a regression before it reaches prod.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  APEX_AUTH_TOKEN: ci-only-token-not-a-secret-1234567890
+  APEX_CALIBRATION_DB: .ci-tmp/apex_calibration.db
+  APEX_EVIDENCE_DB: .ci-tmp/apex_evidence.db
+  APEX_GOVERNANCE_DB: .ci-tmp/apex_governance.db
+  APEX_SIMILARITY_DB: .ci-tmp/apex_similarity.db
+  APEX_MARKET_MEMORY_DB: .ci-tmp/apex_market_memory.db
+  APEX_RESEARCH_DB: .ci-tmp/apex_research.db
+  DB_PATH: .ci-tmp/apex_tracking.db
+  WARM_IOS_ON_IMPORT: "false"
+  RUN_SCANNER_ON_IMPORT: "false"
+
+jobs:
+  smoke:
+    name: Boot smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install runtime dependencies
+        run: pip install -r requirements.txt
+      - run: mkdir -p .ci-tmp
+      - name: Import app and count routes
+        run: |
+          python - <<'PY'
+          import app
+          n = len(list(app.app.url_map.iter_rules()))
+          assert n > 500, f"route count collapsed to {n} — likely a broken registration"
+          print(f"boot OK — {n} routes registered")
+          PY
+
+  tests:
+    name: Test suite (ratcheted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install runtime + test dependencies
+        run: pip install -r requirements.txt pytest
+      - run: mkdir -p .ci-tmp
+      - name: Run pytest (excluding ci/known_failures.txt)
+        run: |
+          set -euo pipefail
+          DESELECT=()
+          COUNT=0
+          if [ -f ci/known_failures.txt ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+              line="${line%$'\r'}"
+              line="${line#"${line%%[![:space:]]*}"}"
+              line="${line%"${line##*[![:space:]]}"}"
+              case "$line" in ''|'#'*) continue ;; esac
+              DESELECT+=(--deselect "$line")
+              COUNT=$((COUNT + 1))
+            done < ci/known_failures.txt
+          fi
+          echo "::notice::Deselecting ${COUNT} baseline test(s) from ci/known_failures.txt"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::warning::No baseline entries parsed — running the FULL suite. Check ci/known_failures.txt exists and its line endings."
+          fi
+          python -m pytest -q "${DESELECT[@]}"
+
+  full-suite:
+    name: Full suite (visibility only, never blocks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install runtime + test dependencies
+        run: pip install -r requirements.txt pytest
+      - run: mkdir -p .ci-tmp
+      - name: Run entire suite (informational)
+        run: python -m pytest -q -ra || true

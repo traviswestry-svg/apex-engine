@@ -1,0 +1,154 @@
+schema_version: apex.capability_registry.v1
+apex_version: 66.5.0
+capabilities:
+  api_explorer:
+    canonical_module: engine.operations_routes
+    status: active
+    version: 48.1.0
+    inputs: [flask_route_registry, capability_registry]
+    outputs: [endpoint_inventory, openapi_inventory, developer_console]
+    api_routes: [/api/endpoints, /api/endpoints/search, /api/endpoints/stats, /api/endpoints/openapi]
+    decision_authority: none
+  release_manifest:
+    canonical_module: engine.release_manifest
+    status: active
+    version: 66.5.0
+    inputs: [environment, capability_registry]
+    outputs: [release_manifest]
+    api_routes: [/api/version, /api/release-manifest]
+    decision_authority: none
+  breadth_regime:
+    canonical_module: engine.breadth_regime
+    status: active
+    version: 66.5.0
+    inputs: [bpspx_observation, bpspx_history, canonical_context]
+    outputs: [breadth_regime_state, horizon_influence, dashboard_band]
+    api_routes: [/api/breadth-regime/status, /api/breadth-regime/diagnostics]
+    decision_authority: none
+  canonical_decision_snapshot:
+    canonical_module: engine.canonical_decision
+    status: active
+    version: 47.0.2
+    inputs: [institutional_os_composition]
+    outputs: [canonical_decision_snapshot, feature_vector]
+    api_routes: [/api/decision-snapshot/latest]
+    decision_authority: advisory
+  canonical_institutional_decision:
+    canonical_module: engine.institutional_decision_object
+    status: active
+    version: 66.3.2
+    inputs: [normalized_engine_opinions, normalized_acceptance, correlation_aware_consensus, raw_conviction, graded_history_maturity, execution_intelligence, thesis_lifecycle]
+    outputs: [institutional_decision_v3, institutional_thesis, evidence_conflict_matrix]
+    api_routes: [/api/institutional-decision, /api/institutional-consensus, /api/institutional-conviction, /api/institutional-narrative, /api/institutional-thesis, /api/institutional-thesis/history]
+    decision_authority: canonical
+    compatibility: Legacy decision/narrative modules may adapt to this contract but must not independently synthesize authoritative consensus or conviction.
+  institutional_thesis_lifecycle:
+    canonical_module: engine.thesis_lifecycle
+    status: active
+    version: 66.3.2
+    inputs: [canonical_institutional_thesis_candidate, explicit_invalidation_inputs, current_market_price, session_state]
+    outputs: [persisted_thesis_state, thesis_transition_events, structured_invalidation_evaluation]
+    api_routes: [/api/institutional-thesis, /api/institutional-thesis/history]
+    decision_authority: none
+    guardrails: [no_direction_synthesis, no_conviction_synthesis, explicit_hard_invalidation_only, ambiguous_soft_triggers_fail_closed, append_only_transition_events, no_closed_weekend_junk_records]
+  decision_reasoning_normalization:
+    canonical_module: engine.decision_reasoning_contracts
+    status: active
+    version: 66.3.1
+    inputs: [primitive_engine_outputs]
+    outputs: [engine_opinions, acceptance_result, correlation_aware_consensus]
+    decision_authority: none
+    guardrails: [missing_data_abstains, neutral_not_abstain, unknown_not_neutral, configured_decorrelation_not_historical_claim]
+  legacy_institutional_decision_adapter:
+    canonical_module: engine.institutional_decision_engine
+    status: compatibility
+    version: 13.0.0_INSTITUTIONAL_DECISION_ENGINE
+    inputs: [canonical_institutional_decision, legacy_component_diagnostics]
+    outputs: [legacy_institutional_decision_response]
+    api_routes: [/api/institutional-decision/status, /api/institutional-decision/diagnostics, /api/institutional-decision/scenarios, /api/institutional-decision/evidence, /api/institutional-decision/strategy]
+    decision_authority: none
+    note: Legacy response shape retained; authoritative consensus, conviction, thesis and actionability come from engine.institutional_decision_object.
+  evidence_readiness:
+    canonical_module: engine.evidence_pipeline
+    status: active
+    version: 47.0.3
+    inputs: [canonical_decision_snapshot, grading_records]
+    outputs: [evidence_readiness]
+    api_routes: [/api/evidence-readiness]
+    decision_authority: none
+  automatic_outcome_grader:
+    canonical_module: engine.outcome_grader
+    status: active
+    version: 47.0.4
+    inputs: [stored_decisions, forward_price_samples]
+    outputs: [graded_outcomes, exclusion_reasons]
+    api_routes: [/api/outcome-grader/run, /api/outcome-grader/summary]
+    decision_authority: none
+  market_narrative:
+    canonical_module: engine.market_narrative
+    status: active
+    version: 45.0.0
+    inputs: [canonical_decision_snapshot]
+    outputs: [market_narrative]
+    decision_authority: advisory
+    note: Legacy/advisory narrative surface; authoritative institutional reasoning is engine.institutional_decision_object via engine.institutional_narrative normalization.
+  adaptive_learning:
+    canonical_module: engine.adaptive_learning
+    status: shadow
+    version: 46.0.0
+    inputs: [graded_outcomes, feature_vector]
+    outputs: [bounded_weight_proposals]
+    decision_authority: advisory
+  legacy_engine_app:
+    canonical_module: engine.app
+    status: quarantined
+    version: legacy
+    decision_authority: none
+    note: Root app.py remains the canonical production application for APEX 47.
+
+  evidence_pipeline_trace:
+    canonical_module: engine.evidence_pipeline_trace
+    status: active
+    version: "47.0.6"
+    inputs: [recommendation_ledger, canonical_decision_snapshot, outcome_grader, adaptive_learning]
+    outputs: [pipeline_trace, first_blocker, lifecycle_counts]
+    api_routes: [/api/evidence-pipeline/trace]
+    decision_authority: none
+
+  production_observability:
+    canonical_module: engine.production_observability
+    status: active
+    version: "48.1.0"
+    component_version: "10.1.0_PRODUCTION_OBSERVABILITY"
+    inputs: [runtime_metrics, capability_registry, canonical_release_manifest]
+    outputs: [system_metrics, system_readiness, integration_health]
+    api_routes: [/api/system/metrics, /api/system/readiness]
+    decision_authority: none
+
+  decision_evidence_pipeline:
+    canonical_module: engine.decision_evidence_pipeline
+    status: active
+    version: "48.2.0"
+    inputs: [recommendation_ledger, governed_terminal_events]
+    outputs: [flow_features, apex_signals, flow_labels, evidence_readiness]
+    api_routes: [/api/evidence-pipeline/readiness, /api/evidence-pipeline/backfill]
+    decision_authority: none
+    guardrails: [no_proxy_outcomes, immutable_pre_decision_features, terminal_economics_required]
+
+  canonical_execution_boundary_65_7:
+    canonical_module: engine.execution.canonical_execution
+    status: active
+    version: "66.2.0"
+    inputs: [broker_preview_id, current_order_intent, current_risk_state]
+    outputs: [risk_revalidated_broker_submission, duplicate_submission_block]
+    api_routes: [/api/trade/spx/place-entry]
+    decision_authority: execution
+
+  hlce_single_owner_65_7:
+    canonical_module: engine.historical_level_calibration
+    status: active
+    version: "65.7.0"
+    inputs: [scanner_process, institutional_os_snapshot]
+    outputs: [historical_level_observations, transition_learning]
+    api_routes: [/api/level-calibration/status, /api/level-calibration/statistics, /api/level-calibration/probabilities]
+    decision_authority: advisory

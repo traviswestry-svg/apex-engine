@@ -1,0 +1,278 @@
+"""APEX 11.1 Institutional Execution OS.
+
+History-free execution quality, fill simulation, position quality and morning
+readiness helpers.  All outputs are deterministic from the current live state;
+no historical win-rate or calibrated-probability claims are made.
+"""
+from __future__ import annotations
+
+import math
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, Mapping, Optional
+
+from .session_readiness import build_session_readiness
+
+VERSION = "11.1.0_INSTITUTIONAL_EXECUTION_OS"
+
+
+def _num(value: Any, default: float = 0.0) -> float:
+    try:
+        out = float(value)
+        return default if math.isnan(out) or math.isinf(out) else out
+    except Exception:
+        return default
+
+
+def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
+    return max(low, min(high, value))
+
+
+def _first(mapping: Mapping[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        if key in mapping and mapping[key] is not None:
+            return mapping[key]
+    return default
+
+
+def _premium(result: Mapping[str, Any]) -> Mapping[str, Any]:
+    value = result.get("premium_strategy") or result.get("premium_recommendation") or {}
+    return value if isinstance(value, Mapping) else {}
+
+
+def _chain(result: Mapping[str, Any], premium: Mapping[str, Any]) -> Mapping[str, Any]:
+    for value in (
+        premium.get("chain_quality"), result.get("chain_quality"),
+        (result.get("market_state") or {}).get("chain_quality") if isinstance(result.get("market_state"), Mapping) else None,
+    ):
+        if isinstance(value, Mapping):
+            return value
+    return {}
+
+
+def _legs(premium: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    raw = premium.get("legs") or premium.get("structure_legs") or premium.get("contracts") or []
+    return [x for x in raw if isinstance(x, Mapping)] if isinstance(raw, list) else []
+
+
+def build_execution_snapshot(result: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    result = result or {}
+    premium = _premium(result)
+    chain = _chain(result, premium)
+    legs = _legs(premium)
+
+    quality_score = _num(_first(chain, "quality_score", "score", default=50), 50)
+    gate = str(_first(chain, "action", "gate", "status", default="UNKNOWN")).upper()
+    valid_count = int(_num(_first(chain, "valid_contract_count", "valid_count", default=len(legs)), len(legs)))
+    chain_evaluated = bool(chain) or bool(legs)
+
+    bid = _num(_first(premium, "bid", "net_bid", "executable_bid", default=0))
+    ask = _num(_first(premium, "ask", "net_ask", "executable_ask", default=0))
+    mid = _num(_first(premium, "mid", "midpoint", "credit", "debit", "price", default=(bid + ask) / 2 if bid and ask else 0))
+    spread = abs(ask - bid) if ask and bid else _num(_first(premium, "spread", "bid_ask_spread", default=0))
+    spread_pct = spread / max(abs(mid), 0.01) * 100 if spread else 0.0
+
+    quote_age = _num(_first(premium, "quote_age_seconds", "max_quote_age_seconds", default=_first(chain, "max_quote_age_seconds", "quote_age_seconds", default=0)))
+    execution_conf = _num(_first(premium, "execution_confidence", default=_first(chain, "execution_confidence", default=0.5)), 0.5)
+    if execution_conf <= 1.0:
+        execution_conf *= 100
+
+    liquidity_score = _clamp(
+        quality_score * 0.55
+        + _clamp(100 - spread_pct * 4) * 0.25
+        + _clamp(100 - quote_age * 2) * 0.15
+        + _clamp(valid_count * 12.5) * 0.05
+    )
+    fill_probability = _clamp(liquidity_score * 0.62 + execution_conf * 0.28 + _clamp(100 - spread_pct * 5) * 0.10)
+    expected_slippage = round(max(0.0, spread * (1.0 - fill_probability / 100) + spread * 0.12), 3)
+    time_to_fill = round(max(0.5, 12.0 - fill_probability * 0.105 + quote_age * 0.03), 1)
+
+    risk = premium.get("risk") if isinstance(premium.get("risk"), Mapping) else {}
+    max_loss = _num(_first(premium, "max_loss", default=_first(risk, "max_loss", default=0)))
+    max_profit = _num(_first(premium, "max_profit", default=_first(risk, "max_profit", default=0)))
+    rr = max_profit / max(max_loss, 0.01) if max_loss > 0 else 0.0
+    risk_score = 70.0 if max_loss > 0 else 45.0
+    if rr > 0:
+        risk_score = _clamp(50 + min(rr, 3.0) * 15)
+
+    market_open = bool(_first(result, "market_open", default=(result.get("market_status") or {}).get("is_open") if isinstance(result.get("market_status"), Mapping) else False))
+    freshness_score = _clamp(100 - quote_age * 3) if quote_age else 60.0
+    broker_ready = bool(_first(result, "broker_ready", "broker_connected", default=False))
+    operational_score = 100.0 if market_open else 70.0
+    if not broker_ready:
+        operational_score -= 10
+
+    execution_score = _clamp(
+        liquidity_score * 0.34 + quality_score * 0.22 + freshness_score * 0.18
+        + risk_score * 0.14 + operational_score * 0.12
+    )
+    if gate in {"SUPPRESS", "BLOCK", "FAIL"}:
+        execution_score = min(execution_score, 39.0)
+    if not premium:
+        execution_score = min(execution_score, 25.0)
+
+    position_score = _clamp(quality_score * 0.35 + liquidity_score * 0.30 + risk_score * 0.20 + execution_conf * 0.15)
+
+    grade = "A" if execution_score >= 90 else "B" if execution_score >= 80 else "C" if execution_score >= 70 else "D" if execution_score >= 60 else "F"
+    quality = "EXCELLENT" if execution_score >= 90 else "GOOD" if execution_score >= 80 else "ACCEPTABLE" if execution_score >= 70 else "POOR" if execution_score >= 50 else "BLOCKED"
+    decision = "EXECUTABLE" if execution_score >= 80 and gate not in {"SUPPRESS", "BLOCK", "FAIL"} else "CAUTION" if execution_score >= 60 else "DO_NOT_EXECUTE"
+
+    expected_fill = mid
+    best_fill = mid + spread * 0.15 if mid else 0.0
+    worst_fill = mid - spread * 0.45 if mid else 0.0
+
+    recommendation_present = bool(premium)
+    quotes_present = bool(mid or (bid and ask))
+    checks = {
+        "recommendation_present": recommendation_present,
+        # UNKNOWN is not a passed gate.  Before a recommendation/chain exists,
+        # downstream presentation should report WAITING rather than READY/FAIL.
+        "chain_evaluated": chain_evaluated,
+        "chain_gate_passed": chain_evaluated and gate not in {"UNKNOWN", "SUPPRESS", "BLOCK", "FAIL"},
+        "quotes_expected": recommendation_present or chain_evaluated,
+        "quotes_present": quotes_present,
+        "quotes_fresh": quotes_present and quote_age > 0 and quote_age <= 15,
+        "liquidity_acceptable": quotes_present and liquidity_score >= 70,
+        "risk_defined": max_loss > 0,
+        "market_open": market_open,
+        "broker_ready": broker_ready,
+    }
+    blockers = [name for name, passed in checks.items() if not passed and name in {"recommendation_present", "chain_gate_passed", "quotes_present", "liquidity_acceptable", "risk_defined"}]
+
+    return {
+        "ok": True,
+        "version": VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "execution_score": round(execution_score, 1),
+        "execution_grade": grade,
+        "execution_quality": quality,
+        "execution_decision": decision,
+        "position_quality_score": round(position_score, 1),
+        "liquidity_score": round(liquidity_score, 1),
+        "fill_probability": round(fill_probability / 100, 3),
+        "expected_slippage": expected_slippage,
+        "estimated_time_to_fill_seconds": time_to_fill,
+        "pricing": {"bid": bid, "ask": ask, "mid": round(mid, 3), "spread": round(spread, 3), "spread_pct": round(spread_pct, 2)},
+        "fill_simulation": {
+            "best_fill": round(best_fill, 3), "expected_fill": round(expected_fill, 3),
+            "worst_fill": round(worst_fill, 3), "partial_fill_risk": "LOW" if fill_probability >= 85 else "MEDIUM" if fill_probability >= 65 else "HIGH",
+        },
+        "risk": {"max_profit": max_profit, "max_loss": max_loss, "reward_risk": round(rr, 2), "risk_quality_score": round(risk_score, 1)},
+        "chain": {"quality_score": round(quality_score, 1), "gate": gate, "valid_contract_count": valid_count, "quote_age_seconds": quote_age},
+        "checks": checks,
+        "blocking_items": blockers,
+        "history_free": True,
+        "note": "Scores describe current execution conditions; they are not historical win probabilities.",
+    }
+
+
+def build_morning_readiness(
+    *,
+    system_checks: Mapping[str, Any],
+    execution: Mapping[str, Any],
+    market_open: bool = False,
+    session: Any = None,
+    execution_checks: Optional[Mapping[str, Any]] = None,
+    risk_config_ready: bool = False,
+    broker_required: Optional[bool] = None,
+) -> Dict[str, Any]:
+    weights = {
+        "application": 10, "database": 10, "data_freshness": 15, "providers": 10,
+        "recommendation_ledger": 10, "execution": 10, "clock": 5,
+        "version_consistency": 5, "alerts": 5, "scheduler": 10,
+    }
+    status_value = {"PASS": 100, "DISABLED": 70, "BLOCKED": 40, "WARN": 55, "FAIL": 0}
+    weighted = 0.0
+    used = 0.0
+    components: Dict[str, Any] = {}
+    blockers = []
+    critical = {"application", "database", "data_freshness", "recommendation_ledger"}
+    for name, weight in weights.items():
+        item = system_checks.get(name, {}) if isinstance(system_checks, Mapping) else {}
+        status = str(item.get("status", "WARN")).upper()
+        points = status_value.get(status, 55)
+
+        # Closed-session readiness must not treat the absence of future live
+        # recommendations/outcomes as an operational failure. Preserve the raw
+        # ledger diagnosis in the summary, but remove it from the weighted score
+        # and blocker list until a live executable session exists.
+        effective_weight = weight
+        effective_score: Optional[float] = float(points)
+        summary = item.get("summary")
+        if name == "recommendation_ledger" and not market_open and status in {"BLOCKED", "WARN"}:
+            status = "WAITING"
+            effective_weight = 0
+            effective_score = None
+            summary = "Awaiting live executable recommendations and graded outcomes"
+
+        if effective_weight:
+            weighted += points * effective_weight
+            used += effective_weight
+        components[name] = {
+            "status": status,
+            "weight": effective_weight,
+            "score": effective_score,
+            "summary": summary,
+        }
+        if name in critical and status in {"FAIL", "BLOCKED"}:
+            blockers.append(name)
+
+    execution_score = _num(execution.get("execution_score"), 0)
+    if market_open:
+        weighted += execution_score * 10
+        used += 10
+        components["execution_intelligence"] = {
+            "status": execution.get("execution_decision", "UNKNOWN"),
+            "weight": 10,
+            "score": execution_score,
+            "summary": execution.get("execution_quality") or "Live execution conditions evaluated",
+        }
+    else:
+        components["execution_intelligence"] = {
+            "status": "NOT_EXPECTED",
+            "weight": 0,
+            "score": None,
+            "summary": "Execution scoring resumes during the live cash session",
+        }
+
+    score = round(weighted / max(used, 1), 1)
+    if blockers:
+        mode, status = "DO_NOT_TRADE", "NOT_READY"
+    elif not market_open:
+        mode, status = "ANALYSIS_ONLY", "READY_FOR_ANALYSIS" if score >= 75 else "CAUTION"
+    elif score >= 90:
+        mode, status = "FULLY_OPERATIONAL", "READY"
+    elif score >= 75:
+        mode, status = "DEGRADED", "CAUTION"
+    else:
+        mode, status = "DO_NOT_TRADE", "NOT_READY"
+
+    # APEX 48.2.1 — session-aware presentation layer. Reuses the boolean checks
+    # already produced by build_execution_snapshot and the canonical session
+    # detector (passed in via ``session``) to express each checklist item as a
+    # rich state instead of a bare pass/fail. Never fabricates a FAIL from the
+    # mere absence of live market data.
+    checks_source = execution_checks
+    if checks_source is None and isinstance(execution.get("checks"), Mapping):
+        checks_source = execution.get("checks")
+    session_readiness = build_session_readiness(
+        session=session,
+        market_open=market_open,
+        execution_checks=checks_source,
+        risk_config_ready=risk_config_ready,
+        broker_required=broker_required,
+    )
+
+    return {
+        "ok": True, "version": VERSION, "generated_at": datetime.now(timezone.utc).isoformat(),
+        "score": score, "status": status, "trading_mode": mode, "market_open": market_open,
+        "blocking_items": blockers, "components": components,
+        "recommendation": "READY TO TRADE" if mode == "FULLY_OPERATIONAL" else "ANALYSIS ONLY" if mode == "ANALYSIS_ONLY" else "DO NOT TRADE" if mode == "DO_NOT_TRADE" else "TRADE WITH CAUTION",
+        # Session-aware checklist + intelligent overall status (APEX 48.2.1).
+        "session": session_readiness["session"],
+        "checklist": session_readiness["checklist"],
+        "overall_status": session_readiness["overall"]["status"],
+        "overall_color": session_readiness["overall"]["color"],
+        "overall_headline": session_readiness["overall"]["headline"],
+        "overall_detail": session_readiness["overall"]["detail"],
+        "color_legend": session_readiness["color_legend"],
+    }

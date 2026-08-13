@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>APEX Adaptive Learning Control Center</title>
+  <style>
+    :root{color-scheme:dark}body{margin:0;font-family:Inter,Arial,sans-serif;background:#07111f;color:#e7edf7}.wrap{max-width:1500px;margin:auto;padding:24px}.hero,.card{background:#0e1c2e;border:1px solid #263b55;border-radius:14px}.hero{padding:22px;margin-bottom:18px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}.card{padding:18px}.metrics{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}.metric{background:#13243a;border:1px solid #2d4664;border-radius:10px;padding:10px 14px;min-width:135px}.value{font-size:24px;font-weight:700}.label,.muted{color:#91a4bb}.warn{color:#ffca6b}.good{color:#73ddb1}.bad{color:#ff8d8d}pre{white-space:pre-wrap;word-break:break-word;font-size:12px;background:#081522;padding:12px;border-radius:10px;max-height:360px;overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:9px;border-bottom:1px solid #263b55}a{color:#83c5ff}.pill{display:inline-block;border:1px solid #3b5878;border-radius:999px;padding:4px 9px;font-size:12px}</style>
+</head>
+<body><main class="wrap">
+  <section class="hero">
+    <h1>Governed Adaptive Learning Control Center</h1>
+    <p class="warn">Production mutation, autonomous promotion, and self-modifying trading logic are disabled.</p>
+    <div class="metrics">
+      <div class="metric"><div class="label">Learning status</div><div class="value" id="statusValue">Loading</div></div>
+      <div class="metric"><div class="label">Candidates</div><div class="value" id="candidateCount">—</div></div>
+      <div class="metric"><div class="label">Approval queue</div><div class="value" id="approvalCount">—</div></div>
+      <div class="metric"><div class="label">Shadow observations</div><div class="value" id="shadowCount">—</div></div>
+    </div>
+  </section>
+  <div class="grid">
+    <section class="card"><h2>Readiness Gates</h2><div id="gates">Loading…</div></section>
+    <section class="card"><h2>Candidate Registry</h2><div id="candidates">Loading…</div></section>
+    <section class="card"><h2>Offline Evaluations</h2><div id="evaluations">Loading…</div></section>
+    <section class="card"><h2>Shadow Mode</h2><div id="shadow">Loading…</div></section>
+    <section class="card"><h2>Drift Monitor</h2><div id="drift">Loading…</div></section>
+    <section class="card"><h2>Approvals & Rollbacks</h2><div id="governance">Loading…</div></section>
+    <section class="card"><h2>Immutable Audit Trail</h2><pre id="audit">Loading…</pre></section>
+    <section class="card"><h2>Safety Policy</h2><ul><li>No automatic production promotion</li><li>Train/validation/test separation required</li><li>Walk-forward and look-ahead guards required</li><li>Human approval required for shadow mode</li><li>Rollback and audit records are mandatory</li></ul></section>
+  </div>
+</main>
+<script>
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const table=(rows,cols)=>rows.length?`<table><thead><tr>${cols.map(c=>`<th>${esc(c[0])}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${esc(r[c[1]])}</td>`).join('')}</tr>`).join('')}</tbody></table>`:'<p class="muted">No records yet.</p>';
+Promise.all(['/api/learning/status','/api/learning/candidates','/api/learning/evaluations','/api/learning/shadow','/api/learning/drift','/api/learning/approvals','/api/learning/rollbacks','/api/learning/audit'].map(u=>fetch(u).then(r=>r.json()))).then(([s,c,e,sh,d,a,r,au])=>{
+ statusValue.textContent=s.status; candidateCount.textContent=s.candidate_count; approvalCount.textContent=s.approval_queue_count; shadowCount.textContent=s.shadow_observation_count;
+ gates.innerHTML=Object.entries(s.readiness.gates).map(([k,v])=>`<p><span class="pill ${v.passed?'good':'bad'}">${v.passed?'PASS':'BLOCKED'}</span> ${esc(k.replaceAll('_',' '))}</p>`).join('');
+ candidates.innerHTML=table(c.candidates,[['Version','version'],['Type','candidate_type'],['Status','status'],['Created','created_at']]);
+ evaluations.innerHTML=table(e.evaluations,[['Candidate','candidate_id'],['Status','status'],['Dataset','dataset_hash'],['Created','created_at']]);
+ shadow.innerHTML=table(sh.results,[['Candidate','candidate_id'],['Quality','data_quality'],['Observed','observed_at']]);
+ drift.innerHTML=table(d.events,[['Metric','metric'],['Severity','severity'],['Status','status'],['Detected','detected_at']]);
+ governance.innerHTML='<h3>Approvals</h3>'+table(a.approvals,[['Decision','decision'],['Candidate','candidate_id'],['Actor','actor'],['Date','decided_at']])+'<h3>Rollbacks</h3>'+table(r.rollbacks,[['Candidate','candidate_id'],['Actor','actor'],['Date','rolled_back_at']]);
+ audit.textContent=JSON.stringify(au.events.slice(0,30),null,2);
+}).catch(err=>{document.querySelectorAll('.card div,.card pre').forEach(x=>x.textContent='Unavailable: '+err.message)});
+</script></body></html>
