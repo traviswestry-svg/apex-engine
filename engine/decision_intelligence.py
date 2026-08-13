@@ -43,6 +43,44 @@ def _sf(v: Any, d: float = 0.0) -> float:
         return d
 
 
+def _evi_text(item: Any) -> Optional[str]:
+    """Coerce one evidence item to a display string.
+
+    The Q5/Q6 answer lists are rendered as plain bullets on the dashboard, so
+    every item must be a string. Confluence evidence is already strings, but the
+    institutional-intelligence evidence fallback is a list of dicts
+    ({source, direction, strength, note, ...}); returning those raw makes the UI
+    print "[object Object]". Flatten dicts to "Source: note" here at the source
+    so the answer list is always display-ready.
+    """
+    if item is None:
+        return None
+    if isinstance(item, str):
+        return item.strip() or None
+    if isinstance(item, dict):
+        note = (item.get("note") or item.get("text") or item.get("label")
+                or item.get("summary") or item.get("detail") or item.get("reason"))
+        src = item.get("source") or item.get("factor") or item.get("engine")
+        note = str(note).strip() if note else ""
+        src = str(src).replace("_", " ").strip().title() if src else ""
+        if src and note:
+            return f"{src}: {note}"
+        return note or src or None
+    return str(item).strip() or None
+
+
+def _evi_list(items: Any) -> List[str]:
+    """Coerce an evidence list to a de-duplicated list of display strings."""
+    out: List[str] = []
+    seen = set()
+    for it in (items or []):
+        t = _evi_text(it)
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 def build_decision_intelligence(
     last_result: Dict[str, Any],
     confluence: Optional[Dict[str, Any]] = None,
@@ -112,13 +150,14 @@ def build_decision_intelligence(
             why = list(conf.get("short_evidence") or [])
         if not why:
             why = list(inst.get("evidence") or [])[:5]
+        why = _evi_list(why)
         q5 = {"question": "Why?", "answer": why or ["No confirming evidence assembled this cycle."]}
 
         # Q6 — What invalidates it?
-        invalidation: List[str] = list(rng.get("invalidation") or [])
+        invalidation: List[str] = _evi_list(rng.get("invalidation"))
         primary_risk = inst.get("primary_risk")
         if primary_risk:
-            invalidation.append(f"Primary risk: {primary_risk}")
+            invalidation.append(f"Primary risk: {_evi_text(primary_risk) or primary_risk}")
         if dom == "LONG":
             missing = conf.get("long_missing") or []
         elif dom == "SHORT":
