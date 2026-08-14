@@ -122,10 +122,54 @@ def _zone_confidence(zone: Dict[str, Any], *, price: float, dealer_ok: bool,
     return int(max(30, min(90, conf)))
 
 
+def _zone_out(side: str, zone: Dict[str, Any]) -> Dict[str, Any]:
+    """Shape a reaction cluster for the API."""
+    return {
+        "side": side,
+        "low": zone["low"], "high": zone["high"], "mid": zone["mid"],
+        "confidence": zone.get("confidence"),
+        "reasons": [f"{l} near {v}" for l, v in zone.get("members", [])],
+    }
+
+
+def _classify_outliers(levels: List[Tuple[str, float, str]], price: float,
+                       direction: str, edge: Optional[float], env_tol: float
+                       ) -> List[Dict[str, Any]]:
+    """Classify levels beyond the expected-move envelope by purpose.
+
+    A level well outside the envelope is never part of the normal projected
+    range — it is an expansion target (breakout continuation) or a tail-risk
+    level (a wall/magnet that only matters on an outsized move). Nearby outliers
+    of a non-structural kind become secondary support/resistance.
+    """
+    out: List[Dict[str, Any]] = []
+    seen_prices = set()
+    for (l, v, k) in sorted(levels, key=lambda x: x[1], reverse=(direction == "ABOVE")):
+        pr = round(v, 2)
+        if pr in seen_prices:
+            continue
+        seen_prices.add(pr)
+        structural = k in ("WALL", "GAMMA", "MAGNET")
+        if direction == "ABOVE":
+            cls = "EXPANSION_TARGET" if structural else "SECONDARY_RESISTANCE"
+        else:
+            cls = "TAIL_RISK_LEVEL" if structural else "SECONDARY_SUPPORT"
+        out.append({
+            "label": l, "price": round(v, 2), "kind": k, "classification": cls,
+            "direction": "UP" if direction == "ABOVE" else "DOWN",
+            "distance": round(v - price, 2),
+            "beyond_envelope": round(abs(v - edge), 2) if edge is not None else None,
+        })
+    # Merge a tight cluster of same-classification levels into one zone label.
+    return out
+
+
 # ── main build ────────────────────────────────────────────────────────────────
 
 def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
-                             ticker: str = "SPX") -> Dict[str, Any]:
+                             ticker: str = "SPX",
+                             canonical: Optional[Dict[str, Any]] = None,
+                             runtime: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Compute the range-intelligence block from the composed Data Bus object.
 
     `last_result` is STATE["last_result"] (as built by /api/institutional_os).
@@ -211,62 +255,71 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
     put_wall = _f(ms.get("put_wall"))
     zero_gamma = _f(ms.get("zero_gamma"))
 
-    # ── expected move (VIX-derived; no options-chain EM exists in-system) ────
-    vix = _f(vol.get("vix"))
-    em_pts = em_high = em_low = None
-    if vix is not None and vix > 0:
-        em_pts = round(price * (vix / 100.0) / math.sqrt(252.0), 2)
-        em_high = round(price + em_pts, 2)
-        em_low = round(price - em_pts, 2)
-        flags.append("EXPECTED_MOVE_DERIVED_FROM_VIX")
-    else:
-        flags.append("EXPECTED_MOVE_UNAVAILABLE")
+    # ── canonical session context (Morning Brief) is authoritative ──────────
+    # The Morning Brief is the single source of truth for spot + expected-move.
+    # Range Intelligence must consume it and must NOT independently recompute an
+    # expected move from VIX when canonical values exist. Confluence levels
+    # SUPPLEMENT the envelope; they never overwrite it.
+    canon = canonical if isinstance(canonical, dict) else {}
+    canon_spot = _f(canon.get("spot"))
+    canon_em_low = _f(canon.get("em_low"))
+    canon_em_high = _f(canon.get("em_high"))
+    if canon_em_low is None or canon_em_high is None:
+        _cem = canon.get("expected_move") or {}
+        canon_em_low = canon_em_low if canon_em_low is not None else _f(_cem.get("low") or _cem.get("lower"))
+        canon_em_high = canon_em_high if canon_em_high is not None else _f(_cem.get("high") or _cem.get("upper"))
 
-    # ── ADR fallback range (prev-day range) ──────────────────────────────────
+    if canon_spot is not None:
+        price = canon_spot                      # authoritative session spot
+        flags.append("SPX_SPOT_FROM_MORNING_BRIEF")
+
+    # ── expected-move envelope ───────────────────────────────────────────────
+    em_source = None
+    if canon_em_low is not None and canon_em_high is not None and canon_em_high > canon_em_low:
+        em_low, em_high = round(canon_em_low, 2), round(canon_em_high, 2)
+        em_pts = round((em_high - em_low) / 2.0, 2)
+        em_source = "MORNING_BRIEF_CANONICAL"
+        flags.append("EXPECTED_MOVE_CANONICAL")
+    else:
+        # Fallback only when canonical values are absent (flagged, never silent).
+        vix = _f(vol.get("vix"))
+        em_pts = em_high = em_low = None
+        if vix is not None and vix > 0:
+            em_pts = round(price * (vix / 100.0) / math.sqrt(252.0), 2)
+            em_high = round(price + em_pts, 2)
+            em_low = round(price - em_pts, 2)
+            em_source = "VIX_DERIVED_FALLBACK"
+            flags.append("EXPECTED_MOVE_DERIVED_FROM_VIX")
+        else:
+            flags.append("EXPECTED_MOVE_UNAVAILABLE")
+
+    # ── previous-day range (context only; not an envelope substitute) ────────
     adr = round(pdh - pdl, 2) if (pdh is not None and pdl is not None) else None
-    adr_high = round(price + adr, 2) if adr else None
-    adr_low = round(price - adr, 2) if adr else None
-    if adr and em_pts is None:
-        flags.append("USING_ATR_FALLBACK")
 
     # ── strike magnets (above/below spot) ────────────────────────────────────
     mag_list = mags.get("magnets") if isinstance(mags, dict) else (mags if isinstance(mags, list) else [])
-    mags_above = [(f"Magnet {m.get('type','')}", _f(m.get("strike")))
+    mags_above = [(f"Magnet {m.get('type','')}", _f(m.get("strike")), "MAGNET")
                   for m in mag_list if _u(m.get("side")) == "ABOVE" and _f(m.get("strike"))]
-    mags_below = [(f"Magnet {m.get('type','')}", _f(m.get("strike")))
+    mags_below = [(f"Magnet {m.get('type','')}", _f(m.get("strike")), "MAGNET")
                   for m in mag_list if _u(m.get("side")) == "BELOW" and _f(m.get("strike"))]
 
-    # ── candidate levels for each side ───────────────────────────────────────
-    high_candidates: List[Tuple[str, Optional[float]]] = [
-        ("Previous day high", pdh),
-        ("SPX-equiv ES overnight high", spx_equiv_on_high),
-        ("Expected move upper", em_high),
-        ("VAH", vah),
-        ("Call wall", call_wall),
-        ("ADR projection high", adr_high),
-    ] + mags_above
-    low_candidates: List[Tuple[str, Optional[float]]] = [
-        ("Previous day low", pdl),
-        ("SPX-equiv ES overnight low", spx_equiv_on_low),
-        ("Expected move lower", em_low),
-        ("VAL", val),
-        ("Put wall", put_wall),
-        ("ADR projection low", adr_low),
-    ] + mags_below
+    # ── typed candidate levels (label, price, kind) ──────────────────────────
+    # kind drives out-of-envelope classification: WALL/GAMMA/VALUE/PRIOR/OVERNIGHT/MAGNET.
+    candidates: List[Tuple[str, Optional[float], str]] = [
+        ("Previous day high", pdh, "PRIOR"),
+        ("Previous day low", pdl, "PRIOR"),
+        ("SPX-equiv ES overnight high", spx_equiv_on_high, "OVERNIGHT"),
+        ("SPX-equiv ES overnight low", spx_equiv_on_low, "OVERNIGHT"),
+        ("VAH", vah, "VALUE"),
+        ("VAL", val, "VALUE"),
+        ("POC", poc, "VALUE"),
+        ("Call wall", call_wall, "WALL"),
+        ("Put wall", put_wall, "WALL"),
+        ("Gamma node", zero_gamma, "GAMMA"),
+    ] + mags_above + mags_below
+    candidates = [(l, v, k) for (l, v, k) in candidates if v is not None]
 
-    high_zone = _cluster([(l, v) for l, v in high_candidates if v is not None], price, "HIGH")
-    low_zone = _cluster([(l, v) for l, v in low_candidates if v is not None], price, "LOW")
-
-    if not high_zone or not low_zone:
-        return _envelope(ticker, {
-            "available": False,
-            "active_scenario": "INSUFFICIENT_DATA" if (not high_zone and not low_zone) else "WAITING_FOR_OPEN",
-            "basis_diagnostics": basis_block,
-            "interpretation": "Not enough confluence to project a reliable range zone yet.",
-            "quality_flags": list(dict.fromkeys(flags + ["INSUFFICIENT_DATA"])),
-        })
-
-    # ── confirmations for confidence ─────────────────────────────────────────
+    # Confirmations (shared by confidence + scenario).
     gamma_regime = _u(ms.get("gamma_regime") or dealer.get("gamma_regime"))
     poc_mig = _u(ms.get("poc_migration"))
     flow_bias = _u(ms.get("flow_bias") or inst.get("flow_bias"))
@@ -274,73 +327,185 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
     vol_regime = _u(vol.get("regime"))
     vol_calm = vol_regime in ("LOW", "NORMAL", "SUBDUED", "COMPRESSED")
     dealer_ok = gamma_regime in ("POSITIVE_GAMMA", "POSITIVE", "MIXED")
-    auction_ok = _u(ms.get("auction_state")) in ("BALANCED", "ROTATIONAL", "ACCEPTING_HIGHER", "ACCEPTING_LOWER", "NEUTRAL DAY")
+    auction_state = _u(ms.get("auction_state"))
+    auction_ok = auction_state in ("BALANCED", "ROTATIONAL", "ACCEPTING_HIGHER", "ACCEPTING_LOWER", "NEUTRAL DAY")
 
-    hi_conf = _zone_confidence(high_zone, price=price, dealer_ok=dealer_ok, auction_ok=auction_ok,
-                               flow_ok=flow_bias == "BULLISH", vol_calm=vol_calm,
-                               driver_ok=driver_bias == "BULLISH")
-    lo_conf = _zone_confidence(low_zone, price=price, dealer_ok=dealer_ok, auction_ok=auction_ok,
-                               flow_ok=flow_bias == "BEARISH", vol_calm=vol_calm,
-                               driver_ok=driver_bias == "BEARISH")
-
-    # ── range used ───────────────────────────────────────────────────────────
-    projected_range = max(1.0, high_zone["mid"] - low_zone["mid"])
-    if sess_high is not None and sess_low is not None and sess_high > sess_low:
-        range_used = (sess_high - sess_low) / projected_range * 100.0
-        range_used_method = "SESSION_RANGE"
+    # ── envelope-constrained classification ──────────────────────────────────
+    # Expected Session Range = the canonical envelope. Levels are separated by
+    # PURPOSE relative to it; a level well outside the envelope is never allowed
+    # into the normal projected range — it is an expansion target or tail risk.
+    tol = _cluster_tol(price)
+    if em_low is not None and em_high is not None:
+        env_tol = max(tol, (em_high - em_low) * 0.10)   # slightly outside allowed, ~71pt outliers excluded
+        in_env = [(l, v, k) for (l, v, k) in candidates if (em_low - env_tol) <= v <= (em_high + env_tol)]
+        above_env = [(l, v, k) for (l, v, k) in candidates if v > em_high + env_tol]
+        below_env = [(l, v, k) for (l, v, k) in candidates if v < em_low - env_tol]
     else:
-        # pre-RTH progress estimate from current price position in the projected band
-        range_used = (price - low_zone["mid"]) / projected_range * 100.0
-        range_used_method = "ESTIMATED_PRE_RTH"
-        flags.append("PRE_RTH_ESTIMATE")
-    range_used = int(max(0, min(140, round(range_used))))
+        env_tol = tol
+        in_env, above_env, below_env = candidates, [], []
 
-    upside_remaining = round(high_zone["mid"] - price, 2)
-    downside_remaining = round(price - low_zone["mid"], 2)
-    near_high = abs(high_zone["mid"] - price) <= _cluster_tol(price) * 1.5 or price >= high_zone["low"]
-    near_low = abs(price - low_zone["mid"]) <= _cluster_tol(price) * 1.5 or price <= low_zone["high"]
+    # Immediate reaction zones: confluence clusters INSIDE the envelope, nearest
+    # spot on each side.
+    in_above = [(l, v) for (l, v, k) in in_env if v >= price - 1.0]
+    in_below = [(l, v) for (l, v, k) in in_env if v <= price + 1.0]
+    upper_reaction = _cluster(in_above, price, "HIGH")
+    lower_reaction = _cluster(in_below, price, "LOW")
 
-    # ── scenario classification ──────────────────────────────────────────────
+    immediate_reaction_zones: List[Dict[str, Any]] = []
+    if upper_reaction:
+        upper_reaction["confidence"] = _zone_confidence(
+            upper_reaction, price=price, dealer_ok=dealer_ok, auction_ok=auction_ok,
+            flow_ok=flow_bias == "BULLISH", vol_calm=vol_calm, driver_ok=driver_bias == "BULLISH")
+        immediate_reaction_zones.append(_zone_out("UPPER", upper_reaction))
+    if lower_reaction:
+        lower_reaction["confidence"] = _zone_confidence(
+            lower_reaction, price=price, dealer_ok=dealer_ok, auction_ok=auction_ok,
+            flow_ok=flow_bias == "BEARISH", vol_calm=vol_calm, driver_ok=driver_bias == "BEARISH")
+        immediate_reaction_zones.append(_zone_out("LOWER", lower_reaction))
+
+    # Intermediate targets: notable in-envelope levels beyond the reaction zone,
+    # toward the envelope edge (e.g. previous-day high).
+    reaction_members = {round(v, 2) for z in (upper_reaction, lower_reaction) if z for _, v in z["members"]}
+    intermediate_targets: List[Dict[str, Any]] = []
+    for (l, v, k) in sorted(in_env, key=lambda x: x[1]):
+        if round(v, 2) in reaction_members:
+            continue
+        if k in ("VALUE", "MAGNET") and abs(v - price) <= env_tol:
+            continue  # too close / minor — already represented by a reaction zone
+        intermediate_targets.append({
+            "label": l, "price": round(v, 2), "kind": k,
+            "direction": "UP" if v >= price else "DOWN",
+            "distance": round(v - price, 2),
+        })
+
+    # Expansion targets (above envelope) and tail-risk levels (below envelope).
+    expansion_targets = _classify_outliers(above_env, price, "ABOVE", em_high, env_tol)
+    tail_risk_levels = _classify_outliers(below_env, price, "BELOW", em_low, env_tol)
+
+    # ── expected session range block ─────────────────────────────────────────
+    if em_low is not None and em_high is not None:
+        expected_session_range = {
+            "low": em_low, "high": em_high, "mid": round((em_low + em_high) / 2, 2),
+            "source": em_source, "points": em_pts,
+        }
+    else:
+        expected_session_range = {"low": None, "high": None, "mid": None,
+                                  "source": em_source, "points": None}
+
+    # ── range used / exhaustion — gated on a REAL RTH session ────────────────
+    # Before an actual RTH high and low exist, "range used" and "exhaustion" are
+    # not defined. Do not estimate them from pre-open price position.
+    rth_live = sess_high is not None and sess_low is not None and sess_high > sess_low
+    if rth_live and em_low is not None and em_high is not None:
+        projected_range = max(1.0, em_high - em_low)
+        range_used = int(max(0, min(140, round((sess_high - sess_low) / projected_range * 100.0))))
+        range_used_method = "SESSION_RANGE"
+        range_used_evaluated = True
+    else:
+        range_used = None
+        range_used_method = "WAITING_FOR_RTH"
+        range_used_evaluated = False
+        flags.append("RANGE_USED_NOT_EVALUATED_PRE_RTH")
+
+    # Upside/downside remaining are measured from the EXPECTED-MOVE ENVELOPE,
+    # not from asymmetric confluence clusters.
+    if em_low is not None and em_high is not None:
+        upside_remaining = round(em_high - price, 2)
+        downside_remaining = round(price - em_low, 2)
+    else:
+        upside_remaining = downside_remaining = None
+
+    near_high = em_high is not None and price >= em_high - env_tol
+    near_low = em_low is not None and price <= em_low + env_tol
+
+    # ── scenario (unchanged inputs; envelope zones stand in for legacy zones) ─
+    legacy_high_zone = upper_reaction or (
+        {"low": em_high, "high": em_high, "mid": em_high, "members": [], "count": 0}
+        if em_high is not None else {"low": price, "high": price, "mid": price, "members": [], "count": 0})
+    legacy_low_zone = lower_reaction or (
+        {"low": em_low, "high": em_low, "mid": em_low, "members": [], "count": 0}
+        if em_low is not None else {"low": price, "high": price, "mid": price, "members": [], "count": 0})
+
     scenario = _classify_scenario(
         price=price, market_open=market_open, session_state=session_state,
-        high_zone=high_zone, low_zone=low_zone, range_used=range_used,
+        high_zone=legacy_high_zone, low_zone=legacy_low_zone,
+        range_used=range_used if range_used is not None else 50,
         near_high=near_high, near_low=near_low, poc_mig=poc_mig, vwap=vwap, vah=vah, val=val,
         gamma_regime=gamma_regime, flow_bias=flow_bias, driver_bias=driver_bias,
         sweep_count=_f(ms.get("sweep_count"), 0) or 0, mags_above=mags_above, mags_below=mags_below,
-        auction_state=_u(ms.get("auction_state")),
+        auction_state=auction_state,
     )
 
-    # ── exhaustion risk ──────────────────────────────────────────────────────
-    exhaustion = _exhaustion_risk(range_used, near_high, near_low, gamma_regime,
-                                  _u(ms.get("auction_state")), poc_mig)
+    # Exhaustion is only a real reading once the session range is real.
+    if range_used_evaluated:
+        exhaustion = _exhaustion_risk(range_used, near_high, near_low, gamma_regime,
+                                      auction_state, poc_mig)
+    else:
+        exhaustion = "NOT_EVALUATED"
 
-    # ── opening context / bias / interpretation / invalidation ───────────────
     opening_context = _opening_context(price, prev_close, vah, val, on)
     bias = _bias(flow_bias, driver_bias, _u(inst.get("institutional_bias")), scenario)
-    interpretation = _interpretation(scenario, high_zone, low_zone, range_used,
+    interpretation = _interpretation(scenario, legacy_high_zone, legacy_low_zone,
+                                     range_used if range_used is not None else 0,
                                      near_high, near_low, exhaustion)
     invalidation = _invalidation(scenario)
 
-    # ── expansion / mean-reversion / pin (additive; pin read from data bus) ───
     _pin_prob = _f(inst.get("pin_probability"))
-    expansion_prob, mean_reversion_prob = _expansion_probabilities(
-        range_used=range_used, gamma_regime=gamma_regime, poc_mig=poc_mig,
-        near_high=near_high, near_low=near_low, exhaustion=exhaustion,
-        auction_state=_u(ms.get("auction_state")), pin_probability=_pin_prob,
-    )
+    if range_used_evaluated:
+        expansion_prob, mean_reversion_prob = _expansion_probabilities(
+            range_used=range_used, gamma_regime=gamma_regime, poc_mig=poc_mig,
+            near_high=near_high, near_low=near_low, exhaustion=exhaustion,
+            auction_state=auction_state, pin_probability=_pin_prob,
+        )
+    else:
+        expansion_prob = mean_reversion_prob = None
+
+    # ── runtime gating (degraded / pre-open) ─────────────────────────────────
+    rt = runtime if isinstance(runtime, dict) else {}
+    rt_state = _u(rt.get("state"))
+    data_fresh = rt.get("data_fresh")
+    degraded = bool(rt.get("degraded")) or rt_state in ("DEGRADED", "STALE")
+    stale_inputs: List[str] = []
+    if em_source != "MORNING_BRIEF_CANONICAL":
+        stale_inputs.append("expected_move" if em_source else "expected_move_missing")
+    if degraded:
+        stale_inputs.append("live_scanner")
+        flags.append("RUNTIME_DEGRADED_PROJECTION_PRESERVED")
+        # Withhold new range/exhaustion conclusions when degraded.
+        range_used = None
+        range_used_evaluated = False
+        range_used_method = "WITHHELD_DEGRADED"
+        exhaustion = "NOT_EVALUATED"
+        expansion_prob = mean_reversion_prob = None
+    if not market_open:
+        runtime_state = "DEGRADED_PREOPEN" if degraded else "PRE_OPEN"
+    else:
+        runtime_state = "DEGRADED" if degraded else "LIVE"
 
     ri = {
         "available": True,
         "version": VERSION,
         "active_scenario": scenario,
-        "projected_high_zone": {**{k: high_zone[k] for k in ("low", "high", "mid")},
-                                "confidence": hi_conf,
-                                "reasons": [f"{l} near {v}" for l, v in high_zone["members"]]},
-        "projected_low_zone": {**{k: low_zone[k] for k in ("low", "high", "mid")},
-                               "confidence": lo_conf,
-                               "reasons": [f"{l} near {v}" for l, v in low_zone["members"]]},
+        "canonical": {
+            "spot": price, "em_low": em_low, "em_high": em_high,
+            "source": em_source, "used": em_source == "MORNING_BRIEF_CANONICAL",
+        },
+        # ── four purpose-separated sections ──────────────────────────────────
+        "expected_session_range": expected_session_range,
+        "immediate_reaction_zones": immediate_reaction_zones,
+        "intermediate_targets": intermediate_targets,
+        "expansion_targets": expansion_targets,
+        "tail_risk_levels": tail_risk_levels,
+        # ── legacy fields (kept for back-compat; now envelope-correct) ───────
+        "projected_high_zone": {**{k: legacy_high_zone[k] for k in ("low", "high", "mid")},
+                                "confidence": legacy_high_zone.get("confidence", upper_reaction.get("confidence") if upper_reaction else None),
+                                "reasons": [f"{l} near {v}" for l, v in legacy_high_zone.get("members", [])]},
+        "projected_low_zone": {**{k: legacy_low_zone[k] for k in ("low", "high", "mid")},
+                               "confidence": legacy_low_zone.get("confidence", lower_reaction.get("confidence") if lower_reaction else None),
+                               "reasons": [f"{l} near {v}" for l, v in legacy_low_zone.get("members", [])]},
         "range_used_percent": range_used,
         "range_used_method": range_used_method,
+        "range_used_evaluated": range_used_evaluated,
         "range_exhaustion_risk": exhaustion,
         "expansion_probability": expansion_prob,
         "mean_reversion_probability": mean_reversion_prob,
@@ -352,12 +517,14 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
         "interpretation": interpretation,
         "invalidation": invalidation,
         "basis_diagnostics": basis_block,
-        "expected_move": {"points": em_pts, "high": em_high, "low": em_low} if em_pts else None,
+        "expected_move": {"points": em_pts, "high": em_high, "low": em_low,
+                          "source": em_source} if em_high is not None else None,
         "session_high": sess_high, "session_low": sess_low,
+        "runtime_state": runtime_state,
+        "stale_inputs": list(dict.fromkeys(stale_inputs)),
         "quality_flags": list(dict.fromkeys(flags)),
     }
     return _envelope(ticker, ri)
-
 
 def _envelope(ticker: str, ri: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "ticker": (ticker or "SPX").upper(),
@@ -789,3 +956,4 @@ def scorecard(ticker: str = "SPX") -> Dict[str, Any]:
         "best_scenario": best, "worst_scenario": worst,
         "scenario_avg_error": scn_avg,
     }
+

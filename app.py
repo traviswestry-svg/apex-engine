@@ -4326,7 +4326,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td11"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td12_ri_canonical"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -12866,10 +12866,64 @@ try:
             except Exception:
                 return {}
 
+        def _ri_canonical(ticker="SPX"):
+            """Authoritative session spot + expected-move from the Morning Brief.
+
+            Range Intelligence and the Morning Brief must read the same canonical
+            context; this returns {spot, em_low, em_high} from the cached brief
+            (no provider I/O), or None so the engine falls back to VIX (flagged).
+            """
+            try:
+                import datetime as _dt
+                now = _dt.datetime.now(EASTERN) if "EASTERN" in globals() else _dt.datetime.now()
+                cand = now.date() if now.time() >= _dt.time(16, 5) else now.date() - _dt.timedelta(days=1)
+                while cand.weekday() >= 5:
+                    cand -= _dt.timedelta(days=1)
+                snapshot = None
+                try:
+                    from engine.evening_recap import get_morning_snapshot
+                    snapshot = get_morning_snapshot(now.date().isoformat()) or get_morning_snapshot(cand.isoformat())
+                except Exception:
+                    snapshot = None
+                if not snapshot and "_MORNING_BRIEF_CACHE" in globals():
+                    snapshot = _MORNING_BRIEF_CACHE.get(now.date().isoformat()) or _MORNING_BRIEF_CACHE.get(cand.isoformat())
+                if not isinstance(snapshot, dict):
+                    return None
+                structured = snapshot.get("structured") or {}
+                spot = structured.get("spot") if isinstance(structured, dict) else None
+                if not isinstance(structured, dict) or not structured:
+                    return None
+                em = structured.get("expected_move") or {}
+                em_low = em.get("low") if em.get("low") is not None else em.get("lower")
+                em_high = em.get("high") if em.get("high") is not None else em.get("upper")
+                sp = spot if spot is not None else structured.get("spot")
+                if sp is None and em_low is None and em_high is None:
+                    return None
+                return {"spot": sp, "em_low": em_low, "em_high": em_high}
+            except Exception:
+                return None
+
+        def _ri_runtime():
+            """Lightweight runtime health for degraded gating."""
+            try:
+                snap = _apex65_component_health_snapshot() if "_apex65_component_health_snapshot" in globals() else {}
+                degraded = False
+                if isinstance(snap, dict):
+                    states = [str(v.get("state", "")).upper() for v in snap.values() if isinstance(v, dict)]
+                    degraded = any(s in ("DEGRADED", "FAILED", "STALE") for s in states)
+                sess = market_session_context() if "market_session_context" in globals() else {}
+                fresh = bool((sess or {}).get("is_tradeable_session")) and not degraded
+                return {"degraded": degraded, "data_fresh": fresh,
+                        "state": "DEGRADED" if degraded else ("LIVE" if fresh else "PRE_OPEN")}
+            except Exception:
+                return None
+
         register_range_routes(
             app,
             last_result_provider=_ri_last_result,
             session_provider=_ri_session,
+            canonical_provider=_ri_canonical,
+            runtime_provider=_ri_runtime,
             default_ticker=ASSISTANT_TICKER,
         )
         print(f"APEX Range Intelligence routes registered ({RANGE_VERSION}).", flush=True)
