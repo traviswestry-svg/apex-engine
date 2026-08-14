@@ -159,31 +159,35 @@ def test_bear_expansion():
 
 
 def test_range_exhaustion():
-    # narrow projected band + ~94% of it used, price at the upper edge,
-    # positive gamma + flat POC -> exhaustion
+    # Corrected contract: exhaustion is measured against the expected-move
+    # ENVELOPE, only with a real RTH session. A session range that nearly fills
+    # the canonical envelope, with price at the upper edge, -> HIGH exhaustion.
+    canon = {"spot": 7507.0, "em_low": 7478.0, "em_high": 7508.0}
     bus = _bus(market_state={"price": 7507.0, "poc_migration": "STABLE", "vah": 7505.0,
-                             "val": 7476.0, "call_wall": 7509.0, "put_wall": 7474.0,
+                             "val": 7480.0, "call_wall": 7509.0, "put_wall": 7474.0,
                              "gamma_regime": "POSITIVE_GAMMA", "auction_state": "BALANCED"},
-               structure={"current_price": 7507.0, "session_high": 7508.0, "session_low": 7478.0,
-                          "prev_day_high": 7508.0, "prev_day_low": 7476.0},
-               strike_magnets={"magnets": [
-                   {"strike": 7509.0, "side": "ABOVE", "type": "CALL_WALL", "score": 88},
-                   {"strike": 7474.0, "side": "BELOW", "type": "PUT_WALL", "score": 84}]})
-    ri = _ri(build_range_intelligence(bus, market_open=True))
+               structure={"current_price": 7507.0, "session_high": 7507.5, "session_low": 7480.0,
+                          "prev_day_high": 7508.0, "prev_day_low": 7476.0})
+    ri = _ri(build_range_intelligence(bus, market_open=True, canonical=canon))
+    assert ri["range_used_evaluated"] is True
     assert ri["range_used_percent"] >= 85
     assert ri["active_scenario"] == "RANGE_EXHAUSTION"
     assert ri["range_exhaustion_risk"] == "HIGH"
 
 
 def test_waiting_for_open_pre_rth():
+    # Corrected contract: before a real RTH high/low exist, range-used and
+    # exhaustion are NOT evaluated (no pre-open estimate).
     bus = _bus(market_state={"session_state": "PREMARKET"},
                structure={"session_high": None, "session_low": None},
                overnight_game_plan={"es_price": 7506.5, "overnight_high": 7530.0,
                                     "overnight_low": 7474.0})
     ri = _ri(build_range_intelligence(bus, market_open=False))
-    assert ri["active_scenario"] == "WAITING_FOR_OPEN"
-    assert "PRE_RTH_ESTIMATE" in ri["quality_flags"]
-    assert ri["range_used_method"] == "ESTIMATED_PRE_RTH"
+    assert ri["range_used_percent"] is None
+    assert ri["range_used_evaluated"] is False
+    assert ri["range_used_method"] == "WAITING_FOR_RTH"
+    assert "RANGE_USED_NOT_EVALUATED_PRE_RTH" in ri["quality_flags"]
+    assert ri["range_exhaustion_risk"] == "NOT_EVALUATED"
 
 
 def test_insufficient_data_no_price():
@@ -221,9 +225,12 @@ def test_range_used_session_method():
 
 
 def test_remaining_points_signs():
+    # Corrected contract: remaining is measured from the expected-move ENVELOPE,
+    # not from asymmetric confluence-cluster mids.
     ri = _ri(build_range_intelligence(_bus(), market_open=True))
-    assert ri["upside_remaining_points"] == round(ri["projected_high_zone"]["mid"] - 7484.0, 2)
-    assert ri["downside_remaining_points"] == round(7484.0 - ri["projected_low_zone"]["mid"], 2)
+    esr = ri["expected_session_range"]
+    assert ri["upside_remaining_points"] == round(esr["high"] - 7484.0, 2)
+    assert ri["downside_remaining_points"] == round(7484.0 - esr["low"], 2)
 
 
 def test_closed_market_flag():

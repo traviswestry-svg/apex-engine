@@ -31,11 +31,16 @@ def _call(fn: Optional[Callable], *args, default=None):
         return default
 
 
+_LAST_GOOD_RANGE: Dict[str, Dict[str, Any]] = {}
+
+
 def register_range_routes(
     app,
     *,
     last_result_provider: Optional[Callable[[], Dict[str, Any]]] = None,
     session_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+    canonical_provider: Optional[Callable[[str], Dict[str, Any]]] = None,
+    runtime_provider: Optional[Callable[[], Dict[str, Any]]] = None,
     default_ticker: str = "SPX",
 ) -> None:
     init_history()
@@ -49,7 +54,23 @@ def register_range_routes(
         ticker = (request.args.get("ticker", default_ticker) or default_ticker).upper()
         try:
             lr = _call(last_result_provider, default={}) or {}
-            env = build_range_intelligence(lr, market_open=_market_open(), ticker=ticker)
+            canonical = _call(canonical_provider, ticker, default=None)
+            runtime = _call(runtime_provider, default=None)
+            env = build_range_intelligence(lr, market_open=_market_open(), ticker=ticker,
+                                           canonical=canonical, runtime=runtime)
+            ri = (env or {}).get("range_intelligence") or {}
+            # Degraded gating: if this cycle can't project, preserve the last valid
+            # projection and mark it stale rather than blanking or fabricating one.
+            if ri.get("available"):
+                _LAST_GOOD_RANGE[ticker] = env
+            elif ticker in _LAST_GOOD_RANGE:
+                preserved = dict(_LAST_GOOD_RANGE[ticker])
+                pri = dict(preserved.get("range_intelligence") or {})
+                pri["runtime_state"] = "DEGRADED_PRESERVED"
+                pri["stale_inputs"] = list(dict.fromkeys((pri.get("stale_inputs") or []) + ["all_live_inputs"]))
+                pri["quality_flags"] = list(dict.fromkeys((pri.get("quality_flags") or []) + ["PRESERVED_LAST_VALID_PROJECTION"]))
+                preserved["range_intelligence"] = pri
+                return jsonify(preserved)
             # opportunistically capture the projection for later self-evaluation
             try:
                 capture_projection(env, ticker)
