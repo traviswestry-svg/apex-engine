@@ -734,6 +734,28 @@ html { overflow-x: hidden; }
 .tape-label    { font-weight: 700; font-size: 10px; }
 .tape-importance { font-size: 9px; color: var(--faint); margin-left: 4px; }
 .tape-empty    { font-size: 11px; color: var(--faint); padding: 14px 0; }
+.large-order-grid { display:grid; grid-template-columns:2fr 1fr 1fr; gap:10px; margin:10px 0 14px; }
+.large-order-chart-card,.large-order-intel-card { background:rgba(2,6,23,.42); border:1px solid rgba(148,163,184,.12); border-radius:10px; padding:10px; min-width:0; }
+.large-order-title { font-size:10px; font-weight:800; color:var(--text); text-transform:uppercase; letter-spacing:.07em; margin-bottom:3px; }
+.large-order-chart { min-height:210px; }
+.large-order-chart svg { width:100%; height:auto; min-height:210px; overflow:visible; }
+.large-order-gridlines line { stroke:rgba(148,163,184,.13); stroke-width:1; }
+.large-order-gridlines text,.large-order-axis { fill:var(--faint); font:10px var(--mono); }
+.large-order-dot circle { stroke-width:2; fill-opacity:.28; cursor:help; }
+.large-order-dot text { fill:var(--text); font:700 9px var(--mono); }
+.large-order-dot.lot-bull circle { fill:var(--green); stroke:var(--green); }
+.large-order-dot.lot-bear circle { fill:var(--red); stroke:var(--red); }
+.large-order-dot.lot-unknown circle { fill:var(--amber); stroke:var(--amber); }
+.lot-intel-row { display:flex; justify-content:space-between; gap:8px; padding:7px 0; border-bottom:1px solid rgba(148,163,184,.08); font-family:var(--mono); font-size:10px; }
+.lot-intel-row div { min-width:0; } .lot-intel-row b,.lot-intel-row span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.lot-intel-row span,.lot-warning span { color:var(--faint); margin-top:3px; } .lot-intel-row strong { color:var(--blue); white-space:nowrap; }
+.lot-warning { padding:7px; margin:5px 0; border-left:2px solid var(--amber); background:rgba(245,158,11,.06); font-family:var(--mono); font-size:10px; }
+.lot-warning b,.lot-warning span { display:block; }
+.tape-bias,.tape-confirm { font-size:9px; font-weight:800; white-space:nowrap; }
+.tape-bias-bullish,.tape-confirm-confirmed { color:var(--green); } .tape-bias-bearish,.tape-confirm-rejected { color:var(--red); }
+.tape-bias-unresolved,.tape-confirm-unavailable,.tape-confirm-pending { color:var(--amber); }
+@media(max-width:1000px){.large-order-grid{grid-template-columns:1fr 1fr}.large-order-chart-card{grid-column:1/-1}}
+@media(max-width:650px){.large-order-grid{grid-template-columns:1fr}.large-order-chart-card{grid-column:auto}.flow-tape-table{max-height:420px}}
 
 /* ── Overlay toggles ─────────────────────────────────────────────────────── */
 .overlay-toggles { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }

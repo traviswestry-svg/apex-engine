@@ -14,6 +14,7 @@ This module NEVER calls it a DOM or cumulative delta.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -74,10 +75,10 @@ def _classify_row(row: Dict[str, Any]) -> Tuple[str, str]:
 
     aggressor = _SIDE_CODE_AGGRESSOR.get(trade_side_code, "NEUTRAL")
 
-    # Fallback: if tradeSideCode is missing, infer from contractType
+    # Missing execution side is unresolved.  Contract type alone cannot tell us
+    # whether a call/put was bought or sold.
     if not trade_side_code:
-        contract_type = str(row.get("contractType") or row.get("contract_type") or "").upper()
-        aggressor = "BUY" if contract_type == "CALL" else "SELL" if contract_type == "PUT" else "NEUTRAL"
+        aggressor = "NEUTRAL"
 
     suffix = _CONSOLIDATION_SUFFIX.get(consolidation_type, "")
     if suffix:
@@ -179,6 +180,31 @@ def _normalize_row(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     aggressor, tape_label = _classify_row(raw)
     importance = _importance_score(premium, aggressor, consolidation_type)
 
+    # Direction is a function of both contract type and aggressor.  A CALL is
+    # not automatically bullish and a PUT is not automatically bearish.
+    if aggressor == "BUY":
+        directional_bias = "BULLISH" if contract_type == "CALL" else "BEARISH"
+    elif aggressor == "SELL":
+        directional_bias = "BEARISH" if contract_type == "CALL" else "BULLISH"
+    else:
+        directional_bias = "UNRESOLVED"
+
+    side_source = "PROVIDER_BID_ASK" if trade_side_code else "MISSING"
+    side_confidence = "HIGH" if trade_side_code in ("ABOVE_ASK", "BELOW_BID") else \
+        "MEDIUM" if trade_side_code in ("AT_ASK", "AT_BID") else "LOW"
+    underlying_price = _safe_float(
+        raw.get("stockPrice") or raw.get("underlyingPrice") or
+        raw.get("underlying_price") or raw.get("spotPrice"), None
+    )
+    open_interest = int(_safe_float(raw.get("openInterest") or raw.get("open_interest"), 0)) or None
+    volume = int(_safe_float(raw.get("volume") or raw.get("optionVolume"), 0)) or None
+    opening_raw = raw.get("opening")
+    opening_state = "OPENING" if opening_raw is True else "CLOSING" if opening_raw is False else "UNKNOWN"
+    raw_id = str(raw.get("id") or raw.get("tradeId") or raw.get("orderId") or "")
+    if not raw_id:
+        fingerprint = f"{ticker}|{contract_type}|{strike}|{expiration}|{time_et}|{premium}|{contracts}"
+        raw_id = hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()[:16]
+
     return {
         "time_et":           time_et,
         "ticker":            ticker,
@@ -193,12 +219,97 @@ def _normalize_row(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "aggressor_side":    aggressor,
         "tape_label":        tape_label,
         "importance_score":  importance,
+        "order_id":          raw_id,
+        "directional_bias":  directional_bias,
+        "side_source":       side_source,
+        "side_confidence":   side_confidence,
+        "interpretation_status": "CONFIRMED_SIDE" if trade_side_code else "SIDE_UNKNOWN",
+        "underlying_price_at_trade": round(underlying_price, 2) if underlying_price else None,
+        "open_interest":     open_interest,
+        "option_volume":     volume,
+        "opening_state":     opening_state,
         # Preserve optional provider Greeks/quote context for later confirmation.
         # Missing values stay None; they are never inferred.
         "delta": _safe_float(raw.get("delta") or (raw.get("greeks") or {}).get("delta"), None),
         "bid": _safe_float(raw.get("bid") or raw.get("bidPrice"), None),
         "ask": _safe_float(raw.get("ask") or raw.get("askPrice"), None),
     }
+
+
+def _apply_price_confirmation(rows: List[Dict[str, Any]], current_prices: Dict[str, float]) -> None:
+    """Annotate price response without pretending it proves order intent."""
+    for row in rows:
+        ticker = str(row.get("ticker") or "").upper()
+        current = _safe_float(current_prices.get(ticker), 0.0)
+        at_trade = _safe_float(row.get("underlying_price_at_trade"), 0.0)
+        bias = row.get("directional_bias")
+        row["current_underlying_price"] = round(current, 2) if current else None
+        row["price_change_since_trade"] = round(current - at_trade, 2) if current and at_trade else None
+        if not current or not at_trade or bias not in ("BULLISH", "BEARISH"):
+            row["price_confirmation"] = "UNAVAILABLE"
+        elif (current > at_trade and bias == "BULLISH") or (current < at_trade and bias == "BEARISH"):
+            row["price_confirmation"] = "CONFIRMED"
+        elif current == at_trade:
+            row["price_confirmation"] = "PENDING"
+        else:
+            row["price_confirmation"] = "REJECTED"
+
+
+def _build_strike_clusters(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[Tuple[str, str, float, str], List[Dict[str, Any]]] = {}
+    for row in rows:
+        strike = _safe_float(row.get("strike"), 0.0)
+        if not strike:
+            continue
+        key = (str(row.get("ticker")), str(row.get("expiration")), strike,
+               str(row.get("contract_type")))
+        grouped.setdefault(key, []).append(row)
+    clusters = []
+    for (ticker, expiration, strike, contract_type), members in grouped.items():
+        premium = sum(_safe_float(x.get("premium"), 0.0) for x in members)
+        biases = {str(x.get("directional_bias")) for x in members}
+        bias = biases.pop() if len(biases) == 1 else "MIXED"
+        clusters.append({
+            "ticker": ticker, "expiration": expiration, "strike": strike,
+            "contract_type": contract_type, "order_count": len(members),
+            "total_premium": round(premium, 0), "directional_bias": bias,
+            "max_importance_score": max(int(x.get("importance_score") or 0) for x in members),
+            "institutional_size": premium >= 1_000_000,
+        })
+    return sorted(clusters, key=lambda x: (-x["total_premium"], -x["order_count"]))[:25]
+
+
+def _detect_spread_candidates(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Flag plausible related legs; never claim a spread without an order id."""
+    candidates = []
+    ordered = sorted(rows, key=lambda x: str(x.get("time_et") or ""))
+    for i, left in enumerate(ordered):
+        for right in ordered[i + 1:i + 8]:
+            if (left.get("ticker"), left.get("expiration"), left.get("contract_type")) != \
+               (right.get("ticker"), right.get("expiration"), right.get("contract_type")):
+                continue
+            if left.get("strike") == right.get("strike"):
+                continue
+            try:
+                t1 = dt.datetime.strptime(str(left.get("time_et"))[:8], "%H:%M:%S")
+                t2 = dt.datetime.strptime(str(right.get("time_et"))[:8], "%H:%M:%S")
+                seconds = abs((t2 - t1).total_seconds())
+            except Exception:
+                continue
+            if seconds > 10:
+                continue
+            opposite = left.get("aggressor_side") != right.get("aggressor_side") and \
+                       "NEUTRAL" not in (left.get("aggressor_side"), right.get("aggressor_side"))
+            if opposite:
+                candidates.append({
+                    "ticker": left.get("ticker"), "expiration": left.get("expiration"),
+                    "contract_type": left.get("contract_type"),
+                    "strikes": sorted([left.get("strike"), right.get("strike")]),
+                    "combined_premium": round(_safe_float(left.get("premium")) + _safe_float(right.get("premium")), 0),
+                    "seconds_apart": int(seconds), "classification": "POSSIBLE_VERTICAL_SPREAD",
+                    "confidence": "MEDIUM", "warning": "Candidate only; provider order linkage unavailable.",
+                })
+    return sorted(candidates, key=lambda x: -x["combined_premium"])[:20]
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +379,7 @@ def build_flow_tape(
     tickers: List[str],
     *,
     min_premium: float = 0.0,
+    current_prices: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     """Build a structured institutional flow tape from raw QuantData rows.
 
@@ -285,6 +397,9 @@ def build_flow_tape(
             "tickers": tickers,
             "rows": [],
             "summary": _build_summary([]),
+            "strike_clusters": [],
+            "spread_candidates": [],
+            "institutional_alerts": [],
             "message": "No institutional flow rows returned by QuantData.",
         }
 
@@ -298,7 +413,11 @@ def build_flow_tape(
         normalized.append(row)
 
     # Sort by importance descending, then by time descending
+    _apply_price_confirmation(normalized, current_prices or {})
     normalized.sort(key=lambda r: (-r["importance_score"], r.get("time_et", "") or ""))
+
+    clusters = _build_strike_clusters(normalized)
+    spread_candidates = _detect_spread_candidates(normalized)
 
     return {
         "ok":      True,
@@ -306,4 +425,13 @@ def build_flow_tape(
         "tickers": tickers,
         "rows":    normalized,
         "summary": _build_summary(normalized),
+        "strike_clusters": clusters,
+        "spread_candidates": spread_candidates,
+        "institutional_alerts": [x for x in clusters if x["institutional_size"]][:10],
+        "methodology": {
+            "direction_requires_execution_side": True,
+            "missing_side_is_unresolved": True,
+            "spread_detection_is_probabilistic": True,
+            "price_confirmation_is_response_not_intent_proof": True,
+        },
     }

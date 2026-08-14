@@ -1285,6 +1285,23 @@
         </div>
       </div>
       <div id="tapeSummaryBar" class="tape-summary-bar"></div>
+      <div class="large-order-grid">
+        <section class="large-order-chart-card">
+          <div class="large-order-title">SPX Large Orders on Price</div>
+          <div class="workflow-sub">Execution time × underlying price · marker size reflects premium</div>
+          <div id="largeOrderChart" class="large-order-chart">
+            <div class="tape-empty">Waiting for SPX order coordinates…</div>
+          </div>
+        </section>
+        <section class="large-order-intel-card">
+          <div class="large-order-title">Dominant Strike Concentration</div>
+          <div id="largeOrderClusters"><div class="tape-empty">Waiting for strike clusters…</div></div>
+        </section>
+        <section class="large-order-intel-card">
+          <div class="large-order-title">Related-Leg Warnings</div>
+          <div id="largeOrderSpreads"><div class="tape-empty">No possible spreads detected.</div></div>
+        </section>
+      </div>
       <div id="flowTapeTable" class="flow-tape-table flow-tape-full">
         <div class="tape-empty">Waiting for institutional flow tape data...</div>
       </div>

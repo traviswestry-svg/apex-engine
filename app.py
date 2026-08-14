@@ -12182,7 +12182,18 @@ def api_flow_tape():
 
     try:
         raw_rows = _fetch_flow_tape_rows(tickers, size_per_ticker=size)
-        tape = build_flow_tape(raw_rows, tickers, min_premium=min_premium)
+        with STATE_LOCK:
+            _flow_last = STATE.get("last_result") or {}
+        _flow_market = _flow_last.get("market_state") if isinstance(_flow_last.get("market_state"), dict) else {}
+        _flow_prices = {}
+        _spx_price = _flow_market.get("price") or _flow_last.get("price")
+        if _spx_price:
+            _flow_prices["SPX"] = _spx_price
+            _flow_prices["SPXW"] = _spx_price
+        tape = build_flow_tape(
+            raw_rows, tickers, min_premium=min_premium,
+            current_prices=_flow_prices,
+        )
         tape["version"] = VERSION
         tape["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         tape["updated_at_et"] = now_et().strftime("%Y-%m-%d %H:%M:%S ET")
