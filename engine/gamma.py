@@ -129,6 +129,55 @@ def _parse_exposure_map(exposure_map: Any, ticker: str, stock_price: Optional[fl
 
 
 
+
+def _gamma_regime_at_price(by_strike: Dict[float, Dict[str, float]], price: float) -> str:
+    """Classify local dealer gamma from the nearest strike's cumulative curve."""
+    cumulative = 0.0
+    points = []
+    for strike, vals in sorted(by_strike.items()):
+        cumulative += float(vals.get("net", 0.0) or 0.0)
+        points.append((strike, cumulative))
+    if not points:
+        return "UNKNOWN"
+    _, value = min(points, key=lambda x: abs(x[0] - price))
+    if value > 0:
+        return "POSITIVE_GAMMA"
+    if value < 0:
+        return "NEGATIVE_GAMMA"
+    return "TRANSITION"
+
+
+def _build_gamma_path(by_strike: Dict[float, Dict[str, float]], spot: float, *,
+                      active_flip: Optional[float], call_wall: Optional[float],
+                      put_wall: Optional[float], high_gamma: Optional[float],
+                      low_gamma: Optional[float]) -> Dict[str, Any]:
+    """Build live spatial gamma context without duplicating LTPE statistics."""
+    current = _gamma_regime_at_price(by_strike, spot)
+    candidates = []
+    for kind, price in (("gamma_flip", active_flip), ("call_wall", call_wall),
+                        ("put_wall", put_wall), ("high_gamma_strike", high_gamma),
+                        ("low_gamma_strike", low_gamma)):
+        if price is None:
+            continue
+        candidates.append({"kind": kind, "price": _round_level(price),
+                           "distance": round(float(price)-spot, 2),
+                           "abs_distance": round(abs(float(price)-spot), 2),
+                           "regime": _gamma_regime_at_price(by_strike, float(price))})
+    candidates.sort(key=lambda x: x["abs_distance"])
+    nearest = candidates[0] if candidates else None
+    upside = [x for x in candidates if x["distance"] > 0]
+    downside = [x for x in candidates if x["distance"] < 0]
+    up_dest = min(upside, key=lambda x:x["distance"]) if upside else None
+    down_dest = min(downside, key=lambda x:abs(x["distance"])) if downside else None
+    return {
+        "available": bool(candidates), "current_regime": current,
+        "nearest_transition": nearest, "upside_destination": up_dest,
+        "downside_destination": down_dest,
+        "path_levels": candidates,
+        "crosses_gamma_flip_up": bool(active_flip is not None and active_flip > spot),
+        "crosses_gamma_flip_down": bool(active_flip is not None and active_flip < spot),
+    }
+
 def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX") -> Dict[str, Any]:
     """Production gamma parser/normalizer for APEX 6.0.1.
 
@@ -240,6 +289,11 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "putPool": "below_spot" if puts_below else "fallback_all_filtered",
     })
 
+    gamma_path = _build_gamma_path(filtered, normalized_stock_price,
+                                   active_flip=active_gamma_flip, call_wall=call_wall,
+                                   put_wall=put_wall, high_gamma=high_gamma_strike,
+                                   low_gamma=low_gamma_strike)
+
     quality_flags: List[str] = []
     if call_wall < normalized_stock_price:
         quality_flags.append("CALL_WALL_BELOW_SPOT_FALLBACK_USED")
@@ -278,6 +332,7 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "gamma_flip_candidate_method": zero_details.get("candidate_method"),
         "gamma_flip_candidate_confidence": zero_details.get("candidate_confidence"),
         "quality_flags": quality_flags,
+        "gamma_path": gamma_path,
         "gex_notes": [
             f"Call wall {call_wall:.2f}",
             f"Put wall {put_wall:.2f}",
@@ -393,6 +448,7 @@ def _empty_gamma(status: str, note: str, trace: DiagnosticsTrace, stock_price: O
         "gamma_flip_candidate_method": None,
         "gamma_flip_candidate_confidence": None,
         "quality_flags": ["NO_USABLE_GAMMA"],
+        "gamma_path": {"available": False, "current_regime": "UNKNOWN", "path_levels": []},
         "gex_notes": [note],
         "diagnostics": trace.to_dict(),
     }
