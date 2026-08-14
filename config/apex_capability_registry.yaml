@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 66.4.0
+apex_version: 66.5.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,10 +12,18 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: 66.4.0
+    version: 66.5.0
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
+    decision_authority: none
+  breadth_regime:
+    canonical_module: engine.breadth_regime
+    status: active
+    version: 66.5.0
+    inputs: [bpspx_observation, bpspx_history, canonical_context]
+    outputs: [breadth_regime_state, horizon_influence, dashboard_band]
+    api_routes: [/api/breadth-regime/status, /api/breadth-regime/diagnostics]
     decision_authority: none
   canonical_decision_snapshot:
     canonical_module: engine.canonical_decision
