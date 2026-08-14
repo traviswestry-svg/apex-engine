@@ -7672,12 +7672,17 @@ def api_institutional_os():
                         _dh.append(_ici_s); SCANNER_STATE["delta_score_history"] = _dh[-12:]
                         _flow_hist  = list(SCANNER_STATE["flow_history"])
                         _delta_hist = list(SCANNER_STATE["delta_score_history"])
+                        _prior_residual_pressure = SCANNER_STATE.get("residual_pressure_memory")
+
+                    _eie_flow_snapshot = dict(flow_snapshot) if isinstance(flow_snapshot, dict) else {}
+                    if isinstance(_prior_residual_pressure, dict):
+                        _eie_flow_snapshot["residual_pressure_memory"] = _prior_residual_pressure
 
                     eie = build_execution_intelligence(
                         institutional_intelligence = result.get("institutional_intelligence") or {},
                         auction_intel              = auction_intel if isinstance(auction_intel, dict) else {},
                         dealer_positioning         = dealer_pos   if isinstance(dealer_pos, dict)   else {},
-                        flow_snapshot              = flow_snapshot,
+                        flow_snapshot              = _eie_flow_snapshot,
                         market_state               = canonical_ms or {},
                         flow_history               = _flow_hist,
                         delta_score_history        = _delta_hist,
@@ -7690,6 +7695,9 @@ def api_institutional_os():
                         _eh = SCANNER_STATE.get("exec_score_history", [])
                         _eh.append(_sf(eie.get("exec_probability")))
                         SCANNER_STATE["exec_score_history"] = _eh[-12:]
+                        _rpm = eie.get("residual_pressure_memory")
+                        if isinstance(_rpm, dict):
+                            SCANNER_STATE["residual_pressure_memory"] = _rpm
                 except Exception as _eie2:
                     print(f"Execution intelligence error (non-fatal): {_eie2}", flush=True)
             if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:

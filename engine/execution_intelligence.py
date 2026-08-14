@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 from typing import Any, Dict, List, Optional, Tuple
+from .residual_pressure_memory import evolve_residual_pressure
 
 
 def _sf(v: Any, d: float = 0.0) -> float:
@@ -460,6 +461,19 @@ def build_execution_intelligence(
     m6_auction  = _auction_acceptance(ai, ms)
     m7_wall     = _gamma_wall_interaction(price, call_wall, put_wall, zero_gamma, gex_score)
 
+    residual_direction = "BULLISH" if flow_bias.upper() in ("BULLISH", "CALL", "BUYING") else "BEARISH" if flow_bias.upper() in ("BEARISH", "PUT", "SELLING") else "UNKNOWN"
+    previous_residual = fs.get("residual_pressure_memory") if isinstance(fs.get("residual_pressure_memory"), dict) else None
+    residual_pressure = evolve_residual_pressure(
+        previous_residual,
+        direction=residual_direction,
+        pressure_score=m1_pressure.get("score", 50.0),
+        absorption_signal=m3_absorb.get("signal", "NEUTRAL"),
+        absorption_score=m3_absorb.get("score", 50.0),
+        acceptance_state=m6_auction.get("acceptance", "UNKNOWN"),
+        level=zero_gamma if m7_wall.get("interaction") == "AT_GAMMA_FLIP" else None,
+        price_response=price_chg,
+    )
+
     # Module 8 — execution probability
     exec_prob = _execution_probability(
         inst_intel_score  = inst_score,
@@ -524,6 +538,7 @@ def build_execution_intelligence(
         "delta_acceleration":    m5_delta,
         "auction_acceptance":    m6_auction,
         "gamma_wall":            m7_wall,
+        "residual_pressure_memory": residual_pressure,
         # Flat scores for pyramid
         "scores": {
             "execution":         round(exec_prob, 1),

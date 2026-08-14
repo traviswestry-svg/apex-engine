@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 import math
+from .flow_excitation import build_flow_excitation
 VERSION='12.3.0_INSTITUTIONAL_OPTIONS_FLOW_INTELLIGENCE'
 def _f(v,d=0.0):
     try:
@@ -38,4 +39,5 @@ def build_options_flow_intelligence(last:Dict[str,Any])->Dict[str,Any]:
     bias='BULLISH' if net>=15 else 'BEARISH' if net<=-15 else 'NEUTRAL'
     trap='BULL_TRAP_RISK' if bias=='BULLISH' and last.get('market_state',{}).get('trend')=='DOWN' else 'BEAR_TRAP_RISK' if bias=='BEARISH' and last.get('market_state',{}).get('trend')=='UP' else 'NONE'
     warnings=[] if rows else ['FLOW_DATA_UNAVAILABLE']
-    return {'ok':True,'version':VERSION,'evaluated_at':datetime.now(timezone.utc).isoformat(),'available':bool(rows),'state':'READY' if rows else 'DEGRADED','event_count':len(rows),'bias':bias,'net_flow_score':round(net,1),'bullish_weight':round(bull,1),'bearish_weight':round(bear,1),'persistence_score':round(min(100,persistence/max(1,len(rows))*100),1),'institutional_clusters':sum(1 for x in scored if x['repeat_count']>=3),'high_quality_events':sum(1 for x in scored if x['quality']>=70),'trap_detection':trap,'events':sorted(scored,key=lambda x:x['quality'],reverse=True)[:25],'warnings':warnings,'guardrails':{'read_only':True,'broker_mutation':False,'intent_is_inference':True}}
+    excitation=build_flow_excitation(rows)
+    return {'ok':True,'version':VERSION,'evaluated_at':datetime.now(timezone.utc).isoformat(),'available':bool(rows),'state':'READY' if rows else 'DEGRADED','event_count':len(rows),'bias':bias,'net_flow_score':round(net,1),'bullish_weight':round(bull,1),'bearish_weight':round(bear,1),'persistence_score':round(min(100,persistence/max(1,len(rows))*100),1),'institutional_clusters':sum(1 for x in scored if x['repeat_count']>=3),'high_quality_events':sum(1 for x in scored if x['quality']>=70),'trap_detection':trap,'flow_excitation':excitation,'independent_evidence_factor':excitation.get('independent_evidence_factor',1.0),'redundancy_factor':excitation.get('redundancy_factor',0.0),'events':sorted(scored,key=lambda x:x['quality'],reverse=True)[:25],'warnings':warnings,'guardrails':{'read_only':True,'broker_mutation':False,'intent_is_inference':True}}
