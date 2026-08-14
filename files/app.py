@@ -178,6 +178,17 @@ except Exception as _cfl_err:
     register_carry_forward_ladder_routes = None
     print(f"Carry-Forward Ladder unavailable: {_cfl_err}", flush=True)
 
+# APEX 66.7.0 — Dynamic State surface (flow excitation · residual pressure · gamma path)
+try:
+    from engine.dynamic_state import build_dynamic_state
+    from engine.dynamic_state_routes import register_dynamic_state_routes
+    DYNAMIC_STATE_AVAILABLE = True
+except Exception as _ds_err:
+    DYNAMIC_STATE_AVAILABLE = False
+    build_dynamic_state = None
+    register_dynamic_state_routes = None
+    print(f"Dynamic State surface unavailable: {_ds_err}", flush=True)
+
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
     from engine.trade_director_flow_intelligence import (
@@ -4326,7 +4337,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td11"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td11_dynamic_state_66_7"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -7672,12 +7683,17 @@ def api_institutional_os():
                         _dh.append(_ici_s); SCANNER_STATE["delta_score_history"] = _dh[-12:]
                         _flow_hist  = list(SCANNER_STATE["flow_history"])
                         _delta_hist = list(SCANNER_STATE["delta_score_history"])
+                        _prior_residual_pressure = SCANNER_STATE.get("residual_pressure_memory")
+
+                    _eie_flow_snapshot = dict(flow_snapshot) if isinstance(flow_snapshot, dict) else {}
+                    if isinstance(_prior_residual_pressure, dict):
+                        _eie_flow_snapshot["residual_pressure_memory"] = _prior_residual_pressure
 
                     eie = build_execution_intelligence(
                         institutional_intelligence = result.get("institutional_intelligence") or {},
                         auction_intel              = auction_intel if isinstance(auction_intel, dict) else {},
                         dealer_positioning         = dealer_pos   if isinstance(dealer_pos, dict)   else {},
-                        flow_snapshot              = flow_snapshot,
+                        flow_snapshot              = _eie_flow_snapshot,
                         market_state               = canonical_ms or {},
                         flow_history               = _flow_hist,
                         delta_score_history        = _delta_hist,
@@ -7690,6 +7706,9 @@ def api_institutional_os():
                         _eh = SCANNER_STATE.get("exec_score_history", [])
                         _eh.append(_sf(eie.get("exec_probability")))
                         SCANNER_STATE["exec_score_history"] = _eh[-12:]
+                        _rpm = eie.get("residual_pressure_memory")
+                        if isinstance(_rpm, dict):
+                            SCANNER_STATE["residual_pressure_memory"] = _rpm
                 except Exception as _eie2:
                     print(f"Execution intelligence error (non-fatal): {_eie2}", flush=True)
             if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:
@@ -12182,7 +12201,18 @@ def api_flow_tape():
 
     try:
         raw_rows = _fetch_flow_tape_rows(tickers, size_per_ticker=size)
-        tape = build_flow_tape(raw_rows, tickers, min_premium=min_premium)
+        with STATE_LOCK:
+            _flow_last = STATE.get("last_result") or {}
+        _flow_market = _flow_last.get("market_state") if isinstance(_flow_last.get("market_state"), dict) else {}
+        _flow_prices = {}
+        _spx_price = _flow_market.get("price") or _flow_last.get("price")
+        if _spx_price:
+            _flow_prices["SPX"] = _spx_price
+            _flow_prices["SPXW"] = _spx_price
+        tape = build_flow_tape(
+            raw_rows, tickers, min_premium=min_premium,
+            current_prices=_flow_prices,
+        )
         tape["version"] = VERSION
         tape["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         tape["updated_at_et"] = now_et().strftime("%Y-%m-%d %H:%M:%S ET")
@@ -12847,10 +12877,64 @@ try:
             except Exception:
                 return {}
 
+        def _ri_canonical(ticker="SPX"):
+            """Authoritative session spot + expected-move from the Morning Brief.
+
+            Range Intelligence and the Morning Brief must read the same canonical
+            context; this returns {spot, em_low, em_high} from the cached brief
+            (no provider I/O), or None so the engine falls back to VIX (flagged).
+            """
+            try:
+                import datetime as _dt
+                now = _dt.datetime.now(EASTERN) if "EASTERN" in globals() else _dt.datetime.now()
+                cand = now.date() if now.time() >= _dt.time(16, 5) else now.date() - _dt.timedelta(days=1)
+                while cand.weekday() >= 5:
+                    cand -= _dt.timedelta(days=1)
+                snapshot = None
+                try:
+                    from engine.evening_recap import get_morning_snapshot
+                    snapshot = get_morning_snapshot(now.date().isoformat()) or get_morning_snapshot(cand.isoformat())
+                except Exception:
+                    snapshot = None
+                if not snapshot and "_MORNING_BRIEF_CACHE" in globals():
+                    snapshot = _MORNING_BRIEF_CACHE.get(now.date().isoformat()) or _MORNING_BRIEF_CACHE.get(cand.isoformat())
+                if not isinstance(snapshot, dict):
+                    return None
+                structured = snapshot.get("structured") or {}
+                spot = structured.get("spot") if isinstance(structured, dict) else None
+                if not isinstance(structured, dict) or not structured:
+                    return None
+                em = structured.get("expected_move") or {}
+                em_low = em.get("low") if em.get("low") is not None else em.get("lower")
+                em_high = em.get("high") if em.get("high") is not None else em.get("upper")
+                sp = spot if spot is not None else structured.get("spot")
+                if sp is None and em_low is None and em_high is None:
+                    return None
+                return {"spot": sp, "em_low": em_low, "em_high": em_high}
+            except Exception:
+                return None
+
+        def _ri_runtime():
+            """Lightweight runtime health for degraded gating."""
+            try:
+                snap = _apex65_component_health_snapshot() if "_apex65_component_health_snapshot" in globals() else {}
+                degraded = False
+                if isinstance(snap, dict):
+                    states = [str(v.get("state", "")).upper() for v in snap.values() if isinstance(v, dict)]
+                    degraded = any(s in ("DEGRADED", "FAILED", "STALE") for s in states)
+                sess = market_session_context() if "market_session_context" in globals() else {}
+                fresh = bool((sess or {}).get("is_tradeable_session")) and not degraded
+                return {"degraded": degraded, "data_fresh": fresh,
+                        "state": "DEGRADED" if degraded else ("LIVE" if fresh else "PRE_OPEN")}
+            except Exception:
+                return None
+
         register_range_routes(
             app,
             last_result_provider=_ri_last_result,
             session_provider=_ri_session,
+            canonical_provider=_ri_canonical,
+            runtime_provider=_ri_runtime,
             default_ticker=ASSISTANT_TICKER,
         )
         print(f"APEX Range Intelligence routes registered ({RANGE_VERSION}).", flush=True)
@@ -13332,6 +13416,23 @@ try:
                 return {}, None
         register_carry_forward_ladder_routes(app, structured_provider=_cfl_structured)
         print("APEX 66.6.0 Carry-Forward Ladder routes registered.", flush=True)
+
+    if DYNAMIC_STATE_AVAILABLE and register_dynamic_state_routes is not None:
+        def _ds_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        def _ds_scanner_state():
+            try:
+                return dict(SCANNER_STATE)
+            except Exception:
+                return {}
+        register_dynamic_state_routes(app, last_result_provider=_ds_last_result,
+                                      scanner_state_provider=_ds_scanner_state)
+        print("APEX 66.7.0 Dynamic State routes registered.", flush=True)
 
     if INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE and register_institutional_forecast_routes is not None:
         def _ife_last_result():

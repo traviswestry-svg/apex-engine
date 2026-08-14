@@ -178,6 +178,17 @@ except Exception as _cfl_err:
     register_carry_forward_ladder_routes = None
     print(f"Carry-Forward Ladder unavailable: {_cfl_err}", flush=True)
 
+# APEX 66.7.0 — Dynamic State surface (flow excitation · residual pressure · gamma path)
+try:
+    from engine.dynamic_state import build_dynamic_state
+    from engine.dynamic_state_routes import register_dynamic_state_routes
+    DYNAMIC_STATE_AVAILABLE = True
+except Exception as _ds_err:
+    DYNAMIC_STATE_AVAILABLE = False
+    build_dynamic_state = None
+    register_dynamic_state_routes = None
+    print(f"Dynamic State surface unavailable: {_ds_err}", flush=True)
+
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
     from engine.trade_director_flow_intelligence import (
@@ -4326,7 +4337,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td12_ri_canonical"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td11_dynamic_state_66_7"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -13405,6 +13416,23 @@ try:
                 return {}, None
         register_carry_forward_ladder_routes(app, structured_provider=_cfl_structured)
         print("APEX 66.6.0 Carry-Forward Ladder routes registered.", flush=True)
+
+    if DYNAMIC_STATE_AVAILABLE and register_dynamic_state_routes is not None:
+        def _ds_last_result():
+            try:
+                with STATE_LOCK:
+                    return dict(STATE.get("last_result") or {})
+            except Exception:
+                return {}
+
+        def _ds_scanner_state():
+            try:
+                return dict(SCANNER_STATE)
+            except Exception:
+                return {}
+        register_dynamic_state_routes(app, last_result_provider=_ds_last_result,
+                                      scanner_state_provider=_ds_scanner_state)
+        print("APEX 66.7.0 Dynamic State routes registered.", flush=True)
 
     if INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE and register_institutional_forecast_routes is not None:
         def _ife_last_result():

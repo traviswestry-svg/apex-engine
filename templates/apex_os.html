@@ -631,6 +631,94 @@
   })();
   </script>
 
+  <!-- ══ DYNAMIC STATE (flow excitation · residual pressure · gamma path) ═════ -->
+  <style>
+    .ds-band{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);padding:14px 16px;margin:0 0 12px 0}
+    .ds-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+    .ds-title{font-size:12px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+    .ds-sum{font-size:11px;color:var(--faint);margin-left:auto}
+    .ds-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    @media(max-width:820px){.ds-grid{grid-template-columns:1fr}}
+    .ds-card{background:var(--bg);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:10px 12px}
+    .ds-clabel{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
+    .ds-state{font-size:16px;font-weight:900;font-family:var(--mono)}
+    .ds-state.good{color:var(--green)} .ds-state.warn{color:var(--amber)} .ds-state.bad{color:var(--red)} .ds-state.mut{color:var(--muted)}
+    .ds-meta{font-size:11px;color:var(--faint);margin-top:4px;line-height:1.5}
+    .ds-bar{height:6px;border-radius:5px;background:var(--bdr);overflow:hidden;margin-top:6px}
+    .ds-bar>span{display:block;height:100%}
+    .ds-warm{color:var(--muted);font-size:13px;padding:6px 2px}
+  </style>
+  <div class="ds-band" id="dsBand">
+    <div class="ds-head">
+      <span class="ds-title">Dynamic State</span>
+      <span class="ds-sum" id="dsSummary"></span>
+    </div>
+    <div id="dsWarm" class="ds-warm">Warming up — waiting for the first scan…</div>
+    <div class="ds-grid" id="dsGrid" style="display:none">
+      <div class="ds-card">
+        <div class="ds-clabel">Flow Excitation</div>
+        <div class="ds-state" id="dsFlowState">—</div>
+        <div class="ds-meta" id="dsFlowMeta"></div>
+        <div class="ds-bar"><span id="dsFlowBar" style="width:0%;background:var(--blue)"></span></div>
+      </div>
+      <div class="ds-card">
+        <div class="ds-clabel">Residual Pressure</div>
+        <div class="ds-state" id="dsResState">—</div>
+        <div class="ds-meta" id="dsResMeta"></div>
+        <div class="ds-bar"><span id="dsResBar" style="width:0%;background:var(--amber)"></span></div>
+      </div>
+      <div class="ds-card">
+        <div class="ds-clabel">Gamma Path</div>
+        <div class="ds-state" id="dsGammaState">—</div>
+        <div class="ds-meta" id="dsGammaMeta"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+  (function(){
+    function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+    function n2(v){return (v==null||v==='')?'—':(Math.round(v*100)/100);}
+    function curTicker(){var b=document.querySelector('.ticker-btn.active');return (b&&b.dataset.ticker)||'SPX';}
+    function pct(v){return Math.max(0,Math.min(100,(v||0)*100));}
+    function render(d){
+      var warm=document.getElementById('dsWarm'),grid=document.getElementById('dsGrid');
+      if(!d||!d.available){warm.style.display='';grid.style.display='none';warm.textContent=(d&&d.summary)||'Warming up — waiting for the first scan…';return;}
+      warm.style.display='none';grid.style.display='';
+      document.getElementById('dsSummary').textContent=d.summary||'';
+      // Flow excitation
+      var fe=d.flow_excitation||{};var fs=document.getElementById('dsFlowState');
+      var st=(fe.state||'—').replace(/_/g,' ');
+      fs.textContent=fe.available?st:'No flow';
+      fs.className='ds-state '+(!fe.available?'mut':(String(fe.state).indexOf('HIGH')>=0?'bad':String(fe.state).indexOf('ELEV')>=0?'warn':'good'));
+      var ief=fe.independent_evidence_factor;
+      var meta='ratio '+n2(fe.excitation_ratio)+' · '+n2(fe.burst_count)+' bursts';
+      if(ief!=null){meta+=' · independent evidence '+Math.round(ief*100)+'%';if(ief<0.5)meta+=' (redundant burst — discounted)';}
+      document.getElementById('dsFlowMeta').textContent=meta;
+      document.getElementById('dsFlowBar').style.width=pct(ief!=null?ief:0)+'%';
+      // Residual pressure
+      var rp=d.residual_pressure||{};var rs=document.getElementById('dsResState');
+      rs.textContent=rp.available?(rp.state||'—').replace(/_/g,' '):'None';
+      rs.className='ds-state '+(!rp.available||rp.state==='RESOLVED'||rp.state==='NONE'?'mut':(rp.state==='ACTIVE'||rp.state==='RESIDUAL_PRESSURE'?'warn':'good'));
+      document.getElementById('dsResMeta').textContent=rp.available?((rp.direction||'')+' · remaining '+n2(rp.remaining_pressure)+(rp.origin_level!=null?(' · at '+rp.origin_level):'')):'No unresolved pressure';
+      document.getElementById('dsResBar').style.width=pct((rp.remaining_pressure||0)/100)+'%';
+      // Gamma path
+      var gp=d.gamma_path||{};var gs=document.getElementById('dsGammaState');
+      gs.textContent=gp.available?(gp.current_regime||'—').replace(/_/g,' '):'Unavailable';
+      gs.className='ds-state '+(gp.available?'good':'mut');
+      var up=gp.upside_destination||{},dn=gp.downside_destination||{};
+      document.getElementById('dsGammaMeta').innerHTML=gp.available?
+        ('↑ '+n2(up.price)+(up.label?(' '+esc(up.label)):'')+'<br>↓ '+n2(dn.price)+(dn.label?(' '+esc(dn.label)):'')):'No gamma path this cycle';
+    }
+    function load(){
+      fetch('/api/dynamic-state?ticker='+encodeURIComponent(curTicker()),{cache:'no-store'})
+        .then(function(r){return r.json();}).then(render)
+        .catch(function(){var g=document.getElementById('dsGrid');if(g&&g.style.display!=='none')return;});
+    }
+    document.querySelectorAll('.ticker-btn').forEach(function(b){b.addEventListener('click',function(){setTimeout(load,60);});});
+    load();setInterval(load,20000);
+  })();
+  </script>
+
   <!-- ════════════════════════════════════════════════════════════════════════
        TAB: MISSION CONTROL — APEX 8.0 default workspace
        Consumes /api/mission_control (pure composition, single lightweight poll).
