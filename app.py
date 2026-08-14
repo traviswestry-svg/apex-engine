@@ -156,6 +156,28 @@ except Exception as _thi_err:
     build_trade_horizon_intelligence = None
     print(f"Trade Horizon Intelligence unavailable: {_thi_err}", flush=True)
 
+# APEX 66.5.0 — Breadth Exhaustion & Recovery Engine
+try:
+    from engine.breadth_regime import build_breadth_regime
+    from engine.breadth_regime_routes import register_breadth_regime_routes
+    BREADTH_REGIME_AVAILABLE = True
+except Exception as _bre_err:
+    BREADTH_REGIME_AVAILABLE = False
+    build_breadth_regime = None
+    register_breadth_regime_routes = None
+    print(f"Breadth Regime Engine unavailable: {_bre_err}", flush=True)
+
+# APEX 66.6.0 — Carry-Forward Levels Ladder (dashboard view of the brief's levels)
+try:
+    from engine.carry_forward_ladder import build_carry_forward_ladder
+    from engine.carry_forward_ladder_routes import register_carry_forward_ladder_routes
+    CARRY_FORWARD_LADDER_AVAILABLE = True
+except Exception as _cfl_err:
+    CARRY_FORWARD_LADDER_AVAILABLE = False
+    build_carry_forward_ladder = None
+    register_carry_forward_ladder_routes = None
+    print(f"Carry-Forward Ladder unavailable: {_cfl_err}", flush=True)
+
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
     from engine.trade_director_flow_intelligence import (
@@ -6142,6 +6164,28 @@ def tv_signal():
         print(f"WEBHOOK REJECTED (bad secret): received len={len(secret)}, expected len={len(WEBHOOK_SECRET)}, ticker={payload.get('ticker')!r}, source={payload.get('source', payload.get('system'))!r}", flush=True)
         return jsonify({"ok": False, "error": "bad secret"}), 403
 
+    # APEX 66.5.0 — a dedicated TradingView BPSPX alert may update daily
+    # breadth without being misclassified as an executable trade signal.
+    bpspx_value = safe_float(payload.get("bpspx"), -1.0)
+    if str(payload.get("source") or "").upper() in {"APEX_BREADTH", "BPSPX"} and 0 <= bpspx_value <= 100:
+        observed_at = dt.datetime.now(dt.timezone.utc).isoformat()
+        with STATE_LOCK:
+            observations = list(SCANNER_STATE.get("bpspx_history") or [])
+            previous = safe_float(SCANNER_STATE.get("bpspx"), -1.0)
+            observations.append(bpspx_value)
+            SCANNER_STATE["bpspx"] = bpspx_value
+            SCANNER_STATE["bpspx_previous"] = previous if previous >= 0 else None
+            SCANNER_STATE["bpspx_history"] = observations[-100:]
+            SCANNER_STATE["bpspx_observed_at"] = observed_at
+        breadth = build_breadth_regime({
+            "bpspx": bpspx_value,
+            "bpspx_previous": previous if previous >= 0 else None,
+            "bpspx_history": observations,
+            "bpspx_source": "tradingview_bpspx",
+            "bpspx_observed_at": observed_at,
+        }) if BREADTH_REGIME_AVAILABLE and build_breadth_regime is not None else {}
+        return jsonify({"ok": True, "version": VERSION, "accepted": "BPSPX", "breadth_regime": breadth})
+
     ticker = normalize_signal_ticker(str(payload.get("ticker", ASSISTANT_TICKER)))
     side   = str(payload.get("signal", payload.get("side", "NONE"))).upper()
 
@@ -7942,6 +7986,26 @@ def api_institutional_os():
                     result["trade_horizon_intelligence"] = {
                         "ok": False, "version": "66.4.0", "status": "DATA_LIMITED",
                         "error": str(_thi_build_err), "execution_authority": "NONE"
+                    }
+
+            # APEX 66.5.0 — daily breadth is a horizon-aware context input. It
+            # cannot create an entry or override execution/risk governance.
+            if BREADTH_REGIME_AVAILABLE and build_breadth_regime is not None:
+                try:
+                    with STATE_LOCK:
+                        _breadth_input = {
+                            "bpspx": SCANNER_STATE.get("bpspx"),
+                            "bpspx_previous": SCANNER_STATE.get("bpspx_previous"),
+                            "bpspx_history": list(SCANNER_STATE.get("bpspx_history") or []),
+                            "bpspx_observed_at": SCANNER_STATE.get("bpspx_observed_at"),
+                            "bpspx_source": "tradingview_bpspx",
+                        }
+                    result["breadth_regime"] = build_breadth_regime({**result, **_breadth_input})
+                except Exception as _bre_build_err:
+                    result["breadth_regime"] = {
+                        "ok": False, "version": "66.5.0", "status": "DATA_LIMITED",
+                        "state": "DATA_LIMITED", "bpspx": None,
+                        "error": str(_bre_build_err), "execution_authority": "NONE"
                     }
 
             # APEX 45 — Institutional Market Narrative Engine. Explainability,
@@ -12118,7 +12182,18 @@ def api_flow_tape():
 
     try:
         raw_rows = _fetch_flow_tape_rows(tickers, size_per_ticker=size)
-        tape = build_flow_tape(raw_rows, tickers, min_premium=min_premium)
+        with STATE_LOCK:
+            _flow_last = STATE.get("last_result") or {}
+        _flow_market = _flow_last.get("market_state") if isinstance(_flow_last.get("market_state"), dict) else {}
+        _flow_prices = {}
+        _spx_price = _flow_market.get("price") or _flow_last.get("price")
+        if _spx_price:
+            _flow_prices["SPX"] = _spx_price
+            _flow_prices["SPXW"] = _spx_price
+        tape = build_flow_tape(
+            raw_rows, tickers, min_premium=min_premium,
+            current_prices=_flow_prices,
+        )
         tape["version"] = VERSION
         tape["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         tape["updated_at_et"] = now_et().strftime("%Y-%m-%d %H:%M:%S ET")
@@ -13224,6 +13299,50 @@ try:
                 return dict(value) if isinstance(value, dict) else {}
         register_institutional_regime_intelligence_routes(app, last_result_provider=_iri_last_result)
         print("APEX 23.1 Institutional Regime Intelligence routes registered.", flush=True)
+
+    if BREADTH_REGIME_AVAILABLE and register_breadth_regime_routes is not None:
+        def _bre_last_result():
+            with STATE_LOCK:
+                value = STATE.get("last_result") or {}
+                return dict(value) if isinstance(value, dict) else {}
+        register_breadth_regime_routes(app, last_result_provider=_bre_last_result)
+        print("APEX 66.5.0 Breadth Regime Engine routes registered.", flush=True)
+
+    if CARRY_FORWARD_LADDER_AVAILABLE and register_carry_forward_ladder_routes is not None:
+        def _cfl_structured(ticker="SPX"):
+            """Latest already-computed Daily Key Levels for the session, cheaply.
+
+            Reads the archived/in-process Morning Brief snapshot (no provider I/O,
+            no LLM). Returns (structured_levels, spot) or ({}, None) if no brief
+            has been generated for the session yet.
+            """
+            try:
+                import datetime as _dt
+                now = _dt.datetime.now(EASTERN) if "EASTERN" in globals() else _dt.datetime.now()
+                candidate = now.date() if now.time() >= _dt.time(16, 5) else now.date() - _dt.timedelta(days=1)
+                while candidate.weekday() >= 5:
+                    candidate -= _dt.timedelta(days=1)
+                # Prefer today's brief if one exists; else the recap candidate.
+                snapshot = None
+                try:
+                    from engine.evening_recap import get_morning_snapshot
+                    snapshot = get_morning_snapshot(now.date().isoformat()) or get_morning_snapshot(candidate.isoformat())
+                except Exception:
+                    snapshot = None
+                if not snapshot:
+                    snapshot = _MORNING_BRIEF_CACHE.get(now.date().isoformat()) or _MORNING_BRIEF_CACHE.get(candidate.isoformat())
+                if not isinstance(snapshot, dict):
+                    return {}, None
+                structured = snapshot.get("structured") or {}
+                spot = None
+                if isinstance(structured, dict):
+                    sp = structured.get("spot")
+                    spot = sp if isinstance(sp, (int, float)) else None
+                return structured, spot
+            except Exception:
+                return {}, None
+        register_carry_forward_ladder_routes(app, structured_provider=_cfl_structured)
+        print("APEX 66.6.0 Carry-Forward Ladder routes registered.", flush=True)
 
     if INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE and register_institutional_forecast_routes is not None:
         def _ife_last_result():

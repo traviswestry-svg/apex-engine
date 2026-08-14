@@ -158,6 +158,7 @@
           <button class="tab-btn" data-tab="chart">Chart</button>
           <button class="tab-btn" data-tab="flow2">Flow</button>
           <button class="tab-btn" data-tab="story">Story</button>
+          <button class="tab-btn" data-tab="levels">Levels</button>
           <button class="tab-btn" data-tab="tape">Tape</button>
         </div>
       </div>
@@ -1219,6 +1220,54 @@
     </div>
   </div>
 
+  <!-- ── TAB: CARRY-FORWARD LEVELS ─────────────────────────────────── -->
+  <div id="tab-levels" class="tab-pane">
+    <style>
+      .cfl-wrap{max-width:760px;margin:0 auto}
+      .cfl-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+      .cfl-spot{font-family:var(--mono);font-weight:800;font-size:15px;color:var(--blue)}
+      .cfl-plan{font-size:12px;color:var(--muted);margin:2px 0 14px;line-height:1.5}
+      .cfl-zone{margin-bottom:14px}
+      .cfl-zone-label{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);margin:0 0 6px 2px}
+      .cfl-row{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:9px;background:var(--panel2,#0d1a2b);border:1px solid var(--line,#1c2c40);margin-bottom:5px}
+      .cfl-row.cfl-here{border-color:var(--blue);box-shadow:inset 0 0 0 1px var(--blue)}
+      .cfl-price{font-family:var(--mono);font-weight:800;font-size:15px;min-width:96px}
+      .cfl-label{flex:1;font-size:13px;color:var(--text,#dbe9fb)}
+      .cfl-tag{font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:2px 7px;border-radius:20px;font-weight:700}
+      .cfl-tag.wall{background:rgba(96,165,250,.16);color:#93c5fd}
+      .cfl-tag.gamma{background:rgba(251,191,36,.16);color:#fcd34d}
+      .cfl-tag.value{background:rgba(148,163,184,.16);color:#cbd5e1}
+      .cfl-tag.expected{background:rgba(167,139,250,.16);color:#c4b5fd}
+      .cfl-tag.prior,.cfl-tag.overnight,.cfl-tag.opening,.cfl-tag.level{background:rgba(148,163,184,.10);color:#94a3b8}
+      .cfl-dist{font-family:var(--mono);font-size:11px;color:var(--faint);min-width:64px;text-align:right}
+      .cfl-over .cfl-price{color:#f87171}
+      .cfl-below .cfl-price{color:#4ade80}
+      .cfl-value .cfl-price{color:#93c5fd}
+      .cfl-here-chip{align-self:center;margin:6px 0;text-align:center;font-family:var(--mono);font-size:12px;color:var(--blue);letter-spacing:.06em}
+      .cfl-empty{padding:26px 14px;text-align:center;color:var(--muted);font-size:13px}
+      .cfl-touch{font-size:10px;color:var(--faint);margin-left:2px}
+    </style>
+    <div class="card">
+      <div class="card-headline">
+        <div>
+          <div class="card-label">Carry-Forward Levels Ladder</div>
+          <div class="workflow-sub">Prior-session &amp; positioning levels, mapped around spot — the brief's levels, live</div>
+        </div>
+        <button class="tape-btn" id="cflRefresh" type="button">Refresh</button>
+      </div>
+      <div class="cfl-wrap">
+        <div class="cfl-head">
+          <div class="cfl-spot" id="cflSpot">SPX —</div>
+          <div class="cfl-spot" id="cflRegime" style="color:var(--muted)"></div>
+        </div>
+        <div class="cfl-plan" id="cflPlan"></div>
+        <div id="cflBody">
+          <div class="cfl-empty" id="cflEmpty">Loading carry-forward levels…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── TAB: FLOW TAPE ─────────────────────────────────────────────── -->
   <div id="tab-tape" class="tab-pane">
     <div class="card">
@@ -1236,6 +1285,23 @@
         </div>
       </div>
       <div id="tapeSummaryBar" class="tape-summary-bar"></div>
+      <div class="large-order-grid">
+        <section class="large-order-chart-card">
+          <div class="large-order-title">SPX Large Orders on Price</div>
+          <div class="workflow-sub">Execution time × underlying price · marker size reflects premium</div>
+          <div id="largeOrderChart" class="large-order-chart">
+            <div class="tape-empty">Waiting for SPX order coordinates…</div>
+          </div>
+        </section>
+        <section class="large-order-intel-card">
+          <div class="large-order-title">Dominant Strike Concentration</div>
+          <div id="largeOrderClusters"><div class="tape-empty">Waiting for strike clusters…</div></div>
+        </section>
+        <section class="large-order-intel-card">
+          <div class="large-order-title">Related-Leg Warnings</div>
+          <div id="largeOrderSpreads"><div class="tape-empty">No possible spreads detected.</div></div>
+        </section>
+      </div>
       <div id="flowTapeTable" class="flow-tape-table flow-tape-full">
         <div class="tape-empty">Waiting for institutional flow tape data...</div>
       </div>

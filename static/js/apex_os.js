@@ -54,8 +54,11 @@ function initTabs() {
       document.querySelectorAll('.tab-pane').forEach(p => {
         p.classList.toggle('active', p.id === 'tab-' + target);
       });
+      if (target === 'levels') loadCarryForwardLadder();
     });
   });
+  const cflBtn = document.getElementById('cflRefresh');
+  if (cflBtn) cflBtn.addEventListener('click', () => loadCarryForwardLadder(true));
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -87,6 +90,21 @@ function renderTradeHorizons(d) {
     const prefix = r.scalp_classification && r.scalp_classification !== 'UNRESOLVED' ? r.scalp_classification.replace(/_/g,' ') + ' · ' : '';
     rel.textContent = prefix + (r.interpretation || 'Horizon relationship unresolved.');
   }
+}
+
+function renderBreadthRegime(d) {
+  const b = d && d.breadth_regime;
+  if (!b) return;
+  const state = String(b.state || 'DATA_LIMITED');
+  const band = $('breadthBand');
+  if (band) band.className = 'bre-band ' + state;
+  if ($('breHeadline')) $('breHeadline').textContent = b.headline || 'Breadth unavailable';
+  if ($('breInterpretation')) $('breInterpretation').textContent = b.interpretation || 'No signal is inferred.';
+  if ($('breValue')) $('breValue').textContent = b.bpspx == null ? '—' : Number(b.bpspx).toFixed(2) + ' · ' + String(b.direction || 'UNKNOWN');
+  if ($('breState')) $('breState').textContent = state.replace(/_/g, ' ');
+  const hi = b.horizon_influence || {};
+  if ($('breScalp')) $('breScalp').textContent = String((hi.SCALP || {}).effect || 'CONTEXT_ONLY').replace(/_/g, ' ');
+  if ($('breSwing')) $('breSwing').textContent = String((hi.SWING || {}).effect || '—').replace(/_/g, ' ');
 }
 
 /* ── Ribbon ───────────────────────────────────────────────────────────────── */
@@ -1659,6 +1677,7 @@ async function _renderAll(data) {
   try {
     // 6.0.3 panels
     _r(renderTradeHorizons, data);
+    _r(renderBreadthRegime, data);
     _r(renderRibbon, data);
     _r(renderICI, data);
     _r(renderDecision, data);
@@ -2716,6 +2735,8 @@ const TAPE_TECH_TICKERS  = new Set(['NVDA','TSLA','AAPL','MSFT','AMZN','META','G
 
 let tapeFilter = 'all';
 let tapeRows   = [];
+let tapeClusters = [];
+let tapeSpreads = [];
 
 function initTapeFilters() {
   document.querySelectorAll('.tape-btn').forEach(btn => {
@@ -2790,6 +2811,8 @@ function renderFlowTapeTable() {
     const contract = _formatContract(r);
     const price    = r.trade_price ? fmt(r.trade_price) : '--';
     const imp      = r.importance_score != null ? r.importance_score : '';
+    const bias     = (r.directional_bias || 'UNRESOLVED').replace(/_/g, ' ');
+    const confirm  = (r.price_confirmation || 'UNAVAILABLE').replace(/_/g, ' ');
     // Color the label badge
     const labelCls = r.aggressor_side === 'BUY' ? 'tape-label-buy' : r.aggressor_side === 'SELL' ? 'tape-label-sell' : 'tape-label-neut';
     return `<tr class="${agCls}">
@@ -2798,6 +2821,8 @@ function renderFlowTapeTable() {
       <td class="tape-td-price">${price}</td>
       <td class="tape-td-premium"><b>${fmtPremium(r.premium)}</b></td>
       <td class="tape-td-label"><span class="tape-label ${labelCls}">${esc(label)}</span></td>
+      <td><span class="tape-bias tape-bias-${esc((r.directional_bias||'unresolved').toLowerCase())}">${esc(bias)}</span></td>
+      <td><span class="tape-confirm tape-confirm-${esc((r.price_confirmation||'unavailable').toLowerCase())}">${esc(confirm)}</span></td>
       <td class="tape-td-score">${imp}</td>
     </tr>`;
   }).join('');
@@ -2808,20 +2833,62 @@ function renderFlowTapeTable() {
       <th>Price</th>
       <th>Premium</th>
       <th>Type</th>
+      <th>Directional Read</th>
+      <th>Price Response</th>
       <th>Score</th>
     </tr></thead>
     <tbody>${rowHtml}</tbody>
   </table>`;
 }
 
+function _timeSeconds(value) {
+  const p = String(value || '').slice(0,8).split(':').map(Number);
+  return p.length === 3 && p.every(Number.isFinite) ? p[0]*3600+p[1]*60+p[2] : null;
+}
+
+function renderLargeOrderChart() {
+  const el = $('largeOrderChart');
+  if (!el) return;
+  const rows = tapeRows.filter(r => (r.ticker === 'SPX' || r.ticker === 'SPXW') &&
+    r.underlying_price_at_trade && _timeSeconds(r.time_et) != null);
+  if (!rows.length) {
+    el.innerHTML = '<div class="tape-empty">QuantData did not provide underlying-price coordinates for the current SPX orders. Order details remain available below.</div>';
+    return;
+  }
+  const width=900, height=260, left=58, right=18, top=20, bottom=34;
+  const times=rows.map(r=>_timeSeconds(r.time_et)), prices=rows.map(r=>Number(r.underlying_price_at_trade));
+  let minT=Math.min(...times), maxT=Math.max(...times), minP=Math.min(...prices), maxP=Math.max(...prices);
+  if(maxT===minT){minT-=60;maxT+=60} if(maxP===minP){minP-=2;maxP+=2}
+  const x=t=>left+(t-minT)/(maxT-minT)*(width-left-right);
+  const y=p=>top+(maxP-p)/(maxP-minP)*(height-top-bottom);
+  const dots=rows.map(r=>{
+    const premium=Number(r.premium||0), radius=Math.max(5,Math.min(18,5+Math.log10(Math.max(1,premium/100000))*4));
+    const cls=r.directional_bias==='BULLISH'?'lot-bull':r.directional_bias==='BEARISH'?'lot-bear':'lot-unknown';
+    const title=`${_formatContract(r)} · ${fmtPremium(premium)} · ${(r.tape_label||'UNKNOWN').replace(/_/g,' ')} · ${(r.price_confirmation||'UNAVAILABLE').replace(/_/g,' ')}`;
+    return `<g class="large-order-dot ${cls}"><circle cx="${x(_timeSeconds(r.time_et)).toFixed(1)}" cy="${y(Number(r.underlying_price_at_trade)).toFixed(1)}" r="${radius.toFixed(1)}"><title>${esc(title)}</title></circle><text x="${x(_timeSeconds(r.time_et)).toFixed(1)}" y="${(y(Number(r.underlying_price_at_trade))-radius-3).toFixed(1)}" text-anchor="middle">${esc(fmtPremium(premium))}</text></g>`;
+  }).join('');
+  const grid=[0,.25,.5,.75,1].map(q=>{const py=top+q*(height-top-bottom), pv=maxP-q*(maxP-minP);return `<line x1="${left}" y1="${py}" x2="${width-right}" y2="${py}"/><text x="${left-7}" y="${py+4}" text-anchor="end">${pv.toFixed(1)}</text>`}).join('');
+  el.innerHTML=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="SPX large options orders plotted by execution time and underlying price"><g class="large-order-gridlines">${grid}</g>${dots}<text class="large-order-axis" x="${left}" y="${height-8}">${esc(rows[0].time_et||'')}</text><text class="large-order-axis" x="${width-right}" y="${height-8}" text-anchor="end">${esc(rows[rows.length-1].time_et||'')}</text></svg>`;
+}
+
+function renderLargeOrderIntelligence() {
+  const clustersEl=$('largeOrderClusters'), spreadsEl=$('largeOrderSpreads');
+  if(clustersEl) clustersEl.innerHTML=tapeClusters.slice(0,8).map(c=>`<div class="lot-intel-row"><div><b>${esc(c.ticker)} ${esc(String(c.strike))}${c.contract_type==='CALL'?'C':'P'} · ${esc(c.expiration||'')}</b><span>${c.order_count} order${c.order_count===1?'':'s'} · ${esc((c.directional_bias||'UNRESOLVED').replace(/_/g,' '))}</span></div><strong>${fmtPremium(c.total_premium)}</strong></div>`).join('')||'<div class="tape-empty">No qualified strike clusters.</div>';
+  if(spreadsEl) spreadsEl.innerHTML=tapeSpreads.slice(0,6).map(s=>`<div class="lot-warning"><b>${esc(s.ticker)} ${esc((s.strikes||[]).join('/'))} ${s.contract_type==='CALL'?'calls':'puts'}</b><span>${fmtPremium(s.combined_premium)} · ${esc((s.classification||'').replace(/_/g,' '))} · ${esc(s.confidence||'')} confidence</span></div>`).join('')||'<div class="tape-empty">No related-leg candidates detected.</div>';
+}
+
 async function loadFlowTape() {
   try {
-    const r = await fetch('/api/flow_tape?tickers=SPY,QQQ,SPX,NVDA,TSLA&min_premium=100000', { cache: 'no-store' });
+    const r = await fetch('/api/flow_tape?tickers=SPY,QQQ,SPX,NVDA,TSLA&min_premium=100000&size=200', { cache: 'no-store' });
     if (!r.ok) return;
     const data = await r.json();
     if (!data.ok) return;
     tapeRows = data.rows || [];
+    tapeClusters = data.strike_clusters || [];
+    tapeSpreads = data.spread_candidates || [];
     renderTapeSummary(data.summary);
+    renderLargeOrderChart();
+    renderLargeOrderIntelligence();
     renderFlowTapeTable();
   } catch (e) {
     // Non-fatal: tape unavailable
@@ -4227,6 +4294,73 @@ function renderMissionEmpty(msg) {
   if (txt) txt.textContent = msg;
   if (empty) empty.style.display = 'flex';
   if (grid)  grid.style.display  = 'none';
+}
+
+/* ── Carry-Forward Levels Ladder ─────────────────────────────────────────── */
+let cflLoading = false;
+async function loadCarryForwardLadder(force) {
+  if (cflLoading) return;
+  cflLoading = true;
+  try {
+    const url = '/api/carry-forward-ladder?ticker=' + encodeURIComponent(activeTicker) + (force ? '&_=' + Date.now() : '');
+    const result = window.ApexAPI
+      ? await ApexAPI.get(url, { timeoutMs: 8000, fallback: null })
+      : await fetch(url, { cache: 'no-store' }).then(r => r.json()).then(data => ({ data }));
+    const d = result && result.data;
+    renderCarryForwardLadder(d);
+  } catch (e) {
+    renderCarryForwardLadder({ available: false, reason: 'Levels unavailable — retry shortly.' });
+    console.warn('[CFL] loadCarryForwardLadder:', e.message);
+  } finally {
+    cflLoading = false;
+  }
+}
+
+function renderCarryForwardLadder(d) {
+  const body = $('cflBody');
+  if (!body) return;
+  const spotEl = $('cflSpot'), regEl = $('cflRegime'), planEl = $('cflPlan');
+  if (!d || d.available === false || (!(d.overhead || []).length && !(d.value || []).length && !(d.below || []).length)) {
+    if (spotEl) spotEl.textContent = activeTicker + ' —';
+    if (regEl)  regEl.textContent  = '';
+    if (planEl) planEl.textContent = '';
+    body.innerHTML = '<div class="cfl-empty">' + esc((d && d.reason) || 'No carry-forward levels yet — generate the Morning Brief for this session.') + '</div>';
+    return;
+  }
+  if (spotEl) spotEl.textContent = activeTicker + (d.spot != null ? ' ' + fmt(d.spot) : ' —');
+  if (regEl)  regEl.textContent  = d.gamma_regime ? d.gamma_regime.replace(/_/g, ' ') + ' gamma' : '';
+  if (planEl) planEl.textContent = d.plan || '';
+
+  const row = (r, zoneCls) => {
+    const dist = r.distance != null
+      ? (r.distance > 0 ? '+' : '') + fmt(r.distance)
+      : '';
+    const here = zoneCls === 'cfl-value' ? ' cfl-here' : '';
+    const touch = (r.touches != null && r.touches > 0)
+      ? '<span class="cfl-touch">' + fmtI(r.touches) + ' touches</span>' : '';
+    return '<div class="cfl-row ' + zoneCls + here + '">'
+      + '<span class="cfl-price">' + fmt(r.price) + '</span>'
+      + '<span class="cfl-label">' + esc(r.label) + ' ' + touch + '</span>'
+      + '<span class="cfl-tag ' + esc(r.role || 'level') + '">' + esc(r.role || '') + '</span>'
+      + '<span class="cfl-dist">' + dist + '</span>'
+      + '</div>';
+  };
+  const zone = (label, rows, zoneCls) => {
+    if (!rows || !rows.length) return '';
+    return '<div class="cfl-zone"><div class="cfl-zone-label">' + esc(label) + '</div>'
+      + rows.map(r => row(r, zoneCls)).join('') + '</div>';
+  };
+
+  let html = '';
+  html += zone('Overhead · resistance', d.overhead, 'cfl-over');
+  if ((d.value || []).length) {
+    html += '<div class="cfl-here-chip">— ' + activeTicker + ' ' + (d.spot != null ? fmt(d.spot) : '') + ' · value shelf —</div>';
+    html += zone('At price · value shelf', d.value, 'cfl-value');
+  } else if (d.spot != null) {
+    html += '<div class="cfl-here-chip">— ' + activeTicker + ' ' + fmt(d.spot) + ' —</div>';
+  }
+  html += zone('Below · support', d.below, 'cfl-below');
+  body.innerHTML = html || '<div class="cfl-empty">No usable levels in this session.</div>';
 }
 
 function renderMissionControl(d) {
