@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 import math
 from typing import Any, Dict, Iterable, Mapping, Optional
 
-VERSION = "66.4.0"
-SCHEMA_VERSION = "apex.trade_horizon_intelligence.v1"
+VERSION = "66.4.1"
+SCHEMA_VERSION = "apex.trade_horizon_intelligence.v2"
 HORIZONS = ("SCALP", "INTRADAY", "SWING")
 
 HORIZON_META = {
@@ -65,6 +65,61 @@ def _path(root: Mapping[str, Any], dotted: str) -> Any:
             return None
         cur = cur.get(key)
     return cur
+
+
+def _mapping(v: Any) -> Mapping[str, Any]:
+    return v if isinstance(v, Mapping) else {}
+
+
+def _session_state(root: Mapping[str, Any]) -> str:
+    session = root.get("session")
+    if isinstance(session, Mapping):
+        session = session.get("session_state") or session.get("session")
+    return str(
+        root.get("session_state") or
+        _mapping(root.get("market_state")).get("session_state") or
+        session or "UNKNOWN"
+    ).upper()
+
+
+def _authoritative_decision(root: Mapping[str, Any]) -> Dict[str, Any]:
+    """Read the canonical decision already present on this same snapshot."""
+    obj = _mapping(root.get("institutional_decision_object"))
+    if not obj.get("authoritative_contract"):
+        return {"available": False, "direction": "UNAVAILABLE", "action": "NO_TRADE",
+                "confidence": None, "as_of": None}
+    conviction = _mapping(obj.get("conviction"))
+    confidence = obj.get("calibrated_conviction")
+    if confidence is None:
+        confidence = obj.get("raw_conviction")
+    if confidence is None:
+        confidence = conviction.get("score") or conviction.get("raw_conviction")
+    return {
+        "available": True,
+        "direction": _direction(obj.get("direction")),
+        "action": str(obj.get("action") or obj.get("decision_state") or "NO_TRADE").upper(),
+        "actionable": bool(obj.get("actionable")),
+        "confidence": round(_f(confidence), 1) if confidence is not None else None,
+        "as_of": obj.get("timestamp") or obj.get("generated_at"),
+        "source": obj.get("decision_authority") or "institutional_decision_object",
+    }
+
+
+def _runtime_quality(root: Mapping[str, Any]) -> Dict[str, Any]:
+    state = str(root.get("status") or root.get("engine_mode") or "").upper()
+    timed_out = root.get("timed_out_components") or []
+    degraded = bool(root.get("stale") or root.get("partial") or timed_out or "DEGRADED" in state)
+    breadth = _mapping(root.get("breadth_regime"))
+    breadth_limited = not breadth or str(breadth.get("state") or "DATA_LIMITED").upper() == "DATA_LIMITED"
+    session = _session_state(root)
+    market_open = session in ("MARKET_OPEN", "OPEN", "RTH")
+    return {
+        "runtime_degraded": degraded,
+        "breadth_limited": breadth_limited,
+        "session_state": session,
+        "market_open": market_open,
+        "timed_out_components": list(timed_out) if isinstance(timed_out, (list, tuple)) else [],
+    }
 
 
 def _first_direction(root: Mapping[str, Any], paths: Iterable[str]) -> str:
@@ -138,6 +193,62 @@ def _evidence_pool(context: Mapping[str, Any], daily_bars: Any, intraday_bars: A
     return ev
 
 
+def _govern_horizon(horizon: Dict[str, Any], authority: Mapping[str, Any],
+                    quality: Mapping[str, Any]) -> Dict[str, Any]:
+    out = dict(horizon)
+    raw_confidence = _f(out.get("confidence"), 0.0)
+    cap = 95.0
+    reasons = []
+    if quality.get("runtime_degraded"):
+        cap = min(cap, 55.0); reasons.append("RUNTIME_DEGRADED")
+    if quality.get("breadth_limited"):
+        cap = min(cap, 65.0); reasons.append("BREADTH_DATA_LIMITED")
+    if not quality.get("market_open"):
+        cap = min(cap, 60.0); reasons.append("SESSION_NOT_TRADEABLE")
+
+    auth_dir = authority.get("direction")
+    horizon_dir = out.get("bias")
+    directional_conflict = (
+        authority.get("available") and auth_dir in ("BULLISH", "BEARISH") and
+        horizon_dir in ("BULLISH", "BEARISH") and auth_dir != horizon_dir
+    )
+    if directional_conflict:
+        cap = min(cap, 50.0); reasons.append("AUTHORITATIVE_DIRECTION_CONFLICT")
+        relationship = "CONFLICT"
+    elif authority.get("available") and auth_dir == horizon_dir and auth_dir in ("BULLISH", "BEARISH"):
+        relationship = "ALIGNED"
+    elif authority.get("available"):
+        relationship = "UNRESOLVED"
+    else:
+        relationship = "AUTHORITY_UNAVAILABLE"
+
+    governed = min(raw_confidence, cap)
+    context_available = out.get("status") not in ("DATA_LIMITED", "UNKNOWN")
+    if not context_available:
+        status = "DATA_LIMITED"
+    elif directional_conflict:
+        status = "CONFLICT"
+    elif not quality.get("market_open"):
+        status = "CONTEXT_ONLY"
+    elif quality.get("runtime_degraded"):
+        status = "DEGRADED_CONTEXT"
+    else:
+        status = "CONTEXT_AVAILABLE"
+
+    # A horizon is context, never an entry instruction. Preserve its directional
+    # option translation separately while keeping the trade focus fail-closed.
+    out["directional_context"] = out.get("trade_focus")
+    out["trade_focus"] = "NO_TRADE"
+    out["status"] = status
+    out["raw_context_confidence"] = round(raw_confidence, 1)
+    out["confidence"] = round(governed, 1)
+    out["confidence_cap"] = round(cap, 1)
+    out["confidence_cap_reasons"] = reasons
+    out["relationship_to_authoritative"] = relationship
+    out["authoritative_direction"] = auth_dir
+    return out
+
+
 def _classify_horizon(name: str, evidence: list[dict[str, Any]]) -> Dict[str, Any]:
     weighted = []
     bull = bear = neutral = total = 0.0
@@ -208,8 +319,23 @@ def build_trade_horizon_intelligence(
 ) -> Dict[str, Any]:
     root = dict(context or {})
     pool = _evidence_pool(root, daily_bars, intraday_bars)
-    horizons = {name: _classify_horizon(name, pool) for name in HORIZONS}
+    authority = _authoritative_decision(root)
+    quality = _runtime_quality(root)
+    horizons = {
+        name: _govern_horizon(_classify_horizon(name, pool), authority, quality)
+        for name in HORIZONS
+    }
     relation = _relationship(horizons["SCALP"], horizons["INTRADAY"], horizons["SWING"])
+    conflicts = [name for name, item in horizons.items()
+                 if item.get("relationship_to_authoritative") == "CONFLICT"]
+    if conflicts:
+        relation["horizon_conflict"] = True
+        relation["authoritative_conflict"] = True
+        relation["conflicting_horizons"] = conflicts
+        relation["interpretation"] = (
+            f"Authoritative decision is {str(authority.get('direction')).lower()}; "
+            f"{', '.join(conflicts).lower()} context disagrees. Execution remains NO TRADE."
+        )
     return {
         "ok": True,
         "version": VERSION,
@@ -218,6 +344,13 @@ def build_trade_horizon_intelligence(
         "ticker": str(root.get("ticker") or "SPX").upper(),
         "horizons": horizons,
         "relationship": relation,
+        "authoritative_decision": authority,
+        "runtime_quality": quality,
+        "snapshot": {
+            "canonical_as_of": authority.get("as_of"),
+            "classification_as_of": _now(),
+            "single_snapshot_contract": True,
+        },
         "source_relevance": SOURCE_RELEVANCE,
         "execution_authority": "NONE",
         "guardrails": {

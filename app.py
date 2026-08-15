@@ -7993,20 +7993,6 @@ def api_institutional_os():
             except Exception as _al46_err:
                 print(f"Adaptive learning error (non-fatal): {_al46_err}", flush=True)
 
-            # APEX 66.4.0 — Trade Horizon Intelligence. Read-only classification
-            # layer; it labels SCALP / INTRADAY / SWING context but has no
-            # execution authority and cannot bypass existing decision gates.
-            if TRADE_HORIZON_INTELLIGENCE_AVAILABLE and build_trade_horizon_intelligence is not None:
-                try:
-                    result["trade_horizon_intelligence"] = build_trade_horizon_intelligence(
-                        result, daily_bars=daily_bars, intraday_bars=intraday_bars
-                    )
-                except Exception as _thi_build_err:
-                    result["trade_horizon_intelligence"] = {
-                        "ok": False, "version": "66.4.0", "status": "DATA_LIMITED",
-                        "error": str(_thi_build_err), "execution_authority": "NONE"
-                    }
-
             # APEX 66.5.0 — daily breadth is a horizon-aware context input. It
             # cannot create an entry or override execution/risk governance.
             if BREADTH_REGIME_AVAILABLE and build_breadth_regime is not None:
@@ -8025,6 +8011,41 @@ def api_institutional_os():
                         "ok": False, "version": "66.5.0", "status": "DATA_LIMITED",
                         "state": "DATA_LIMITED", "bpspx": None,
                         "error": str(_bre_build_err), "execution_authority": "NONE"
+                    }
+
+            # APEX 66.4.1 — compose the authoritative decision once on this
+            # exact result snapshot, then make horizon intelligence reconcile
+            # against it. This prevents independently refreshed panels from
+            # presenting opposing high-confidence trade instructions.
+            result["stale"] = False
+            result["partial"] = len(timed_out) > 0
+            result["timed_out_components"] = list(timed_out)
+            try:
+                from engine.institutional_decision_object import build_canonical_institutional_decision
+                result["institutional_decision_object"] = build_canonical_institutional_decision(
+                    result, session_state=_session_state_now
+                )
+            except Exception as _ido_sync_err:
+                result["institutional_decision_object"] = {
+                    "authoritative_contract": True, "actionable": False,
+                    "action": "NO_TRADE", "direction": "UNKNOWN",
+                    "status": "FAIL_CLOSED", "fail_closed": True,
+                    "error": str(_ido_sync_err),
+                }
+
+            # Horizon classification runs after breadth and the canonical
+            # decision so freshness, data limits and conflicts can govern its
+            # presentation. It remains advisory and execution-ineligible.
+            if TRADE_HORIZON_INTELLIGENCE_AVAILABLE and build_trade_horizon_intelligence is not None:
+                try:
+                    result["trade_horizon_intelligence"] = build_trade_horizon_intelligence(
+                        result, daily_bars=daily_bars, intraday_bars=intraday_bars
+                    )
+                except Exception as _thi_build_err:
+                    result["trade_horizon_intelligence"] = {
+                        "ok": False, "version": "66.4.1", "status": "DATA_LIMITED",
+                        "error": str(_thi_build_err), "execution_authority": "NONE",
+                        "horizons": {},
                     }
 
             # APEX 45 — Institutional Market Narrative Engine. Explainability,

@@ -5,11 +5,19 @@
   function normalizeDecision(value){const v=String(value||'').toUpperCase().replace(/_/g,' ');if(/CALL|BULL|LONG/.test(v))return 'CALL BIAS';if(/PUT|BEAR|SHORT/.test(v))return 'PUT BIAS';if(/STAND|AVOID|NO TRADE|BLOCK/.test(v))return 'STAND ASIDE';return v||'OBSERVE';}
   function tone(value){const v=String(value||'').toUpperCase();if(/CALL|BULL|PASS|READY|POSITIVE|ACCEPT/.test(v))return 'good';if(/PUT|BEAR|FAIL|BLOCK|NEGATIVE|REJECT/.test(v))return 'bad';return 'neutral';}
   function syncCockpit(){
-    set('tcDecision',normalizeDecision(text('iwDecision','OBSERVE')));
+    const decision=normalizeDecision(text('iwDecision','OBSERVE'));
+    const strategy=String(text('iwStrategy','NO TRADE')).toUpperCase();
+    const entry=text('iwEntry','—'), stop=text('iwStop','—'), target=text('iwTp1','—');
+    const targetNumber=Number(String(target).replace(/[$,]/g,''));
+    const blocked=/OBSERVE|WATCH|STAND ASIDE|NO TRADE|BLOCK/.test(decision+' '+strategy);
+    const invalidTarget=target!=='—' && (!Number.isFinite(targetNumber) || targetNumber<=0);
+    const planValid=!blocked && !invalidTarget && entry!=='—' && stop!=='—' && target!=='—';
+    set('tcDecision',decision);
     set('tcSummary',text('iwHeadline','Waiting for a complete institutional decision.'));
     set('tcConfidence',text('iwConfidence','—'));
-    set('tcEntry',text('iwEntry','—')); set('tcStop',text('iwStop','—')); set('tcTarget',text('iwTp1','—'));
-    set('tcSize',text('iwReadiness','—')); set('tcBias',text('iwBias','NEUTRAL')); set('tcStrategy',text('iwStrategy','NO TRADE'));
+    set('tcEntry',planValid?entry:'—'); set('tcStop',planValid?stop:'—'); set('tcTarget',planValid?target:'—');
+    set('tcSize',planValid?text('iwReadiness','—'):'NOT READY'); set('tcBias',text('iwBias','NEUTRAL')); set('tcStrategy',strategy);
+    set('tcPlanState',planValid?'VALIDATED PLAN':invalidTarget?'INVALID PLAN HIDDEN':'NO ACTIONABLE PLAN');
     const evidence=[['tcDealer',text('ribbonDealer','Dealer: —')],['tcFlow',text('ribbonFlow','Flow: —')],['tcAuction',text('ribbonAuction','Auction: —')]];
     evidence.forEach(([id,v])=>{set(id,v);const el=document.getElementById(id);if(el){el.className='tc-chip '+tone(v)}});
   }
