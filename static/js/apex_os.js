@@ -78,10 +78,19 @@ function renderTradeHorizons(d) {
     const h = thi.horizons[name] || {};
     const trend = String(h.trend || 'UNKNOWN').toUpperCase();
     const card = document.querySelector(`.thi-card[data-horizon="${name}"]`);
-    if (card) { card.classList.remove('BULLISH','BEARISH','NEUTRAL'); card.classList.add(['BULLISH','BEARISH','NEUTRAL'].includes(trend) ? trend : 'NEUTRAL'); }
+    if (card) {
+      card.classList.remove('BULLISH','BEARISH','NEUTRAL','CONFLICT','DEGRADED');
+      card.classList.add(['BULLISH','BEARISH','NEUTRAL'].includes(trend) ? trend : 'NEUTRAL');
+      if (h.status === 'CONFLICT') card.classList.add('CONFLICT');
+      if (h.status === 'DEGRADED_CONTEXT') card.classList.add('DEGRADED');
+    }
     if ($(ids[0])) $(ids[0]).textContent = trend;
     if ($(ids[1])) $(ids[1]).textContent = h.trade_focus || 'NO TRADE';
-    if ($(ids[2])) $(ids[2]).textContent = h.confidence != null ? Math.round(Number(h.confidence)) + '% confidence' : '—';
+    if ($(ids[2])) {
+      const governed = h.confidence != null ? Math.round(Number(h.confidence)) : null;
+      const raw = h.raw_context_confidence != null ? Math.round(Number(h.raw_context_confidence)) : governed;
+      $(ids[2]).textContent = governed == null ? '—' : governed + '% governed' + (raw > governed ? ' · raw ' + raw + '%' : '');
+    }
     if ($(ids[3])) $(ids[3]).textContent = String(h.status || 'DATA_LIMITED').replace(/_/g,' ');
   });
   const rel = $('thiRelation');
@@ -89,6 +98,16 @@ function renderTradeHorizons(d) {
     const r = thi.relationship || {};
     const prefix = r.scalp_classification && r.scalp_classification !== 'UNRESOLVED' ? r.scalp_classification.replace(/_/g,' ') + ' · ' : '';
     rel.textContent = prefix + (r.interpretation || 'Horizon relationship unresolved.');
+  }
+  const foot = $('thiFreshness');
+  if (foot) {
+    const q = thi.runtime_quality || {}, s = thi.snapshot || {}, a = thi.authoritative_decision || {};
+    const flags = ['Session ' + String(q.session_state || 'UNKNOWN').replace(/_/g,' ')];
+    if (q.runtime_degraded) flags.push('runtime degraded');
+    if (q.breadth_limited) flags.push('breadth limited');
+    flags.push('authority ' + String(a.direction || 'unavailable').toLowerCase());
+    if (s.canonical_as_of) flags.push('snapshot ' + new Date(s.canonical_as_of).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}));
+    foot.textContent = flags.join(' · ');
   }
 }
 
