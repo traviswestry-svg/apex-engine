@@ -167,7 +167,7 @@ except Exception as _bre_err:
     register_breadth_regime_routes = None
     print(f"Breadth Regime Engine unavailable: {_bre_err}", flush=True)
 
-# APEX 66.7.0 — Carry-Forward Levels Ladder (dashboard view of the brief's levels)
+# APEX 66.6.0 — Carry-Forward Levels Ladder (dashboard view of the brief's levels)
 try:
     from engine.carry_forward_ladder import build_carry_forward_ladder
     from engine.carry_forward_ladder_routes import register_carry_forward_ladder_routes
@@ -177,17 +177,6 @@ except Exception as _cfl_err:
     build_carry_forward_ladder = None
     register_carry_forward_ladder_routes = None
     print(f"Carry-Forward Ladder unavailable: {_cfl_err}", flush=True)
-
-# APEX 66.7.0 — Dynamic State surface (flow excitation · residual pressure · gamma path)
-try:
-    from engine.dynamic_state import build_dynamic_state
-    from engine.dynamic_state_routes import register_dynamic_state_routes
-    DYNAMIC_STATE_AVAILABLE = True
-except Exception as _ds_err:
-    DYNAMIC_STATE_AVAILABLE = False
-    build_dynamic_state = None
-    register_dynamic_state_routes = None
-    print(f"Dynamic State surface unavailable: {_ds_err}", flush=True)
 
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
@@ -1235,24 +1224,6 @@ except Exception as _ea658_err:
     register_evidence_accumulation_routes = None  # type: ignore[assignment]
     EVIDENCE_ACCUMULATION_AVAILABLE = False
     print(f"APEX 65.8 Evidence Accumulation Observatory unavailable (non-fatal): {_ea658_err}", flush=True)
-
-# APEX 66.7.0 — Historical Effectiveness Observatory (read-only).
-try:
-    from engine.historical_effectiveness_routes import register_historical_effectiveness_routes
-    HISTORICAL_EFFECTIVENESS_AVAILABLE = True
-except Exception as _heo_err:
-    register_historical_effectiveness_routes = None  # type: ignore[assignment]
-    HISTORICAL_EFFECTIVENESS_AVAILABLE = False
-    print(f"APEX 66.7.0 Historical Effectiveness Observatory unavailable (non-fatal): {_heo_err}", flush=True)
-
-# APEX 66.8.0 — Confidence Calibration Audit (read-only).
-try:
-    from engine.confidence_calibration_audit_routes import register_confidence_calibration_audit_routes
-    CONFIDENCE_CALIBRATION_AUDIT_AVAILABLE = True
-except Exception as _cca_err:
-    register_confidence_calibration_audit_routes = None  # type: ignore[assignment]
-    CONFIDENCE_CALIBRATION_AUDIT_AVAILABLE = False
-    print(f"APEX 66.8.0 Confidence Calibration Audit unavailable (non-fatal): {_cca_err}", flush=True)
 
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
@@ -4355,7 +4326,7 @@ def start_background_scanner() -> None:
 # =============================================================================
 
 VERSION_45 = VERSION
-STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td11_dynamic_state_66_7"
+STATIC_ASSET_VERSION = VERSION.replace(".", "_") + "_ios_bg4_td11"
 
 # ---------------------------------------------------------------------------
 # New env vars for v4.5 features
@@ -7701,17 +7672,12 @@ def api_institutional_os():
                         _dh.append(_ici_s); SCANNER_STATE["delta_score_history"] = _dh[-12:]
                         _flow_hist  = list(SCANNER_STATE["flow_history"])
                         _delta_hist = list(SCANNER_STATE["delta_score_history"])
-                        _prior_residual_pressure = SCANNER_STATE.get("residual_pressure_memory")
-
-                    _eie_flow_snapshot = dict(flow_snapshot) if isinstance(flow_snapshot, dict) else {}
-                    if isinstance(_prior_residual_pressure, dict):
-                        _eie_flow_snapshot["residual_pressure_memory"] = _prior_residual_pressure
 
                     eie = build_execution_intelligence(
                         institutional_intelligence = result.get("institutional_intelligence") or {},
                         auction_intel              = auction_intel if isinstance(auction_intel, dict) else {},
                         dealer_positioning         = dealer_pos   if isinstance(dealer_pos, dict)   else {},
-                        flow_snapshot              = _eie_flow_snapshot,
+                        flow_snapshot              = flow_snapshot,
                         market_state               = canonical_ms or {},
                         flow_history               = _flow_hist,
                         delta_score_history        = _delta_hist,
@@ -7724,9 +7690,6 @@ def api_institutional_os():
                         _eh = SCANNER_STATE.get("exec_score_history", [])
                         _eh.append(_sf(eie.get("exec_probability")))
                         SCANNER_STATE["exec_score_history"] = _eh[-12:]
-                        _rpm = eie.get("residual_pressure_memory")
-                        if isinstance(_rpm, dict):
-                            SCANNER_STATE["residual_pressure_memory"] = _rpm
                 except Exception as _eie2:
                     print(f"Execution intelligence error (non-fatal): {_eie2}", flush=True)
             if _session_state_now in ("OVERNIGHT", "PREMARKET") and OVERNIGHT_ENGINE_AVAILABLE and build_overnight_game_plan is not None:
@@ -8011,6 +7974,20 @@ def api_institutional_os():
             except Exception as _al46_err:
                 print(f"Adaptive learning error (non-fatal): {_al46_err}", flush=True)
 
+            # APEX 66.4.0 — Trade Horizon Intelligence. Read-only classification
+            # layer; it labels SCALP / INTRADAY / SWING context but has no
+            # execution authority and cannot bypass existing decision gates.
+            if TRADE_HORIZON_INTELLIGENCE_AVAILABLE and build_trade_horizon_intelligence is not None:
+                try:
+                    result["trade_horizon_intelligence"] = build_trade_horizon_intelligence(
+                        result, daily_bars=daily_bars, intraday_bars=intraday_bars
+                    )
+                except Exception as _thi_build_err:
+                    result["trade_horizon_intelligence"] = {
+                        "ok": False, "version": "66.4.0", "status": "DATA_LIMITED",
+                        "error": str(_thi_build_err), "execution_authority": "NONE"
+                    }
+
             # APEX 66.5.0 — daily breadth is a horizon-aware context input. It
             # cannot create an entry or override execution/risk governance.
             if BREADTH_REGIME_AVAILABLE and build_breadth_regime is not None:
@@ -8029,41 +8006,6 @@ def api_institutional_os():
                         "ok": False, "version": "66.5.0", "status": "DATA_LIMITED",
                         "state": "DATA_LIMITED", "bpspx": None,
                         "error": str(_bre_build_err), "execution_authority": "NONE"
-                    }
-
-            # APEX 66.4.1 — compose the authoritative decision once on this
-            # exact result snapshot, then make horizon intelligence reconcile
-            # against it. This prevents independently refreshed panels from
-            # presenting opposing high-confidence trade instructions.
-            result["stale"] = False
-            result["partial"] = len(timed_out) > 0
-            result["timed_out_components"] = list(timed_out)
-            try:
-                from engine.institutional_decision_object import build_canonical_institutional_decision
-                result["institutional_decision_object"] = build_canonical_institutional_decision(
-                    result, session_state=_session_state_now
-                )
-            except Exception as _ido_sync_err:
-                result["institutional_decision_object"] = {
-                    "authoritative_contract": True, "actionable": False,
-                    "action": "NO_TRADE", "direction": "UNKNOWN",
-                    "status": "FAIL_CLOSED", "fail_closed": True,
-                    "error": str(_ido_sync_err),
-                }
-
-            # Horizon classification runs after breadth and the canonical
-            # decision so freshness, data limits and conflicts can govern its
-            # presentation. It remains advisory and execution-ineligible.
-            if TRADE_HORIZON_INTELLIGENCE_AVAILABLE and build_trade_horizon_intelligence is not None:
-                try:
-                    result["trade_horizon_intelligence"] = build_trade_horizon_intelligence(
-                        result, daily_bars=daily_bars, intraday_bars=intraday_bars
-                    )
-                except Exception as _thi_build_err:
-                    result["trade_horizon_intelligence"] = {
-                        "ok": False, "version": "66.4.1", "status": "DATA_LIMITED",
-                        "error": str(_thi_build_err), "execution_authority": "NONE",
-                        "horizons": {},
                     }
 
             # APEX 45 — Institutional Market Narrative Engine. Explainability,
@@ -12916,64 +12858,10 @@ try:
             except Exception:
                 return {}
 
-        def _ri_canonical(ticker="SPX"):
-            """Authoritative session spot + expected-move from the Morning Brief.
-
-            Range Intelligence and the Morning Brief must read the same canonical
-            context; this returns {spot, em_low, em_high} from the cached brief
-            (no provider I/O), or None so the engine falls back to VIX (flagged).
-            """
-            try:
-                import datetime as _dt
-                now = _dt.datetime.now(EASTERN) if "EASTERN" in globals() else _dt.datetime.now()
-                cand = now.date() if now.time() >= _dt.time(16, 5) else now.date() - _dt.timedelta(days=1)
-                while cand.weekday() >= 5:
-                    cand -= _dt.timedelta(days=1)
-                snapshot = None
-                try:
-                    from engine.evening_recap import get_morning_snapshot
-                    snapshot = get_morning_snapshot(now.date().isoformat()) or get_morning_snapshot(cand.isoformat())
-                except Exception:
-                    snapshot = None
-                if not snapshot and "_MORNING_BRIEF_CACHE" in globals():
-                    snapshot = _MORNING_BRIEF_CACHE.get(now.date().isoformat()) or _MORNING_BRIEF_CACHE.get(cand.isoformat())
-                if not isinstance(snapshot, dict):
-                    return None
-                structured = snapshot.get("structured") or {}
-                spot = structured.get("spot") if isinstance(structured, dict) else None
-                if not isinstance(structured, dict) or not structured:
-                    return None
-                em = structured.get("expected_move") or {}
-                em_low = em.get("low") if em.get("low") is not None else em.get("lower")
-                em_high = em.get("high") if em.get("high") is not None else em.get("upper")
-                sp = spot if spot is not None else structured.get("spot")
-                if sp is None and em_low is None and em_high is None:
-                    return None
-                return {"spot": sp, "em_low": em_low, "em_high": em_high}
-            except Exception:
-                return None
-
-        def _ri_runtime():
-            """Lightweight runtime health for degraded gating."""
-            try:
-                snap = _apex65_component_health_snapshot() if "_apex65_component_health_snapshot" in globals() else {}
-                degraded = False
-                if isinstance(snap, dict):
-                    states = [str(v.get("state", "")).upper() for v in snap.values() if isinstance(v, dict)]
-                    degraded = any(s in ("DEGRADED", "FAILED", "STALE") for s in states)
-                sess = market_session_context() if "market_session_context" in globals() else {}
-                fresh = bool((sess or {}).get("is_tradeable_session")) and not degraded
-                return {"degraded": degraded, "data_fresh": fresh,
-                        "state": "DEGRADED" if degraded else ("LIVE" if fresh else "PRE_OPEN")}
-            except Exception:
-                return None
-
         register_range_routes(
             app,
             last_result_provider=_ri_last_result,
             session_provider=_ri_session,
-            canonical_provider=_ri_canonical,
-            runtime_provider=_ri_runtime,
             default_ticker=ASSISTANT_TICKER,
         )
         print(f"APEX Range Intelligence routes registered ({RANGE_VERSION}).", flush=True)
@@ -13454,24 +13342,7 @@ try:
             except Exception:
                 return {}, None
         register_carry_forward_ladder_routes(app, structured_provider=_cfl_structured)
-        print("APEX 66.7.0 Carry-Forward Ladder routes registered.", flush=True)
-
-    if DYNAMIC_STATE_AVAILABLE and register_dynamic_state_routes is not None:
-        def _ds_last_result():
-            try:
-                with STATE_LOCK:
-                    return dict(STATE.get("last_result") or {})
-            except Exception:
-                return {}
-
-        def _ds_scanner_state():
-            try:
-                return dict(SCANNER_STATE)
-            except Exception:
-                return {}
-        register_dynamic_state_routes(app, last_result_provider=_ds_last_result,
-                                      scanner_state_provider=_ds_scanner_state)
-        print("APEX 66.7.0 Dynamic State routes registered.", flush=True)
+        print("APEX 66.6.0 Carry-Forward Ladder routes registered.", flush=True)
 
     if INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE and register_institutional_forecast_routes is not None:
         def _ife_last_result():
@@ -13548,14 +13419,6 @@ try:
     if EVIDENCE_ACCUMULATION_AVAILABLE and register_evidence_accumulation_routes is not None:
         register_evidence_accumulation_routes(app)
         print("APEX 65.8 Evidence Accumulation Observatory routes registered.", flush=True)
-
-    if HISTORICAL_EFFECTIVENESS_AVAILABLE and register_historical_effectiveness_routes is not None:
-        register_historical_effectiveness_routes(app)
-        print("APEX 66.7.0 Historical Effectiveness Observatory routes registered.", flush=True)
-
-    if CONFIDENCE_CALIBRATION_AUDIT_AVAILABLE and register_confidence_calibration_audit_routes is not None:
-        register_confidence_calibration_audit_routes(app)
-        print("APEX 66.8.0 Confidence Calibration Audit routes registered.", flush=True)
 
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)

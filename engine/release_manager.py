@@ -135,6 +135,8 @@ FEATURES = [
     "Unified Execution Lifecycle",
     "Execution Journal and Replay",
     "Dynamic Execution Quality Scoring",
+    "Historical Effectiveness Observatory",
+    "Confidence Calibration Audit",
 ]
 
 # Stores whose emptiness would silently invalidate an 11.1 module. Each names its

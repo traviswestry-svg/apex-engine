@@ -1,14 +1,14 @@
 {
-  "apex_version": "66.5.0",
-  "build_name": "Breadth Exhaustion & Recovery Intelligence",
+  "apex_version": "66.8.0",
+  "build_name": "Confidence Calibration Audit",
   "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-13",
+  "released_at": "2026-08-15",
   "guardrails": {
-    "changes_trade_decisions": true,
+    "changes_trade_decisions": false,
     "changes_execution_authority": false,
     "fabricates_outcomes": false,
     "requires_governed_terminal_outcomes": true,
@@ -22,7 +22,13 @@
     "structured_invalidation_lifecycle": true,
     "thesis_replay_persistence": true,
     "hard_invalidation_requires_explicit_input": true,
-    "closed_session_junk_persistence_blocked": true
+    "closed_session_junk_persistence_blocked": true,
+    "historical_effectiveness_read_only": true,
+    "automatic_recalibration_enabled": false,
+    "horizon_inference_from_elapsed_time": false,
+    "confidence_calibration_audit_read_only": true,
+    "audit_reference_probability_is_advisory": true,
+    "confidence_audit_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
