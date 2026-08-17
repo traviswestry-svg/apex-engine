@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt, hashlib, json, math, os, sqlite3, uuid
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 from .learning_maturity import maturity_contract
+from .canonical_persistence import connect as canonical_connect
 
 VERSION = "13.0.6"
 SCHEMA_VERSION = 5
@@ -25,7 +26,7 @@ def _load(v: Any, default: Any=None) -> Any:
     except Exception: return {} if default is None else default
 
 def _conn():
-    c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
+    c=canonical_connect(DB_PATH); return c
 
 def init_db() -> Dict[str, Any]:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)

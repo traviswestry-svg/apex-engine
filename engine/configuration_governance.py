@@ -155,6 +155,14 @@ _REGISTRY_DATA.extend([  # APEX 66.4.1: register 31 previously-undocumented env 
  {'name':'RENDER_SERVICE_ID','category':'DEPLOYMENT','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':"'Render service identifier (platform-provided).'",'safety_critical':False,'used_in_code':True},
 ])
 
+# APEX 67.0.0 / 67.1.0 - canonical persistence layer + silent-degradation observability.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_SQLITE_BUSY_TIMEOUT_MS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'15000','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite busy-timeout in milliseconds for the canonical persistence connection policy.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SQLITE_SYNCHRONOUS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'NORMAL','expected_type':'string','allowed_values':['OFF','NORMAL','FULL','EXTRA'],'secret':False,'deprecated':False,'replacement':None,'description':'SQLite synchronous mode for the canonical persistence connection policy.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_DEGRADATION_DB','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'apex_degradation_events.db','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite path for the silent-degradation observability store.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_DEGRADATION_MEMORY_EVENTS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'500','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'In-memory ring buffer size used as a fallback when the degradation-events database is unavailable.','safety_critical':False,'used_in_code':True},
+])
+
 
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 

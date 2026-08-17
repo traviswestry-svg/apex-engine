@@ -31,6 +31,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from .canonical_persistence import connect as canonical_connect, connection as canonical_connection
 from .persistent_store import persistent_sqlite_path
 from .session_intelligence import classify_session
 from statistics import median
@@ -128,8 +129,7 @@ def resolve_evidence_session_date(
     db = path or _db_path()
     try:
         if db and Path(db).exists():
-            uri = f"file:{Path(db).resolve()}?mode=ro"
-            with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+            with canonical_connection(db, read_only=True, timeout=2.0, wal=False, heal=False) as conn:
                 row = conn.execute(
                     "SELECT MAX(session_date) FROM daily_levels WHERE symbol=? AND session_date<=?",
                     (_norm(symbol), canonical),
@@ -293,16 +293,10 @@ def _wilson_interval(successes: int, n: int, z: float = 1.96) -> Tuple[float, fl
 
 def _connect(path: Optional[str] = None) -> sqlite3.Connection:
     resolved = path or _db_path()
-    parent = Path(resolved).expanduser().resolve().parent
-    parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(resolved, timeout=_env_float("APEX_SQLITE_TIMEOUT_SECONDS", 15))
-    conn.row_factory = sqlite3.Row
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-    except sqlite3.DatabaseError:
-        pass
-    return conn
+    return canonical_connect(
+        resolved,
+        timeout=_env_float("APEX_SQLITE_TIMEOUT_SECONDS", 15),
+    )
 
 
 _SCHEMA = """

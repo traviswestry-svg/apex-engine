@@ -1254,6 +1254,17 @@ except Exception as _cca_err:
     CONFIDENCE_CALIBRATION_AUDIT_AVAILABLE = False
     print(f"APEX 66.8.0 Confidence Calibration Audit unavailable (non-fatal): {_cca_err}", flush=True)
 
+# APEX 67.1.0 — Silent-Degradation Observability (read-only diagnostics).
+try:
+    from engine.silent_degradation_observability import record_degradation
+    from engine.silent_degradation_observability_routes import register_silent_degradation_observability_routes
+    SILENT_DEGRADATION_OBSERVABILITY_AVAILABLE = True
+except Exception as _sdo_err:
+    record_degradation = None  # type: ignore[assignment]
+    register_silent_degradation_observability_routes = None  # type: ignore[assignment]
+    SILENT_DEGRADATION_OBSERVABILITY_AVAILABLE = False
+    print(f"APEX 67.1.0 Silent-Degradation Observability unavailable (non-fatal): {_sdo_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -1279,6 +1290,23 @@ FEATURE_WRITE_SESSIONS = {
 }
 
 VERSION = RELEASE_APP_VERSION
+
+def _observe_degradation(component, operation, exc, *, fallback, suppressed=False, source="app.py", context=None):
+    """Best-effort non-fatal degradation recording; never affects caller flow."""
+    if record_degradation is None:
+        return
+    try:
+        record_degradation(
+            component=component,
+            operation=operation,
+            exc=exc,
+            fallback=fallback,
+            decision_authority_suppressed=suppressed,
+            source=source,
+            context=context or {},
+        )
+    except Exception:
+        pass
 
 try:
     from engine.build_identity import apply_build_identity as apex65_apply_build_identity, STABILIZATION_BUILD as APEX_STABILIZATION_BUILD
@@ -7318,8 +7346,9 @@ def api_institutional_os():
                     tape_summary = _tape_result.get("summary") or {}
                     result["flow_tape_summary"] = tape_summary
                     result["flow_tape_rows_preview"] = (_tape_result.get("rows") or [])[:5]
-                except Exception:
-                    pass
+                except Exception as _flow_tape_err:
+                    _observe_degradation("flow_tape", "build_flow_tape", _flow_tape_err,
+                                         fallback="EMPTY_TAPE_SUMMARY", suppressed=False)
 
             # ── APEX 6.4.1 — Canonical Market State ──
             canonical_ms: Dict[str, Any] = {}
@@ -7334,6 +7363,8 @@ def api_institutional_os():
                     )
                     result["market_state"] = canonical_ms
                 except Exception as _cms_err:
+                    _observe_degradation("canonical_market_state", "build", _cms_err,
+                                         fallback="EMPTY_CANONICAL_MARKET_STATE", suppressed=True)
                     print(f"Canonical market state error (non-fatal): {_cms_err}", flush=True)
 
             # ── APEX 6.3.4 / 6.4.1 — Story Engine 3.1 ──
@@ -7586,8 +7617,9 @@ def api_institutional_os():
                                     vol  = _sf(t.get("day", {}).get("v", 0))
                                     avol = _sf(t.get("prevDay", {}).get("v", 1) or 1)
                                     _md_snap[tkr] = {"change_pct": chg, "volume_relative": vol/avol if avol else 1.0}
-                        except Exception:
-                            pass
+                        except Exception as _md_snapshot_err:
+                            _observe_degradation("market_drivers", "provider_snapshot", _md_snapshot_err,
+                                                 fallback="EMPTY_PROVIDER_SNAPSHOT", suppressed=False)
                     market_drivers_intel = build_market_drivers(
                         snapshot_data   = _md_snap,
                         heat_map_scores = _hm_scores,
@@ -12806,6 +12838,8 @@ try:
             return build_canonical_institutional_decision(
                 last, session_state=(last.get("session") or (last.get("market_state") or {}).get("session_state")))
         except Exception as _gov_err:
+            _observe_degradation("execution_governance", "canonical_decision_provider", _gov_err,
+                                 fallback="FAIL_CLOSED_NO_DECISION", suppressed=True)
             print(f"APEX 66.4.0 governance decision unavailable (non-fatal): {_gov_err}", flush=True)
             return None
 
@@ -12833,19 +12867,25 @@ try:
             try:
                 with STATE_LOCK:
                     return dict(STATE.get("last_result") or {})
-            except Exception:
+            except Exception as _atd_last_err:
+                _observe_degradation("active_trade_director", "last_result_provider", _atd_last_err,
+                                     fallback="EMPTY_RESULT", suppressed=True)
                 return {}
 
         def _atd_flow_snapshot(ticker):
             try:
                 return quantdata_flow_snapshot(ticker)
-            except Exception:
+            except Exception as _atd_flow_err:
+                _observe_degradation("active_trade_director", "flow_snapshot_provider", _atd_flow_err,
+                                     fallback="EMPTY_FLOW", suppressed=True)
                 return {}
 
         def _atd_session():
             try:
                 return market_session_context()
-            except Exception:
+            except Exception as _atd_session_err:
+                _observe_degradation("active_trade_director", "session_provider", _atd_session_err,
+                                     fallback="EMPTY_SESSION", suppressed=True)
                 return {}
 
         def _atd_signal():
@@ -12854,14 +12894,18 @@ try:
                     dec = TRADE_ASSISTANT_STATE.get("last_decision") or {}
                     sig = TRADE_ASSISTANT_STATE.get("last_signal") or {}
                 return {"fresh_signal": bool(dec.get("fresh_signal")), **({} if not isinstance(sig, dict) else sig)}
-            except Exception:
+            except Exception as _atd_signal_err:
+                _observe_degradation("active_trade_director", "signal_provider", _atd_signal_err,
+                                     fallback="EMPTY_SIGNAL", suppressed=True)
                 return {}
 
         def _atd_open_brackets():
             try:
                 from engine.execution.bracket_manager import get_bracket_manager
                 return [b.to_dict() for b in get_bracket_manager().open_brackets()]
-            except Exception:
+            except Exception as _atd_bracket_err:
+                _observe_degradation("active_trade_director", "open_brackets_provider", _atd_bracket_err,
+                                     fallback="EMPTY_BRACKETS", suppressed=True)
                 return []
 
         def _atd_broker_positions():
@@ -12872,14 +12916,18 @@ try:
                     return []
                 r = adapter.get_positions(adapter.account_id_key)
                 return (r.data or {}).get("positions", []) if getattr(r, "ok", False) else []
-            except Exception:
+            except Exception as _atd_broker_err:
+                _observe_degradation("active_trade_director", "broker_positions_provider", _atd_broker_err,
+                                     fallback="EMPTY_BROKER_POSITIONS", suppressed=True)
                 return []
 
         def _atd_manual_position():
             try:
                 with ACTIVE_POSITION_LOCK:
                     return dict(ACTIVE_POSITION)
-            except Exception:
+            except Exception as _atd_manual_err:
+                _observe_degradation("active_trade_director", "manual_position_provider", _atd_manual_err,
+                                     fallback="EMPTY_MANUAL_POSITION", suppressed=True)
                 return {}
 
         register_director_routes(
@@ -12907,13 +12955,17 @@ try:
             try:
                 with STATE_LOCK:
                     return dict(STATE.get("last_result") or {})
-            except Exception:
+            except Exception as _ri_last_err:
+                _observe_degradation("range_intelligence", "last_result_provider", _ri_last_err,
+                                     fallback="EMPTY_RESULT", suppressed=False)
                 return {}
 
         def _ri_session():
             try:
                 return market_session_context()
-            except Exception:
+            except Exception as _ri_session_err:
+                _observe_degradation("range_intelligence", "session_provider", _ri_session_err,
+                                     fallback="EMPTY_SESSION", suppressed=False)
                 return {}
 
         def _ri_canonical(ticker="SPX"):
@@ -12950,7 +13002,9 @@ try:
                 if sp is None and em_low is None and em_high is None:
                     return None
                 return {"spot": sp, "em_low": em_low, "em_high": em_high}
-            except Exception:
+            except Exception as _ri_canonical_err:
+                _observe_degradation("range_intelligence", "canonical_provider", _ri_canonical_err,
+                                     fallback="VIX_FALLBACK_OR_DATA_LIMITED", suppressed=False)
                 return None
 
         def _ri_runtime():
@@ -12965,7 +13019,9 @@ try:
                 fresh = bool((sess or {}).get("is_tradeable_session")) and not degraded
                 return {"degraded": degraded, "data_fresh": fresh,
                         "state": "DEGRADED" if degraded else ("LIVE" if fresh else "PRE_OPEN")}
-            except Exception:
+            except Exception as _ri_runtime_err:
+                _observe_degradation("range_intelligence", "runtime_provider", _ri_runtime_err,
+                                     fallback="UNKNOWN_RUNTIME_HEALTH", suppressed=True)
                 return None
 
         register_range_routes(
@@ -13556,6 +13612,10 @@ try:
     if CONFIDENCE_CALIBRATION_AUDIT_AVAILABLE and register_confidence_calibration_audit_routes is not None:
         register_confidence_calibration_audit_routes(app)
         print("APEX 66.8.0 Confidence Calibration Audit routes registered.", flush=True)
+
+    if SILENT_DEGRADATION_OBSERVABILITY_AVAILABLE and register_silent_degradation_observability_routes is not None:
+        register_silent_degradation_observability_routes(app)
+        print("APEX 67.1.0 Silent-Degradation Observability routes registered.", flush=True)
 
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)

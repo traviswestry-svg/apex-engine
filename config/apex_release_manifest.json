@@ -1,5 +1,5 @@
 {
-  "apex_version": "66.9.0",
+  "apex_version": "67.1.0",
   "build_name": "Confidence Calibration Audit",
   "release_series": "APEX 66",
   "application_entrypoint": "wsgi.py",

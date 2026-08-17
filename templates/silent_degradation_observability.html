@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APEX Silent-Degradation Observability</title>
+<style>
+body{font-family:Arial,sans-serif;background:#0b0f14;color:#e6edf3;margin:0;padding:22px}
+h1{margin:0 0 4px}.muted{color:#8b949e}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:20px 0}
+.card{background:#121923;border:1px solid #273244;border-radius:10px;padding:14px}.big{font-size:28px;font-weight:700}
+table{width:100%;border-collapse:collapse;background:#121923}th,td{padding:10px;border-bottom:1px solid #273244;text-align:left;font-size:13px;vertical-align:top}
+.bad{color:#ff7b72}.warn{color:#d29922}.good{color:#3fb950}code{white-space:pre-wrap}
+a{color:#58a6ff}.pill{padding:3px 7px;border-radius:10px;background:#273244}
+</style></head>
+<body>
+<a href="/apex_os">← APEX OS</a>
+<h1>Silent-Degradation Observability</h1>
+<div class="muted">APEX {{ version }} · non-fatal fallbacks, swallowed exceptions, and authority suppression</div>
+<div class="cards">
+<div class="card"><div class="muted">State</div><div id="status" class="big">—</div></div>
+<div class="card"><div class="muted">Event Groups</div><div id="groups" class="big">—</div></div>
+<div class="card"><div class="muted">Occurrences</div><div id="occ" class="big">—</div></div>
+<div class="card"><div class="muted">Authority Suppressed</div><div id="supp" class="big">—</div></div>
+</div>
+<table><thead><tr><th>Last Seen</th><th>Component</th><th>Operation</th><th>Error</th><th>Fallback</th><th>Count</th><th>Authority</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+async function load(){
+ const r=await fetch('/api/diagnostics/degradations?limit=200',{cache:'no-store'}); const d=await r.json();
+ document.getElementById('status').textContent=d.status||'UNKNOWN';
+ document.getElementById('groups').textContent=d.event_groups??0;
+ document.getElementById('occ').textContent=d.occurrences??0;
+ document.getElementById('supp').textContent=d.decision_authority_suppressed_occurrences??0;
+ const tb=document.getElementById('rows'); tb.innerHTML='';
+ for(const e of (d.events||[])){
+  const tr=document.createElement('tr');
+  const auth=e.decision_authority_suppressed?'SUPPRESSED':'UNCHANGED';
+  tr.innerHTML=`<td>${e.last_seen||''}</td><td>${e.component||''}</td><td>${e.operation||''}</td><td><b>${e.exception_type||''}</b><br>${e.message||''}</td><td>${e.fallback||''}</td><td>${e.occurrence_count||1}</td><td>${auth}</td>`;
+  tb.appendChild(tr);
+ }
+}
+load(); setInterval(load,15000);
+</script></body></html>
