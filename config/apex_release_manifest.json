@@ -1,6 +1,6 @@
 {
-  "apex_version": "67.4.0",
-  "build_name": "Silent-Degradation Coverage Wave 2",
+  "apex_version": "67.5.0",
+  "build_name": "Canonical Persistence Migration Wave 3",
   "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -40,7 +40,12 @@
     "silent_degradation_wave2": true,
     "degradation_observability_changes_decisions": false,
     "degradation_observability_changes_execution_authority": false,
-    "high_consequence_fallbacks_recorded": true
+    "high_consequence_fallbacks_recorded": true,
+    "canonical_persistence_wave3": true,
+    "execution_risk_position_store_migration_staged": true,
+    "persistence_trading_logic_changes": false,
+    "persistence_risk_rule_changes": false,
+    "persistence_execution_authority_changes": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

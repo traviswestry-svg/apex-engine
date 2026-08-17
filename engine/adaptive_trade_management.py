@@ -6,6 +6,7 @@ profit milestones, then emits evidence-backed recommendations. It never sends,
 changes, or cancels broker orders.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, hashlib, json, math, sqlite3, uuid
 from typing import Any
 from . import institutional_governance as gov
@@ -15,7 +16,7 @@ VERSION='16.2.16.2'; SCHEMA_VERSION='apex.adaptive_trade_management.v1'
 def _now(): return dt.datetime.now(dt.timezone.utc).isoformat()
 def _json(v): return json.dumps(v,sort_keys=True,separators=(',',':'),default=str)
 def _conn():
-    c=sqlite3.connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
+    c=canonical_connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
 def _num(v,default=0.0):
     try:
         x=float(v); return x if math.isfinite(x) else default
