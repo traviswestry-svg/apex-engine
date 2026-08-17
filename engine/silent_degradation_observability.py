@@ -32,9 +32,9 @@ def _fingerprint(component: str, operation: str, exception_type: str, fallback: 
     return hashlib.sha256(raw).hexdigest()[:20]
 
 
-def _connect(path: str | Path = DEFAULT_DB):
+def _connect(path: str | Path | None = None):
     from .canonical_persistence import connect
-    c = connect(path)
+    c = connect(DEFAULT_DB if path is None else path)
     c.executescript("""
     CREATE TABLE IF NOT EXISTS degradation_events(
       id INTEGER PRIMARY KEY AUTOINCREMENT,
