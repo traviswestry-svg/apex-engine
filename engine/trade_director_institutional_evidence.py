@@ -5,6 +5,7 @@ SPX bars. This module measures the existing system; it does not mutate engine
 weights, authorize trades, place orders, or fabricate outcomes.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import hashlib
 import json
@@ -74,7 +75,7 @@ def _connect() -> sqlite3.Connection:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=10.0)
+    conn = canonical_connect(path, timeout=10.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA)

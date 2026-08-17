@@ -5,6 +5,7 @@ bounded policy proposals.  It never mutates live decision logic automatically.
 All fitting/evaluation uses session-disjoint chronological splits.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import datetime as dt
 import hashlib
@@ -30,7 +31,7 @@ FAILURE_OUTCOMES = {"STOP_FIRST", "STOP_ONLY"}
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(_DB_PATH, timeout=10)
+    c = canonical_connect(_DB_PATH, timeout=10)
     c.row_factory = sqlite3.Row
     return c
 

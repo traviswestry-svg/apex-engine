@@ -1,6 +1,6 @@
 {
-  "apex_version": "67.2.0",
-  "build_name": "Architecture Closure & Registry Integrity",
+  "apex_version": "67.3.0",
+  "build_name": "Canonical Persistence Migration Wave 2",
   "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -32,7 +32,11 @@
     "capability_registry_complete": true,
     "release_metadata_ratcheted": true,
     "architecture_diagnostic_read_only": true,
-    "historical_executable_source_cleanup_enforced": true
+    "historical_executable_source_cleanup_enforced": true,
+    "canonical_persistence_wave2": true,
+    "persistence_schema_changes": false,
+    "persistence_path_changes": false,
+    "decision_learning_store_migration_staged": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

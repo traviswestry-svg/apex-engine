@@ -5,6 +5,7 @@ and signal spine. Outcomes are written only from governed terminal ledger events
 this module never invents fills, prices, P/L, or directional results.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import datetime as dt
 import json
@@ -118,7 +119,7 @@ def capture_recommendation(capture: Mapping[str, Any]) -> Dict[str, Any]:
     feature_created = feature_store_db.write_features(vector)
 
     signal_created = False
-    with sqlite3.connect(_DB_PATH(), timeout=10) as conn:
+    with canonical_connect(_DB_PATH(), timeout=10) as conn:
         _ensure_signal_table(conn)
         cur = conn.execute(
             """INSERT OR IGNORE INTO apex_signals
@@ -169,7 +170,7 @@ def process_terminal_event(recommendation: Mapping[str, Any], event_type: str,
     }
     feature_store_db.init_db()
     label_created = feature_store_db.write_label(record)
-    with sqlite3.connect(_DB_PATH(), timeout=10) as conn:
+    with canonical_connect(_DB_PATH(), timeout=10) as conn:
         _ensure_signal_table(conn)
         conn.execute("""UPDATE apex_signals SET status=?, outcome_r=?, exit_at=?, exit_reason=?, updated_at=?
                         WHERE signal_id=?""",
@@ -202,7 +203,7 @@ def readiness() -> Dict[str, Any]:
     db = _DB_PATH()
     counts = {"recommendations": 0, "features": 0, "signals": 0, "labels": 0,
               "settled_recommendations": 0}
-    with sqlite3.connect(db, timeout=10) as conn:
+    with canonical_connect(db, timeout=10) as conn:
         for key, table in (("recommendations", "recommendation_ledger"),
                            ("features", "flow_features"), ("signals", "apex_signals"),
                            ("labels", "flow_labels")):

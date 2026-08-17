@@ -26,6 +26,7 @@ production changes require explicit operator approval; ``production_effect`` is
 governance workflow is not itself a production behavior change).
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import datetime as dt
 import json
@@ -372,7 +373,7 @@ def _db_path() -> str:
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(_db_path())
+    c = canonical_connect(_db_path())
     c.row_factory = sqlite3.Row
     return c
 

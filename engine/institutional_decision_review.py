@@ -25,6 +25,7 @@ Reuse (no duplication)
 * ``institutional_governance.audit`` for the audit trail of approve/reject.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import datetime as dt
 import hashlib
@@ -133,7 +134,7 @@ def _db_path() -> str:
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(_db_path())
+    c = canonical_connect(_db_path())
     c.row_factory = sqlite3.Row
     return c
 

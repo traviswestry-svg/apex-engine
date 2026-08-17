@@ -1,5 +1,6 @@
 """APEX 13.0 Sprint 1 immutable institutional evidence case files."""
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, hashlib, json, os, sqlite3, uuid
 from typing import Any, Dict, Mapping, Optional
 from . import recommendation_ledger as ledger
@@ -16,7 +17,7 @@ def _load(v,d=None):
 def _hash(v): return hashlib.sha256(_json(v).encode()).hexdigest()
 def _conn():
     os.makedirs(os.path.dirname(DB_PATH) or '.',exist_ok=True)
-    c=sqlite3.connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('PRAGMA journal_mode=WAL'); return c
+    c=canonical_connect(DB_PATH); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); c.execute('PRAGMA journal_mode=WAL'); return c
 
 def init_db():
     with _conn() as c:

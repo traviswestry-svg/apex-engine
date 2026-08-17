@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 67.2.0
+apex_version: 67.3.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: "67.2.0"
+    version: "67.3.0"
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -201,3 +201,12 @@ capabilities:
     api_routes: [/api/architecture-integrity, /apex_os/architecture-integrity]
     decision_authority: none
     guardrails: [read_only, no_runtime_mutation, no_execution_authority]
+
+  canonical_persistence_migration_wave2:
+    canonical_module: engine.canonical_persistence
+    status: active
+    version: "67.3.0"
+    inputs: [decision_stores, learning_stores, calibration_stores, governance_stores, evidence_stores]
+    outputs: [canonical_sqlite_connections, standardized_busy_handling, standardized_wal_policy, standardized_foreign_keys]
+    decision_authority: none
+    guardrails: [no_schema_migration, no_database_relocation, no_model_logic_change, staged_migration]

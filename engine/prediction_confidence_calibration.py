@@ -5,6 +5,7 @@ confidence corresponds to observed success rates. It never mutates production
 confidence and cannot promote calibration changes without existing governance.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, hashlib, json, math, sqlite3, uuid
 from typing import Any
 from . import institutional_governance as gov
@@ -17,7 +18,7 @@ def _load(v,d=None):
     try:return json.loads(v)
     except Exception:return [] if d==[] else ({} if d is None else d)
 def _conn():
-    c=sqlite3.connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
+    c=canonical_connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
 
 def init_db():
     gov.init_db()

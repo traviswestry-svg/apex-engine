@@ -5,6 +5,7 @@ ledger and produces advisory calibration, attribution, similarity, and feedback.
 It performs no provider or broker calls and never mutates live risk/authorization.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import json
 import math
@@ -76,7 +77,7 @@ def _connect() -> sqlite3.Connection:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=4.0)
+    conn = canonical_connect(path, timeout=4.0)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     return conn
