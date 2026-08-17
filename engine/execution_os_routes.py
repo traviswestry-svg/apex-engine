@@ -1,5 +1,6 @@
 """Routes and dashboard for APEX 11.1 Institutional Execution OS."""
 from __future__ import annotations
+from .silent_degradation_observability import record_degradation
 from typing import Any, Callable, Mapping
 import threading
 from flask import jsonify, render_template
@@ -32,7 +33,11 @@ def register_execution_os_routes(
         try:
             value = last_result_provider() or {}
             return value if isinstance(value, Mapping) else {}
-        except Exception:
+        except Exception as exc:
+            record_degradation(component="execution_os", operation="last_result_provider",
+                               exc=exc, fallback="EMPTY_CURRENT_RESULT",
+                               decision_authority_suppressed=True,
+                               source="engine/execution_os_routes.py")
             return {}
 
     def current_session():
@@ -40,7 +45,11 @@ def register_execution_os_routes(
             return None
         try:
             return session_provider()
-        except Exception:
+        except Exception as exc:
+            record_degradation(component="execution_os", operation="session_provider",
+                               exc=exc, fallback="UNKNOWN_SESSION",
+                               decision_authority_suppressed=True,
+                               source="engine/execution_os_routes.py")
             return None
 
     def current_risk_config():
@@ -49,7 +58,11 @@ def register_execution_os_routes(
         try:
             value = risk_config_provider() or {}
             return value if isinstance(value, Mapping) else {}
-        except Exception:
+        except Exception as exc:
+            record_degradation(component="execution_os", operation="risk_config_provider",
+                               exc=exc, fallback="EMPTY_RISK_CONFIG",
+                               decision_authority_suppressed=True,
+                               source="engine/execution_os_routes.py")
             return {}
 
     @app.get('/apex_os/execution')

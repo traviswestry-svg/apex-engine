@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 67.3.0
+apex_version: 67.4.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: "67.3.0"
+    version: "67.4.0"
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -210,3 +210,13 @@ capabilities:
     outputs: [canonical_sqlite_connections, standardized_busy_handling, standardized_wal_policy, standardized_foreign_keys]
     decision_authority: none
     guardrails: [no_schema_migration, no_database_relocation, no_model_logic_change, staged_migration]
+
+  silent_degradation_coverage_wave2:
+    canonical_module: engine.silent_degradation_observability
+    status: active
+    version: "67.4.0"
+    inputs: [execution_fallbacks, sizing_fallbacks, signal_callbacks, learning_fallbacks, promotion_audits, runtime_provider_failures, hlce_maintenance_failures]
+    outputs: [structured_degradation_events, authority_suppression_flags, recurrence_counts]
+    api_routes: [/api/diagnostics/degradations, /apex_os/degradations]
+    decision_authority: none
+    guardrails: [observability_only, never_raise_into_caller, no_execution_authority, fail_closed_authority_marking]

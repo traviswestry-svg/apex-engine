@@ -28,6 +28,7 @@ no third "estimated" state, so nothing downstream can fabricate.
 """
 
 from __future__ import annotations
+from .silent_degradation_observability import record_degradation
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -699,8 +700,11 @@ class DailyKeyLevels:
             symbol = getattr(levels[0], "instrument", "SPX") if levels else "SPX"
             ctx = {"gamma_regime": g.regime.value.upper() if getattr(g, "regime", None) else None}
             levels = enrich_levels_with_calibration(levels, ctx, symbol=str(symbol).upper())
-        except Exception:
-            pass
+        except Exception as exc:
+            record_degradation(component="daily_key_levels", operation="hlce_enrichment",
+                               exc=exc, fallback="RAW_UNCALIBRATED_LEVELS",
+                               decision_authority_suppressed=False,
+                               source="engine/daily_key_levels.py")
         tmap = trade_map(spot, levels, g, em)
         ranked = rank_levels(spot, levels)
         return cls(spot, levels, g, em, tmap, ranked)

@@ -20,6 +20,7 @@ Safety contract (non-negotiable)
   randomness.
 """
 from __future__ import annotations
+from .silent_degradation_observability import record_degradation
 
 import datetime as dt
 import math
@@ -95,8 +96,11 @@ def _limits() -> dict[str, Any]:
                 "require_confirmation": bool(getattr(rl, "require_confirmation", True)),
                 "source": "trade_risk_guard",
             }
-        except Exception:
-            pass
+        except Exception as exc:
+            record_degradation(component="execution_intelligence", operation="risk_limits_provider",
+                               exc=exc, fallback="FALLBACK_DEFAULT_LIMITS",
+                               decision_authority_suppressed=True,
+                               source="engine/execution_intelligence_core_v260.py")
     return {**_FALLBACK_LIMITS, "source": "fallback_defaults"}
 
 
@@ -356,23 +360,35 @@ def build_execution_plan(payload: Optional[Mapping[str, Any]], *,
     try:
         from . import entry_optimization_v261 as _entry_opt
         entry = _entry_opt.optimize(root)
-    except Exception:
-        pass
+    except Exception as exc:
+        record_degradation(component="execution_intelligence", operation="entry_optimization",
+                           exc=exc, fallback="NO_ENTRY_OPTIMIZATION",
+                           decision_authority_suppressed=True,
+                           source="engine/execution_intelligence_core_v260.py")
     try:
         from . import position_sizing_v264 as _sizing
         sizing = _sizing.size(root, confidence=decision_block.get("integrity_adjusted_confidence"))
-    except Exception:
-        pass
+    except Exception as exc:
+        record_degradation(component="execution_intelligence", operation="position_sizing",
+                           exc=exc, fallback="NO_SIZING_RECOMMENDATION",
+                           decision_authority_suppressed=True,
+                           source="engine/execution_intelligence_core_v260.py")
     try:
         from . import contract_intelligence_v262 as _contract
         contract = _contract.recommend(root)
-    except Exception:
-        pass
+    except Exception as exc:
+        record_degradation(component="execution_intelligence", operation="contract_intelligence",
+                           exc=exc, fallback="NO_CONTRACT_RECOMMENDATION",
+                           decision_authority_suppressed=True,
+                           source="engine/execution_intelligence_core_v260.py")
     try:
         from . import liquidity_slippage_v263 as _liquidity
         liquidity_block = _liquidity.analyze(root)
-    except Exception:
-        pass
+    except Exception as exc:
+        record_degradation(component="execution_intelligence", operation="liquidity_slippage",
+                           exc=exc, fallback="NO_LIQUIDITY_ANALYSIS",
+                           decision_authority_suppressed=True,
+                           source="engine/execution_intelligence_core_v260.py")
 
     exits = frame_exits(root, readiness)
 

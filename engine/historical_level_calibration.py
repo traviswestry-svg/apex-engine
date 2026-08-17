@@ -20,6 +20,7 @@ than drifting across a dozen files. Routes live in the thin companion module
 ``historical_level_calibration_routes.py``.
 """
 from __future__ import annotations
+from .silent_degradation_observability import record_degradation
 
 import json
 import math
@@ -1687,8 +1688,12 @@ class CalibrationService:
                 if prune_counter % 240 == 0:  # ~ every hour at 15s cadence
                     try:
                         prune_old_samples(path=self.path)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        record_degradation(component="historical_level_calibration",
+                                           operation="prune_old_samples",
+                                           exc=exc, fallback="RETAIN_OLD_SAMPLES_UNTIL_NEXT_PRUNE",
+                                           decision_authority_suppressed=False,
+                                           source="engine/historical_level_calibration.py")
                 self._stop.wait(COLLECTOR_INTERVAL_SECONDS)
 
         self._thread = threading.Thread(target=_loop, name="hlce-collector", daemon=True)

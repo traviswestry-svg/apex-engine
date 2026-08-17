@@ -36,6 +36,7 @@ director_directives, a different data source).
 """
 
 from __future__ import annotations
+from engine.silent_degradation_observability import record_degradation
 
 import os
 import sqlite3
@@ -377,8 +378,11 @@ def _persist_outcome(received_at: str, label: str, mfe: float, mae: float,
                 "outcome": label, "outcome_pnl": pnl, "outcome_notes": notes,
                 "mfe_pts": mfe, "mae_pts": mae,
             })
-        except Exception:
-            pass
+        except Exception as exc:
+            record_degradation(component="signal_evaluator", operation="outcome_mark_callback",
+                               exc=exc, fallback="OUTCOME_PERSISTED_WITHOUT_CALLBACK",
+                               decision_authority_suppressed=False,
+                               source="signal_evaluator.py")
 
 
 # ── Reporting ───────────────────────────────────────────────────────────────

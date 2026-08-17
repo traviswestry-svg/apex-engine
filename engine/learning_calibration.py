@@ -5,6 +5,7 @@ bounded policy proposals.  It never mutates live decision logic automatically.
 All fitting/evaluation uses session-disjoint chronological splits.
 """
 from __future__ import annotations
+from .silent_degradation_observability import record_degradation
 from .canonical_persistence import connect as canonical_connect
 
 import datetime as dt
@@ -74,7 +75,11 @@ def init_learning_db() -> bool:
             c.execute("CREATE INDEX IF NOT EXISTS idx_cp_status ON calibration_policies(status)")
             c.commit()
         return True
-    except Exception:
+    except Exception as exc:
+        record_degradation(component="learning_calibration", operation="ensure_store",
+                           exc=exc, fallback="STORE_UNAVAILABLE",
+                           decision_authority_suppressed=True,
+                           source="engine/learning_calibration.py")
         return False
 
 
@@ -228,7 +233,11 @@ def persist_proposal(proposal: Mapping[str, Any]) -> bool:
                  json.dumps(proposal.get("guardrails") or {})))
             c.commit()
         return True
-    except Exception:
+    except Exception as exc:
+        record_degradation(component="learning_calibration", operation="persist_policy_proposal",
+                           exc=exc, fallback="PROPOSAL_NOT_PERSISTED",
+                           decision_authority_suppressed=True,
+                           source="engine/learning_calibration.py")
         return False
 
 
@@ -315,8 +324,11 @@ def register_learning_routes(app) -> None:
                 from app import TRADE_ASSISTANT_STATE, TRADE_ASSISTANT_LOCK
                 with TRADE_ASSISTANT_LOCK:
                     last_sig = TRADE_ASSISTANT_STATE.get('last_signal')
-            except Exception:
-                pass
+            except Exception as exc:
+                record_degradation(component="learning_calibration", operation="last_signal_provider",
+                                   exc=exc, fallback="NO_LAST_SIGNAL",
+                                   decision_authority_suppressed=False,
+                                   source="engine/learning_calibration.py")
             import datetime as _dt
             now = _dt.datetime.now(_dt.timezone.utc)
             is_rth = 9 * 60 + 30 <= (int(now.strftime('%H')) * 60 + int(now.strftime('%M'))) < 16 * 60  # UTC-naive fallback
