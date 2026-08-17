@@ -167,7 +167,7 @@ except Exception as _bre_err:
     register_breadth_regime_routes = None
     print(f"Breadth Regime Engine unavailable: {_bre_err}", flush=True)
 
-# APEX 66.7.0 — Carry-Forward Levels Ladder (dashboard view of the brief's levels)
+# APEX 66.6.0 — Carry-Forward Levels Ladder (dashboard view of the brief's levels)
 try:
     from engine.carry_forward_ladder import build_carry_forward_ladder
     from engine.carry_forward_ladder_routes import register_carry_forward_ladder_routes
@@ -1235,24 +1235,6 @@ except Exception as _ea658_err:
     register_evidence_accumulation_routes = None  # type: ignore[assignment]
     EVIDENCE_ACCUMULATION_AVAILABLE = False
     print(f"APEX 65.8 Evidence Accumulation Observatory unavailable (non-fatal): {_ea658_err}", flush=True)
-
-# APEX 66.7.0 — Historical Effectiveness Observatory (read-only).
-try:
-    from engine.historical_effectiveness_routes import register_historical_effectiveness_routes
-    HISTORICAL_EFFECTIVENESS_AVAILABLE = True
-except Exception as _heo_err:
-    register_historical_effectiveness_routes = None  # type: ignore[assignment]
-    HISTORICAL_EFFECTIVENESS_AVAILABLE = False
-    print(f"APEX 66.7.0 Historical Effectiveness Observatory unavailable (non-fatal): {_heo_err}", flush=True)
-
-# APEX 66.8.0 — Confidence Calibration Audit (read-only).
-try:
-    from engine.confidence_calibration_audit_routes import register_confidence_calibration_audit_routes
-    CONFIDENCE_CALIBRATION_AUDIT_AVAILABLE = True
-except Exception as _cca_err:
-    register_confidence_calibration_audit_routes = None  # type: ignore[assignment]
-    CONFIDENCE_CALIBRATION_AUDIT_AVAILABLE = False
-    print(f"APEX 66.8.0 Confidence Calibration Audit unavailable (non-fatal): {_cca_err}", flush=True)
 
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
@@ -13454,7 +13436,7 @@ try:
             except Exception:
                 return {}, None
         register_carry_forward_ladder_routes(app, structured_provider=_cfl_structured)
-        print("APEX 66.7.0 Carry-Forward Ladder routes registered.", flush=True)
+        print("APEX 66.6.0 Carry-Forward Ladder routes registered.", flush=True)
 
     if DYNAMIC_STATE_AVAILABLE and register_dynamic_state_routes is not None:
         def _ds_last_result():
@@ -13548,14 +13530,6 @@ try:
     if EVIDENCE_ACCUMULATION_AVAILABLE and register_evidence_accumulation_routes is not None:
         register_evidence_accumulation_routes(app)
         print("APEX 65.8 Evidence Accumulation Observatory routes registered.", flush=True)
-
-    if HISTORICAL_EFFECTIVENESS_AVAILABLE and register_historical_effectiveness_routes is not None:
-        register_historical_effectiveness_routes(app)
-        print("APEX 66.7.0 Historical Effectiveness Observatory routes registered.", flush=True)
-
-    if CONFIDENCE_CALIBRATION_AUDIT_AVAILABLE and register_confidence_calibration_audit_routes is not None:
-        register_confidence_calibration_audit_routes(app)
-        print("APEX 66.8.0 Confidence Calibration Audit routes registered.", flush=True)
 
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)

@@ -29,7 +29,7 @@
     /* APEX 66.4.0 Trade Horizon Intelligence */
     .thi-band{border:1px solid var(--bdr);background:linear-gradient(135deg,var(--surf),var(--surf2));border-radius:var(--radius);padding:13px 15px;margin-bottom:12px}
     .thi-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;margin-bottom:10px}.thi-eyebrow{font-size:10px;font-weight:900;letter-spacing:.08em;color:var(--blue);text-transform:uppercase}.thi-title{font-size:14px;font-weight:850;margin-top:3px}.thi-relation{max-width:48%;font-size:11px;line-height:1.4;color:var(--muted);text-align:right}
-    .thi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.thi-card{background:var(--bg);border:1px solid var(--bdr);border-radius:9px;padding:10px 11px}.thi-card.BULLISH{border-color:rgba(34,197,94,.45)}.thi-card.BEARISH{border-color:rgba(239,68,68,.45)}.thi-card.NEUTRAL{border-color:rgba(245,158,11,.4)}.thi-card.CONFLICT{border-color:var(--red);box-shadow:inset 0 0 0 1px rgba(239,68,68,.18)}.thi-card.DEGRADED{border-style:dashed}
+    .thi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.thi-card{background:var(--bg);border:1px solid var(--bdr);border-radius:9px;padding:10px 11px}.thi-card.BULLISH{border-color:rgba(34,197,94,.45)}.thi-card.BEARISH{border-color:rgba(239,68,68,.45)}.thi-card.NEUTRAL{border-color:rgba(245,158,11,.4)}
     .thi-label{font-size:11px;font-weight:900;letter-spacing:.05em}.thi-label span{font-weight:500;color:var(--muted);letter-spacing:0;margin-left:4px}.thi-main{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-top:7px}.thi-main strong{font-size:18px}.thi-main b{font-size:12px}.thi-card.BULLISH .thi-main strong,.thi-card.BULLISH .thi-main b{color:var(--green)}.thi-card.BEARISH .thi-main strong,.thi-card.BEARISH .thi-main b{color:var(--red)}.thi-card.NEUTRAL .thi-main strong{color:var(--amber)}
     .thi-meta{display:flex;justify-content:space-between;gap:8px;margin-top:6px;font-size:10px;color:var(--muted);text-transform:uppercase}.thi-foot{font-size:10px;color:var(--faint);margin-top:8px}
     @media(max-width:820px){.thi-head{display:block}.thi-relation{max-width:none;text-align:left;margin-top:6px}.thi-grid{grid-template-columns:1fr}.thi-label span{float:right}}
@@ -89,7 +89,6 @@
       <div class="thi-card" data-horizon="SWING"><div class="thi-label">SWING <span>65m–Daily · multi-day</span></div><div class="thi-main"><strong id="thiSwingTrend">UNKNOWN</strong><b id="thiSwingTrade">NO TRADE</b></div><div class="thi-meta"><span id="thiSwingConfidence">—</span><span id="thiSwingStatus">DATA LIMITED</span></div></div>
     </div>
     <div class="thi-foot">Context only · existing confirmation, risk, and execution gates retain authority.</div>
-    <div id="thiFreshness" class="thi-foot">Canonical snapshot and freshness pending…</div>
   </section>
 
   <!-- APEX 66.5.0 Breadth Exhaustion & Recovery -->
@@ -105,7 +104,6 @@
   <section id="traderCockpit" class="trader-cockpit" aria-label="Trader decision cockpit">
     <div class="tc-top"><div><div class="tc-eyebrow">Live Decision</div><div id="tcDecision" class="tc-decision">OBSERVE</div><div id="tcSummary" class="tc-summary">Waiting for a complete institutional decision.</div></div><div class="tc-score"><strong id="tcConfidence">—</strong><span>Confidence</span></div></div>
     <div class="tc-grid"><div class="tc-cell"><span>Entry</span><strong id="tcEntry">—</strong></div><div class="tc-cell"><span>Invalidation / Stop</span><strong id="tcStop">—</strong></div><div class="tc-cell"><span>First Target</span><strong id="tcTarget">—</strong></div><div class="tc-cell"><span>Readiness / Size</span><strong id="tcSize">—</strong></div></div>
-    <div id="tcPlanState" class="thi-foot">NO ACTIONABLE PLAN</div>
     <div class="tc-grid"><div class="tc-cell"><span>Bias</span><strong id="tcBias">NEUTRAL</strong></div><div class="tc-cell"><span>Structure</span><strong id="tcStrategy">NO TRADE</strong></div><div class="tc-cell"><span>Risk Gate</span><strong>CONFIRMATION GATED</strong></div><div class="tc-cell"><span>Broker</span><strong>LOCKED</strong></div></div>
     <div class="tc-evidence"><div id="tcDealer" class="tc-chip neutral">Dealer: —</div><div id="tcFlow" class="tc-chip neutral">Flow: —</div><div id="tcAuction" class="tc-chip neutral">Auction: —</div></div>
   </section>
@@ -218,19 +216,6 @@
     .ri-flags{font-size:10px;color:var(--faint);margin-top:6px}
     .ri-warm{color:var(--muted);font-size:13px;padding:8px 2px}
     @media(max-width:820px){.ri-body{grid-template-columns:1fr}}
-    .ri-section{background:var(--bg);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:8px}
-    .ri-sec-label{font-size:10px;font-weight:800;letter-spacing:.09em;color:var(--muted);text-transform:uppercase;margin-bottom:5px}
-    .ri-esr{font-size:22px;font-weight:900;font-family:var(--mono);color:var(--blue)}
-    .ri-lists{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    @media(max-width:820px){.ri-lists{grid-template-columns:1fr}}
-    .ri-lvl{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px solid rgba(148,163,184,.08)}
-    .ri-lvl .p{font-family:var(--mono);font-weight:800}
-    .ri-lvl .c{font-size:9px;letter-spacing:.05em;color:var(--faint);text-transform:uppercase}
-    .ri-lvl.up .p{color:var(--green)} .ri-lvl.down .p{color:var(--red)}
-    .ri-rz{display:flex;justify-content:space-between;gap:8px;font-size:13px;font-family:var(--mono);padding:4px 0}
-    .ri-rz .rzr{font-weight:800}
-    .ri-degraded{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);color:var(--amber);
-      font-size:11px;font-weight:700;letter-spacing:.04em;padding:6px 10px;border-radius:var(--radius-sm);margin-bottom:8px}
   </style>
 
   <!-- APEX 7.5.7 Decision Intelligence — self-contained panel (isolated CSS/JS) -->
@@ -302,7 +287,7 @@
           <div><span>Dealer</span><strong id="iis-dealer">—</strong></div><div><span>Flow</span><strong id="iis-flow">—</strong></div>
           <div><span>Bull Probability</span><strong id="iis-prob">—</strong></div><div><span>Learning</span><strong id="iis-learning">—</strong></div>
         </div>
-        <div class="small-links"><a href="/api/dealer-positioning/diagnostics" target="_blank">Dealer</a> · <a href="/api/options-flow-intelligence/diagnostics" target="_blank">Flow</a> · <a href="/api/institutional-probability/diagnostics" target="_blank">Probability</a> · <a href="/api/adaptive-learning-v2/diagnostics" target="_blank">Learning</a> · <a href="/apex_os/effectiveness">Effectiveness</a> · <a href="/apex_os/confidence-calibration">Calibration Audit</a></div>
+        <div class="small-links"><a href="/api/dealer-positioning/diagnostics" target="_blank">Dealer</a> · <a href="/api/options-flow-intelligence/diagnostics" target="_blank">Flow</a> · <a href="/api/institutional-probability/diagnostics" target="_blank">Probability</a> · <a href="/api/adaptive-learning-v2/diagnostics" target="_blank">Learning</a></div>
       </section>
 <script>
   (function(){
@@ -488,47 +473,30 @@
       <span class="ri-upd" id="riUpd"></span>
     </div>
     <div id="riWarm" class="ri-warm">Warming up — waiting for the first scan…</div>
-    <div id="riBodyGrid" style="display:none">
-      <div id="riDegradedBanner" class="ri-degraded" style="display:none"></div>
-      <!-- 1 · Expected Session Range (canonical envelope) -->
-      <div class="ri-section">
-        <div class="ri-sec-label">Expected Session Range</div>
-        <div class="ri-esr" id="riEsr">—</div>
-        <div class="ri-zmeta" id="riEsrMeta"></div>
+    <div class="ri-body" id="riBodyGrid" style="display:none">
+      <div class="ri-zone lo">
+        <div class="ri-zlabel">Projected Low Zone</div>
+        <div class="ri-zrange" id="riLoRange">—</div>
+        <div class="ri-zmeta" id="riLoMeta"></div>
+        <div class="ri-zreasons" id="riLoReasons"></div>
       </div>
-      <!-- center metrics -->
-      <div class="ri-center ri-section">
+      <div class="ri-center">
         <div class="ri-metrics">
-          <div class="ri-metric"><div class="v" id="riDown">—</div><div class="l">Downside to EM low</div></div>
+          <div class="ri-metric"><div class="v" id="riDown">—</div><div class="l">Downside</div></div>
           <div class="ri-metric"><div class="v" id="riUsed">—</div><div class="l">Range Used</div></div>
-          <div class="ri-metric"><div class="v" id="riUp">—</div><div class="l">Upside to EM high</div></div>
+          <div class="ri-metric"><div class="v" id="riUp">—</div><div class="l">Upside</div></div>
         </div>
         <div class="ri-usedbar"><span id="riUsedBar" style="width:0%"></span></div>
         <div class="ri-metrics">
           <div class="ri-metric"><div class="v" id="riExh">—</div><div class="l">Exhaustion Risk</div></div>
           <div class="ri-metric"><div class="v" id="riOpen">—</div><div class="l">Opening Context</div></div>
-          <div class="ri-metric"><div class="v" id="riRuntime">—</div><div class="l">Runtime</div></div>
         </div>
       </div>
-      <!-- 2 · Immediate Reaction Zones -->
-      <div class="ri-section">
-        <div class="ri-sec-label">Immediate Reaction Zones</div>
-        <div id="riReactions"><div class="ri-zmeta">—</div></div>
-      </div>
-      <!-- 3 · Expansion Targets · 4 · Tail-Risk Levels -->
-      <div class="ri-section ri-lists">
-        <div>
-          <div class="ri-sec-label">Expansion Targets</div>
-          <div id="riExpansion"><div class="ri-zmeta">None beyond envelope.</div></div>
-        </div>
-        <div>
-          <div class="ri-sec-label">Tail-Risk Levels</div>
-          <div id="riTail"><div class="ri-zmeta">None flagged.</div></div>
-        </div>
-      </div>
-      <div class="ri-section" id="riIntermediateWrap" style="display:none">
-        <div class="ri-sec-label">Next Levels (inside range)</div>
-        <div id="riIntermediate"></div>
+      <div class="ri-zone hi">
+        <div class="ri-zlabel">Projected High Zone</div>
+        <div class="ri-zrange" id="riHiRange">—</div>
+        <div class="ri-zmeta" id="riHiMeta"></div>
+        <div class="ri-zreasons" id="riHiReasons"></div>
       </div>
     </div>
     <div class="ri-interp" id="riInterp" style="display:none"></div>
@@ -558,60 +526,26 @@
         return;
       }
       warm.style.display='none';grid.style.display='';interp.style.display='';
+      var hz=ri.projected_high_zone||{},lz=ri.projected_low_zone||{};
       var sc=document.getElementById('riScenario');
       sc.textContent=(ri.active_scenario||'—').replace(/_/g,' ');sc.className='ri-pill '+scenClass(ri.active_scenario);
       var bi=document.getElementById('riBias');
       bi.textContent=(ri.bias||'').replace(/_/g,' ')||'—';bi.className='ri-pill '+biasClass(ri.bias);
-      var rtState=(ri.runtime_state||'').replace(/_/g,' ');
-      document.getElementById('riUpd').textContent=(env.ticker||'')+' · '+(rtState||'live');
+      document.getElementById('riUpd').textContent=(env.ticker||'')+' · '+(ri.range_used_method==='ESTIMATED_PRE_RTH'?'pre-RTH estimate':'live');
 
-      // Degraded banner
-      var deg=document.getElementById('riDegradedBanner');
-      var isDeg=(ri.runtime_state||'').indexOf('DEGRADED')>=0||(ri.stale_inputs||[]).length>0;
-      if(isDeg){deg.style.display='';deg.textContent='⚠ '+(rtState||'DEGRADED')+((ri.stale_inputs&&ri.stale_inputs.length)?(' · stale: '+ri.stale_inputs.join(', ')):'')+' — projection preserved, new range/exhaustion withheld';}
-      else{deg.style.display='none';}
+      document.getElementById('riHiRange').textContent=num(hz.low)+' – '+num(hz.high);
+      document.getElementById('riHiMeta').textContent='mid '+num(hz.mid)+' · conf '+(hz.confidence||'--');
+      document.getElementById('riHiReasons').innerHTML=(hz.reasons||[]).map(function(r){return '• '+esc(r);}).join('<br>');
+      document.getElementById('riLoRange').textContent=num(lz.low)+' – '+num(lz.high);
+      document.getElementById('riLoMeta').textContent='mid '+num(lz.mid)+' · conf '+(lz.confidence||'--');
+      document.getElementById('riLoReasons').innerHTML=(lz.reasons||[]).map(function(r){return '• '+esc(r);}).join('<br>');
 
-      // 1 · Expected Session Range (canonical envelope)
-      var esr=ri.expected_session_range||{};
-      document.getElementById('riEsr').textContent=(esr.low!=null?num(esr.low)+' – '+num(esr.high):'unavailable');
-      var canon=ri.canonical||{};
-      document.getElementById('riEsrMeta').textContent='mid '+num(esr.mid)+' · '+((esr.source||'').replace(/_/g,' ').toLowerCase()||'source n/a')+(canon.used?' · canonical':'');
-
-      // center metrics — envelope-relative, gated pre-RTH
       document.getElementById('riUp').textContent=pts(ri.upside_remaining_points);
       document.getElementById('riDown').textContent=pts(ri.downside_remaining_points!=null?-Math.abs(ri.downside_remaining_points):null);
-      var evaluated=ri.range_used_evaluated===true&&ri.range_used_percent!=null;
-      document.getElementById('riUsed').textContent=evaluated?(ri.range_used_percent+'%'):'N/A';
-      document.getElementById('riUsedBar').style.width=(evaluated?Math.max(0,Math.min(100,ri.range_used_percent)):0)+'%';
-      var exh=document.getElementById('riExh');
-      var exhVal=ri.range_exhaustion_risk||'--';
-      exh.textContent=(exhVal==='NOT_EVALUATED')?'Not evaluated':exhVal;
-      exh.style.color=(exhVal==='NOT_EVALUATED')?'var(--faint)':exhClass(exhVal);
+      document.getElementById('riUsed').textContent=(ri.range_used_percent!=null?ri.range_used_percent+'%':'--');
+      document.getElementById('riUsedBar').style.width=Math.max(0,Math.min(100,ri.range_used_percent||0))+'%';
+      var exh=document.getElementById('riExh');exh.textContent=ri.range_exhaustion_risk||'--';exh.style.color=exhClass(ri.range_exhaustion_risk);
       document.getElementById('riOpen').textContent=(ri.opening_context||'--').replace(/_/g,' ');
-      document.getElementById('riRuntime').textContent=rtState||'LIVE';
-
-      // 2 · Immediate Reaction Zones
-      var rz=ri.immediate_reaction_zones||[];
-      document.getElementById('riReactions').innerHTML=rz.length?rz.map(function(z){
-        return '<div class="ri-rz"><span>'+esc((z.side||'').toLowerCase())+' reaction</span>'+
-               '<span class="rzr">'+num(z.low)+' – '+num(z.high)+'</span>'+
-               '<span class="ri-zmeta">conf '+(z.confidence||'--')+'</span></div>';
-      }).join(''):'<div class="ri-zmeta">No confluence hugging spot yet.</div>';
-
-      // 3 · Expansion Targets · 4 · Tail-Risk Levels
-      function lvlRow(t){var dir=(t.direction||'').toLowerCase();
-        return '<div class="ri-lvl '+dir+'"><span>'+esc(t.label)+'</span>'+
-               '<span><span class="p">'+num(t.price)+'</span> <span class="c">'+esc((t.classification||'').replace(/_/g,' '))+'</span></span></div>';}
-      var exp=ri.expansion_targets||[],tail=ri.tail_risk_levels||[];
-      document.getElementById('riExpansion').innerHTML=exp.length?exp.map(lvlRow).join(''):'<div class="ri-zmeta">None beyond envelope.</div>';
-      document.getElementById('riTail').innerHTML=tail.length?tail.map(lvlRow).join(''):'<div class="ri-zmeta">None flagged.</div>';
-
-      // intermediate targets
-      var inter=ri.intermediate_targets||[];
-      var iw=document.getElementById('riIntermediateWrap');
-      if(inter.length){iw.style.display='';document.getElementById('riIntermediate').innerHTML=inter.map(lvlRow).join('');}
-      else{iw.style.display='none';}
-
       interp.textContent=ri.interpretation||'';
       document.getElementById('riFlags').textContent=(ri.quality_flags||[]).join(' · ');
     }
@@ -630,94 +564,6 @@
     document.querySelectorAll('.ticker-btn').forEach(function(b){b.addEventListener('click',function(){setTimeout(load,60);});});
     load();
     setInterval(load, 20000);
-  })();
-  </script>
-
-  <!-- ══ DYNAMIC STATE (flow excitation · residual pressure · gamma path) ═════ -->
-  <style>
-    .ds-band{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--radius);padding:14px 16px;margin:0 0 12px 0}
-    .ds-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-    .ds-title{font-size:12px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
-    .ds-sum{font-size:11px;color:var(--faint);margin-left:auto}
-    .ds-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-    @media(max-width:820px){.ds-grid{grid-template-columns:1fr}}
-    .ds-card{background:var(--bg);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:10px 12px}
-    .ds-clabel{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
-    .ds-state{font-size:16px;font-weight:900;font-family:var(--mono)}
-    .ds-state.good{color:var(--green)} .ds-state.warn{color:var(--amber)} .ds-state.bad{color:var(--red)} .ds-state.mut{color:var(--muted)}
-    .ds-meta{font-size:11px;color:var(--faint);margin-top:4px;line-height:1.5}
-    .ds-bar{height:6px;border-radius:5px;background:var(--bdr);overflow:hidden;margin-top:6px}
-    .ds-bar>span{display:block;height:100%}
-    .ds-warm{color:var(--muted);font-size:13px;padding:6px 2px}
-  </style>
-  <div class="ds-band" id="dsBand">
-    <div class="ds-head">
-      <span class="ds-title">Dynamic State</span>
-      <span class="ds-sum" id="dsSummary"></span>
-    </div>
-    <div id="dsWarm" class="ds-warm">Warming up — waiting for the first scan…</div>
-    <div class="ds-grid" id="dsGrid" style="display:none">
-      <div class="ds-card">
-        <div class="ds-clabel">Flow Excitation</div>
-        <div class="ds-state" id="dsFlowState">—</div>
-        <div class="ds-meta" id="dsFlowMeta"></div>
-        <div class="ds-bar"><span id="dsFlowBar" style="width:0%;background:var(--blue)"></span></div>
-      </div>
-      <div class="ds-card">
-        <div class="ds-clabel">Residual Pressure</div>
-        <div class="ds-state" id="dsResState">—</div>
-        <div class="ds-meta" id="dsResMeta"></div>
-        <div class="ds-bar"><span id="dsResBar" style="width:0%;background:var(--amber)"></span></div>
-      </div>
-      <div class="ds-card">
-        <div class="ds-clabel">Gamma Path</div>
-        <div class="ds-state" id="dsGammaState">—</div>
-        <div class="ds-meta" id="dsGammaMeta"></div>
-      </div>
-    </div>
-  </div>
-  <script>
-  (function(){
-    function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
-    function n2(v){return (v==null||v==='')?'—':(Math.round(v*100)/100);}
-    function curTicker(){var b=document.querySelector('.ticker-btn.active');return (b&&b.dataset.ticker)||'SPX';}
-    function pct(v){return Math.max(0,Math.min(100,(v||0)*100));}
-    function render(d){
-      var warm=document.getElementById('dsWarm'),grid=document.getElementById('dsGrid');
-      if(!d||!d.available){warm.style.display='';grid.style.display='none';warm.textContent=(d&&d.summary)||'Warming up — waiting for the first scan…';return;}
-      warm.style.display='none';grid.style.display='';
-      document.getElementById('dsSummary').textContent=d.summary||'';
-      // Flow excitation
-      var fe=d.flow_excitation||{};var fs=document.getElementById('dsFlowState');
-      var st=(fe.state||'—').replace(/_/g,' ');
-      fs.textContent=fe.available?st:'No flow';
-      fs.className='ds-state '+(!fe.available?'mut':(String(fe.state).indexOf('HIGH')>=0?'bad':String(fe.state).indexOf('ELEV')>=0?'warn':'good'));
-      var ief=fe.independent_evidence_factor;
-      var meta='ratio '+n2(fe.excitation_ratio)+' · '+n2(fe.burst_count)+' bursts';
-      if(ief!=null){meta+=' · independent evidence '+Math.round(ief*100)+'%';if(ief<0.5)meta+=' (redundant burst — discounted)';}
-      document.getElementById('dsFlowMeta').textContent=meta;
-      document.getElementById('dsFlowBar').style.width=pct(ief!=null?ief:0)+'%';
-      // Residual pressure
-      var rp=d.residual_pressure||{};var rs=document.getElementById('dsResState');
-      rs.textContent=rp.available?(rp.state||'—').replace(/_/g,' '):'None';
-      rs.className='ds-state '+(!rp.available||rp.state==='RESOLVED'||rp.state==='NONE'?'mut':(rp.state==='ACTIVE'||rp.state==='RESIDUAL_PRESSURE'?'warn':'good'));
-      document.getElementById('dsResMeta').textContent=rp.available?((rp.direction||'')+' · remaining '+n2(rp.remaining_pressure)+(rp.origin_level!=null?(' · at '+rp.origin_level):'')):'No unresolved pressure';
-      document.getElementById('dsResBar').style.width=pct((rp.remaining_pressure||0)/100)+'%';
-      // Gamma path
-      var gp=d.gamma_path||{};var gs=document.getElementById('dsGammaState');
-      gs.textContent=gp.available?(gp.current_regime||'—').replace(/_/g,' '):'Unavailable';
-      gs.className='ds-state '+(gp.available?'good':'mut');
-      var up=gp.upside_destination||{},dn=gp.downside_destination||{};
-      document.getElementById('dsGammaMeta').innerHTML=gp.available?
-        ('↑ '+n2(up.price)+(up.label?(' '+esc(up.label)):'')+'<br>↓ '+n2(dn.price)+(dn.label?(' '+esc(dn.label)):'')):'No gamma path this cycle';
-    }
-    function load(){
-      fetch('/api/dynamic-state?ticker='+encodeURIComponent(curTicker()),{cache:'no-store'})
-        .then(function(r){return r.json();}).then(render)
-        .catch(function(){var g=document.getElementById('dsGrid');if(g&&g.style.display!=='none')return;});
-    }
-    document.querySelectorAll('.ticker-btn').forEach(function(b){b.addEventListener('click',function(){setTimeout(load,60);});});
-    load();setInterval(load,20000);
   })();
   </script>
 
@@ -1763,8 +1609,7 @@
   if(!r.ok)throw new Error('workspace HTTP '+r.status); return r.json();
  }).then(function(w){
   w=w||{};var b=w.decision_banner||{},r=w.execution_readiness||{},x=((w.workspace||{}).execution_plan)||{},vp=((w.workspace||{}).volume_profile)||{},sum=vp.summary||{};
-  var capped=b.raw_confidence!=null&&Number(b.raw_confidence)>Number(b.confidence);var confidenceText=Math.round(b.confidence||0)+'/100'+(capped?' · capped':'');var headline=b.headline||'Institutional decision unavailable';if(capped)headline+=' — raw '+Math.round(b.raw_confidence)+' capped for '+(b.confidence_cap_reasons||[]).join(', ').replaceAll('_',' ').toLowerCase();
-  t('iwDecision',(b.decision||'WARMING').replaceAll('_',' '));t('iwHeadline',headline);t('iwBias',b.bias);t('iwConfidence',confidenceText);t('iwGrade',r.grade);t('iwStrategy',(b.preferred_strategy||'—').replaceAll('_',' '));t('iwReadiness',Math.round(r.score||0)+'/100');
+  t('iwDecision',(b.decision||'WARMING').replaceAll('_',' '));t('iwHeadline',b.headline||'Institutional decision unavailable');t('iwBias',b.bias);t('iwConfidence',Math.round(b.confidence||0)+'/100');t('iwGrade',r.grade);t('iwStrategy',(b.preferred_strategy||'—').replaceAll('_',' '));t('iwReadiness',Math.round(r.score||0)+'/100');
   var banner=document.getElementById('iwBanner');if(banner)banner.className='iw-banner '+(b.bias||'NEUTRAL');
   t('iwGreen',sum.active_green||0);t('iwRed',sum.stalled_red||0);t('iwHeat',(sum.heat_state||'BALANCED').replaceAll('_',' '));
   t('iwEntry',((x.entry_zone||{}).anchor));t('iwStop',x.invalidation);t('iwTp1',((x.targets||{}).tp1));
