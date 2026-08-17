@@ -4,10 +4,11 @@ import json, os, sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
+from .canonical_persistence import connect as canonical_connect
 VERSION="47.0.3"; SCHEMA_VERSION="apex.evidence_readiness.v1"; DEFAULT_DB=os.getenv("APEX_EVIDENCE_PIPELINE_DB","apex_evidence_pipeline.db")
 def _now(): return datetime.now(timezone.utc).isoformat()
 def _connect(path: str|Path=DEFAULT_DB):
- c=sqlite3.connect(str(path)); c.row_factory=sqlite3.Row; c.executescript('''
+ c=canonical_connect(path); c.executescript('''
  CREATE TABLE IF NOT EXISTS decisions(decision_id TEXT PRIMARY KEY,observed_at TEXT NOT NULL,ticker TEXT NOT NULL,session TEXT,direction TEXT,action TEXT,entry_price REAL,confidence REAL,learning_eligible INTEGER NOT NULL,snapshot_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING');
  CREATE TABLE IF NOT EXISTS price_samples(id INTEGER PRIMARY KEY AUTOINCREMENT,ticker TEXT NOT NULL,observed_at TEXT NOT NULL,price REAL NOT NULL);
  CREATE TABLE IF NOT EXISTS grading_results(id INTEGER PRIMARY KEY AUTOINCREMENT,decision_id TEXT NOT NULL UNIQUE,graded_at TEXT NOT NULL,status TEXT NOT NULL,exclusion_reason TEXT,horizon_seconds INTEGER,outcome_json TEXT NOT NULL);
