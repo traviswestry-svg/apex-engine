@@ -1265,6 +1265,15 @@ except Exception as _sdo_err:
     SILENT_DEGRADATION_OBSERVABILITY_AVAILABLE = False
     print(f"APEX 67.1.0 Silent-Degradation Observability unavailable (non-fatal): {_sdo_err}", flush=True)
 
+# APEX 67.2.0 — Architecture Closure & Registry Integrity (read-only).
+try:
+    from engine.architecture_integrity_routes import register_architecture_integrity_routes
+    ARCHITECTURE_INTEGRITY_AVAILABLE = True
+except Exception as _ai672_err:
+    register_architecture_integrity_routes = None  # type: ignore[assignment]
+    ARCHITECTURE_INTEGRITY_AVAILABLE = False
+    print(f"APEX 67.2.0 Architecture Integrity unavailable (non-fatal): {_ai672_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -13616,6 +13625,10 @@ try:
     if SILENT_DEGRADATION_OBSERVABILITY_AVAILABLE and register_silent_degradation_observability_routes is not None:
         register_silent_degradation_observability_routes(app)
         print("APEX 67.1.0 Silent-Degradation Observability routes registered.", flush=True)
+
+    if ARCHITECTURE_INTEGRITY_AVAILABLE and register_architecture_integrity_routes is not None:
+        register_architecture_integrity_routes(app)
+        print("APEX 67.2.0 Architecture Integrity routes registered.", flush=True)
 
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)

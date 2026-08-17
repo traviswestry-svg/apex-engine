@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APEX Architecture Integrity</title><style>
+body{font-family:Arial,sans-serif;background:#0b0f14;color:#e6edf3;margin:0;padding:22px}a{color:#58a6ff}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:18px 0}.card{background:#121923;border:1px solid #273244;border-radius:10px;padding:14px}
+.big{font-size:28px;font-weight:700}.muted{color:#8b949e}pre{background:#121923;border:1px solid #273244;padding:14px;overflow:auto;white-space:pre-wrap}
+</style></head><body>
+<a href="/apex_os">← APEX OS</a><h1>Architecture Integrity</h1><div class="muted">APEX {{ version }} · canonical release, capability, route, and source-tree integrity</div>
+<div class="cards"><div class="card"><div class="muted">State</div><div id="s" class="big">—</div></div>
+<div class="card"><div class="muted">Capabilities</div><div id="c" class="big">—</div></div>
+<div class="card"><div class="muted">Routes</div><div id="r" class="big">—</div></div>
+<div class="card"><div class="muted">Cleanup Violations</div><div id="v" class="big">—</div></div></div>
+<pre id="detail">Loading…</pre><script>
+fetch('/api/architecture-integrity',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+s.textContent=d.status||'UNKNOWN';c.textContent=d.capability_count??0;r.textContent=d.declared_route_count??0;v.textContent=(d.cleanup_violations||[]).length;
+detail.textContent=JSON.stringify(d,null,2);
+}).catch(e=>detail.textContent=String(e));
+</script></body></html>
