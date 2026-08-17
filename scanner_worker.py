@@ -28,6 +28,7 @@ os.environ["APEX_SCANNER_PROCESS"] = "true"
 
 from engine.operational_runtime import write_scanner_heartbeat  # noqa: E402
 from engine.pre23_hardening import acquire_scanner_lease  # noqa: E402
+from engine.silent_degradation_observability import record_degradation  # noqa: E402
 
 # APEX 65.7.3: take the process lease *before* importing the large application.
 # This prevents duplicate scanner/HLCE owners even if both start_render.sh and
@@ -182,8 +183,15 @@ def _hlce_snapshot_provider() -> Dict[str, Any]:
         if hlce_extract_context(local).spot is not None:
             local["hlce_source"] = "scanner_local_canonical_snapshot"
             return local
-    except Exception:
-        pass
+    except Exception as _collector_state_err:
+        record_degradation(
+            component="hlce_scanner_collector",
+            operation="collector_state_update",
+            exc=_collector_state_err,
+            fallback="CONTINUE_WITH_PRIOR_COLLECTOR_STATE",
+            decision_authority_suppressed=False,
+            source="scanner_worker.py",
+        )
 
     # Keep provider traffic bounded if the collector cadence is configured below
     # 15 seconds. A cached snapshot is still a real observation; HLCE's own price
