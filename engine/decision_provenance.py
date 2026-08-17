@@ -1,5 +1,6 @@
 """Immutable decision provenance snapshots and deterministic replay checks."""
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import datetime as dt
 import hashlib
@@ -30,7 +31,7 @@ def init_db() -> bool:
         folder = os.path.dirname(_DB_PATH)
         if folder:
             os.makedirs(folder, exist_ok=True)
-        with sqlite3.connect(_DB_PATH, timeout=10) as c:
+        with canonical_connect(_DB_PATH, timeout=10) as c:
             c.execute("""CREATE TABLE IF NOT EXISTS decision_provenance (
                 snapshot_id TEXT PRIMARY KEY,
                 sample_id TEXT UNIQUE NOT NULL,
@@ -78,7 +79,7 @@ def write_snapshot(snapshot: Dict[str, Any]) -> bool:
         return False
     p = snapshot["payload"]
     try:
-        with _LOCK, sqlite3.connect(_DB_PATH, timeout=10) as c:
+        with _LOCK, canonical_connect(_DB_PATH, timeout=10) as c:
             exists = c.execute("SELECT 1 FROM decision_provenance WHERE sample_id=?",
                                (p["sample_id"],)).fetchone()
             if exists:
@@ -99,7 +100,7 @@ def get_snapshot(sample_id: str) -> Optional[Dict[str, Any]]:
     if not _READY:
         return None
     try:
-        with sqlite3.connect(_DB_PATH, timeout=10) as c:
+        with canonical_connect(_DB_PATH, timeout=10) as c:
             c.row_factory = sqlite3.Row
             r = c.execute("SELECT * FROM decision_provenance WHERE sample_id=?", (sample_id,)).fetchone()
         if not r:

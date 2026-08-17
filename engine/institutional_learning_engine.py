@@ -5,6 +5,7 @@ engine never changes trade decisions directly: it produces bounded evidence and
 operator-reviewable recommendations.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, json, os, sqlite3, statistics
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -33,7 +34,7 @@ class LearningStore:
         self.db_path = db_path or os.getenv("DB_PATH", "apex_tracking.db")
         self._init()
     def _c(self):
-        c=sqlite3.connect(self.db_path, timeout=10); c.row_factory=sqlite3.Row; return c
+        c=canonical_connect(self.db_path, timeout=10); c.row_factory=sqlite3.Row; return c
     def _init(self):
         with self._c() as c:
             c.execute("""CREATE TABLE IF NOT EXISTS institutional_learning_samples(

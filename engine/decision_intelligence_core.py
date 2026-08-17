@@ -5,6 +5,7 @@ This module is observational: it never changes recommendation, confidence, risk,
 execution, or production-governance behavior.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt
 import hashlib
 import json
@@ -40,7 +41,7 @@ def _load(value: Any, default: Any = None) -> Any:
 
 
 def _conn():
-    c = sqlite3.connect(gov.DB_PATH)
+    c = canonical_connect(gov.DB_PATH)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     return c

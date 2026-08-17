@@ -4,6 +4,7 @@ This module creates immutable promotion records and manifests. It cannot activat
 deploy, or mutate production configuration.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, hashlib, json, sqlite3, uuid
 from typing import Any, Mapping
 from . import institutional_governance as gov
@@ -20,7 +21,7 @@ def _load(v,default=None):
     except Exception:return {} if default is None else default
 
 def _conn():
-    c=sqlite3.connect(gov.DB_PATH); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
+    c=canonical_connect(gov.DB_PATH); c.row_factory=sqlite3.Row; c.execute('PRAGMA foreign_keys=ON'); return c
 
 def init_db():
     gov.init_db(); shadow_validation.init_db()

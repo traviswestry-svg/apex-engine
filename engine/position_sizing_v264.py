@@ -7,6 +7,7 @@ recommends only; actual placement still passes ``trade_risk_guard.validate_entry
 and the confirmation gate. ``production_effect`` is ``NONE``.
 """
 from __future__ import annotations
+from .silent_degradation_observability import record_degradation
 
 import math
 from typing import Any, Mapping, Optional
@@ -55,8 +56,11 @@ def _limits() -> dict[str, Any]:
                 "max_daily_loss": float(getattr(rl, "max_daily_loss", 2500.0)),
                 "source": "trade_risk_guard",
             }
-        except Exception:
-            pass
+        except Exception as exc:
+            record_degradation(component="position_sizing", operation="risk_limits_provider",
+                               exc=exc, fallback="FALLBACK_DEFAULT_LIMITS",
+                               decision_authority_suppressed=True,
+                               source="engine/position_sizing_v264.py")
     return {**_FALLBACK, "source": "fallback_defaults"}
 
 

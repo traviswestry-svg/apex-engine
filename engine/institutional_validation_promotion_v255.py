@@ -26,6 +26,8 @@ production changes require explicit operator approval; ``production_effect`` is
 governance workflow is not itself a production behavior change).
 """
 from __future__ import annotations
+from .silent_degradation_observability import record_degradation
+from .canonical_persistence import connect as canonical_connect
 
 import datetime as dt
 import json
@@ -372,7 +374,7 @@ def _db_path() -> str:
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(_db_path())
+    c = canonical_connect(_db_path())
     c.row_factory = sqlite3.Row
     return c
 
@@ -497,8 +499,11 @@ def _set_state(engine: str, new_state: str, actor: str, note: str,
         try:
             governance.audit("ENGINE_PROMOTION", "engine", engine, previous=current,
                              new=new_state, explanation=note, actor=actor)
-        except Exception:
-            pass
+        except Exception as exc:
+            record_degradation(component="validation_promotion", operation="governance_audit",
+                               exc=exc, fallback="PROMOTION_STATE_RETURNED_WITHOUT_AUDIT_RECORD",
+                               decision_authority_suppressed=False,
+                               source="engine/institutional_validation_promotion_v255.py")
     return {"ok": True, "engine": engine, "previous_state": current, "new_state": new_state,
             "reviewed_by": actor, "production_effect": "NONE"}
 

@@ -1,12 +1,12 @@
 {
-  "apex_version": "67.1.0",
-  "build_name": "Confidence Calibration Audit",
-  "release_series": "APEX 66",
+  "apex_version": "67.4.0",
+  "build_name": "Silent-Degradation Coverage Wave 2",
+  "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-15",
+  "released_at": "2026-08-17",
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
@@ -28,7 +28,19 @@
     "horizon_inference_from_elapsed_time": false,
     "confidence_calibration_audit_read_only": true,
     "audit_reference_probability_is_advisory": true,
-    "confidence_audit_changes_execution_authority": false
+    "confidence_audit_changes_execution_authority": false,
+    "capability_registry_complete": true,
+    "release_metadata_ratcheted": true,
+    "architecture_diagnostic_read_only": true,
+    "historical_executable_source_cleanup_enforced": true,
+    "canonical_persistence_wave2": true,
+    "persistence_schema_changes": false,
+    "persistence_path_changes": false,
+    "decision_learning_store_migration_staged": true,
+    "silent_degradation_wave2": true,
+    "degradation_observability_changes_decisions": false,
+    "degradation_observability_changes_execution_authority": false,
+    "high_consequence_fallbacks_recorded": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

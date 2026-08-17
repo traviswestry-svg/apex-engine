@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 67.1.0
+apex_version: 67.4.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: 66.5.0
+    version: "67.4.0"
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -20,7 +20,7 @@ capabilities:
   breadth_regime:
     canonical_module: engine.breadth_regime
     status: active
-    version: 66.5.0
+    version: "66.9.0"
     inputs: [bpspx_observation, bpspx_history, canonical_context]
     outputs: [breadth_regime_state, horizon_influence, dashboard_band]
     api_routes: [/api/breadth-regime/status, /api/breadth-regime/diagnostics]
@@ -147,8 +147,76 @@ capabilities:
   hlce_single_owner_65_7:
     canonical_module: engine.historical_level_calibration
     status: active
-    version: "65.7.0"
+    version: 66.9.0
     inputs: [scanner_process, institutional_os_snapshot]
     outputs: [historical_level_observations, transition_learning]
     api_routes: [/api/level-calibration/status, /api/level-calibration/statistics, /api/level-calibration/probabilities]
     decision_authority: advisory
+
+  historical_effectiveness_observatory:
+    canonical_module: engine.historical_effectiveness_observatory
+    status: active
+    version: "66.7.0"
+    inputs: [governed_graded_outcomes, canonical_decision_snapshots, trade_horizon_intelligence]
+    outputs: [effectiveness_metrics, horizon_breakdowns, setup_breakdowns, regime_breakdowns]
+    api_routes: [/api/effectiveness, /apex_os/effectiveness]
+    decision_authority: none
+    guardrails: [read_only, governed_terminal_outcomes_only, no_horizon_inference_from_elapsed_time]
+
+  confidence_calibration_audit:
+    canonical_module: engine.confidence_calibration_audit
+    status: active
+    version: "66.8.0"
+    inputs: [historical_effectiveness_records, stated_confidence, governed_outcomes]
+    outputs: [brier_score, log_loss, calibration_error, reliability_buckets, drift]
+    api_routes: [/api/effectiveness/confidence-calibration, /apex_os/confidence-calibration]
+    decision_authority: none
+    guardrails: [read_only, advisory_reference_probability_only, no_automatic_recalibration]
+
+  canonical_persistence:
+    canonical_module: engine.canonical_persistence
+    status: active
+    version: "67.0.0"
+    inputs: [sqlite_database_paths, persistence_policy]
+    outputs: [canonical_connections, transaction_boundaries, persistence_diagnostics]
+    decision_authority: none
+    guardrails: [no_schema_migration, no_database_relocation, staged_store_migration]
+
+  silent_degradation_observability:
+    canonical_module: engine.silent_degradation_observability
+    status: active
+    version: "67.1.0"
+    inputs: [nonfatal_exceptions, fallback_paths, authority_suppression]
+    outputs: [degradation_events, recurrence_counts, degradation_dashboard]
+    api_routes: [/api/diagnostics/degradations, /apex_os/degradations]
+    decision_authority: none
+    guardrails: [best_effort_only, memory_fallback, never_raise_into_caller]
+
+  architecture_integrity:
+    canonical_module: engine.architecture_integrity
+    status: active
+    version: "67.2.0"
+    inputs: [release_manifest, capability_registry, source_tree, flask_route_registry]
+    outputs: [architecture_inventory, identity_drift, missing_modules, duplicate_routes, cleanup_violations]
+    api_routes: [/api/architecture-integrity, /apex_os/architecture-integrity]
+    decision_authority: none
+    guardrails: [read_only, no_runtime_mutation, no_execution_authority]
+
+  canonical_persistence_migration_wave2:
+    canonical_module: engine.canonical_persistence
+    status: active
+    version: "67.3.0"
+    inputs: [decision_stores, learning_stores, calibration_stores, governance_stores, evidence_stores]
+    outputs: [canonical_sqlite_connections, standardized_busy_handling, standardized_wal_policy, standardized_foreign_keys]
+    decision_authority: none
+    guardrails: [no_schema_migration, no_database_relocation, no_model_logic_change, staged_migration]
+
+  silent_degradation_coverage_wave2:
+    canonical_module: engine.silent_degradation_observability
+    status: active
+    version: "67.4.0"
+    inputs: [execution_fallbacks, sizing_fallbacks, signal_callbacks, learning_fallbacks, promotion_audits, runtime_provider_failures, hlce_maintenance_failures]
+    outputs: [structured_degradation_events, authority_suppression_flags, recurrence_counts]
+    api_routes: [/api/diagnostics/degradations, /apex_os/degradations]
+    decision_authority: none
+    guardrails: [observability_only, never_raise_into_caller, no_execution_authority, fail_closed_authority_marking]

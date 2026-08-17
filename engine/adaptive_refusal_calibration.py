@@ -5,6 +5,7 @@ premium eligibility policy. Recommendations are inert until explicitly promoted.
 No broker action is possible from this module.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import hashlib
 import json
@@ -51,7 +52,7 @@ class CalibrationStore:
         self._init()
 
     def _connect(self) -> sqlite3.Connection:
-        c = sqlite3.connect(self.db_path, timeout=10)
+        c = canonical_connect(self.db_path, timeout=10)
         c.row_factory = sqlite3.Row
         return c
 

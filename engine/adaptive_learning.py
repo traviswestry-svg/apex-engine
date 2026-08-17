@@ -4,6 +4,7 @@ Outcome-calibrated, bounded learning for advisory scoring weights. The engine is
 shadow-first, auditable, and cannot place or modify orders.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import json
 import math
@@ -49,7 +50,7 @@ def _utcnow() -> str:
 
 
 def _connect(path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path))
+    conn = canonical_connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS adaptive_outcomes (

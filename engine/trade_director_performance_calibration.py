@@ -4,6 +4,7 @@ Read-only analytics over Phase 31 immutable evidence. This module never changes
 scores, thresholds, policies, risk, authorization, or broker state.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import json
 import math
@@ -23,7 +24,7 @@ MIN_ATTRIBUTION_SAMPLES = 30
 
 def _connect() -> sqlite3.Connection:
     initialize_evidence_store()
-    conn = sqlite3.connect(evidence_db_path(), timeout=10.0)
+    conn = canonical_connect(evidence_db_path(), timeout=10.0)
     conn.row_factory = sqlite3.Row
     return conn
 

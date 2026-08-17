@@ -11,6 +11,7 @@ injected via provider callables; the engine consumes the already-composed Data B
 object and never re-fetches. Never 500s the dashboard.
 """
 from __future__ import annotations
+from .silent_degradation_observability import record_degradation
 
 from typing import Any, Callable, Dict, Optional
 
@@ -27,7 +28,11 @@ def _call(fn: Optional[Callable], *args, default=None):
         return default
     try:
         return fn(*args)
-    except Exception:
+    except Exception as exc:
+        record_degradation(component="range_intelligence", operation=getattr(fn, "__name__", "provider"),
+                           exc=exc, fallback="PROVIDER_DEFAULT",
+                           decision_authority_suppressed=False,
+                           source="engine/range_routes.py")
         return default
 
 
@@ -74,8 +79,11 @@ def register_range_routes(
             # opportunistically capture the projection for later self-evaluation
             try:
                 capture_projection(env, ticker)
-            except Exception:
-                pass
+            except Exception as exc:
+                record_degradation(component="range_intelligence", operation="capture_projection",
+                                   exc=exc, fallback="PROJECTION_NOT_CAPTURED",
+                                   decision_authority_suppressed=False,
+                                   source="engine/range_routes.py")
             return jsonify(env)
         except Exception as e:  # never break the dashboard
             return jsonify({"ok": False, "ticker": ticker,

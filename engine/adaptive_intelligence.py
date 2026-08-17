@@ -6,6 +6,7 @@ playbooks, computes an institutional edge score, and generates post-session
 review/journal artifacts. It never mutates broker state or submits orders.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 
 import hashlib
 import json
@@ -29,7 +30,7 @@ def _now() -> str:
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(gov.DB_PATH)
+    c = canonical_connect(gov.DB_PATH)
     c.row_factory = sqlite3.Row
     return c
 
