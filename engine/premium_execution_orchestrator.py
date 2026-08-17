@@ -5,6 +5,7 @@ portfolio. Submission remains disabled unless an executor is supplied, the
 runtime switch is enabled, and a fresh one-time human confirmation is provided.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, hashlib, json, os, sqlite3, uuid
 from typing import Any, Callable, Dict, Optional
 
@@ -18,7 +19,7 @@ class PremiumExecutionOrchestrator:
     def __init__(self,db_path:Optional[str]=None,executor:Optional[Callable[[Dict[str,Any]],Dict[str,Any]]]=None):
         self.db_path=db_path or os.getenv("DB_PATH","apex_tracking.db"); self.executor=executor; self._init()
     def _connect(self):
-        c=sqlite3.connect(self.db_path); c.row_factory=sqlite3.Row; return c
+        c=canonical_connect(self.db_path); c.row_factory=sqlite3.Row; return c
     def _init(self):
         with self._connect() as c:c.executescript("""
         CREATE TABLE IF NOT EXISTS premium_execution_intents(

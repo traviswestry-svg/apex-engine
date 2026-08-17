@@ -6,6 +6,7 @@ compares broker state with APEX state. Never submits, replaces, cancels, or
 modifies an order or position.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, hashlib, json, sqlite3, uuid
 from typing import Any
 from . import institutional_governance as gov
@@ -18,7 +19,7 @@ def _now(): return dt.datetime.now(dt.timezone.utc).isoformat()
 def _json(v): return json.dumps(v,sort_keys=True,separators=(',',':'),default=str)
 def _hash(v): return hashlib.sha256(_json(v).encode()).hexdigest()
 def _conn():
- c=sqlite3.connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
+ c=canonical_connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
 
 def init_db():
  gov.init_db()

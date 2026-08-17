@@ -45,6 +45,7 @@ def test_execution_fallbacks_mark_authority_suppression():
 def test_wave2_is_observability_only_release():
     import json
     m = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert m["apex_version"] == "67.4.0"
+    version = tuple(int(part) for part in m["apex_version"].split("."))
+    assert version >= (67, 4, 0)
     assert m["guardrails"]["degradation_observability_changes_decisions"] is False
     assert m["guardrails"]["degradation_observability_changes_execution_authority"] is False

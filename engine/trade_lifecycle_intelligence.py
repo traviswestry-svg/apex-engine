@@ -2,6 +2,7 @@
 Advisory monitoring for confirmed positions; never routes or modifies orders.
 """
 from __future__ import annotations
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, json, os, sqlite3
 from typing import Any, Dict, Optional
 VERSION="18.2.2_TRADE_LIFECYCLE_INTELLIGENCE"
@@ -11,7 +12,7 @@ def _f(v,d=0.0):
     except Exception:return d
 class LifecycleStore:
     def __init__(self,db_path:Optional[str]=None): self.db_path=db_path or os.getenv("DB_PATH","apex_tracking.db"); self._init()
-    def _c(self): c=sqlite3.connect(self.db_path,timeout=10); c.row_factory=sqlite3.Row; return c
+    def _c(self): c=canonical_connect(self.db_path,timeout=10); c.row_factory=sqlite3.Row; return c
     def _init(self):
         with self._c() as c:c.execute("""CREATE TABLE IF NOT EXISTS trade_lifecycle_events(id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT NOT NULL,position_id TEXT NOT NULL,action TEXT NOT NULL,state_json TEXT NOT NULL,rationale_json TEXT NOT NULL)""")
     def record(self,position_id:str,result:Dict[str,Any])->Dict[str,Any]:
