@@ -6,12 +6,15 @@ never receives execution authority.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import math
 from typing import Any, Mapping, Optional, Sequence
 
-VERSION = "66.5.0"
-SCHEMA_VERSION = "apex.breadth_regime.v1"
+VERSION = "66.9.0"
+SCHEMA_VERSION = "apex.breadth_regime.v2"
+FRESHNESS_VERSION = "apex.bpspx_freshness.v1"
+DEFAULT_CURRENT_MAX_AGE_MINUTES = 24 * 60
+DEFAULT_PRIOR_SETTLED_MAX_AGE_MINUTES = 4 * 24 * 60
 VALID_STATES = (
     "BROAD_RISK_ON", "NARROW_RISK_ON", "NEUTRAL", "BREADTH_DETERIORATION",
     "BROAD_RISK_OFF", "CAPITULATION", "EARLY_RECOVERY", "CONFIRMED_RECOVERY",
@@ -53,6 +56,69 @@ def _extract(context: Mapping[str, Any]) -> tuple[Optional[float], Optional[floa
     return value, previous, history, source, str(observed_at) if observed_at else None
 
 
+def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _freshness_governance(
+    observed_at: Optional[str],
+    *,
+    now: datetime,
+    session_open: Optional[bool],
+    current_max_age_minutes: int,
+    prior_settled_max_age_minutes: int,
+) -> dict[str, Any]:
+    observed = _parse_timestamp(observed_at)
+    if observed is None:
+        return {
+            "version": FRESHNESS_VERSION,
+            "state": "DATA_LIMITED",
+            "usable": False,
+            "reason": "bpspx_observed_at_missing_or_invalid",
+            "age_minutes": None,
+            "observed_at": observed_at,
+            "current_max_age_minutes": current_max_age_minutes,
+            "prior_settled_max_age_minutes": prior_settled_max_age_minutes,
+        }
+
+    age_minutes = max(0.0, (now - observed).total_seconds() / 60.0)
+    if session_open is True:
+        state = "CURRENT_SESSION" if age_minutes <= current_max_age_minutes else "STALE"
+        usable = state == "CURRENT_SESSION"
+    elif session_open is False:
+        state = "PRIOR_SETTLED_SESSION" if age_minutes <= prior_settled_max_age_minutes else "STALE"
+        usable = state == "PRIOR_SETTLED_SESSION"
+    else:
+        # When session state is unavailable, be conservative: only a current-age
+        # observation may influence breadth. Weekend carry-forward requires the
+        # caller to identify the market as closed.
+        state = "CURRENT_SESSION" if age_minutes <= current_max_age_minutes else "STALE"
+        usable = state == "CURRENT_SESSION"
+
+    return {
+        "version": FRESHNESS_VERSION,
+        "state": state,
+        "usable": usable,
+        "reason": None if usable else "bpspx_observation_too_old",
+        "age_minutes": round(age_minutes, 2),
+        "observed_at": observed.isoformat(),
+        "current_max_age_minutes": current_max_age_minutes,
+        "prior_settled_max_age_minutes": prior_settled_max_age_minutes,
+    }
+
 def _state(value: float, direction: str, prior: Optional[float]) -> str:
     recovered_20 = prior is not None and prior < 20 <= value
     recovered_30 = prior is not None and prior < 30 <= value
@@ -69,13 +135,35 @@ def _state(value: float, direction: str, prior: Optional[float]) -> str:
     return "NEUTRAL" if direction != "FALLING" else "BREADTH_DETERIORATION"
 
 
-def build_breadth_regime(context: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+def build_breadth_regime(
+    context: Optional[Mapping[str, Any]] = None,
+    *,
+    now: Optional[datetime] = None,
+    current_max_age_minutes: int = DEFAULT_CURRENT_MAX_AGE_MINUTES,
+    prior_settled_max_age_minutes: int = DEFAULT_PRIOR_SETTLED_MAX_AGE_MINUTES,
+) -> dict[str, Any]:
     root = dict(context or {})
     value, previous, history, source, observed_at = _extract(root)
-    now = datetime.now(timezone.utc).isoformat()
+    now_dt = now.astimezone(timezone.utc) if now and now.tzinfo else (now.replace(tzinfo=timezone.utc) if now else datetime.now(timezone.utc))
+    now_iso = now_dt.isoformat()
+    session_open_raw = root.get("market_open")
+    if session_open_raw is None:
+        session = root.get("session")
+        if isinstance(session, Mapping):
+            session_open_raw = session.get("is_open")
+        elif isinstance(root.get("market_status"), Mapping):
+            session_open_raw = root["market_status"].get("is_open")
+    session_open = session_open_raw if isinstance(session_open_raw, bool) else None
+    freshness = _freshness_governance(
+        observed_at,
+        now=now_dt,
+        session_open=session_open,
+        current_max_age_minutes=current_max_age_minutes,
+        prior_settled_max_age_minutes=prior_settled_max_age_minutes,
+    )
     base = {
         "ok": True, "version": VERSION, "schema_version": SCHEMA_VERSION,
-        "as_of": now, "execution_authority": "NONE",
+        "as_of": now_iso, "execution_authority": "NONE",
         "guardrails": {
             "advisory_only": True, "automatic_entry": False,
             "oversold_is_not_confirmation": True,
@@ -84,9 +172,32 @@ def build_breadth_regime(context: Optional[Mapping[str, Any]] = None) -> dict[st
     }
     if value is None or not 0 <= value <= 100:
         return {**base, "status": "DATA_LIMITED", "state": "DATA_LIMITED", "bpspx": None,
-                "source": None, "missing_data": ["bpspx"],
+                "source": None, "freshness": freshness, "missing_data": ["bpspx"],
                 "headline": "BPSPX feed required",
                 "interpretation": "No real BPSPX observation is available; APEX will not infer one from price."}
+
+    if not freshness["usable"]:
+        return {
+            **base,
+            "status": freshness["state"],
+            "state": "DATA_LIMITED",
+            "bpspx": round(value, 2),
+            "previous": round(previous, 2) if previous is not None else None,
+            "source": source,
+            "observed_at": observed_at,
+            "freshness": freshness,
+            "missing_data": ["current_bpspx_observation"],
+            "headline": "BPSPX observation is not fresh enough for breadth influence",
+            "interpretation": (
+                f"BPSPX {value:.2f} is retained for diagnostics but freshness is "
+                f"{freshness['state'].lower().replace('_', ' ')}; APEX suppresses breadth influence."
+            ),
+            "horizon_influence": {
+                "SCALP": {"weight": 0.0, "effect": "DATA_LIMITED", "authority": "CONTEXT_ONLY"},
+                "INTRADAY": {"weight": 0.0, "effect": "DATA_LIMITED", "authority": "CONTEXT_ONLY"},
+                "SWING": {"weight": 0.0, "effect": "DATA_LIMITED", "authority": "CONTEXT_ONLY"},
+            },
+        }
 
     direction = _direction(value, previous, history)
     prior = previous if previous is not None else (history[-2] if len(history) >= 2 else None)
@@ -110,7 +221,7 @@ def build_breadth_regime(context: Optional[Mapping[str, Any]] = None) -> dict[st
     return {
         **base, "status": "READY", "state": state, "bpspx": round(value, 2),
         "previous": round(prior, 2) if prior is not None else None,
-        "direction": direction, "source": source, "observed_at": observed_at,
+        "direction": direction, "source": source, "observed_at": observed_at, "freshness": freshness,
         "confidence": min(90.0, confidence), "recovery_confirmed": confirmed,
         "headline": headline,
         "interpretation": f"BPSPX {value:.2f} is {direction.lower()}; {state.lower().replace('_', ' ')} applies to breadth context, not entry timing.",

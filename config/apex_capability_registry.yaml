@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 66.8.0
+apex_version: 66.9.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
