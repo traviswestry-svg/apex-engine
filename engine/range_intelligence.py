@@ -28,6 +28,9 @@ import threading
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
+from .canonical_persistence import connect as canonical_connect
+from .silent_degradation_observability import record_degradation
+
 VERSION = "7.2_RANGE_INTELLIGENCE_ENGINE"
 _ET = ZoneInfo("America/New_York")
 
@@ -752,9 +755,20 @@ _INIT = False
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(), timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
+    return canonical_connect(_db_path(), timeout=10)
+
+
+def _record_history_degradation(operation: str, exc: BaseException, fallback: str) -> None:
+    """Best-effort visibility for non-fatal range-history persistence failures."""
+    record_degradation(
+        component="range_intelligence",
+        operation=operation,
+        exc=exc,
+        fallback=fallback,
+        decision_authority_suppressed=False,
+        source="engine.range_intelligence",
+        context={"store": "range_projection_history"},
+    )
 
 
 def init_history() -> bool:
@@ -794,6 +808,7 @@ def init_history() -> bool:
             _INIT = True
             return True
         except Exception as e:  # pragma: no cover
+            _record_history_degradation("history_init", e, "HISTORY_DISABLED")
             print(f"Range history DISABLED — table init failed: {e}", flush=True)
             return False
 
@@ -838,6 +853,7 @@ def capture_projection(envelope: Dict[str, Any], ticker: str = "SPX") -> bool:
             conn.close()
         return True
     except Exception as e:  # pragma: no cover
+        _record_history_degradation("capture_projection_persistence", e, "RETURN_FALSE")
         print(f"capture_projection failed: {e}", flush=True)
         return False
 
@@ -873,6 +889,7 @@ def record_actuals(ticker: str, *, actual_high: float, actual_low: float,
             conn.close()
         return True
     except Exception as e:  # pragma: no cover
+        _record_history_degradation("record_actuals_persistence", e, "RETURN_FALSE")
         print(f"record_actuals failed: {e}", flush=True)
         return False
 
@@ -898,7 +915,8 @@ def history(ticker: str = "SPX", limit: int = 50) -> List[Dict[str, Any]]:
             ).fetchall()
             conn.close()
             return [dict(r) for r in rows]
-    except Exception:
+    except Exception as e:
+        _record_history_degradation("history_read", e, "EMPTY_LIST")
         return []
 
 
@@ -916,6 +934,7 @@ def scorecard(ticker: str = "SPX") -> Dict[str, Any]:
                 (ticker.upper(),)).fetchall()]
             conn.close()
     except Exception as e:  # pragma: no cover
+        _record_history_degradation("scorecard_read", e, "ERROR_RESPONSE")
         return {"ok": False, "error": str(e)}
 
     n = len(rows)

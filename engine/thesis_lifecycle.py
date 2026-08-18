@@ -13,6 +13,8 @@ import json
 import os
 import sqlite3
 import threading
+
+from .canonical_persistence import connect as canonical_connect
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 VERSION = "66.3.2"
@@ -27,15 +29,10 @@ def _db_path() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    path = _db_path()
-    directory = os.path.dirname(path)
-    if directory:
-        os.makedirs(directory, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    # APEX 67.6: thesis state is decision-adjacent canonical state. Preserve the
+    # existing DB path/schema/timeout while delegating connection policy to the
+    # canonical persistence layer.
+    return canonical_connect(_db_path(), timeout=10)
 
 
 def _iso(value: Optional[dt.datetime] = None) -> str:

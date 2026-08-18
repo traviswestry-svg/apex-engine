@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, List
 from datetime import datetime, timezone
 
+from .canonical_persistence import connect as canonical_connect
+
 VERSION = "66.1.2_DYNAMIC_LEVEL_IDENTITY"
 
 def _default_path() -> str:
@@ -28,7 +30,7 @@ DB_PATH = _default_path()
 def init_db(path: Optional[str] = None) -> str:
     p = path or DB_PATH
     Path(p).parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(p, timeout=10) as c:
+    with canonical_connect(p, timeout=10) as c:
         c.execute("""CREATE TABLE IF NOT EXISTS canonical_session_context(
           symbol TEXT NOT NULL,
           target_session_date TEXT NOT NULL,
@@ -139,7 +141,7 @@ def _publish_active_levels(conn, *, symbol: str, target_session_date: str, level
 
 def active_levels(symbol: str="SPX", *, target_session_date: str, path: Optional[str]=None) -> List[dict]:
     p=init_db(path)
-    with sqlite3.connect(p,timeout=10) as c:
+    with canonical_connect(p, timeout=10) as c:
         c.row_factory=sqlite3.Row
         rows=c.execute("""SELECT * FROM canonical_active_levels WHERE symbol=? AND target_session_date=? AND active=1 ORDER BY price,kind""",
                        (symbol.upper(),target_session_date)).fetchall()
@@ -172,7 +174,7 @@ def save_from_morning_brief(payload: Mapping[str, Any], *, symbol: str="SPX", pa
         if isinstance(row, Mapping) and str(row.get("kind") or "").lower()=="prev_close":
             prev_close=_num(row.get("price")); break
     body=json.dumps(levels, separators=(",",":"), default=str)
-    with sqlite3.connect(p, timeout=10) as c:
+    with canonical_connect(p, timeout=10) as c:
         c.execute("""INSERT INTO canonical_session_context
           (symbol,target_session_date,source_session_date,generated_at,reference_spot,prev_close,levels_json,source,component_version)
           VALUES(?,?,?,?,?,?,?,?,?)
@@ -186,7 +188,7 @@ def save_from_morning_brief(payload: Mapping[str, Any], *, symbol: str="SPX", pa
 
 def latest(symbol: str="SPX", *, target_session_date: Optional[str]=None, path: Optional[str]=None) -> Optional[dict]:
     p=init_db(path)
-    with sqlite3.connect(p, timeout=10) as c:
+    with canonical_connect(p, timeout=10) as c:
         c.row_factory=sqlite3.Row
         if target_session_date:
             row=c.execute("SELECT * FROM canonical_session_context WHERE symbol=? AND target_session_date=? LIMIT 1",(symbol.upper(),target_session_date)).fetchone()
@@ -264,7 +266,7 @@ def _identity_tolerance(kind: str) -> float:
 
 def level_migration_history(canonical_level_id: str, *, path: Optional[str] = None) -> List[dict]:
     p = init_db(path)
-    with sqlite3.connect(p, timeout=10) as c:
+    with canonical_connect(p, timeout=10) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
             "SELECT * FROM canonical_level_migrations WHERE canonical_level_id=? ORDER BY migration_id",
@@ -299,7 +301,7 @@ def publish_live_levels(
 
     created=reactivated=retired=refreshed=unchanged=migrated=0
     migration_distance=0.0
-    with sqlite3.connect(p,timeout=10) as c:
+    with canonical_connect(p, timeout=10) as c:
         c.row_factory=sqlite3.Row
         new_by_kind={}
         for row in normalized_rows: new_by_kind.setdefault(row["kind"],[]).append(row)

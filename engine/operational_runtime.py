@@ -13,6 +13,8 @@ import shutil
 import sqlite3
 from typing import Any, Dict, Optional
 
+from .canonical_persistence import connect as canonical_connect
+
 VERSION = "24.2.1_PRODUCTION_HARDENING"
 
 
@@ -41,27 +43,19 @@ def connect_sqlite(
     foreign_keys: bool = True,
     wal: bool = True,
 ) -> sqlite3.Connection:
-    """Return an APEX-standard SQLite connection.
+    """Compatibility adapter for the canonical SQLite connection policy.
 
-    The function is additive; existing modules may migrate to it incrementally.
+    APEX 67.6 closes the legacy competing policy here. Existing callers retain
+    this public helper, but all connection behavior is delegated to
+    ``engine.canonical_persistence``.
     """
-    db_path = pathlib.Path(path)
-    if db_path.parent and str(db_path.parent) not in ("", "."):
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-    resolved_timeout = float(timeout if timeout is not None else os.getenv("APEX_SQLITE_TIMEOUT_SECONDS", "15"))
-    conn = sqlite3.connect(str(db_path), timeout=resolved_timeout)
-    if row_factory:
-        conn.row_factory = sqlite3.Row
-    conn.execute(f"PRAGMA busy_timeout={int(resolved_timeout * 1000)}")
-    if foreign_keys:
-        conn.execute("PRAGMA foreign_keys=ON")
-    if wal:
-        try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-        except sqlite3.DatabaseError:
-            pass
-    return conn
+    return canonical_connect(
+        path,
+        timeout=timeout,
+        row_factory=row_factory,
+        foreign_keys=foreign_keys,
+        wal=wal,
+    )
 
 
 def storage_status() -> Dict[str, Any]:
