@@ -5,6 +5,8 @@ Intelligence artifacts. No market outcome or information timestamped after the
 canonical decision may enter LIVE replay mode.
 """
 from __future__ import annotations
+
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt
 import hashlib
 import json
@@ -31,7 +33,7 @@ def _load(v: Any, default: Any = None) -> Any:
     except Exception: return [] if default == [] else ({} if default is None else default)
 
 def _conn():
-    c=sqlite3.connect(gov.DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
+    c=canonical_connect(gov.DB_PATH); c.row_factory=sqlite3.Row; c.execute("PRAGMA foreign_keys=ON"); return c
 
 def init_db() -> dict[str, Any]:
     core.init_db()

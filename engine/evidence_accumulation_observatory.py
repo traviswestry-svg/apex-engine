@@ -7,6 +7,8 @@ actually accumulating real evidence, and where is each lifecycle blocked?
 """
 from __future__ import annotations
 
+from .canonical_persistence import connect as canonical_connect
+
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -68,8 +70,7 @@ def _query(path: Optional[str], queries: Mapping[str, str]) -> Dict[str, Any]:
     if not p.exists():
         return {"available": False, "state": "NOT_CREATED", "path": str(p), "counts": {}, "error": None}
     try:
-        uri = f"file:{p.resolve()}?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+        with canonical_connect(p, read_only=True, timeout=2.0, wal=False, heal=False) as conn:
             conn.row_factory = sqlite3.Row
             counts: Dict[str, Any] = {}
             for key, sql in queries.items():
@@ -199,8 +200,7 @@ def _level_source_coverage(path: Optional[str], *, symbol: str = "SPX", session_
     if not path or not Path(path).exists():
         return {"symbol": symbol.upper(), "session_date": target, **session, "state": "STORE_UNAVAILABLE", "families": result}
     try:
-        uri = f"file:{Path(path).resolve()}?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+        with canonical_connect(path, read_only=True, timeout=2.0, wal=False, heal=False) as conn:
             conn.row_factory = sqlite3.Row
             levels = conn.execute(
                 "SELECT level_id,level_type,active FROM daily_levels WHERE session_date=? AND symbol=?",

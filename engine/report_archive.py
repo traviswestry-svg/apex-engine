@@ -1,5 +1,7 @@
 """APEX 50.7.1 — Morning Readiness + Evening Recap review archive."""
 from __future__ import annotations
+
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt, hashlib, json, os, sqlite3
 from typing import Any
 from .persistent_store import persistent_sqlite_path
@@ -20,7 +22,7 @@ def _today(payload: dict) -> str:
 
 def init_db() -> None:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS apex5071_readiness_archive(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +45,7 @@ def archive_readiness(payload: dict) -> dict:
     captured_at = dt.datetime.now(dt.timezone.utc).isoformat()
     body = _json(payload)
     digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         count = c.execute("SELECT COUNT(*) FROM apex5071_readiness_archive WHERE session_date=?", (session_date,)).fetchone()[0]
         official = count == 0
         try:
@@ -57,7 +59,7 @@ def archive_readiness(payload: dict) -> dict:
 
 def readiness_history(limit: int = 60) -> dict:
     init_db(); limit=max(1,min(int(limit),365))
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         rows=c.execute("""SELECT session_date,MIN(captured_at),MAX(captured_at),COUNT(*),MAX(is_official)
                           FROM apex5071_readiness_archive GROUP BY session_date ORDER BY session_date DESC LIMIT ?""",(limit,)).fetchall()
     return {"ok":True,"count":len(rows),"items":[{"session_date":r[0],"first_captured_at":r[1],"last_captured_at":r[2],"revision_count":r[3],"official_available":bool(r[4])} for r in rows],"version":VERSION}
@@ -65,7 +67,7 @@ def readiness_history(limit: int = 60) -> dict:
 def get_readiness(session_date: str, revision: str = "official") -> dict | None:
     init_db()
     order = "is_official DESC, captured_at ASC" if revision == "official" else "captured_at DESC"
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         row=c.execute(f"SELECT captured_at,payload_json,is_official FROM apex5071_readiness_archive WHERE session_date=? ORDER BY {order} LIMIT 1",(session_date,)).fetchone()
     if not row: return None
     payload=json.loads(row[1]); payload["archive"]={"session_date":session_date,"captured_at":row[0],"is_official":bool(row[2]),"version":VERSION}
@@ -75,7 +77,7 @@ def report_catalog(limit: int = 60) -> dict:
     """Unified review index across readiness, Morning Brief and Evening Recap archives."""
     init_db(); limit=max(1,min(int(limit),365))
     dates={}
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         for (d,) in c.execute("SELECT DISTINCT session_date FROM apex5071_readiness_archive ORDER BY session_date DESC LIMIT ?",(limit,)).fetchall(): dates.setdefault(d,{"session_date":d})["morning_readiness"]=True
         # APEX 49 tables may not exist on a brand-new DB.
         tables={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}

@@ -4,6 +4,8 @@ Read-only aggregation over immutable evidence packages, data-quality assessments
 recommendation ledger rows, and real graded outcomes. No outcomes are inferred.
 """
 from __future__ import annotations
+
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt
 import json
 import os
@@ -50,7 +52,7 @@ def _recommendations(limit: int = 10000):
 def _quality_rows() -> Dict[str, Dict[str, Any]]:
     quality.init_db()
     out: Dict[str, Dict[str, Any]] = {}
-    with sqlite3.connect(quality.DB_PATH) as c:
+    with canonical_connect(quality.DB_PATH) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute("SELECT * FROM data_quality_assessments ORDER BY assessed_at").fetchall()
     for row in rows:
@@ -63,7 +65,7 @@ def _quality_rows() -> Dict[str, Dict[str, Any]]:
 
 def _outcomes() -> Dict[str, Dict[str, Any]]:
     governance.init_db()
-    with sqlite3.connect(governance.DB_PATH) as c:
+    with canonical_connect(governance.DB_PATH) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute("SELECT * FROM graded_outcomes ORDER BY graded_at").fetchall()
     return {r["recommendation_id"]: dict(r) for r in rows}
@@ -217,7 +219,7 @@ def build_report(*, include_records: bool = False, record_limit: int = 100) -> D
     outcomes = _outcomes()
 
     package_by_id: Dict[str, Dict[str, Any]] = {}
-    with sqlite3.connect(evidence.DB_PATH) as c:
+    with canonical_connect(evidence.DB_PATH) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute("SELECT recommendation_id,created_at,status,package_json FROM evidence_packages ORDER BY created_at").fetchall()
     for row in rows:

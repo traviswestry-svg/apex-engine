@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 67.7.0
+apex_version: 67.8.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: "67.7.0"
+    version: "67.8.0"
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -238,6 +238,15 @@ capabilities:
     outputs: [canonical_decision_evidence_connections, canonical_lifecycle_connections, observable_nonfatal_persistence_fallbacks]
     decision_authority: none
     guardrails: [no_schema_migration, no_database_relocation, no_decision_logic_change, no_eligibility_rule_change, no_execution_authority_change, staged_migration, observability_only]
+
+  research_replay_reporting_persistence_closure:
+    canonical_module: engine.canonical_persistence
+    status: active
+    version: "67.8.0"
+    inputs: [evening_recap_archive, report_review_archive, evidence_audit, evidence_accumulation_observatory, institutional_research, historical_readiness, institutional_replay, institutional_research_labs, institutional_similarity]
+    outputs: [canonical_research_connections, canonical_replay_connections, canonical_reporting_connections, canonical_read_only_diagnostics]
+    decision_authority: none
+    guardrails: [no_schema_migration, no_database_relocation, no_research_logic_change, no_replay_logic_change, no_reporting_logic_change, no_decision_authority_change, no_execution_authority_change, preserve_read_only_diagnostics, staged_migration]
 
   silent_degradation_coverage_wave2:
     canonical_module: engine.silent_degradation_observability

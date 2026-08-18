@@ -5,6 +5,8 @@ queries providers, never invents performance, and never changes live trading pol
 """
 from __future__ import annotations
 
+from .canonical_persistence import connect as canonical_connect
+
 import datetime as dt
 import hashlib
 import json
@@ -51,7 +53,7 @@ def _hash(value: Any) -> str:
 
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = canonical_connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn
@@ -121,7 +123,7 @@ def _band(value: Any) -> str:
 def _eligible_ids() -> set[str]:
     quality.init_db()
     try:
-        with sqlite3.connect(quality.DB_PATH) as conn:
+        with canonical_connect(quality.DB_PATH) as conn:
             rows = conn.execute("SELECT recommendation_id FROM data_quality_assessments WHERE eligible=1").fetchall()
         return {str(row[0]) for row in rows}
     except sqlite3.Error:
@@ -131,7 +133,7 @@ def _eligible_ids() -> set[str]:
 def _dataset() -> List[Dict[str, Any]]:
     governance.init_db()
     eligible = _eligible_ids()
-    with sqlite3.connect(governance.DB_PATH) as conn:
+    with canonical_connect(governance.DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM graded_outcomes ORDER BY graded_at,recommendation_id").fetchall()
     result: List[Dict[str, Any]] = []

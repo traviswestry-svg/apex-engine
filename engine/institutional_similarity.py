@@ -4,6 +4,8 @@ Read-only research infrastructure. It never queries providers, never fabricates 
 and never allows a comparison observed after the requested as-of cutoff.
 """
 from __future__ import annotations
+
+from .canonical_persistence import connect as canonical_connect
 import datetime as dt
 import hashlib
 import json
@@ -69,7 +71,7 @@ def _hash(value: Any) -> str:
 
 def _conn() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = canonical_connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     return conn

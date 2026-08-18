@@ -6,6 +6,8 @@ historical evidence and forecast archive data actually exists.
 """
 from __future__ import annotations
 
+from .canonical_persistence import connect as canonical_connect
+
 import os
 import sqlite3
 from pathlib import Path
@@ -35,11 +37,8 @@ def _resolve(path: str) -> str:
 
 
 def _ro_connect(path: str) -> sqlite3.Connection:
-    # URI read-only mode guarantees this diagnostic cannot create/modify data.
-    uri = Path(path).expanduser().resolve().as_uri() + "?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=3)
-    conn.row_factory = sqlite3.Row
-    return conn
+    # Canonical read-only mode guarantees this diagnostic cannot create/modify data.
+    return canonical_connect(path, read_only=True, timeout=3, wal=False, heal=False)
 
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:

@@ -6,6 +6,8 @@ explain the evidence, but it never grades or invents prices.
 """
 from __future__ import annotations
 
+from .canonical_persistence import connect as canonical_connect
+
 import datetime as dt
 import json
 import os
@@ -69,7 +71,7 @@ def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
     sdate = str(payload.get("session_date") or _now_et().date().isoformat())
     generated_at = str(payload.get("generated_at") or _now_et().isoformat())
     body = _json(payload)
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         existing = c.execute(
             "SELECT generated_at FROM apex49_morning_snapshots WHERE session_date=?",
             (sdate,),
@@ -103,7 +105,7 @@ def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
 
 def morning_archive_status(session_date: str) -> dict:
     init_db()
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         official = c.execute(
             "SELECT generated_at,ticker,version FROM apex49_morning_snapshots WHERE session_date=?",
             (session_date,),
@@ -126,7 +128,7 @@ def morning_archive_status(session_date: str) -> dict:
 def morning_history(limit: int = 60) -> dict:
     init_db()
     limit = max(1, min(int(limit), 365))
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         rows = c.execute("""SELECT s.session_date,s.generated_at,s.ticker,s.version,
                             (SELECT COUNT(*) FROM apex49_morning_revisions r WHERE r.session_date=s.session_date)
                             FROM apex49_morning_snapshots s ORDER BY s.session_date DESC LIMIT ?""", (limit,)).fetchall()
@@ -136,14 +138,14 @@ def morning_history(limit: int = 60) -> dict:
 
 def get_morning_snapshot(session_date: str) -> Optional[dict]:
     init_db()
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         row = c.execute("SELECT payload_json FROM apex49_morning_snapshots WHERE session_date=?", (session_date,)).fetchone()
     return _load(row[0]) if row else None
 
 
 def get_cached_recap(session_date: str) -> Optional[dict]:
     init_db()
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         row = c.execute("SELECT payload_json FROM apex49_evening_recaps WHERE session_date=?", (session_date,)).fetchone()
     return _load(row[0]) if row else None
 
@@ -347,7 +349,7 @@ def generate_evening_recap(*, morning: dict, intraday_bars: Iterable[dict], sess
         "comparison": comparison, "version": VERSION,
     }
     init_db()
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         c.execute("""INSERT INTO apex49_evening_recaps VALUES(?,?,?,?,?,?,?)
                      ON CONFLICT(session_date) DO UPDATE SET generated_at=excluded.generated_at,ticker=excluded.ticker,
                      payload_json=excluded.payload_json,score=excluded.score,grade=excluded.grade,version=excluded.version""",
@@ -357,7 +359,7 @@ def generate_evening_recap(*, morning: dict, intraday_bars: Iterable[dict], sess
 
 def recap_history(limit: int = 30) -> dict:
     init_db()
-    with sqlite3.connect(DB_PATH, timeout=10) as c:
+    with canonical_connect(DB_PATH, timeout=10) as c:
         rows = c.execute("SELECT session_date,generated_at,score,grade,payload_json FROM apex49_evening_recaps ORDER BY session_date DESC LIMIT ?", (max(1, min(int(limit), 250)),)).fetchall()
     items = []
     for sdate, generated, score, grade, payload in rows:
