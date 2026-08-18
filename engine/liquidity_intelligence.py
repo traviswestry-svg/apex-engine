@@ -9,6 +9,8 @@ import json
 import math
 import os
 import sqlite3
+
+from .canonical_persistence import connect as canonical_connect
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -193,7 +195,7 @@ def evaluate(snapshot: Mapping[str, Any] | None = None) -> dict[str, Any]:
 
 
 def _connect(db_path: str | Path = DEFAULT_DB) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
+    conn = canonical_connect(str(db_path))
     conn.execute("""CREATE TABLE IF NOT EXISTS liquidity_outcomes (
         id INTEGER PRIMARY KEY AUTOINCREMENT, observed_at TEXT NOT NULL, ticker TEXT NOT NULL,
         pool_type TEXT NOT NULL, side TEXT NOT NULL, level REAL NOT NULL, strength REAL,

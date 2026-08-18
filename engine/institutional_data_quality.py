@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt, hashlib, json, os, sqlite3, uuid
 from typing import Any, Dict, Iterable, Mapping, Optional
 from . import institutional_evidence as evidence
+from .canonical_persistence import connect as canonical_connect
 
 VERSION = "13.0.0-sprint2"
 SCHEMA_VERSION = 1
@@ -32,8 +33,7 @@ def _hash(v: Any) -> str: return hashlib.sha256(_json(v).encode()).hexdigest()
 def _conn():
     path = DB_PATH  # APEX: honor module DB_PATH like sibling modules (env captured at import)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    c = sqlite3.connect(path); c.row_factory = sqlite3.Row
-    c.execute("PRAGMA journal_mode=WAL"); return c
+    return canonical_connect(path)
 
 
 def init_db() -> Dict[str, Any]:

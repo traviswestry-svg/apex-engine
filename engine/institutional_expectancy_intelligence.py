@@ -10,6 +10,8 @@ import json
 import math
 import os
 import sqlite3
+
+from .canonical_persistence import connect as canonical_connect
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -78,9 +80,7 @@ class ExpectancyStore:
         self._init()
 
     def _connect(self):
-        c = sqlite3.connect(self.db_path, timeout=10)
-        c.row_factory = sqlite3.Row
-        return c
+        return canonical_connect(self.db_path, timeout=10)
 
     def _init(self):
         directory = os.path.dirname(self.db_path)

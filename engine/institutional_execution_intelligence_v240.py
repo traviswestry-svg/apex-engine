@@ -17,6 +17,7 @@ from .institutional_ai_trading_coach_v235 import build_trading_coach
 from .institutional_forecast_engine_v232 import build_institutional_forecast
 from .institutional_playbook_engine_v233 import build_institutional_playbooks
 from .institutional_trading_brain_v230 import build_institutional_trading_brain
+from .canonical_persistence import connect as canonical_connect
 
 VERSION = "17.0.0_INSTITUTIONAL_EXECUTION_INTELLIGENCE"
 SEMANTIC_VERSION = "17.0.0"
@@ -42,9 +43,7 @@ def _db_path() -> str:
 
 
 def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
-    return conn
+    return canonical_connect(_db_path())
 
 
 def init_db() -> None:

@@ -1,12 +1,12 @@
 {
-  "apex_version": "67.6.0",
-  "build_name": "Decision-State Persistence & Persistence Policy Closure",
+  "apex_version": "67.7.0",
+  "build_name": "Decision Evidence & Lifecycle Persistence Closure",
   "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-17",
+  "released_at": "2026-08-18",
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
@@ -53,7 +53,16 @@
     "decision_state_schema_changes": false,
     "decision_state_path_changes": false,
     "decision_state_logic_changes": false,
-    "decision_state_execution_authority_changes": false
+    "decision_state_execution_authority_changes": false,
+    "canonical_persistence_wave5_decision_evidence": true,
+    "decision_evidence_lifecycle_store_migration_staged": true,
+    "decision_evidence_persistence_degradations_observable": true,
+    "decision_evidence_schema_changes": false,
+    "decision_evidence_path_changes": false,
+    "decision_evidence_logic_changes": false,
+    "decision_evidence_eligibility_rule_changes": false,
+    "decision_evidence_execution_authority_changes": false,
+    "decision_evidence_degradations_observable": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

@@ -15,6 +15,9 @@ import sqlite3
 import threading
 from typing import Any, Dict, List, Optional
 
+from ..canonical_persistence import connect as canonical_connect
+from ..silent_degradation_observability import record_degradation
+
 
 _DB_PATH = os.getenv("DIRECTOR_DB_PATH", os.getenv("DB_PATH", "apex_tracking.db"))
 _LOCK = threading.RLock()
@@ -23,9 +26,7 @@ _INIT_DONE = False
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_DB_PATH, timeout=10)
-    conn.execute("PRAGMA journal_mode=WAL;")
-    return conn
+    return canonical_connect(_DB_PATH, timeout=10)
 
 
 def init_store() -> bool:
@@ -85,6 +86,11 @@ def init_store() -> bool:
             conn.close()
             _ENABLED = True
         except Exception as e:  # pragma: no cover - environment dependent
+            record_degradation(
+                component="director_store", operation="init_store", exc=e,
+                fallback="DIRECTIVE_LOGGING_DISABLED", decision_authority_suppressed=False,
+                source=__name__, context={"db_path": _DB_PATH},
+            )
             print(f"Director directive logging DISABLED — DB init failed at '{_DB_PATH}': {e}", flush=True)
             _ENABLED = False
         return _ENABLED
@@ -131,6 +137,11 @@ def log_directive(directive: Dict[str, Any]) -> Optional[int]:
             conn.close()
             return rid
     except Exception as e:  # pragma: no cover
+        record_degradation(
+            component="director_store", operation="log_directive", exc=e,
+            fallback="DIRECTIVE_NOT_PERSISTED", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH},
+        )
         print(f"Director log_directive failed: {e}", flush=True)
         return None
 
@@ -148,7 +159,12 @@ def recent_directives(symbol: str = "SPX", limit: int = 50) -> List[Dict[str, An
             ).fetchall()
             conn.close()
             return [dict(r) for r in rows]
-    except Exception:
+    except Exception as e:
+        record_degradation(
+            component="director_store", operation="recent_directives", exc=e,
+            fallback="EMPTY_HISTORY", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH},
+        )
         return []
 
 

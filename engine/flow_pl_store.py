@@ -32,6 +32,9 @@ import sqlite3
 import threading
 from typing import Any, Dict, List, Optional
 
+from .canonical_persistence import connect as canonical_connect
+from .silent_degradation_observability import record_degradation
+
 _DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")
 _LOCK = threading.Lock()
 _DB_READY = False
@@ -40,9 +43,7 @@ STORE_VERSION = "9.4.0_FLOW_PL_STORE"
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(_DB_PATH, timeout=10)
-    c.row_factory = sqlite3.Row
-    return c
+    return canonical_connect(_DB_PATH, timeout=10)
 
 
 def init_db() -> bool:
@@ -121,6 +122,11 @@ def init_db() -> bool:
         _DB_READY = True
     except Exception as e:  # pragma: no cover
         _DB_READY = False
+        record_degradation(
+            component="flow_pl_store", operation="init_db", exc=e,
+            fallback="FLOW_PL_TRACKING_DISABLED", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH},
+        )
         print(f"Flow P/L tracking DISABLED — DB init failed at '{_DB_PATH}': {e}", flush=True)
     return _DB_READY
 
@@ -193,6 +199,11 @@ def record_observation(pl: Dict[str, Any], *, cluster_key: Optional[str] = None,
             return {"event_id": eid, "samples": (row["samples"] or 0) + 1,
                     "mfe_dollars": mfe, "mae_dollars": mae, "first_sample": False}
     except Exception as e:  # pragma: no cover
+        record_degradation(
+            component="flow_pl_store", operation="record_observation", exc=e,
+            fallback="OBSERVATION_NOT_PERSISTED", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH},
+        )
         print(f"flow_pl_store.record_observation failed (non-fatal): {e}", flush=True)
         return None
 
@@ -236,6 +247,11 @@ def get_excursions(event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
                     }
         return out
     except Exception as e:  # pragma: no cover
+        record_degradation(
+            component="flow_pl_store", operation="get_excursions", exc=e,
+            fallback="EMPTY_EXCURSION_HISTORY", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH},
+        )
         print(f"flow_pl_store.get_excursions failed (non-fatal): {e}", flush=True)
         return {}
 
@@ -303,6 +319,11 @@ def record_cluster_observation(*, cluster_key: str, session_date: str,
             return {"cluster_key": cluster_key, "samples": (row["samples"] or 0) + 1,
                     "first_sample": False}
     except Exception as e:  # pragma: no cover
+        record_degradation(
+            component="flow_pl_store", operation="record_cluster_observation", exc=e,
+            fallback="CLUSTER_OBSERVATION_NOT_PERSISTED", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH},
+        )
         print(f"flow_pl_store.record_cluster_observation failed (non-fatal): {e}", flush=True)
         return None
 
@@ -335,5 +356,10 @@ def get_cluster_excursions(cluster_keys: List[str], session_date: str
                     }
         return out
     except Exception as e:  # pragma: no cover
+        record_degradation(
+            component="flow_pl_store", operation="get_cluster_excursions", exc=e,
+            fallback="EMPTY_CLUSTER_EXCURSION_HISTORY", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH},
+        )
         print(f"flow_pl_store.get_cluster_excursions failed (non-fatal): {e}", flush=True)
         return {}

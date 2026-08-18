@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
+from .canonical_persistence import connect as canonical_connect
+
 DB_PATH = Path(os.getenv("APEX_INSTITUTIONAL_INTENT_DB", "apex_institutional_intent.db"))
 
 
@@ -39,9 +41,7 @@ def _upper(value: Any, default: str = "UNKNOWN") -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    con = sqlite3.connect(str(DB_PATH))
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL")
+    con = canonical_connect(DB_PATH)
     con.executescript(
         """
         CREATE TABLE IF NOT EXISTS institutional_intent_events (
