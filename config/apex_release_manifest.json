@@ -1,6 +1,6 @@
 {
-  "apex_version": "67.5.0",
-  "build_name": "Canonical Persistence Migration Wave 3",
+  "apex_version": "67.6.0",
+  "build_name": "Decision-State Persistence & Persistence Policy Closure",
   "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -45,7 +45,15 @@
     "execution_risk_position_store_migration_staged": true,
     "persistence_trading_logic_changes": false,
     "persistence_risk_rule_changes": false,
-    "persistence_execution_authority_changes": false
+    "persistence_execution_authority_changes": false,
+    "canonical_persistence_wave4_decision_state": true,
+    "decision_state_store_migration_staged": true,
+    "legacy_persistence_policy_closed": true,
+    "range_history_degradations_observable": true,
+    "decision_state_schema_changes": false,
+    "decision_state_path_changes": false,
+    "decision_state_logic_changes": false,
+    "decision_state_execution_authority_changes": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
