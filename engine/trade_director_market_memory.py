@@ -12,6 +12,8 @@ import os
 import sqlite3
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .canonical_persistence import connect as canonical_connect
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS trade_director_memory_sessions (
  session_id TEXT PRIMARY KEY, session_date TEXT NOT NULL, captured_at TEXT NOT NULL,
@@ -38,7 +40,7 @@ def memory_db_path()->str:
 def _connect()->sqlite3.Connection:
     p=memory_db_path(); parent=os.path.dirname(p)
     if parent: os.makedirs(parent,exist_ok=True)
-    c=sqlite3.connect(p,timeout=3.0); c.row_factory=sqlite3.Row; c.executescript(_SCHEMA); return c
+    c=canonical_connect(p,timeout=3.0); c.executescript(_SCHEMA); return c
 
 def _nested(d: Dict[str,Any], *paths: str, default: Any=None)->Any:
     for path in paths:

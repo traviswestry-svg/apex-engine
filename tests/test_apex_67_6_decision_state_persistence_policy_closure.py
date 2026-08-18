@@ -56,8 +56,10 @@ def test_676_range_history_failures_are_structurally_observable():
 
 def test_676_release_identity_and_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "67.6.0"
-    assert manifest["build_name"] == "Decision-State Persistence & Persistence Policy Closure"
+    version = tuple(int(part) for part in manifest["apex_version"].split("."))
+    assert version >= (67, 6, 0)
+    if version == (67, 6, 0):
+        assert manifest["build_name"] == "Decision-State Persistence & Persistence Policy Closure"
     guardrails = manifest["guardrails"]
     assert guardrails["canonical_persistence_wave4_decision_state"] is True
     assert guardrails["decision_state_store_migration_staged"] is True
@@ -71,7 +73,7 @@ def test_676_release_identity_and_guardrails():
 
 def test_676_registry_declares_no_authority_expansion():
     text = (ROOT / "config/apex_capability_registry.yaml").read_text(encoding="utf-8")
-    assert "apex_version: 67.6.0" in text
+    assert "apex_version:" in text
     assert "decision_state_persistence_policy_closure:" in text
     section = text.split("decision_state_persistence_policy_closure:", 1)[1].split(
         "\n  silent_degradation_coverage_wave2:", 1

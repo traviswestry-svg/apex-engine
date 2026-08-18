@@ -16,6 +16,8 @@ import threading
 import uuid
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
+from .canonical_persistence import connect as canonical_connect
+
 VERSION = "18.0.2_EXECUTABILITY_PROTECTED_SETTLEMENT"
 SCHEMA_VERSION = 1
 _LOCK = threading.RLock()
@@ -57,11 +59,7 @@ def _connect() -> sqlite3.Connection:
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=10)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    return canonical_connect(path, timeout=10)
 
 
 def init_db() -> None:

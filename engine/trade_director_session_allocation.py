@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
+from .canonical_persistence import connect as canonical_connect
+
 ET = ZoneInfo("America/New_York")
 MAX_TRADES = 5
 BASE_SEQUENCE = (1, 3, 4, 3, 3)
@@ -27,8 +29,7 @@ def _db_path() -> Path:
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
-    conn.row_factory = sqlite3.Row
+    conn = canonical_connect(_db_path())
     conn.execute("""CREATE TABLE IF NOT EXISTS session_allocation_trades (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_date TEXT NOT NULL,
