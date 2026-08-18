@@ -1,6 +1,6 @@
 {
-  "apex_version": "67.8.0",
-  "build_name": "Research, Replay & Reporting Persistence Closure",
+  "apex_version": "67.8.1",
+  "build_name": "CI Regression Fix \u2014 Deterministic BPSPX Freshness Fixture",
   "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -70,7 +70,12 @@
     "research_replay_reporting_path_changes": false,
     "research_replay_reporting_logic_changes": false,
     "research_replay_reporting_decision_authority_changes": false,
-    "research_replay_reporting_execution_authority_changes": false
+    "research_replay_reporting_execution_authority_changes": false,
+    "bpspx_ci_fixture_clock_deterministic": true,
+    "bpspx_freshness_governance_preserved": true,
+    "breadth_regime_production_logic_changes": false,
+    "breadth_regime_threshold_changes": false,
+    "breadth_regime_authority_changes": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

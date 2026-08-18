@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from flask import Flask
 
 from engine.breadth_regime import build_breadth_regime
+from engine import breadth_regime_routes
 from engine.breadth_regime_routes import register_breadth_regime_routes
 
 
@@ -35,9 +36,21 @@ def test_cross_above_30_confirms_recovery():
     assert result["recovery_confirmed"] is True
 
 
-def test_routes_expose_dashboard_payload():
+def test_routes_expose_dashboard_payload(monkeypatch):
+    # Keep the route test deterministic without weakening BPSPX freshness
+    # governance.  The route normally evaluates freshness against wall-clock
+    # time, so a hard-coded observation eventually becomes stale in CI.
+    monkeypatch.setattr(
+        breadth_regime_routes,
+        "build_breadth_regime",
+        lambda context: build_breadth_regime(context, now=NOW),
+    )
     app = Flask(__name__)
-    register_breadth_regime_routes(app, last_result_provider=lambda: {"bpspx": 14, "bpspx_previous": 18, "bpspx_observed_at": "2026-08-17T11:30:00+00:00"})
+    register_breadth_regime_routes(app, last_result_provider=lambda: {
+        "bpspx": 14,
+        "bpspx_previous": 18,
+        "bpspx_observed_at": "2026-08-17T11:30:00+00:00",
+    })
     response = app.test_client().get("/api/breadth-regime/status")
     assert response.status_code == 200
     assert response.get_json()["state"] == "CAPITULATION"
