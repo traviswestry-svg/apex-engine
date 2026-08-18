@@ -1,6 +1,6 @@
 {
-  "apex_version": "67.7.0",
-  "build_name": "Decision Evidence & Lifecycle Persistence Closure",
+  "apex_version": "67.8.0",
+  "build_name": "Research, Replay & Reporting Persistence Closure",
   "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -62,7 +62,15 @@
     "decision_evidence_logic_changes": false,
     "decision_evidence_eligibility_rule_changes": false,
     "decision_evidence_execution_authority_changes": false,
-    "decision_evidence_degradations_observable": true
+    "decision_evidence_degradations_observable": true,
+    "canonical_persistence_wave6_research_replay_reporting": true,
+    "research_replay_reporting_store_migration_staged": true,
+    "research_replay_reporting_read_only_semantics_preserved": true,
+    "research_replay_reporting_schema_changes": false,
+    "research_replay_reporting_path_changes": false,
+    "research_replay_reporting_logic_changes": false,
+    "research_replay_reporting_decision_authority_changes": false,
+    "research_replay_reporting_execution_authority_changes": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

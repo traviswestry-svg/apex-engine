@@ -6,13 +6,15 @@ importing the recap service while the Flask application is still initializing.
 """
 from __future__ import annotations
 
+from .canonical_persistence import connect as canonical_connect
+
 import os
 import sqlite3
 
 
 def init_evening_archive_db(db_path: str) -> None:
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-    with sqlite3.connect(db_path, timeout=10) as c:
+    with canonical_connect(db_path, timeout=10) as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS apex49_morning_snapshots(
           session_date TEXT PRIMARY KEY,
