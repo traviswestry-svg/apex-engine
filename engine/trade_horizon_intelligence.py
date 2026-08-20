@@ -258,7 +258,7 @@ def _govern_horizon(horizon: Dict[str, Any], authority: Mapping[str, Any],
         out["trend"] = auth_dir
         out["bias"] = auth_dir
         out["directional_context"] = "CALL" if auth_dir == "BULLISH" else "PUT"
-        out["status"] = "CONFLICT"
+        out["status"] = "CANONICAL_SESSION_GOVERNED"
         out["relationship_to_authoritative"] = "GOVERNED_TO_AUTHORITY"
         out["confidence_cap_reasons"] = reasons + ["INTRADAY_USES_CANONICAL_SESSION_DIRECTION"]
     return out
@@ -345,11 +345,15 @@ def build_trade_horizon_intelligence(
     # governance helper is restored during a merge or deployment overlay.
     intraday = horizons["INTRADAY"]
     auth_dir = authority.get("direction")
-    if (authority.get("available") and auth_dir in ("BULLISH", "BEARISH") and
-            intraday.get("bias") in ("BULLISH", "BEARISH") and
-            intraday.get("bias") != auth_dir):
-        intraday["raw_context_trend"] = intraday.get("trend")
-        intraday["raw_context_bias"] = intraday.get("bias")
+    intraday_needs_governance = (
+        authority.get("available") and auth_dir in ("BULLISH", "BEARISH") and (
+            (intraday.get("bias") in ("BULLISH", "BEARISH") and intraday.get("bias") != auth_dir) or
+            intraday.get("relationship_to_authoritative") == "GOVERNED_TO_AUTHORITY"
+        )
+    )
+    if intraday_needs_governance:
+        intraday["raw_context_trend"] = intraday.get("raw_context_trend", intraday.get("trend"))
+        intraday["raw_context_bias"] = intraday.get("raw_context_bias", intraday.get("bias"))
         intraday["trend"] = auth_dir
         intraday["bias"] = auth_dir
         intraday["directional_context"] = "CALL" if auth_dir == "BULLISH" else "PUT"

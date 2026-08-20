@@ -2216,6 +2216,35 @@ def refresh_bpspx_observation() -> bool:
         print(f"BPSPX refresh unavailable (fail-closed): {exc}", flush=True)
         return False
 
+
+_BPSPX_REFRESH_LOCK = threading.Lock()
+_BPSPX_REFRESH_IN_FLIGHT = False
+_BPSPX_LAST_REFRESH_ATTEMPT = 0.0
+_BPSPX_REFRESH_INTERVAL_SECONDS = max(60, int(os.getenv("BPSPX_REFRESH_INTERVAL_SECONDS", "300")))
+
+
+def schedule_bpspx_refresh() -> bool:
+    """Schedule a throttled breadth refresh without blocking dashboard requests."""
+    global _BPSPX_REFRESH_IN_FLIGHT, _BPSPX_LAST_REFRESH_ATTEMPT
+    now_mono = time.monotonic()
+    with _BPSPX_REFRESH_LOCK:
+        if (_BPSPX_REFRESH_IN_FLIGHT or
+                now_mono - _BPSPX_LAST_REFRESH_ATTEMPT < _BPSPX_REFRESH_INTERVAL_SECONDS):
+            return False
+        _BPSPX_REFRESH_IN_FLIGHT = True
+        _BPSPX_LAST_REFRESH_ATTEMPT = now_mono
+
+    def _worker() -> None:
+        global _BPSPX_REFRESH_IN_FLIGHT
+        try:
+            refresh_bpspx_observation()
+        finally:
+            with _BPSPX_REFRESH_LOCK:
+                _BPSPX_REFRESH_IN_FLIGHT = False
+
+    threading.Thread(target=_worker, name="apex-bpspx-refresh", daemon=True).start()
+    return True
+
 def get_daily_bars(ticker: str, days: int = 320) -> List[dict]:
     end = now_et().date()
     start = end - dt.timedelta(days=days * 2)
@@ -8098,7 +8127,10 @@ def api_institutional_os():
             # cannot create an entry or override execution/risk governance.
             if BREADTH_REGIME_AVAILABLE and build_breadth_regime is not None:
                 try:
-                    refresh_bpspx_observation()
+                    # Never perform provider I/O on the dashboard request path.
+                    # Render the last canonical observation immediately while a
+                    # throttled background refresh updates the next snapshot.
+                    schedule_bpspx_refresh()
                     with STATE_LOCK:
                         _breadth_input = {
                             "bpspx": SCANNER_STATE.get("bpspx"),
