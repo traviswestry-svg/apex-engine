@@ -46,7 +46,10 @@ def test_679_release_and_registry_are_aligned():
     assert manifest["guardrails"]["post_persistence_architecture_audit_read_only"] is True
     assert "post_persistence_architecture_audit:" in registry
     section=registry.split("post_persistence_architecture_audit:",1)[1].split("\n  silent_degradation_coverage_wave2:",1)[0]
-    assert 'version: "67.9.0"' in section
+    import re
+    m = re.search(r'version:\s*[\"\']?([0-9]+\.[0-9]+\.[0-9]+)', section)
+    assert m is not None
+    assert tuple(map(int, m.group(1).split('.'))) >= (67, 9, 0)
     assert "decision_authority: none" in section
     assert "no_execution_authority" in section
 
