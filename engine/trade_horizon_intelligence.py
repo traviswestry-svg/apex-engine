@@ -340,9 +340,31 @@ def build_trade_horizon_intelligence(
         name: _govern_horizon(_classify_horizon(name, pool), authority, quality)
         for name in HORIZONS
     }
+    # Contract-level backstop. Keep this at composition scope so the public
+    # payload cannot regress to CONFLICT/BULLISH for Intraday even if a legacy
+    # governance helper is restored during a merge or deployment overlay.
+    intraday = horizons["INTRADAY"]
+    auth_dir = authority.get("direction")
+    if (authority.get("available") and auth_dir in ("BULLISH", "BEARISH") and
+            intraday.get("bias") in ("BULLISH", "BEARISH") and
+            intraday.get("bias") != auth_dir):
+        intraday["raw_context_trend"] = intraday.get("trend")
+        intraday["raw_context_bias"] = intraday.get("bias")
+        intraday["trend"] = auth_dir
+        intraday["bias"] = auth_dir
+        intraday["directional_context"] = "CALL" if auth_dir == "BULLISH" else "PUT"
+        intraday["trade_focus"] = "NO_TRADE"
+        intraday["status"] = "CANONICAL_SESSION_GOVERNED"
+        intraday["relationship_to_authoritative"] = "GOVERNED_TO_AUTHORITY"
+        intraday["confidence"] = min(_f(intraday.get("confidence")), 50.0)
+        reasons = list(intraday.get("confidence_cap_reasons") or [])
+        for reason in ("AUTHORITATIVE_DIRECTION_CONFLICT", "INTRADAY_USES_CANONICAL_SESSION_DIRECTION"):
+            if reason not in reasons:
+                reasons.append(reason)
+        intraday["confidence_cap_reasons"] = reasons
     relation = _relationship(horizons["SCALP"], horizons["INTRADAY"], horizons["SWING"])
     conflicts = [name for name, item in horizons.items()
-                 if item.get("relationship_to_authoritative") == "CONFLICT"]
+                 if item.get("relationship_to_authoritative") in ("CONFLICT", "GOVERNED_TO_AUTHORITY")]
     if conflicts:
         relation["horizon_conflict"] = True
         relation["authoritative_conflict"] = True
