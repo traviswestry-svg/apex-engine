@@ -390,7 +390,7 @@ def test_spread_leg_cluster_warns_package_construction_unknown():
 
 def test_roll_cluster_warns_package_construction_unknown():
     rows = [_row(time_et="10:31:02", expiration=_future_exp(), trade_side_code="AT_BID"),
-            _row(time_et="10:31:03", expiration="2026-08-21", trade_side_code="ABOVE_ASK",
+            _row(time_et="10:31:03", expiration=_future_exp(days=2), trade_side_code="ABOVE_ASK",
                  trade_price=9.40)]
     events = classify_flow_events(rows)["events"]
     clusters = build_flow_clusters(events, min_prints=1)["clusters"]
