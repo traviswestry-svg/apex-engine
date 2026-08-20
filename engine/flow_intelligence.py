@@ -204,12 +204,22 @@ def build_flow_intelligence_2(
         urgency_note = "Low sweep activity. Institutions positioning slowly or not at all."
 
     # Intent classification
-    if call_ratio > 58 and net_prem > 0:
+    directional_tape = sweep_count > 0 or abs(block_prem) > 0 or abs(split_prem) > 0
+    directional_confirmed = directional_tape and order_score >= 60 and flow_score not in (0, 50)
+    if call_ratio > 58 and net_prem > 0 and directional_confirmed:
         flow_intent  = "BULLISH_ACCUMULATION"
-        intent_note  = f"Call premium dominates at {call_ratio:.0f}%. Net flow {_fmtM(net_prem)} bullish."
-    elif call_ratio < 42 and net_prem < 0:
+        intent_note  = f"Buyer-confirmed call flow dominates at {call_ratio:.0f}%. Net flow {_fmtM(net_prem)} bullish."
+    elif call_ratio < 42 and net_prem < 0 and directional_confirmed:
         flow_intent  = "BEARISH_DISTRIBUTION"
-        intent_note  = f"Put premium dominates at {100-call_ratio:.0f}%. Net flow {_fmtM(abs(net_prem))} bearish."
+        intent_note  = f"Seller-confirmed put flow dominates at {100-call_ratio:.0f}%. Net flow {_fmtM(abs(net_prem))} bearish."
+    elif call_ratio > 58 and net_prem > 0:
+        flow_intent = "CALL_DOMINANT_UNCONFIRMED"
+        intent_note = (f"Call premium dominates at {call_ratio:.0f}%, but execution-side/opening "
+                       "evidence is insufficient to classify it as bullish accumulation.")
+    elif call_ratio < 42 and net_prem < 0:
+        flow_intent = "PUT_DOMINANT_UNCONFIRMED"
+        intent_note = (f"Put premium dominates at {100-call_ratio:.0f}%, but execution-side/opening "
+                       "evidence is insufficient to classify it as bearish distribution.")
     else:
         flow_intent  = "MIXED"
         intent_note  = f"Call/put split {call_ratio:.0f}%/{100-call_ratio:.0f}% — no clear directional accumulation."
@@ -311,5 +321,6 @@ def build_flow_intelligence_2(
         "sweep_pressure_label":  "BUY" if flow_bias == "BULLISH" else "SELL" if flow_bias == "BEARISH" else "MIXED",
         "sweep_urgency":         round(sweep_score, 0),
         "institutional_intent":  flow_intent,
+        "directional_confirmed": directional_confirmed,
         "interpretation":        narrative,
     }

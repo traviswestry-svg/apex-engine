@@ -246,6 +246,21 @@ def _govern_horizon(horizon: Dict[str, Any], authority: Mapping[str, Any],
     out["confidence_cap_reasons"] = reasons
     out["relationship_to_authoritative"] = relationship
     out["authoritative_direction"] = auth_dir
+
+    # Intraday describes the active session.  When the independently weighted
+    # context conflicts with the same snapshot's authoritative decision, do not
+    # leave a capped bullish label beside a bearish canonical decision. Preserve
+    # the raw classifier result for diagnostics, but govern the displayed session
+    # direction to the canonical state. Swing remains independent by design.
+    if out.get("horizon") == "INTRADAY" and directional_conflict:
+        out["raw_context_trend"] = out.get("trend")
+        out["raw_context_bias"] = out.get("bias")
+        out["trend"] = auth_dir
+        out["bias"] = auth_dir
+        out["directional_context"] = "CALL" if auth_dir == "BULLISH" else "PUT"
+        out["status"] = "CANONICAL_SESSION_GOVERNED"
+        out["relationship_to_authoritative"] = "GOVERNED_TO_AUTHORITY"
+        out["confidence_cap_reasons"] = reasons + ["INTRADAY_USES_CANONICAL_SESSION_DIRECTION"]
     return out
 
 

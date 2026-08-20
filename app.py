@@ -2184,7 +2184,37 @@ def polygon_bar_ticker(ticker: str) -> str:
     t = (ticker or "").upper().strip()
     if t in {"SPX", "$SPX", "SPXW"}:
         return "I:SPX"
+    if t in {"BPSPX", "$BPSPX", "I:BPSPX"}:
+        return "I:BPSPX"
     return ticker
+
+
+def refresh_bpspx_observation() -> bool:
+    """Refresh the canonical BPSPX feed from Polygon when available.
+
+    TradingView breadth alerts remain a supported secondary source. No SPX
+    price proxy is ever synthesized when the real breadth index is unavailable.
+    """
+    try:
+        bars = get_daily_bars("BPSPX", days=12)
+        valid = [b for b in bars if 0 <= safe_float(b.get("c"), -1) <= 100]
+        if not valid:
+            return False
+        closes = [safe_float(b.get("c")) for b in valid[-100:]]
+        latest = valid[-1]
+        observed_at = dt.datetime.fromtimestamp(
+            safe_float(latest.get("t")) / 1000.0, tz=dt.timezone.utc
+        ).isoformat() if safe_float(latest.get("t")) > 0 else dt.datetime.now(dt.timezone.utc).isoformat()
+        with STATE_LOCK:
+            SCANNER_STATE["bpspx"] = closes[-1]
+            SCANNER_STATE["bpspx_previous"] = closes[-2] if len(closes) > 1 else None
+            SCANNER_STATE["bpspx_history"] = closes
+            SCANNER_STATE["bpspx_observed_at"] = observed_at
+            SCANNER_STATE["bpspx_source"] = "polygon_i_bpspx"
+        return True
+    except Exception as exc:
+        print(f"BPSPX refresh unavailable (fail-closed): {exc}", flush=True)
+        return False
 
 def get_daily_bars(ticker: str, days: int = 320) -> List[dict]:
     end = now_et().date()
@@ -4300,6 +4330,9 @@ def scanner_loop() -> None:
                 _n = _sigeval.mark_due_signals(get_intraday_bars, on_marked=_sigeval_sync)
                 if _n:
                     print(f"signal_evaluator: marked {_n} signal(s).", flush=True)
+                _sync = _sigeval.sync_completed_to_learning()
+                if _sync.get("synced"):
+                    print(f"signal_evaluator: promoted {_sync['synced']} simulated trigger trade(s) to Phase 22.", flush=True)
             except Exception as e:
                 print(f"signal_evaluator mark error (recovered): {e}", flush=True)
         # APEX 7.6.0: settle any premium structures whose 0DTE session has closed,
@@ -8065,13 +8098,14 @@ def api_institutional_os():
             # cannot create an entry or override execution/risk governance.
             if BREADTH_REGIME_AVAILABLE and build_breadth_regime is not None:
                 try:
+                    refresh_bpspx_observation()
                     with STATE_LOCK:
                         _breadth_input = {
                             "bpspx": SCANNER_STATE.get("bpspx"),
                             "bpspx_previous": SCANNER_STATE.get("bpspx_previous"),
                             "bpspx_history": list(SCANNER_STATE.get("bpspx_history") or []),
                             "bpspx_observed_at": SCANNER_STATE.get("bpspx_observed_at"),
-                            "bpspx_source": "tradingview_bpspx",
+                            "bpspx_source": SCANNER_STATE.get("bpspx_source") or "tradingview_bpspx",
                         }
                     result["breadth_regime"] = build_breadth_regime({**result, **_breadth_input})
                 except Exception as _bre_build_err:

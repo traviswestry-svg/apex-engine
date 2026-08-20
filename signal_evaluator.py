@@ -138,11 +138,18 @@ def init_signal_eval_db() -> bool:
                     outcome_pnl    REAL,               -- convenience = mfe if win else mae
                     outcome_notes  TEXT,
                     marked_at      TEXT
+                    ,learning_synced_at TEXT
+                    ,learning_sync_error TEXT
                 );
                 """
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_ps_unscored ON pine_signals(outcome);")
             c.execute("CREATE INDEX IF NOT EXISTS idx_ps_system ON pine_signals(system, received_at);")
+            cols = {r[1] for r in c.execute("PRAGMA table_info(pine_signals)").fetchall()}
+            if "learning_synced_at" not in cols:
+                c.execute("ALTER TABLE pine_signals ADD COLUMN learning_synced_at TEXT")
+            if "learning_sync_error" not in cols:
+                c.execute("ALTER TABLE pine_signals ADD COLUMN learning_sync_error TEXT")
         return True
     except Exception as e:  # pragma: no cover - defensive
         print(f"signal_evaluator: init failed: {e}", flush=True)
@@ -383,6 +390,57 @@ def _persist_outcome(received_at: str, label: str, mfe: float, mae: float,
                                exc=exc, fallback="OUTCOME_PERSISTED_WITHOUT_CALLBACK",
                                decision_authority_suppressed=False,
                                source="signal_evaluator.py")
+
+
+def sync_completed_to_learning(limit: int = 200) -> Dict[str, int]:
+    """Promote each completed Pine evaluation to Phase 22 exactly once.
+
+    Failures remain unsynced and are retried by the next scanner cycle. The
+    deterministic trade_id plus Phase 22's UNIQUE(trade_id) makes this safe
+    across deploys, restarts, duplicate callbacks, and webhook retries.
+    """
+    _ensure_ready()
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT * FROM pine_signals
+               WHERE outcome IS NOT NULL AND learning_synced_at IS NULL
+               ORDER BY received_at ASC LIMIT ?""", (max(1, min(int(limit), 1000)),)
+        ).fetchall()
+    synced = failed = 0
+    for r in rows:
+        try:
+            from engine.trade_director_institutional_learning import archive_learning_record
+            side = str(r["signal"] or "").upper()
+            direction = "BULLISH" if side == "CALL" else "BEARISH" if side == "PUT" else "UNKNOWN"
+            trade_id = "PINE-" + __import__("hashlib").sha256(str(r["received_at"]).encode()).hexdigest()[:20].upper()
+            context = {
+                "symbol": r["ticker"] or "SPX",
+                "position": {"trade_id": trade_id, "side": direction, "entered_at": r["received_at"]},
+                "decision": {"dominant_direction": direction, "confidence": r["score"] or r["apex_ici"] or 0},
+                "strategy": {"selected_strategy": r["system"] or "PINE_TRIGGER"},
+                "trade_lifecycle": {"lifecycle_id": trade_id, "provenance": [{"engine": "PINE_SIGNAL_EVALUATOR", "value": r["outcome"]}]},
+                "simulation": {"type": "SIMULATED_TRIGGER_TRADE", "broker_filled": False},
+            }
+            pnl = float(r["outcome_pnl"] or 0)
+            archive_learning_record(context, {
+                "trade_id": trade_id, "realized_pnl": pnl,
+                "r_multiple": pnl / max(SIGNAL_EVAL_LOSS_PTS, 0.01),
+                "mfe": r["mfe_pts"], "mae": r["mae_pts"],
+                "duration_minutes": SIGNAL_EVAL_WINDOW_MIN,
+                "closed_at": r["marked_at"], "exit_reason": "AUTO_EVALUATION_WINDOW",
+                "source": "SIMULATED_TRIGGER_TRADE",
+                "notes": r["outcome_notes"],
+            })
+            with _conn() as c:
+                c.execute("UPDATE pine_signals SET learning_synced_at=?, learning_sync_error=NULL WHERE received_at=?",
+                          (dt.datetime.now(dt.timezone.utc).isoformat(), r["received_at"]))
+            synced += 1
+        except Exception as exc:
+            with _conn() as c:
+                c.execute("UPDATE pine_signals SET learning_sync_error=? WHERE received_at=?",
+                          (str(exc)[:500], r["received_at"]))
+            failed += 1
+    return {"eligible": len(rows), "synced": synced, "failed": failed}
 
 
 # ── Reporting ───────────────────────────────────────────────────────────────
