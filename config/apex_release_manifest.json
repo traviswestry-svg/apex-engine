@@ -1,6 +1,6 @@
 {
-  "apex_version": "67.9.0",
-  "build_name": "Post-Persistence Architecture Audit",
+  "apex_version": "67.9.1",
+  "build_name": "Duplicate Route Integrity Closure",
   "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -80,7 +80,12 @@
     "post_persistence_architecture_audit_changes_decisions": false,
     "post_persistence_architecture_audit_changes_execution_authority": false,
     "post_persistence_architecture_audit_mutates_persistence": false,
-    "remaining_sqlite_requires_staged_review": true
+    "remaining_sqlite_requires_staged_review": true,
+    "duplicate_route_integrity_method_aware": true,
+    "duplicate_route_path_only_false_positive_closed": true,
+    "duplicate_route_integrity_changes_runtime_routes": false,
+    "duplicate_route_integrity_changes_decisions": false,
+    "duplicate_route_integrity_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

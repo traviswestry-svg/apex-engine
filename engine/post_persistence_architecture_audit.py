@@ -1,4 +1,4 @@
-"""APEX 67.9.0 — Post-Persistence Architecture Audit.
+"""APEX 67.9.1 — Post-Persistence Architecture Audit.
 
 Read-only static architecture diagnostic for the staged canonical-persistence program.
 It inventories remaining direct SQLite usage after 67.8.1 and highlights places where
@@ -15,7 +15,7 @@ from typing import Any
 
 from .architecture_integrity import snapshot as architecture_snapshot
 
-VERSION = "67.9.0"
+VERSION = "67.9.1"
 SCHEMA_VERSION = "apex.post_persistence_architecture_audit.v1"
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "engine"
@@ -167,6 +167,8 @@ def snapshot() -> dict[str, Any]:
             "identity_aligned": architecture.get("identity_aligned"),
             "missing_module_count": len(architecture.get("missing_modules") or []),
             "duplicate_route_count": len(architecture.get("duplicate_routes") or []),
+            "duplicate_routes": architecture.get("duplicate_routes") or [],
+            "duplicate_route_details": architecture.get("duplicate_route_details") or [],
             "cleanup_violation_count": len(architecture.get("cleanup_violations") or []),
         },
         "persistence": {
