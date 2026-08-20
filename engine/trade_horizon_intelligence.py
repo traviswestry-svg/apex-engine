@@ -246,6 +246,21 @@ def _govern_horizon(horizon: Dict[str, Any], authority: Mapping[str, Any],
     out["confidence_cap_reasons"] = reasons
     out["relationship_to_authoritative"] = relationship
     out["authoritative_direction"] = auth_dir
+
+    # Intraday describes the active session.  When the independently weighted
+    # context conflicts with the same snapshot's authoritative decision, do not
+    # leave a capped bullish label beside a bearish canonical decision. Preserve
+    # the raw classifier result for diagnostics, but govern the displayed session
+    # direction to the canonical state. Swing remains independent by design.
+    if out.get("horizon") == "INTRADAY" and directional_conflict:
+        out["raw_context_trend"] = out.get("trend")
+        out["raw_context_bias"] = out.get("bias")
+        out["trend"] = auth_dir
+        out["bias"] = auth_dir
+        out["directional_context"] = "CALL" if auth_dir == "BULLISH" else "PUT"
+        out["status"] = "CONFLICT"
+        out["relationship_to_authoritative"] = "GOVERNED_TO_AUTHORITY"
+        out["confidence_cap_reasons"] = reasons + ["INTRADAY_USES_CANONICAL_SESSION_DIRECTION"]
     return out
 
 
@@ -325,9 +340,31 @@ def build_trade_horizon_intelligence(
         name: _govern_horizon(_classify_horizon(name, pool), authority, quality)
         for name in HORIZONS
     }
+    # Contract-level backstop. Keep this at composition scope so the public
+    # payload cannot regress to CONFLICT/BULLISH for Intraday even if a legacy
+    # governance helper is restored during a merge or deployment overlay.
+    intraday = horizons["INTRADAY"]
+    auth_dir = authority.get("direction")
+    if (authority.get("available") and auth_dir in ("BULLISH", "BEARISH") and
+            intraday.get("bias") in ("BULLISH", "BEARISH") and
+            intraday.get("bias") != auth_dir):
+        intraday["raw_context_trend"] = intraday.get("trend")
+        intraday["raw_context_bias"] = intraday.get("bias")
+        intraday["trend"] = auth_dir
+        intraday["bias"] = auth_dir
+        intraday["directional_context"] = "CALL" if auth_dir == "BULLISH" else "PUT"
+        intraday["trade_focus"] = "NO_TRADE"
+        intraday["status"] = "CANONICAL_SESSION_GOVERNED"
+        intraday["relationship_to_authoritative"] = "GOVERNED_TO_AUTHORITY"
+        intraday["confidence"] = min(_f(intraday.get("confidence")), 50.0)
+        reasons = list(intraday.get("confidence_cap_reasons") or [])
+        for reason in ("AUTHORITATIVE_DIRECTION_CONFLICT", "INTRADAY_USES_CANONICAL_SESSION_DIRECTION"):
+            if reason not in reasons:
+                reasons.append(reason)
+        intraday["confidence_cap_reasons"] = reasons
     relation = _relationship(horizons["SCALP"], horizons["INTRADAY"], horizons["SWING"])
     conflicts = [name for name, item in horizons.items()
-                 if item.get("relationship_to_authoritative") == "CONFLICT"]
+                 if item.get("relationship_to_authoritative") in ("CONFLICT", "GOVERNED_TO_AUTHORITY")]
     if conflicts:
         relation["horizon_conflict"] = True
         relation["authoritative_conflict"] = True

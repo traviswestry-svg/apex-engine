@@ -54,11 +54,15 @@ def test_authoritative_conflict_fails_closed_and_caps_confidence():
     )
     assert out["snapshot"]["single_snapshot_contract"] is True
     assert out["relationship"]["authoritative_conflict"] is True
-    for horizon in out["horizons"].values():
+    for name, horizon in out["horizons"].items():
         assert horizon["trade_focus"] == "NO_TRADE"
-        assert horizon["status"] == "CONFLICT"
         assert horizon["confidence"] <= 50
         assert "AUTHORITATIVE_DIRECTION_CONFLICT" in horizon["confidence_cap_reasons"]
+        if name == "INTRADAY":
+            assert horizon["status"] == "CONFLICT"
+            assert horizon["bias"] == "BEARISH"
+        else:
+            assert horizon["status"] == "CONFLICT"
 
 
 def test_closed_session_is_context_only_not_ready():
