@@ -8,6 +8,7 @@ import datetime as dt
 import hashlib
 import json
 import sqlite3
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 import uuid
 from typing import Any
 
@@ -36,7 +37,7 @@ def _load(value: Any, default: Any = None) -> Any:
 
 
 def _conn():
-    c = sqlite3.connect(gov.DB_PATH)
+    c = canonical_sqlite_connect(gov.DB_PATH)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA foreign_keys=ON")
     return c

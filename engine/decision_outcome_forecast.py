@@ -26,6 +26,7 @@ import datetime as dt
 import math
 import os
 import sqlite3
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 import uuid
 from typing import Any, Mapping, Optional, Sequence
 
@@ -493,7 +494,7 @@ def _db_path() -> str:
 
 
 def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path())
+    conn = canonical_sqlite_connect(_db_path())
     conn.row_factory = sqlite3.Row
     return conn
 

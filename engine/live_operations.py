@@ -5,6 +5,7 @@ completeness, synchronized decision snapshots, session state and tradeability.
 May block APEX internal actionability; never mutates recommendations or brokers.
 """
 from __future__ import annotations
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 import datetime as dt, hashlib, json, sqlite3, uuid
 from typing import Any
 from . import institutional_governance as gov
@@ -20,7 +21,7 @@ def _now_dt(): return dt.datetime.now(dt.timezone.utc)
 def _now(): return _now_dt().isoformat()
 def _json(v): return json.dumps(v,sort_keys=True,separators=(',',':'),default=str)
 def _conn():
-    c=sqlite3.connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
+    c=canonical_sqlite_connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
 
 def init_db():
     gov.init_db()

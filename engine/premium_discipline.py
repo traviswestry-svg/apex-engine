@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -225,7 +226,7 @@ class RefusalLedger:
         self._init()
 
     def _connect(self) -> sqlite3.Connection:
-        c = sqlite3.connect(self.db_path, timeout=10)
+        c = canonical_sqlite_connect(self.db_path, timeout=10)
         c.row_factory = sqlite3.Row
         return c
 

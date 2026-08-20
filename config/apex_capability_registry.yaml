@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 67.9.1
+apex_version: 68.0.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: "67.9.1"
+    version: "68.0.0"
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -251,12 +251,21 @@ capabilities:
   post_persistence_architecture_audit:
     canonical_module: engine.post_persistence_architecture_audit
     status: active
-    version: "67.9.1"
+    version: "68.0.0"
     inputs: [canonical_release_manifest, capability_registry, source_tree, remaining_sqlite_sites, architecture_integrity]
     outputs: [persistence_debt_inventory, consequence_tiers, competing_policy_sites, recommended_next_action]
     api_routes: [/api/post-persistence-architecture-audit, /apex_os/post-persistence-architecture-audit]
     decision_authority: none
     guardrails: [read_only, no_runtime_mutation, no_database_mutation, no_decision_authority, no_execution_authority, staged_review_only]
+
+  final_high_consequence_persistence_closure:
+    canonical_module: engine.canonical_persistence
+    status: active
+    version: "68.0.0"
+    inputs: [decision_state_stores, confidence_attribution, market_state, order_flow, feature_store, level_transition, trade_director_change_control, trade_director_data_lineage, premium_strategy_state]
+    outputs: [canonical_high_consequence_connections, closed_high_consequence_persistence_debt]
+    decision_authority: none
+    guardrails: [no_schema_migration, no_database_relocation, no_trading_logic_change, no_risk_rule_change, no_decision_authority_change, no_execution_authority_change, preserve_specialized_infrastructure_semantics]
 
   duplicate_route_integrity_closure:
     canonical_module: engine.architecture_integrity

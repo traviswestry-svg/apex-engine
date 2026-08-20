@@ -4,13 +4,14 @@ Learns bounded advisory allocation parameters from graded portfolio outcomes.
 Recommendations are immutable and non-operational until explicitly promoted.
 """
 from __future__ import annotations
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 import datetime as dt, json, os, sqlite3
 from typing import Any, Dict, Optional
 VERSION="18.1.4_ADAPTIVE_PORTFOLIO_ALLOCATION_CALIBRATION"
 DEFAULT={"institutional_score_weight":0.50,"expected_value_weight":0.50,"bull_bear_pair_penalty":0.35,"max_positions":2,"max_contracts_per_strategy":3}
 class PortfolioCalibrationStore:
     def __init__(self,db_path:Optional[str]=None): self.db_path=db_path or os.getenv('DB_PATH','apex_tracking.db'); self._init()
-    def _c(self): c=sqlite3.connect(self.db_path); c.row_factory=sqlite3.Row; return c
+    def _c(self): c=canonical_sqlite_connect(self.db_path); c.row_factory=sqlite3.Row; return c
     def _init(self):
         with self._c() as c:
             c.execute("""CREATE TABLE IF NOT EXISTS portfolio_calibration_runs(id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, status TEXT NOT NULL, sample_size INTEGER NOT NULL, evidence_json TEXT NOT NULL, recommendation_json TEXT NOT NULL, promoted INTEGER NOT NULL DEFAULT 0, promoted_at TEXT, promoted_by TEXT)""")

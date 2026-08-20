@@ -1,7 +1,7 @@
 {
-  "apex_version": "67.9.1",
-  "build_name": "Duplicate Route Integrity Closure",
-  "release_series": "APEX 67",
+  "apex_version": "68.0.0",
+  "build_name": "Final High-Consequence Persistence Closure",
+  "release_series": "APEX 68",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
@@ -85,7 +85,15 @@
     "duplicate_route_path_only_false_positive_closed": true,
     "duplicate_route_integrity_changes_runtime_routes": false,
     "duplicate_route_integrity_changes_decisions": false,
-    "duplicate_route_integrity_changes_execution_authority": false
+    "duplicate_route_integrity_changes_execution_authority": false,
+    "canonical_persistence_final_high_consequence_closure": true,
+    "high_consequence_direct_sqlite_remaining": false,
+    "high_consequence_persistence_schema_changes": false,
+    "high_consequence_persistence_path_changes": false,
+    "high_consequence_persistence_logic_changes": false,
+    "high_consequence_persistence_authority_changes": false,
+    "specialized_infrastructure_persistence_preserved": true,
+    "lower_authority_persistence_requires_individual_review": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

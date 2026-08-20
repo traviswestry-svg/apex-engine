@@ -30,12 +30,18 @@ def test_679_inventory_matches_source_tree_direct_connects():
     assert {x["module"] for x in s["direct_sqlite_sites"]} == expected_files
 
 
-def test_679_high_consequence_review_remains_explicit():
+def test_679_high_consequence_review_remains_explicit_until_canonicalized():
     s=snapshot()["persistence"]
     high=set(s["by_tier"].get("HIGH_CONSEQUENCE_REVIEW", []))
-    assert "engine/institutional_market_state_engine.py" in high
-    assert "engine/institutional_order_flow_intelligence.py" in high
-    assert "engine/level_transition_probability.py" in high
+    for module in (
+        "engine/institutional_market_state_engine.py",
+        "engine/institutional_order_flow_intelligence.py",
+        "engine/level_transition_probability.py",
+    ):
+        source=(ROOT/module).read_text()
+        assert module in high or (
+            "sqlite3.connect(" not in source and "canonical_persistence" in source
+        )
     assert s["high_consequence_file_count"] == len(high)
 
 
