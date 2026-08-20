@@ -258,7 +258,7 @@ def _govern_horizon(horizon: Dict[str, Any], authority: Mapping[str, Any],
         out["trend"] = auth_dir
         out["bias"] = auth_dir
         out["directional_context"] = "CALL" if auth_dir == "BULLISH" else "PUT"
-        out["status"] = "CANONICAL_SESSION_GOVERNED"
+        out["status"] = "CONFLICT"
         out["relationship_to_authoritative"] = "GOVERNED_TO_AUTHORITY"
         out["confidence_cap_reasons"] = reasons + ["INTRADAY_USES_CANONICAL_SESSION_DIRECTION"]
     return out
