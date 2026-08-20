@@ -6,6 +6,7 @@ and ES/SPX evidence into an Institutional Pressure Score (IPS). It is advisory
 and read-only: no recommendation, confidence, risk, or broker mutation.
 """
 from __future__ import annotations
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 import datetime as dt, hashlib, json, math, sqlite3, uuid
 from typing import Any
 from . import institutional_governance as gov
@@ -24,7 +25,7 @@ def _load(v,d=None):
     try:return json.loads(v)
     except Exception:return {} if d is None else d
 def _conn():
-    c=sqlite3.connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
+    c=canonical_sqlite_connect(gov.DB_PATH); c.row_factory=sqlite3.Row; return c
 def _num(v,default=0.0):
     try:
         x=float(v); return x if math.isfinite(x) else default

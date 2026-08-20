@@ -38,6 +38,7 @@ import json as _json
 import math as _math
 import os
 import sqlite3
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 import threading
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -89,7 +90,7 @@ _SETTLE_HOUR_ET = int(os.getenv("PREMIUM_SETTLE_HOUR_ET", "16"))  # cash close
 
 
 def _conn() -> sqlite3.Connection:
-    c = sqlite3.connect(_DB_PATH, timeout=10)
+    c = canonical_sqlite_connect(_DB_PATH, timeout=10)
     c.row_factory = sqlite3.Row
     return c
 

@@ -21,6 +21,7 @@ import json
 import math
 import os
 import sqlite3
+from engine.canonical_persistence import connect as canonical_sqlite_connect, connection as canonical_sqlite_connection
 import uuid
 from datetime import datetime, timezone
 from statistics import median
@@ -928,7 +929,7 @@ def _load_latest_morning_brief(symbol: str = "SPX") -> Optional[Dict[str, Any]]:
         from .persistent_store import persistent_sqlite_path
         recap_db = persistent_sqlite_path("APEX_GOVERNANCE_DB", "apex_governance.db")
         init_evening_archive_db(recap_db)
-        with sqlite3.connect(recap_db, timeout=5) as conn:
+        with canonical_sqlite_connection(recap_db, timeout=5) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """SELECT payload_json FROM apex49_morning_revisions

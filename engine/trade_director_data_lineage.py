@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
@@ -123,7 +124,7 @@ def _connect() -> sqlite3.Connection:
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=5.0)
+    conn = canonical_sqlite_connect(path, timeout=5.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA)
