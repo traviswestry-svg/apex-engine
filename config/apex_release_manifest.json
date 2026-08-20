@@ -1,12 +1,12 @@
 {
-  "apex_version": "67.8.1",
-  "build_name": "CI Regression Fix \u2014 Deterministic BPSPX Freshness Fixture",
+  "apex_version": "67.9.0",
+  "build_name": "Post-Persistence Architecture Audit",
   "release_series": "APEX 67",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-18",
+  "released_at": "2026-08-20",
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
@@ -75,7 +75,12 @@
     "bpspx_freshness_governance_preserved": true,
     "breadth_regime_production_logic_changes": false,
     "breadth_regime_threshold_changes": false,
-    "breadth_regime_authority_changes": false
+    "breadth_regime_authority_changes": false,
+    "post_persistence_architecture_audit_read_only": true,
+    "post_persistence_architecture_audit_changes_decisions": false,
+    "post_persistence_architecture_audit_changes_execution_authority": false,
+    "post_persistence_architecture_audit_mutates_persistence": false,
+    "remaining_sqlite_requires_staged_review": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

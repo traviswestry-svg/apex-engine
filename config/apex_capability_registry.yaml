@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 67.8.1
+apex_version: 67.9.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: "67.8.1"
+    version: "67.9.0"
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -247,6 +247,16 @@ capabilities:
     outputs: [canonical_research_connections, canonical_replay_connections, canonical_reporting_connections, canonical_read_only_diagnostics]
     decision_authority: none
     guardrails: [no_schema_migration, no_database_relocation, no_research_logic_change, no_replay_logic_change, no_reporting_logic_change, no_decision_authority_change, no_execution_authority_change, preserve_read_only_diagnostics, staged_migration]
+
+  post_persistence_architecture_audit:
+    canonical_module: engine.post_persistence_architecture_audit
+    status: active
+    version: "67.9.0"
+    inputs: [canonical_release_manifest, capability_registry, source_tree, remaining_sqlite_sites, architecture_integrity]
+    outputs: [persistence_debt_inventory, consequence_tiers, competing_policy_sites, recommended_next_action]
+    api_routes: [/api/post-persistence-architecture-audit, /apex_os/post-persistence-architecture-audit]
+    decision_authority: none
+    guardrails: [read_only, no_runtime_mutation, no_database_mutation, no_decision_authority, no_execution_authority, staged_review_only]
 
   silent_degradation_coverage_wave2:
     canonical_module: engine.silent_degradation_observability

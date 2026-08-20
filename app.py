@@ -1274,6 +1274,15 @@ except Exception as _ai672_err:
     ARCHITECTURE_INTEGRITY_AVAILABLE = False
     print(f"APEX 67.2.0 Architecture Integrity unavailable (non-fatal): {_ai672_err}", flush=True)
 
+# APEX 67.9.0 — Post-Persistence Architecture Audit (read-only).
+try:
+    from engine.post_persistence_architecture_audit_routes import register_post_persistence_architecture_audit_routes
+    POST_PERSISTENCE_ARCHITECTURE_AUDIT_AVAILABLE = True
+except Exception as _ppaa_err:
+    register_post_persistence_architecture_audit_routes = None  # type: ignore[assignment]
+    POST_PERSISTENCE_ARCHITECTURE_AUDIT_AVAILABLE = False
+    print(f"APEX 67.9.0 Post-Persistence Architecture Audit unavailable (non-fatal): {_ppaa_err}", flush=True)
+
 # APEX 11.0D — Operations Center and system checks (isolated, read-only).
 try:
     from engine.operations_routes import register_operations_routes
@@ -13629,6 +13638,10 @@ try:
     if ARCHITECTURE_INTEGRITY_AVAILABLE and register_architecture_integrity_routes is not None:
         register_architecture_integrity_routes(app)
         print("APEX 67.2.0 Architecture Integrity routes registered.", flush=True)
+
+    if POST_PERSISTENCE_ARCHITECTURE_AUDIT_AVAILABLE and register_post_persistence_architecture_audit_routes is not None:
+        register_post_persistence_architecture_audit_routes(app)
+        print("APEX 67.9.0 Post-Persistence Architecture Audit routes registered.", flush=True)
 
     if OPERATIONS_ROUTES_AVAILABLE and register_operations_routes is not None:
         register_operations_routes(app)
