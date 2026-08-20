@@ -59,7 +59,7 @@ def test_authoritative_conflict_fails_closed_and_caps_confidence():
         assert horizon["confidence"] <= 50
         assert "AUTHORITATIVE_DIRECTION_CONFLICT" in horizon["confidence_cap_reasons"]
         if name == "INTRADAY":
-            assert horizon["status"] == "CONFLICT"
+            assert horizon["status"] == "CANONICAL_SESSION_GOVERNED"
             assert horizon["bias"] == "BEARISH"
         else:
             assert horizon["status"] == "CONFLICT"

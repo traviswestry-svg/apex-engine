@@ -23,7 +23,7 @@ def test_intraday_conflict_is_governed_to_canonical_session():
     assert intraday["trend"] == "BEARISH"
     assert intraday["bias"] == "BEARISH"
     assert intraday["raw_context_bias"] == "BULLISH"
-    assert intraday["status"] == "CONFLICT"
+    assert intraday["status"] == "CANONICAL_SESSION_GOVERNED"
     assert intraday["trade_focus"] == "NO_TRADE"
 
 
