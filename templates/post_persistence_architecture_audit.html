@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APEX Post-Persistence Architecture Audit</title><style>
+body{font-family:Arial,sans-serif;background:#0b0f14;color:#e6edf3;margin:0;padding:22px}a{color:#58a6ff}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:18px 0}.card{background:#121923;border:1px solid #273244;border-radius:10px;padding:14px}
+.big{font-size:26px;font-weight:700}.muted{color:#8b949e}pre{background:#121923;border:1px solid #273244;padding:14px;overflow:auto;white-space:pre-wrap}.warn{color:#f2cc60}
+</style></head><body>
+<a href="/apex_os">← APEX OS</a><h1>Post-Persistence Architecture Audit</h1>
+<div class="muted">APEX {{ version }} · read-only persistence debt, policy overlap, and architecture closure review</div>
+<div class="cards">
+<div class="card"><div class="muted">Architecture</div><div id="s" class="big">—</div></div>
+<div class="card"><div class="muted">Audit State</div><div id="a" class="big">—</div></div>
+<div class="card"><div class="muted">Direct SQLite Files</div><div id="f" class="big">—</div></div>
+<div class="card"><div class="muted">Direct Calls</div><div id="c" class="big">—</div></div>
+<div class="card"><div class="muted">High-Consequence Files</div><div id="h" class="big">—</div></div>
+<div class="card"><div class="muted">Local Policy Sites</div><div id="p" class="big">—</div></div>
+</div>
+<pre id="detail">Loading…</pre><script>
+fetch('/api/post-persistence-architecture-audit',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+ s.textContent=d.status||'UNKNOWN'; a.textContent=d.audit_state||'UNKNOWN';
+ const p=d.persistence||{}; f.textContent=p.remaining_direct_sqlite_files??0;c.textContent=p.remaining_direct_sqlite_calls??0;h.textContent=p.high_consequence_file_count??0;const pEl=document.getElementById('p');pEl.textContent=p.competing_policy_site_count??0;
+ detail.textContent=JSON.stringify(d,null,2);
+}).catch(e=>detail.textContent=String(e));
+</script></body></html>

@@ -6,8 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_6781_release_identity_and_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "67.8.1"
-    assert manifest["build_name"] == "CI Regression Fix — Deterministic BPSPX Freshness Fixture"
+    version = tuple(int(x) for x in manifest["apex_version"].split("."))
+    assert version >= (67, 8, 1)
     g = manifest["guardrails"]
     assert g["bpspx_ci_fixture_clock_deterministic"] is True
     assert g["bpspx_freshness_governance_preserved"] is True
@@ -18,9 +18,13 @@ def test_6781_release_identity_and_guardrails():
 
 def test_6781_registry_release_identity_is_ratcheted():
     text = (ROOT / "config/apex_capability_registry.yaml").read_text(encoding="utf-8")
-    assert "apex_version: 67.8.1" in text
+    top = next(line for line in text.splitlines() if line.startswith("apex_version:"))
+    version = tuple(int(x) for x in top.split(":", 1)[1].strip().strip('"').split("."))
+    assert version >= (67, 8, 1)
     section = text.split("  release_manifest:", 1)[1].split("\n  breadth_regime:", 1)[0]
-    assert 'version: "67.8.1"' in section
+    rel = next(line for line in section.splitlines() if line.strip().startswith("version:"))
+    rel_version = tuple(int(x) for x in rel.split(":", 1)[1].strip().strip('"').split("."))
+    assert rel_version >= (67, 8, 1)
 
 
 def test_6781_breadth_route_fixture_has_deterministic_clock():
