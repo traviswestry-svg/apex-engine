@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Dict, Iterable, Mapping, Optional, List, Tuple
 
+from engine.dynamic_state_policy import evaluate_dynamic_state_policy
+
 QUALITY_VERSION = "38.0"
 VERSION = QUALITY_VERSION  # kept for callers importing VERSION from the quality module
 
@@ -462,7 +464,10 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
     exit_threshold = _num(s.get("exit_confidence_threshold"), max(0.0, entry_threshold - 8.0))
     active = bool((prior_state or {}).get("active") or s.get("position_active") or "HOLD" in recommendation)
     applied_threshold = exit_threshold if active else entry_threshold
-    boundary_margin = confidence - applied_threshold
+    dynamic_policy = evaluate_dynamic_state_policy(s, direction=direction, prior_state=prior_state)
+    dynamic_adjustment = _num(dynamic_policy.get("threshold_adjustment_points"), 0.0)
+    applied_threshold_with_dynamic = applied_threshold + dynamic_adjustment
+    boundary_margin = confidence - applied_threshold_with_dynamic
 
     blockers = []
     if not market_open:
@@ -473,12 +478,15 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
         blockers.append("NO_DIRECTIONAL_CONSENSUS")
     if liquidity in {"POOR", "WIDE", "UNAVAILABLE", "FAILED"}:
         blockers.append("LIQUIDITY_NOT_ELIGIBLE")
-    if confidence < applied_threshold:
+    if confidence < applied_threshold_with_dynamic:
         blockers.append("CONFIDENCE_BELOW_DECISION_BOUNDARY")
     if execution and execution < 70:
         blockers.append("EXECUTION_QUALITY_BELOW_MINIMUM")
     if position_quality and position_quality < 70:
         blockers.append("POSITION_QUALITY_BELOW_MINIMUM")
+
+    if dynamic_policy.get("suppress_new_alerts"):
+        blockers.append("EVENT_RELEASE_NEW_ALERT_SUPPRESSION")
 
     participation = build_flow_participation(s)
     # Do not let raw-volume participation independently authorize an alert.
@@ -489,7 +497,10 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
             blockers.append("FLOW_TOO_DISPERSED")
 
     alert_eligible = not blockers
-    if alert_eligible and boundary_margin < 5:
+    if alert_eligible and dynamic_policy.get("watch_only"):
+        alert_state = "WATCH_ONLY"
+        alert_eligible = False
+    elif alert_eligible and boundary_margin < 5:
         alert_state = "WATCH_ONLY"
         alert_eligible = False
         blockers.append("INSUFFICIENT_BOUNDARY_MARGIN")
@@ -510,6 +521,7 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
             "entry_threshold": entry_threshold,
             "exit_threshold": exit_threshold,
             "applied_threshold": applied_threshold,
+            "dynamic_threshold_adjustment": round(dynamic_adjustment, 1),
             "margin_points": round(boundary_margin, 1),
             "hysteresis_points": round(entry_threshold - exit_threshold, 1),
             "next_state_requirement": (
@@ -528,9 +540,10 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
             ),
         },
         "flow_participation": participation,
+        "dynamic_state_policy": dynamic_policy,
         "policy_quality": _policy_metrics(s),
         "counterfactuals": [
-            {"change": "confidence", "required": round(max(0.0, applied_threshold + 5.0 - confidence), 1),
+            {"change": "confidence", "required": round(max(0.0, applied_threshold_with_dynamic + 5.0 - confidence), 1),
              "effect": "Would clear the minimum decision-boundary margin."},
             {"change": "data_freshness", "required": "FRESH", "effect": "Removes stale-data suppression."},
             {"change": "liquidity", "required": "NORMAL_OR_BETTER", "effect": "Removes execution-liquidity suppression."},

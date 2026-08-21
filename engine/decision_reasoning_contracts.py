@@ -183,6 +183,15 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
     ii = _dict(last.get("institutional_intelligence"))
     auction = _dict(last.get("auction_intelligence") or last.get("auction"))
     flow = _dict(last.get("flow_intelligence_2") or last.get("flow_intelligence") or last.get("options_flow_intelligence"))
+    flow_independence = _num(_nested(
+        last,
+        "institutional_options_flow.flow_excitation.independent_evidence_factor",
+        "options_flow_engine.flow_excitation.independent_evidence_factor",
+        "dynamic_state.flow_excitation.independent_evidence_factor",
+        "flow_intelligence.flow_excitation.independent_evidence_factor",
+        "flow_intelligence_2.flow_excitation.independent_evidence_factor",
+        "flow_intelligence.independent_evidence_factor",
+    ))
     dealer = _dict(last.get("dealer_positioning"))
     structure = _dict(last.get("institutional_market_structure") or last.get("market_structure") or last.get("structure"))
     if not structure:
@@ -241,14 +250,17 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
         available = _engine_available(evidence)
         missing = [] if raw not in (None, "") and available else [f"{origin}.direction"]
         freshness = _engine_freshness(evidence, evidence.get("freshness") or evidence.get("freshness_state"), missing=not available)
-        out.append(make_engine_opinion(
+        opinion = make_engine_opinion(
             engine_name=name, raw_direction=raw if available else None, reliability=rel,
             correlation_cluster=CORRELATION_CLUSTERS.get(name), confidence=conf,
             freshness=freshness, evidence=evidence, missing_data=missing,
             provenance={"origin": origin, "normalizer_version": VERSION, "adapter": "production_schema"},
             engine_version=_engine_version(evidence), timestamp=_engine_timestamp(evidence),
             abstain_reason="PROVIDER_UNAVAILABLE" if not available else None,
-        ))
+        )
+        if name == "flow":
+            opinion["independence_factor"] = flow_independence
+        out.append(opinion)
     return out
 
 
@@ -333,7 +345,13 @@ def build_correlation_aware_consensus(opinions: List[Mapping[str, Any]]) -> Dict
             effective_total += ew
             d = o.get("direction")
             if d in effective: effective[d] += ew
-            eff_rows.append({"engine": o.get("engine_name"), "direction": d, "raw_weight": round(w, 4), "effective_weight": round(ew, 4)})
+            eff_rows.append({
+                "engine": o.get("engine_name"),
+                "direction": d,
+                "raw_weight": round(w, 4),
+                "effective_weight": round(ew, 4),
+                "independence_factor": _num(o.get("independence_factor")),
+            })
         directions = {o.get("direction") for o, _ in rows if o.get("direction") in {"BULLISH", "BEARISH"}}
         if rows: active_clusters.append(cluster)
         if len(directions) > 1: conflicted_clusters.append(cluster)
