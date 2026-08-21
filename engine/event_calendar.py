@@ -251,6 +251,7 @@ def build_event_intelligence(now: Optional[dt.datetime] = None) -> Dict[str, Any
             "as_of": today.isoformat(),
             "event_regime": event_regime,          # backward-compatible day-level regime
             "intraday_event_regime": intraday_regime,
+            "event_phase": event_phase_at(now),
             "headline_event": headline,
             "today_events": today_events,
             "upcoming": upcoming,
@@ -268,6 +269,60 @@ def build_event_intelligence(now: Optional[dt.datetime] = None) -> Dict[str, Any
             "summary": f"Event intelligence recovered from error: {e}",
             "data_stale": False, "stale_note": None,
         }
+
+
+def event_phase_at(moment: Optional[dt.datetime] = None) -> Dict[str, Any]:
+    """Return a canonical intraday event phase for alert/flow segmentation.
+
+    High-impact scheduled releases get explicit pre/post windows. Rule-derived
+    events without a release timestamp remain NORMAL so we do not invent false
+    precision.
+    """
+    now = moment or dt.datetime.now(EASTERN)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=EASTERN)
+    else:
+        now = now.astimezone(EASTERN)
+
+    candidates = []
+    for iso, key, label, tier in DATED_EVENTS:
+        if tier != "HIGH" and key not in {"PPI"}:
+            continue
+        try:
+            d = dt.date.fromisoformat(iso)
+        except ValueError:
+            continue
+        hh, mm = (14, 0) if key == "FOMC" else (8, 30)
+        release = dt.datetime.combine(d, dt.time(hh, mm), tzinfo=EASTERN)
+        delta = (now - release).total_seconds()
+        if abs(delta) <= 24 * 3600:
+            candidates.append((abs(delta), delta, key, label, tier, release))
+
+    if not candidates:
+        return {"available": True, "phase": "NORMAL", "event_key": None,
+                "event_label": None, "release_at": None, "seconds_to_event": None,
+                "boundary_id": None}
+
+    _, delta, key, label, tier, release = min(candidates, key=lambda x: x[0])
+    seconds_to = -delta
+    if delta < -3600:
+        phase = "PRE_EVENT"
+    elif delta < -300:
+        phase = "EVENT_IMMINENT"
+    elif delta < 120:
+        phase = "RELEASE"
+    elif delta < 1800:
+        phase = "PRICE_DISCOVERY"
+    elif delta < 7200:
+        phase = "POST_EVENT_NORMALIZATION"
+    else:
+        phase = "NORMAL"
+    return {
+        "available": True, "phase": phase, "event_key": key, "event_label": label,
+        "impact": tier, "release_at": release.isoformat(),
+        "seconds_to_event": round(seconds_to, 1),
+        "boundary_id": f"{key}:{release.isoformat()}",
+    }
 
 
 def _overall_summary(regime: str, headline: Optional[Dict[str, Any]],
@@ -288,70 +343,3 @@ def _overall_summary(regime: str, headline: Optional[Dict[str, Any]],
 
 def _when(days: int) -> str:
     return "today" if days == 0 else "tomorrow" if days == 1 else f"in {days} days"
-
-
-def event_phase_at(now: Optional[dt.datetime] = None) -> Dict[str, Any]:
-    """Return a coarse event-boundary phase for scheduled macro releases.
-
-    This is a compatibility helper for consumers that need to split observations
-    across a scheduled release boundary without depending on the richer event
-    regime payload.
-    """
-    try:
-        now = now or dt.datetime.now(EASTERN)
-        if now.tzinfo is None:
-            now = now.replace(tzinfo=EASTERN)
-        else:
-            now = now.astimezone(EASTERN)
-
-        intelligence = build_event_intelligence(now=now)
-        today_events = list(intelligence.get("today_events") or [])
-        supported = [e for e in today_events if e.get("release_time_et")]
-        if not supported:
-            return {
-                "available": False,
-                "phase": "NORMAL",
-                "boundary_id": None,
-                "segment_id": None,
-                "release_at": None,
-                "minutes_from_release": None,
-                "event_key": None,
-            }
-
-        priority = {"FOMC": 0, "CPI": 1, "NFP": 2, "PPI": 3}
-        event = sorted(supported, key=lambda e: priority.get(str(e.get("key", "")).upper(), 99))[0]
-        hour, minute = (int(x) for x in str(event["release_time_et"]).split(":"))
-        release_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        minutes_from_release = (now - release_at).total_seconds() / 60.0
-
-        if minutes_from_release < 2.0:
-            phase = "RELEASE"
-            segment = "PRE_RELEASE" if minutes_from_release < 0 else "INITIAL_RELEASE"
-        elif minutes_from_release < 45.0:
-            phase = "PRICE_DISCOVERY"
-            segment = "POST_RELEASE"
-        else:
-            phase = "POST_EVENT"
-            segment = "POST_EVENT"
-
-        boundary_id = f"{event.get('key')}@{release_at.date().isoformat()}"
-        return {
-            "available": True,
-            "phase": phase,
-            "boundary_id": boundary_id,
-            "segment_id": f"{boundary_id}:{segment}",
-            "release_at": release_at.isoformat(),
-            "minutes_from_release": round(minutes_from_release, 2),
-            "event_key": event.get("key"),
-        }
-    except Exception as exc:
-        return {
-            "available": False,
-            "phase": "NORMAL",
-            "boundary_id": None,
-            "segment_id": None,
-            "release_at": None,
-            "minutes_from_release": None,
-            "event_key": None,
-            "reason": str(exc),
-        }

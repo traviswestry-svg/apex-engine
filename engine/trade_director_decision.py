@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Dict, Iterable, Mapping, Optional, List, Tuple
 
+from .dynamic_state_policy import evaluate_dynamic_state_policy
+
 QUALITY_VERSION = "38.0"
 VERSION = QUALITY_VERSION  # kept for callers importing VERSION from the quality module
 
@@ -461,7 +463,10 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
     entry_threshold = _num(s.get("entry_confidence_threshold"), 80.0)
     exit_threshold = _num(s.get("exit_confidence_threshold"), max(0.0, entry_threshold - 8.0))
     active = bool((prior_state or {}).get("active") or s.get("position_active") or "HOLD" in recommendation)
-    applied_threshold = exit_threshold if active else entry_threshold
+    base_applied_threshold = exit_threshold if active else entry_threshold
+    dynamic_policy = evaluate_dynamic_state_policy(s, direction=direction)
+    dynamic_adjustment = 0.0 if active else _num(dynamic_policy.get("threshold_adjustment_points"), 0.0)
+    applied_threshold = base_applied_threshold + dynamic_adjustment
     boundary_margin = confidence - applied_threshold
 
     blockers = []
@@ -479,6 +484,8 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
         blockers.append("EXECUTION_QUALITY_BELOW_MINIMUM")
     if position_quality and position_quality < 70:
         blockers.append("POSITION_QUALITY_BELOW_MINIMUM")
+    if not active and dynamic_policy.get("suppress_new_alerts"):
+        blockers.extend([x for x in dynamic_policy.get("blocking_conditions", []) if x not in blockers])
 
     participation = build_flow_participation(s)
     # Do not let raw-volume participation independently authorize an alert.
@@ -489,7 +496,11 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
             blockers.append("FLOW_TOO_DISPERSED")
 
     alert_eligible = not blockers
-    if alert_eligible and boundary_margin < 5:
+    if alert_eligible and not active and dynamic_policy.get("watch_only"):
+        alert_state = "WATCH_ONLY"
+        alert_eligible = False
+        blockers.append("DYNAMIC_STATE_WATCH_ONLY")
+    elif alert_eligible and boundary_margin < 5:
         alert_state = "WATCH_ONLY"
         alert_eligible = False
         blockers.append("INSUFFICIENT_BOUNDARY_MARGIN")
@@ -509,7 +520,9 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
             "active_state": active,
             "entry_threshold": entry_threshold,
             "exit_threshold": exit_threshold,
-            "applied_threshold": applied_threshold,
+            "base_applied_threshold": base_applied_threshold,
+            "dynamic_threshold_adjustment": round(dynamic_adjustment, 1),
+            "applied_threshold": round(applied_threshold, 1),
             "margin_points": round(boundary_margin, 1),
             "hysteresis_points": round(entry_threshold - exit_threshold, 1),
             "next_state_requirement": (
@@ -528,6 +541,7 @@ def build_decision_quality(snapshot: Optional[Mapping[str, Any]], prior_state: O
             ),
         },
         "flow_participation": participation,
+        "dynamic_state_policy": dynamic_policy,
         "policy_quality": _policy_metrics(s),
         "counterfactuals": [
             {"change": "confidence", "required": round(max(0.0, applied_threshold + 5.0 - confidence), 1),

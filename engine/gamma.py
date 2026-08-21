@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import date, datetime, timezone
+import hashlib
 
 from .diagnostics import DiagnosticsTrace
 
@@ -131,6 +132,63 @@ def _parse_exposure_map(exposure_map: Any, ticker: str, stock_price: Optional[fl
 
 
 
+def _parse_expiration_curves(exposure_map: Any, ticker: str, stock_price: Optional[float]) -> Dict[str, Dict[float, Dict[str, float]]]:
+    curves: Dict[str, Dict[float, Dict[str, float]]] = {}
+    if not isinstance(exposure_map, dict):
+        return curves
+    for expiration, strikes in exposure_map.items():
+        if not isinstance(strikes, dict):
+            continue
+        curve: Dict[float, Dict[str, float]] = {}
+        for strike_raw, cell in strikes.items():
+            if not isinstance(cell, dict):
+                continue
+            raw_strike = _safe_float(strike_raw, None)
+            if raw_strike is None:
+                continue
+            strike = normalize_index_level_v6(raw_strike, ticker=ticker, reference_price=stock_price) or raw_strike
+            call_exp = _safe_float(cell.get("callExposure"), 0.0) or 0.0
+            put_exp = _safe_float(cell.get("putExposure"), 0.0) or 0.0
+            bucket = curve.setdefault(strike, {"call": 0.0, "put": 0.0, "net": 0.0})
+            bucket["call"] += call_exp; bucket["put"] += put_exp; bucket["net"] += call_exp + put_exp
+        if curve:
+            curves[str(expiration)] = curve
+    return curves
+
+
+def _expiration_dte(expiration: str, today: date) -> Optional[int]:
+    raw = str(expiration).strip()[:10]
+    try:
+        return max(0, (date.fromisoformat(raw) - today).days)
+    except ValueError:
+        return None
+
+
+def _build_gamma_term_structure(curves: Dict[str, Dict[float, Dict[str, float]]], spot: float, *,
+                                as_of: Optional[date] = None) -> Dict[str, Any]:
+    today = as_of or datetime.now(timezone.utc).date()
+    rows = []
+    for expiration, curve in curves.items():
+        dte = _expiration_dte(expiration, today)
+        total_net = sum(float(v.get("net", 0.0) or 0.0) for v in curve.values())
+        total_abs = sum(abs(float(v.get("call", 0.0) or 0.0)) + abs(float(v.get("put", 0.0) or 0.0)) for v in curve.values()) or 1.0
+        ratio = total_net / total_abs
+        regime = "POSITIVE_GAMMA" if ratio > 0.05 else "NEGATIVE_GAMMA" if ratio < -0.05 else "MIXED_GAMMA"
+        rows.append({"expiration": expiration, "dte": dte, "regime": regime, "net_gamma_ratio": round(ratio, 4),
+                     "local_regime_at_spot": _gamma_regime_at_price(curve, spot)})
+    rows.sort(key=lambda x: (9999 if x["dte"] is None else x["dte"], x["expiration"]))
+    finite = [r for r in rows if r["dte"] is not None]
+    immediate = finite[0] if finite else (rows[0] if rows else None)
+    forward = [r for r in finite if r["dte"] is not None and r["dte"] >= 2][:3]
+    regimes = [r["regime"] for r in ([immediate] if immediate else []) + forward]
+    alignment = len(set(regimes)) <= 1 if regimes else None
+    return {"available": bool(rows), "as_of": today.isoformat(), "expirations": rows[:12],
+            "immediate": immediate, "forward": forward, "term_alignment": alignment,
+            "term_divergence": bool(alignment is False),
+            "near_term_fragility": bool(immediate and forward and any(r["regime"] != immediate["regime"] for r in forward)),
+            "zero_dte_dominance": bool(immediate and immediate.get("dte") == 0)}
+
+
 def _gamma_regime_at_price(by_strike: Dict[float, Dict[str, float]], price: float) -> str:
     """Classify local dealer gamma from the nearest strike's cumulative curve."""
     cumulative = 0.0
@@ -170,7 +228,11 @@ def _build_gamma_path(by_strike: Dict[float, Dict[str, float]], spot: float, *,
     downside = [x for x in candidates if x["distance"] < 0]
     up_dest = min(upside, key=lambda x:x["distance"]) if upside else None
     down_dest = min(downside, key=lambda x:abs(x["distance"])) if downside else None
-    snapshot_at = datetime.now(timezone.utc).isoformat()
+    generated_at = datetime.now(timezone.utc).isoformat()
+    level_material = "|".join(f"{x['kind']}:{x['price']}" for x in candidates)
+    level_version = hashlib.sha1(level_material.encode()).hexdigest()[:12] if level_material else None
+    path_material = f"{round(spot,2)}|{current}|{level_material}"
+    path_version = hashlib.sha1(path_material.encode()).hexdigest()[:12]
     return {
         "available": bool(candidates), "current_regime": current,
         "nearest_transition": nearest, "upside_destination": up_dest,
@@ -178,64 +240,8 @@ def _build_gamma_path(by_strike: Dict[float, Dict[str, float]], spot: float, *,
         "path_levels": candidates,
         "crosses_gamma_flip_up": bool(active_flip is not None and active_flip > spot),
         "crosses_gamma_flip_down": bool(active_flip is not None and active_flip < spot),
-        "path_version": "1.0",
-        "level_version": "1.0",
-        "generated_at": snapshot_at,
-        "source_snapshot_at": snapshot_at,
-    }
-
-
-def _build_gamma_term_structure(curves: Dict[str, Dict[float, Dict[str, float]]], spot: float, *,
-                                as_of: Optional[date] = None) -> Dict[str, Any]:
-    """Summarize near-term gamma structure across expiries."""
-    as_of = as_of or datetime.now(timezone.utc).date()
-    ordered: List[Dict[str, Any]] = []
-    for raw_expiry, curve in sorted((curves or {}).items()):
-        try:
-            expiry = date.fromisoformat(str(raw_expiry))
-        except ValueError:
-            continue
-        if expiry < as_of:
-            continue
-        nearest_strike, nearest_bucket = min(
-            ((float(k), v) for k, v in (curve or {}).items()),
-            key=lambda kv: abs(kv[0] - float(spot)),
-            default=(None, None),
-        )
-        if nearest_strike is None or not isinstance(nearest_bucket, dict):
-            continue
-        net = _safe_float(nearest_bucket.get("net"), None)
-        if net is None:
-            continue
-        ordered.append({
-            "expiration": expiry.isoformat(),
-            "days_to_expiry": (expiry - as_of).days,
-            "nearest_strike": _round_level(nearest_strike),
-            "net_gamma": round(net, 4),
-        })
-
-    front = ordered[0] if ordered else None
-    next_expiry = ordered[1] if len(ordered) > 1 else None
-    front_net = _safe_float(front.get("net_gamma") if front else None, None)
-    next_net = _safe_float(next_expiry.get("net_gamma") if next_expiry else None, None)
-    zero_dte_dominance = bool(
-        front and front["days_to_expiry"] == 0 and front_net is not None
-        and (next_net is None or abs(front_net) >= abs(next_net))
-    )
-    term_divergence = bool(front_net is not None and next_net is not None and front_net * next_net < 0)
-    snapshot_at = datetime.now(timezone.utc).isoformat()
-    return {
-        "available": bool(ordered),
-        "as_of": as_of.isoformat(),
-        "spot": _round_level(spot),
-        "expiries": ordered,
-        "front_expiry": front,
-        "next_expiry": next_expiry,
-        "zero_dte_dominance": zero_dte_dominance,
-        "term_divergence": term_divergence,
-        "near_term_fragility": bool(zero_dte_dominance and term_divergence),
-        "generated_at": snapshot_at,
-        "source_snapshot_at": snapshot_at,
+        "generated_at": generated_at, "source_snapshot_at": generated_at,
+        "path_version": path_version, "level_version": level_version, "regime_age_seconds": 0.0,
     }
 
 def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX") -> Dict[str, Any]:
@@ -274,6 +280,7 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
 
     exposure_map = ticker_data.get("exposureMap") or {}
     by_strike, examples = _parse_exposure_map(exposure_map, ticker=ticker, stock_price=normalized_stock_price)
+    expiration_curves = _parse_expiration_curves(exposure_map, ticker=ticker, stock_price=normalized_stock_price)
     trace.add("strike_normalization_examples", {"examples": examples, "normalizedStrikeCount": len(by_strike)})
 
     if not by_strike:
@@ -353,6 +360,7 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
                                    active_flip=active_gamma_flip, call_wall=call_wall,
                                    put_wall=put_wall, high_gamma=high_gamma_strike,
                                    low_gamma=low_gamma_strike)
+    gamma_term_structure = _build_gamma_term_structure(expiration_curves, normalized_stock_price)
 
     quality_flags: List[str] = []
     if call_wall < normalized_stock_price:
@@ -393,6 +401,7 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "gamma_flip_candidate_confidence": zero_details.get("candidate_confidence"),
         "quality_flags": quality_flags,
         "gamma_path": gamma_path,
+        "gamma_term_structure": gamma_term_structure,
         "gex_notes": [
             f"Call wall {call_wall:.2f}",
             f"Put wall {put_wall:.2f}",
