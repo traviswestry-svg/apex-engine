@@ -19,7 +19,11 @@ def record_snapshot(snapshot: Mapping[str,Any], path: str|Path=DEFAULT_DB)->bool
  if not did: return False
  with _connect(path) as c:
   c.execute("INSERT OR IGNORE INTO decisions(decision_id,observed_at,ticker,session,direction,action,entry_price,confidence,learning_eligible,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?)",(did,str(s.get('timestamp') or _now()),str(s.get('ticker') or 'SPX'),str(s.get('session') or 'UNKNOWN'),str(s.get('direction') or 'NEUTRAL'),str(s.get('action') or 'STAND_DOWN'),s.get('entry_reference'),s.get('confidence'),int(bool(s.get('learning_eligible'))),json.dumps(s,default=str)))
-  return c.total_changes>0
+  changed=c.total_changes>0
+  if changed:
+   from .dynamic_state_outcome_calibration import persist_context
+   persist_context(c,did,s)
+  return changed
 def record_price(ticker:str, price:Any, observed_at:str|None=None,path: str|Path=DEFAULT_DB)->bool:
  try: p=float(price)
  except (TypeError,ValueError): return False
