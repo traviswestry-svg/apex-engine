@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from .diagnostics import DiagnosticsTrace
@@ -169,6 +170,7 @@ def _build_gamma_path(by_strike: Dict[float, Dict[str, float]], spot: float, *,
     downside = [x for x in candidates if x["distance"] < 0]
     up_dest = min(upside, key=lambda x:x["distance"]) if upside else None
     down_dest = min(downside, key=lambda x:abs(x["distance"])) if downside else None
+    snapshot_at = datetime.now(timezone.utc).isoformat()
     return {
         "available": bool(candidates), "current_regime": current,
         "nearest_transition": nearest, "upside_destination": up_dest,
@@ -176,6 +178,64 @@ def _build_gamma_path(by_strike: Dict[float, Dict[str, float]], spot: float, *,
         "path_levels": candidates,
         "crosses_gamma_flip_up": bool(active_flip is not None and active_flip > spot),
         "crosses_gamma_flip_down": bool(active_flip is not None and active_flip < spot),
+        "path_version": "1.0",
+        "level_version": "1.0",
+        "generated_at": snapshot_at,
+        "source_snapshot_at": snapshot_at,
+    }
+
+
+def _build_gamma_term_structure(curves: Dict[str, Dict[float, Dict[str, float]]], spot: float, *,
+                                as_of: Optional[date] = None) -> Dict[str, Any]:
+    """Summarize near-term gamma structure across expiries."""
+    as_of = as_of or datetime.now(timezone.utc).date()
+    ordered: List[Dict[str, Any]] = []
+    for raw_expiry, curve in sorted((curves or {}).items()):
+        try:
+            expiry = date.fromisoformat(str(raw_expiry))
+        except ValueError:
+            continue
+        if expiry < as_of:
+            continue
+        nearest_strike, nearest_bucket = min(
+            ((float(k), v) for k, v in (curve or {}).items()),
+            key=lambda kv: abs(kv[0] - float(spot)),
+            default=(None, None),
+        )
+        if nearest_strike is None or not isinstance(nearest_bucket, dict):
+            continue
+        net = _safe_float(nearest_bucket.get("net"), None)
+        if net is None:
+            continue
+        ordered.append({
+            "expiration": expiry.isoformat(),
+            "days_to_expiry": (expiry - as_of).days,
+            "nearest_strike": _round_level(nearest_strike),
+            "net_gamma": round(net, 4),
+        })
+
+    front = ordered[0] if ordered else None
+    next_expiry = ordered[1] if len(ordered) > 1 else None
+    front_net = _safe_float(front.get("net_gamma") if front else None, None)
+    next_net = _safe_float(next_expiry.get("net_gamma") if next_expiry else None, None)
+    zero_dte_dominance = bool(
+        front and front["days_to_expiry"] == 0 and front_net is not None
+        and (next_net is None or abs(front_net) >= abs(next_net))
+    )
+    term_divergence = bool(front_net is not None and next_net is not None and front_net * next_net < 0)
+    snapshot_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "available": bool(ordered),
+        "as_of": as_of.isoformat(),
+        "spot": _round_level(spot),
+        "expiries": ordered,
+        "front_expiry": front,
+        "next_expiry": next_expiry,
+        "zero_dte_dominance": zero_dte_dominance,
+        "term_divergence": term_divergence,
+        "near_term_fragility": bool(zero_dte_dominance and term_divergence),
+        "generated_at": snapshot_at,
+        "source_snapshot_at": snapshot_at,
     }
 
 def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX") -> Dict[str, Any]:

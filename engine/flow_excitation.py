@@ -12,6 +12,8 @@ from math import exp
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 import hashlib
 
+from .event_calendar import event_phase_at
+
 VERSION = "66.4.0_FLOW_EXCITATION"
 
 
@@ -67,12 +69,16 @@ def build_flow_excitation(events: Iterable[Mapping[str, Any]], *, now: Optional[
     active: Optional[Dict[str, Any]] = None
     for t, e in enriched:
         ident = _identity(e)
-        if active is None or ident != active["identity"] or (t - active["last_at"]).total_seconds() > burst_gap_seconds:
+        phase = event_phase_at(t)
+        segment_id = phase.get("segment_id")
+        if (active is None or ident != active["identity"] or segment_id != active["segment_id"]
+                or (t - active["last_at"]).total_seconds() > burst_gap_seconds):
             if active is not None:
                 bursts.append(active)
             seed = "|".join(ident) + "|" + t.isoformat()
             active = {"burst_id": hashlib.sha1(seed.encode()).hexdigest()[:12], "identity": ident,
-                      "first_at": t, "last_at": t, "event_count": 0, "premium": 0.0, "contracts": 0.0}
+                      "first_at": t, "last_at": t, "event_count": 0, "premium": 0.0, "contracts": 0.0,
+                      "segment_id": segment_id}
         active["last_at"] = t
         active["event_count"] += 1
         active["premium"] += _f(e.get("premium") or e.get("notional") or e.get("value"))
