@@ -34,3 +34,13 @@ def register_dynamic_state_routes(app, *, last_result_provider: Optional[Callabl
         state = build_dynamic_state(lr, _ss())
         state["alert_policy"] = evaluate_dynamic_state_policy(lr, dynamic_state=state)
         return jsonify(state)
+
+    @app.get("/api/dynamic-state/calibration")
+    def dynamic_state_calibration():
+        try:
+            from .dynamic_state_outcome_calibration import calibration_summary
+            from .evidence_pipeline import DEFAULT_DB
+            return jsonify(calibration_summary(DEFAULT_DB))
+        except Exception as exc:
+            return jsonify({"ok": False, "status": "UNAVAILABLE", "error": str(exc),
+                            "execution_authority": False}), 200
