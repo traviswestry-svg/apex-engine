@@ -139,12 +139,14 @@ def make_engine_opinion(
     missing_data: Optional[List[str]] = None, warnings: Optional[List[str]] = None,
     provenance: Optional[Mapping[str, Any]] = None, engine_version: Optional[str] = None,
     timestamp: Optional[str] = None, abstain_reason: Optional[str] = None,
+    independence_factor: Any = 1.0,
 ) -> Dict[str, Any]:
     missing = list(missing_data or [])
     direction = _direction(raw_direction, missing=bool(missing and raw_direction in (None, "")))
     abstain = direction == "ABSTAIN"
     fs = _freshness_state(freshness)
     rel = max(0.0, min(1.0, _num(reliability, 0.0) or 0.0))
+    independence = max(0.0, min(1.0, _num(independence_factor, 1.0) or 0.0))
     conf = _num(confidence)
     if conf is not None and conf > 1.0:
         conf /= 100.0
@@ -166,6 +168,7 @@ def make_engine_opinion(
         "freshness": fs,
         "freshness_state": fs,
         "reliability": round(rel, 4),
+        "independence_factor": round(independence, 4),
         "correlation_cluster": correlation_cluster or CORRELATION_CLUSTERS.get(engine_name, "OTHER"),
         "abstain": abstain,
         "abstain_reason": abstain_reason or ("MISSING_REQUIRED_DATA" if abstain and missing else "NO_DIRECTIONAL_OPINION" if abstain else None),
@@ -183,6 +186,7 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
     ii = _dict(last.get("institutional_intelligence"))
     auction = _dict(last.get("auction_intelligence") or last.get("auction"))
     flow = _dict(last.get("flow_intelligence_2") or last.get("flow_intelligence") or last.get("options_flow_intelligence"))
+    institutional_options_flow = _dict(last.get("institutional_options_flow") or last.get("options_flow_engine"))
     dealer = _dict(last.get("dealer_positioning"))
     structure = _dict(last.get("institutional_market_structure") or last.get("market_structure") or last.get("structure"))
     if not structure:
@@ -206,6 +210,12 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
 
     flow_raw = market.get("flow_bias") or flow.get("flow_bias") or flow.get("bias") or flow.get("direction") or flow.get("flow_intent") or flow.get("institutional_intent")
     flow_conf = flow.get("confidence") or flow.get("flow_conviction") or flow.get("conviction") or flow.get("flow_score") or flow.get("score")
+    flow_excitation = _dict(flow.get("flow_excitation")) or _dict(institutional_options_flow.get("flow_excitation"))
+    flow_independence = (flow_excitation.get("independent_evidence_factor")
+                         if flow_excitation.get("independent_evidence_factor") is not None
+                         else institutional_options_flow.get("independent_evidence_factor"))
+    if flow_independence is None:
+        flow_independence = 1.0
 
     intent = _dict(liquidity.get("institutional_intent"))
     liq_raw = liquidity.get("direction") or liquidity.get("bias") or liquidity.get("pressure_direction") or intent.get("direction") or intent.get("state") or _nested(liquidity, "trade_director_context.intent_alignment")
@@ -248,6 +258,7 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
             provenance={"origin": origin, "normalizer_version": VERSION, "adapter": "production_schema"},
             engine_version=_engine_version(evidence), timestamp=_engine_timestamp(evidence),
             abstain_reason="PROVIDER_UNAVAILABLE" if not available else None,
+            independence_factor=flow_independence if name == "flow" else 1.0,
         ))
     return out
 
@@ -307,7 +318,8 @@ def build_correlation_aware_consensus(opinions: List[Mapping[str, Any]]) -> Dict
     def weight(o: Mapping[str, Any]) -> float:
         freshness_factor = 0.25 if o.get("freshness_state") == "STALE" else 0.60 if o.get("freshness_state") == "DEGRADED" else 1.0
         strength = _num(o.get("strength"), 0.0) or 0.0
-        return max(0.0, (_num(o.get("reliability"), 0.0) or 0.0) * strength * freshness_factor)
+        independence = max(0.0, min(1.0, _num(o.get("independence_factor"), 1.0) or 0.0))
+        return max(0.0, (_num(o.get("reliability"), 0.0) or 0.0) * strength * freshness_factor * independence)
 
     raw = {"BULLISH": 0.0, "BEARISH": 0.0, "NEUTRAL": 0.0}
     by_cluster: Dict[str, List[tuple[Dict[str, Any], float]]] = {}
@@ -333,7 +345,7 @@ def build_correlation_aware_consensus(opinions: List[Mapping[str, Any]]) -> Dict
             effective_total += ew
             d = o.get("direction")
             if d in effective: effective[d] += ew
-            eff_rows.append({"engine": o.get("engine_name"), "direction": d, "raw_weight": round(w, 4), "effective_weight": round(ew, 4)})
+            eff_rows.append({"engine": o.get("engine_name"), "direction": d, "raw_weight": round(w, 4), "effective_weight": round(ew, 4), "independence_factor": o.get("independence_factor", 1.0)})
         directions = {o.get("direction") for o, _ in rows if o.get("direction") in {"BULLISH", "BEARISH"}}
         if rows: active_clusters.append(cluster)
         if len(directions) > 1: conflicted_clusters.append(cluster)
