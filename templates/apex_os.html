@@ -403,6 +403,7 @@
       <div class="ps-why" id="psWhy"></div>
       <div class="ps-basis" id="psBasis"></div>
     </div>
+    <div class="ds-cal" id="dsCalibration">Outcome calibration: collecting decision-time regime history…</div>
   </div>
   <script>
   (function(){
@@ -649,6 +650,7 @@
     .ds-bar{height:6px;border-radius:5px;background:var(--bdr);overflow:hidden;margin-top:6px}
     .ds-bar>span{display:block;height:100%}
     .ds-warm{color:var(--muted);font-size:13px;padding:6px 2px}
+    .ds-cal{font-size:11px;color:var(--faint);margin-top:9px;padding-top:8px;border-top:1px solid var(--bdr)}
   </style>
   <div class="ds-band" id="dsBand">
     <div class="ds-head">
@@ -725,10 +727,21 @@
       if(pol.warnings&&pol.warnings.length){pmeta+='<br>'+esc(pol.warnings.slice(0,2).join(' · ').replace(/_/g,' '));}
       document.getElementById('dsPolicyMeta').innerHTML=pmeta;
     }
+    function renderCalibration(c){
+      var el=document.getElementById('dsCalibration');if(!el)return;
+      if(!c||!c.ok){el.textContent='Outcome calibration: unavailable';return;}
+      var txt='Outcome calibration: '+String(c.status||'COLLECTING').replace(/_/g,' ')+' · '+n2(c.graded_contexts)+' graded / '+n2(c.minimum_sample_per_bucket)+' min per bucket';
+      var dims=c.dimensions||{},ev=dims.event_phase||[],ready=ev.filter(function(x){return x.calibration_ready;}).length;
+      if(ready){txt+=' · '+ready+' event-phase bucket'+(ready===1?'':'s')+' calibrated';}
+      txt+=' · advisory only';el.textContent=txt;
+    }
     function load(){
       fetch('/api/dynamic-state?ticker='+encodeURIComponent(curTicker()),{cache:'no-store'})
         .then(function(r){return r.json();}).then(render)
         .catch(function(){var g=document.getElementById('dsGrid');if(g&&g.style.display!=='none')return;});
+      fetch('/api/dynamic-state/calibration',{cache:'no-store'})
+        .then(function(r){return r.json();}).then(renderCalibration)
+        .catch(function(){renderCalibration(null);});
     }
     document.querySelectorAll('.ticker-btn').forEach(function(b){b.addEventListener('click',function(){setTimeout(load,60);});});
     load();setInterval(load,20000);
