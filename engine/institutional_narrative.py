@@ -15,6 +15,7 @@ from .decision_reasoning_contracts import (
     build_engine_opinions, build_correlation_aware_consensus, normalize_acceptance,
     build_reasoning_evidence_graph,
 )
+from .dynamic_state_policy import evaluate_dynamic_state_policy
 
 VERSION = "66.3.2"
 SCHEMA_VERSION = "apex.institutional_narrative.v2"
@@ -100,9 +101,16 @@ def _quality(last: Mapping[str, Any], session_state: str) -> Dict[str, Any]:
 
 
 def build_consensus_gauge(last_result: Mapping[str, Any]) -> Dict[str, Any]:
-    """Canonical correlation-aware consensus over normalized EngineOpinion objects."""
+    """Canonical consensus plus a separately reported dynamic-state quality adjustment."""
     opinions = build_engine_opinions(last_result)
-    return build_correlation_aware_consensus(opinions)
+    consensus = build_correlation_aware_consensus(opinions)
+    policy = evaluate_dynamic_state_policy(last_result, direction=consensus.get("dominant_direction"))
+    raw = _num(consensus.get("effective_consensus")) or 0.0
+    penalty = _num(policy.get("consensus_penalty_points")) or 0.0
+    consensus["quality_adjusted_consensus"] = round(max(0.0, raw - penalty), 1)
+    consensus["dynamic_state_adjustment_points"] = round(penalty, 1)
+    consensus["dynamic_state_policy"] = policy
+    return consensus
 
 def build_conviction(last_result: Mapping[str, Any], consensus: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Produce raw conviction separately from any historically calibrated conviction.
@@ -114,7 +122,7 @@ def build_conviction(last_result: Mapping[str, Any], consensus: Optional[Mapping
     confidence=_num(ii.get("confidence") or ii.get("institutional_confidence") or last.get("final_live_confidence"))
     execution=_dict(last.get("execution_intelligence") or last.get("execution_os")); position=_dict(last.get("position_quality") or last.get("position_quality_snapshot")); readiness=_dict(last.get("readiness") or last.get("morning_readiness"))
     provider=_dict(last.get("provider_health")); event=_dict(last.get("event_intelligence") or last.get("event_risk"))
-    values={"confidence":confidence,"consensus":_num(consensus.get("effective_consensus") or consensus.get("agreement_percentage")),"execution":_num(execution.get("execution_score") or execution.get("score")),"position_quality":_num(position.get("score") or position.get("position_quality_score")),"readiness":_num(readiness.get("score") or readiness.get("readiness_score"))}
+    values={"confidence":confidence,"consensus":_num(consensus.get("quality_adjusted_consensus") if consensus.get("quality_adjusted_consensus") is not None else consensus.get("effective_consensus") or consensus.get("agreement_percentage")),"execution":_num(execution.get("execution_score") or execution.get("score")),"position_quality":_num(position.get("score") or position.get("position_quality_score")),"readiness":_num(readiness.get("score") or readiness.get("readiness_score"))}
     weights={"confidence":.30,"consensus":.25,"execution":.18,"position_quality":.15,"readiness":.12}; contributors=[]; detractors=[]; available=[]
     for k,v in values.items():
         if v is not None: available.append((k,v,weights[k])); (contributors if v>=70 else detractors).append({"driver":k,"value":round(v,1),"weight":weights[k]})
@@ -127,6 +135,10 @@ def build_conviction(last_result: Mapping[str, Any], consensus: Optional[Mapping
     penalty=(_num(consensus.get("disagreement")) or 0)*.25
     penalty+=(_num(consensus.get("redundant_evidence_score")) or 0)*.08
     if _text(event.get("risk_level") or event.get("severity"),"LOW").upper() in {"HIGH","EXTREME","CRITICAL"}: penalty+=10; detractors.append({"driver":"event_risk","value":10,"weight":"penalty"})
+    dynamic_policy=_dict(consensus.get("dynamic_state_policy")) or evaluate_dynamic_state_policy(last, direction=consensus.get("dominant_direction"))
+    dynamic_penalty=_num(dynamic_policy.get("conviction_penalty_points")) or 0.0
+    if dynamic_penalty:
+        penalty+=dynamic_penalty; detractors.append({"driver":"dynamic_state_policy","value":round(dynamic_penalty,1),"weight":"penalty"})
     raw=max(0.0,min(100.0,base-penalty)); raw=0.0 if blockers else raw
     classification="EXTREME" if raw>=95 else "VERY_HIGH" if raw>=85 else "HIGH" if raw>=75 else "MODERATE" if raw>=55 else "LOW"
     grade="A+" if raw>=95 else "A" if raw>=85 else "B" if raw>=75 else "C" if raw>=55 else "D"
@@ -141,7 +153,7 @@ def build_conviction(last_result: Mapping[str, Any], consensus: Optional[Mapping
         elif calibration_state=="READY_FOR_CALIBRATION": calibration_state="READY_FOR_CALIBRATION_MODEL"
     except Exception:
         calibration_state="INSUFFICIENT_HISTORY"
-    return {"schema_version":"apex.conviction.v3","score":round(raw,1),"conviction_score":round(raw,1),"raw_conviction":round(raw,1),"calibrated_conviction":None,"calibration_state":calibration_state,"calibration_sample_size":calibration_samples,"calibration_minimum":calibration_minimum,"grade":grade,"conviction_grade":grade,"classification":classification,"band":classification,"contributors":contributors,"detractors":detractors,"explanation":"Raw conviction combines current evidence coverage, correlation-aware consensus, execution, position quality, readiness and risk penalties. Calibrated conviction remains null until an approved calibration model is supported by sufficient graded history.","blocking_conditions":blockers,"fail_closed":bool(blockers) or not available,"status":status,"direction":consensus.get("dominant_direction","NEUTRAL"),"historical_calibration_applied":False}
+    return {"schema_version":"apex.conviction.v3","score":round(raw,1),"conviction_score":round(raw,1),"raw_conviction":round(raw,1),"calibrated_conviction":None,"calibration_state":calibration_state,"calibration_sample_size":calibration_samples,"calibration_minimum":calibration_minimum,"grade":grade,"conviction_grade":grade,"classification":classification,"band":classification,"contributors":contributors,"detractors":detractors,"explanation":"Raw conviction combines current evidence coverage, correlation-aware consensus, execution, position quality, readiness and risk penalties. Calibrated conviction remains null until an approved calibration model is supported by sufficient graded history.","blocking_conditions":blockers,"fail_closed":bool(blockers) or not available,"status":status,"direction":consensus.get("dominant_direction","NEUTRAL"),"historical_calibration_applied":False,"dynamic_state_policy":dynamic_policy}
 
 def build_institutional_narrative(last_result: Mapping[str, Any], *, session_state: Optional[str] = None,
                                   generated_at: Optional[str] = None) -> Dict[str, Any]:
@@ -151,7 +163,7 @@ def build_institutional_narrative(last_result: Mapping[str, Any], *, session_sta
     session = resolve_session_state(last, session_state)
     quality = _quality(last, session)
     opinions = build_engine_opinions(last)
-    consensus = build_correlation_aware_consensus(opinions)
+    consensus = build_consensus_gauge(last)
     acceptance = normalize_acceptance(last)
     conviction = build_conviction(last, consensus)
     reasoning_graph = build_reasoning_evidence_graph(opinions, consensus, acceptance)

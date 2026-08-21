@@ -639,7 +639,7 @@
     .ds-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
     .ds-title{font-size:12px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
     .ds-sum{font-size:11px;color:var(--faint);margin-left:auto}
-    .ds-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+    .ds-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px}
     @media(max-width:820px){.ds-grid{grid-template-columns:1fr}}
     .ds-card{background:var(--bg);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:10px 12px}
     .ds-clabel{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
@@ -673,6 +673,11 @@
         <div class="ds-clabel">Gamma Path</div>
         <div class="ds-state" id="dsGammaState">—</div>
         <div class="ds-meta" id="dsGammaMeta"></div>
+      </div>
+      <div class="ds-card">
+        <div class="ds-clabel">Event / Alert Policy</div>
+        <div class="ds-state" id="dsPolicyState">—</div>
+        <div class="ds-meta" id="dsPolicyMeta"></div>
       </div>
     </div>
   </div>
@@ -710,6 +715,15 @@
       var up=gp.upside_destination||{},dn=gp.downside_destination||{};
       document.getElementById('dsGammaMeta').innerHTML=gp.available?
         ('↑ '+n2(up.price)+(up.label?(' '+esc(up.label)):'')+'<br>↓ '+n2(dn.price)+(dn.label?(' '+esc(dn.label)):'')):'No gamma path this cycle';
+      // Event phase + dynamic alert policy
+      var ep=d.event_phase||{},pol=d.alert_policy||{};var ps=document.getElementById('dsPolicyState');
+      var phase=(ep.phase||'NORMAL').replace(/_/g,' '),pstate=(pol.state||'NORMAL').replace(/_/g,' ');
+      ps.textContent=phase+' · '+pstate;
+      ps.className='ds-state '+(pol.state==='SUPPRESSED'?'bad':pol.state==='WATCH_ONLY'?'warn':'good');
+      var pmeta='threshold +'+n2(pol.threshold_adjustment_points)+' · conviction -'+n2(pol.conviction_penalty_points);
+      if(ep.seconds_to_event!=null){pmeta+=' · event '+(ep.seconds_to_event>=0?'in ':'since ')+Math.round(Math.abs(ep.seconds_to_event)/60)+'m';}
+      if(pol.warnings&&pol.warnings.length){pmeta+='<br>'+esc(pol.warnings.slice(0,2).join(' · ').replace(/_/g,' '));}
+      document.getElementById('dsPolicyMeta').innerHTML=pmeta;
     }
     function load(){
       fetch('/api/dynamic-state?ticker='+encodeURIComponent(curTicker()),{cache:'no-store'})

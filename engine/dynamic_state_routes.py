@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, Optional
 from flask import jsonify
 
 from .dynamic_state import build_dynamic_state
+from .dynamic_state_policy import evaluate_dynamic_state_policy
 
 
 def register_dynamic_state_routes(app, *, last_result_provider: Optional[Callable[[], Dict[str, Any]]] = None,
@@ -29,4 +30,7 @@ def register_dynamic_state_routes(app, *, last_result_provider: Optional[Callabl
 
     @app.get("/api/dynamic-state")
     def dynamic_state():
-        return jsonify(build_dynamic_state(_lr(), _ss()))
+        lr = _lr()
+        state = build_dynamic_state(lr, _ss())
+        state["alert_policy"] = evaluate_dynamic_state_policy(lr, dynamic_state=state)
+        return jsonify(state)

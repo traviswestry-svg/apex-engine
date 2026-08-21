@@ -52,8 +52,16 @@ _GAMMA_PATHS = (
     "dealer_positioning.gamma_path", "gamma.gamma_path", "gamma_path",
     "dealer_positioning.gamma.gamma_path",
 )
+_GAMMA_TERM_PATHS = (
+    "dealer_positioning.gamma_term_structure", "gamma.gamma_term_structure",
+    "gamma_term_structure", "dealer_positioning.gamma.gamma_term_structure",
+)
 _RESIDUAL_PATHS = (
     "execution_intelligence.residual_pressure_memory", "residual_pressure_memory",
+)
+
+_EVENT_PATHS = (
+    "event_intelligence.event_phase", "event_risk.event_phase", "event_phase",
 )
 
 
@@ -138,9 +146,56 @@ def _gamma_path(lr: Mapping[str, Any]) -> Dict[str, Any]:
         "downside_destination": _dest(gp.get("downside_destination")),
         "path_levels": [
             {"price": _f(l.get("price") or l.get("strike")),
-             "net": _f(l.get("net")), "label": l.get("label") or l.get("type")}
+             "net": _f(l.get("net")), "label": l.get("label") or l.get("type") or l.get("kind"),
+             "regime": l.get("regime")}
             for l in levels if isinstance(l, Mapping)
         ][:12],
+        "generated_at": gp.get("generated_at"), "source_snapshot_at": gp.get("source_snapshot_at"),
+        "path_version": gp.get("path_version"), "level_version": gp.get("level_version"),
+        "regime_age_seconds": _f(gp.get("regime_age_seconds")),
+    }
+
+
+def _gamma_term_structure(lr: Mapping[str, Any]) -> Dict[str, Any]:
+    gt = None
+    for p in _GAMMA_TERM_PATHS:
+        cand = _get(lr, p)
+        if isinstance(cand, Mapping):
+            gt = cand
+            break
+    if not isinstance(gt, Mapping) or not gt.get("available", False):
+        return {"available": False, "term_alignment": None, "term_divergence": False,
+                "near_term_fragility": False, "expirations": []}
+    rows = gt.get("expirations") if isinstance(gt.get("expirations"), list) else []
+    return {
+        "available": True, "as_of": gt.get("as_of"),
+        "term_alignment": gt.get("term_alignment"), "term_divergence": bool(gt.get("term_divergence")),
+        "near_term_fragility": bool(gt.get("near_term_fragility")),
+        "zero_dte_dominance": bool(gt.get("zero_dte_dominance")),
+        "expirations": [dict(x) for x in rows if isinstance(x, Mapping)][:8],
+    }
+
+
+
+def _event_phase(lr: Mapping[str, Any]) -> Dict[str, Any]:
+    ep = None
+    for p in _EVENT_PATHS:
+        cand = _get(lr, p)
+        if isinstance(cand, Mapping):
+            ep = cand
+            break
+    if not isinstance(ep, Mapping):
+        return {"available": False, "phase": "NORMAL", "event_key": None,
+                "event_label": None, "seconds_to_event": None, "boundary_id": None}
+    return {
+        "available": bool(ep.get("available", True)),
+        "phase": str(ep.get("phase") or "NORMAL"),
+        "event_key": ep.get("event_key"),
+        "event_label": ep.get("event_label"),
+        "impact": ep.get("impact"),
+        "release_at": ep.get("release_at"),
+        "seconds_to_event": _f(ep.get("seconds_to_event")),
+        "boundary_id": ep.get("boundary_id"),
     }
 
 
@@ -151,7 +206,9 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
     flow = _flow_excitation(lr)
     residual = _residual_pressure(lr, scanner_state)
     gamma = _gamma_path(lr)
-    available = any(x.get("available") for x in (flow, residual, gamma))
+    gamma_term = _gamma_term_structure(lr)
+    event_phase = _event_phase(lr)
+    available = any(x.get("available") for x in (flow, residual, gamma, gamma_term, event_phase))
 
     # One-line read of what the three signals collectively imply (neutral).
     notes = []
@@ -164,11 +221,15 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
         notes.append(f"unresolved {str(residual.get('direction') or '').lower()} pressure at {residual.get('origin_level')}")
     if gamma.get("available") and gamma.get("current_regime") not in ("UNKNOWN", None):
         notes.append(f"gamma {str(gamma['current_regime']).replace('_', ' ').lower()}")
+    if event_phase.get("available") and event_phase.get("phase") not in ("NORMAL", None):
+        notes.append(f"event {str(event_phase['phase']).replace('_', ' ').lower()}")
 
     return {
         "available": available,
         "flow_excitation": flow,
         "residual_pressure": residual,
         "gamma_path": gamma,
+        "gamma_term_structure": gamma_term,
+        "event_phase": event_phase,
         "summary": " · ".join(notes) if notes else None,
     }
