@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 from .canonical_persistence import connect as canonical_connect
-VERSION="47.0.3"; SCHEMA_VERSION="apex.evidence_readiness.v1"; DEFAULT_DB=os.getenv("APEX_EVIDENCE_PIPELINE_DB","apex_evidence_pipeline.db")
+VERSION="68.3.0"; SCHEMA_VERSION="apex.evidence_readiness.v2"; DEFAULT_DB=os.getenv("APEX_EVIDENCE_PIPELINE_DB","apex_evidence_pipeline.db")
 def _now(): return datetime.now(timezone.utc).isoformat()
 def _connect(path: str|Path=DEFAULT_DB):
  c=canonical_connect(path); c.executescript('''
@@ -18,8 +18,16 @@ def record_snapshot(snapshot: Mapping[str,Any], path: str|Path=DEFAULT_DB)->bool
  s=dict(snapshot); did=str(s.get('decision_id') or '');
  if not did: return False
  with _connect(path) as c:
-  c.execute("INSERT OR IGNORE INTO decisions(decision_id,observed_at,ticker,session,direction,action,entry_price,confidence,learning_eligible,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?)",(did,str(s.get('timestamp') or _now()),str(s.get('ticker') or 'SPX'),str(s.get('session') or 'UNKNOWN'),str(s.get('direction') or 'NEUTRAL'),str(s.get('action') or 'STAND_DOWN'),s.get('entry_reference'),s.get('confidence'),int(bool(s.get('learning_eligible'))),json.dumps(s,default=str)))
-  return c.total_changes>0
+  observed_at=str(s.get('timestamp') or _now())
+  before=c.total_changes
+  c.execute("INSERT OR IGNORE INTO decisions(decision_id,observed_at,ticker,session,direction,action,entry_price,confidence,learning_eligible,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?)",(did,observed_at,str(s.get('ticker') or 'SPX'),str(s.get('session') or 'UNKNOWN'),str(s.get('direction') or 'NEUTRAL'),str(s.get('action') or 'STAND_DOWN'),s.get('entry_reference'),s.get('confidence'),int(bool(s.get('learning_eligible'))),json.dumps(s,default=str)))
+  inserted=c.total_changes>before
+  try:
+   from .dynamic_state_outcome_calibration import persist_context
+   persist_context(c,did,observed_at,s)
+  except Exception:
+   pass
+  return inserted
 def record_price(ticker:str, price:Any, observed_at:str|None=None,path: str|Path=DEFAULT_DB)->bool:
  try: p=float(price)
  except (TypeError,ValueError): return False
