@@ -251,6 +251,7 @@ def build_event_intelligence(now: Optional[dt.datetime] = None) -> Dict[str, Any
             "as_of": today.isoformat(),
             "event_regime": event_regime,          # backward-compatible day-level regime
             "intraday_event_regime": intraday_regime,
+            "event_phase": event_phase_at(now),
             "headline_event": headline,
             "today_events": today_events,
             "upcoming": upcoming,
@@ -268,6 +269,60 @@ def build_event_intelligence(now: Optional[dt.datetime] = None) -> Dict[str, Any
             "summary": f"Event intelligence recovered from error: {e}",
             "data_stale": False, "stale_note": None,
         }
+
+
+def event_phase_at(moment: Optional[dt.datetime] = None) -> Dict[str, Any]:
+    """Return a canonical intraday event phase for alert/flow segmentation.
+
+    High-impact scheduled releases get explicit pre/post windows. Rule-derived
+    events without a release timestamp remain NORMAL so we do not invent false
+    precision.
+    """
+    now = moment or dt.datetime.now(EASTERN)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=EASTERN)
+    else:
+        now = now.astimezone(EASTERN)
+
+    candidates = []
+    for iso, key, label, tier in DATED_EVENTS:
+        if tier != "HIGH" and key not in {"PPI"}:
+            continue
+        try:
+            d = dt.date.fromisoformat(iso)
+        except ValueError:
+            continue
+        hh, mm = (14, 0) if key == "FOMC" else (8, 30)
+        release = dt.datetime.combine(d, dt.time(hh, mm), tzinfo=EASTERN)
+        delta = (now - release).total_seconds()
+        if abs(delta) <= 24 * 3600:
+            candidates.append((abs(delta), delta, key, label, tier, release))
+
+    if not candidates:
+        return {"available": True, "phase": "NORMAL", "event_key": None,
+                "event_label": None, "release_at": None, "seconds_to_event": None,
+                "boundary_id": None}
+
+    _, delta, key, label, tier, release = min(candidates, key=lambda x: x[0])
+    seconds_to = -delta
+    if delta < -3600:
+        phase = "PRE_EVENT"
+    elif delta < -300:
+        phase = "EVENT_IMMINENT"
+    elif delta < 120:
+        phase = "RELEASE"
+    elif delta < 1800:
+        phase = "PRICE_DISCOVERY"
+    elif delta < 7200:
+        phase = "POST_EVENT_NORMALIZATION"
+    else:
+        phase = "NORMAL"
+    return {
+        "available": True, "phase": phase, "event_key": key, "event_label": label,
+        "impact": tier, "release_at": release.isoformat(),
+        "seconds_to_event": round(seconds_to, 1),
+        "boundary_id": f"{key}:{release.isoformat()}",
+    }
 
 
 def _overall_summary(regime: str, headline: Optional[Dict[str, Any]],

@@ -52,6 +52,10 @@ _GAMMA_PATHS = (
     "dealer_positioning.gamma_path", "gamma.gamma_path", "gamma_path",
     "dealer_positioning.gamma.gamma_path",
 )
+_GAMMA_TERM_PATHS = (
+    "dealer_positioning.gamma_term_structure", "gamma.gamma_term_structure",
+    "gamma_term_structure", "dealer_positioning.gamma.gamma_term_structure",
+)
 _RESIDUAL_PATHS = (
     "execution_intelligence.residual_pressure_memory", "residual_pressure_memory",
 )
@@ -138,9 +142,33 @@ def _gamma_path(lr: Mapping[str, Any]) -> Dict[str, Any]:
         "downside_destination": _dest(gp.get("downside_destination")),
         "path_levels": [
             {"price": _f(l.get("price") or l.get("strike")),
-             "net": _f(l.get("net")), "label": l.get("label") or l.get("type")}
+             "net": _f(l.get("net")), "label": l.get("label") or l.get("type") or l.get("kind"),
+             "regime": l.get("regime")}
             for l in levels if isinstance(l, Mapping)
         ][:12],
+        "generated_at": gp.get("generated_at"), "source_snapshot_at": gp.get("source_snapshot_at"),
+        "path_version": gp.get("path_version"), "level_version": gp.get("level_version"),
+        "regime_age_seconds": _f(gp.get("regime_age_seconds")),
+    }
+
+
+def _gamma_term_structure(lr: Mapping[str, Any]) -> Dict[str, Any]:
+    gt = None
+    for p in _GAMMA_TERM_PATHS:
+        cand = _get(lr, p)
+        if isinstance(cand, Mapping):
+            gt = cand
+            break
+    if not isinstance(gt, Mapping) or not gt.get("available", False):
+        return {"available": False, "term_alignment": None, "term_divergence": False,
+                "near_term_fragility": False, "expirations": []}
+    rows = gt.get("expirations") if isinstance(gt.get("expirations"), list) else []
+    return {
+        "available": True, "as_of": gt.get("as_of"),
+        "term_alignment": gt.get("term_alignment"), "term_divergence": bool(gt.get("term_divergence")),
+        "near_term_fragility": bool(gt.get("near_term_fragility")),
+        "zero_dte_dominance": bool(gt.get("zero_dte_dominance")),
+        "expirations": [dict(x) for x in rows if isinstance(x, Mapping)][:8],
     }
 
 
@@ -151,7 +179,8 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
     flow = _flow_excitation(lr)
     residual = _residual_pressure(lr, scanner_state)
     gamma = _gamma_path(lr)
-    available = any(x.get("available") for x in (flow, residual, gamma))
+    gamma_term = _gamma_term_structure(lr)
+    available = any(x.get("available") for x in (flow, residual, gamma, gamma_term))
 
     # One-line read of what the three signals collectively imply (neutral).
     notes = []
@@ -170,5 +199,6 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
         "flow_excitation": flow,
         "residual_pressure": residual,
         "gamma_path": gamma,
+        "gamma_term_structure": gamma_term,
         "summary": " · ".join(notes) if notes else None,
     }
