@@ -11,7 +11,7 @@ from typing import Any, Dict, Mapping, Optional
 
 from .dynamic_state import build_dynamic_state
 
-VERSION = "68.5.1"
+VERSION = "68.5.2"
 SCHEMA_VERSION = "apex.dynamic_state_policy.v2"
 
 
@@ -197,5 +197,5 @@ def evaluate_dynamic_state_policy(
         "modifiers": modifiers,
         "calibration_activation": calibration,
         "provenance": {"dynamic_state_available": bool(ds.get("available")), "policy_is_directionally_non_generative": True,
-                       "calibration_activation_version": "68.5.1", "execution_authority": False},
+                       "calibration_activation_version": "68.5.2", "execution_authority": False},
     }

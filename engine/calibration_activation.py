@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "68.5.1"
+VERSION = "68.5.2"
 SCHEMA_VERSION = "apex.calibration_activation.v1"
 
 # Hard production envelopes. Requests outside these limits are rejected rather
@@ -44,6 +44,44 @@ def _readonly_connect(path: str | Path):
         busy_timeout_ms=READ_BUSY_TIMEOUT_MS,
     )
 
+
+
+
+def _read_availability(path: str | Path, exc: Exception | None = None) -> Dict[str, Any]:
+    """Classify bounded read availability without mutating persistence.
+
+    Missing stores are a truthful pre-initialization state, not a product error.
+    Busy/locked stores and genuine read failures remain degraded and observable.
+    """
+    import sqlite3
+    resolved = Path(path).expanduser()
+    if str(path) not in {":memory:", ""} and not resolved.exists():
+        return {
+            "status": "MISSING_DB", "read_available": False, "initialized": False,
+            "degraded": False, "reason": "STORE_NOT_CREATED_YET",
+        }
+    if exc is None:
+        return {"status": "READY", "read_available": True, "initialized": True, "degraded": False}
+    msg = str(exc).lower()
+    if isinstance(exc, sqlite3.OperationalError) and ("locked" in msg or "busy" in msg):
+        return {
+            "status": "BUSY", "read_available": False, "initialized": True,
+            "degraded": True, "reason": "SQLITE_BUSY", "error": type(exc).__name__,
+        }
+    if isinstance(exc, sqlite3.OperationalError) and "unable to open database file" in msg and not resolved.exists():
+        return {
+            "status": "MISSING_DB", "read_available": False, "initialized": False,
+            "degraded": False, "reason": "STORE_NOT_CREATED_YET",
+        }
+    return {
+        "status": "READ_ERROR", "read_available": False, "initialized": resolved.exists(),
+        "degraded": True, "reason": "SQLITE_READ_FAILED", "error": type(exc).__name__,
+    }
+
+
+def _empty_read_state(path: str | Path) -> Dict[str, Any] | None:
+    state = _read_availability(path)
+    return state if state["status"] == "MISSING_DB" else None
 
 def _table_exists(conn, name: str) -> bool:
     return bool(conn.execute(
@@ -263,6 +301,10 @@ def resolve_active_adjustments(path: str | Path, dynamic_state: Mapping[str, Any
     values = _dimension_values(dynamic_state, policy_state=policy_state, alert_state=alert_state)
     totals = {key: 0.0 for key in BOUNDS}
     applied = []
+    missing = _empty_read_state(path)
+    if missing:
+        return {"active": False, "adjustment": totals, "applied": [], "context": values,
+                **missing, "execution_authority": False}
     try:
         with _readonly_connect(path) as conn:
             if not _table_exists(conn, "calibration_activations"):
@@ -285,8 +327,7 @@ def resolve_active_adjustments(path: str | Path, dynamic_state: Mapping[str, Any
                 })
     except Exception as exc:
         return {"active": False, "adjustment": totals, "applied": [], "context": values,
-                "status": "READ_UNAVAILABLE", "degraded": True, "error": type(exc).__name__,
-                "execution_authority": False}
+                **_read_availability(path, exc), "execution_authority": False}
 
     aggregate_caps = {
         "threshold_adjustment_points": (-5.0, 5.0),
@@ -307,6 +348,13 @@ def eligibility_readout(path: str | Path) -> Dict[str, Any]:
     decision_contexts = 0
     graded_contexts = 0
     active = 0
+    missing = _empty_read_state(path)
+    if missing:
+        return {"ok": True, **missing, "eligibility_mode": "HEURISTIC", "graded_contexts": 0,
+                "decision_contexts": 0, "minimum_sample_per_bucket": MIN_SAMPLE,
+                "candidate_counts": {}, "active_calibrations": 0,
+                "automatic_activation": False, "human_activation_required": True,
+                "production_effect": "NONE", "execution_authority": False}
     try:
         with _readonly_connect(path) as conn:
             if _table_exists(conn, "dynamic_state_decision_context"):
@@ -327,12 +375,12 @@ def eligibility_readout(path: str | Path) -> Dict[str, Any]:
                     "SELECT COUNT(*) n FROM calibration_activations WHERE status='ACTIVE'"
                 ).fetchone()["n"] or 0)
     except Exception as exc:
-        return {"ok": False, "status": "READ_UNAVAILABLE", "graded_contexts": 0,
+        availability = _read_availability(path, exc)
+        return {"ok": False, **availability, "eligibility_mode": "HEURISTIC", "graded_contexts": 0,
                 "decision_contexts": 0, "minimum_sample_per_bucket": MIN_SAMPLE,
                 "candidate_counts": {}, "active_calibrations": 0,
                 "automatic_activation": False, "human_activation_required": True,
-                "production_effect": "NONE", "degraded": True, "error": type(exc).__name__,
-                "execution_authority": False}
+                "production_effect": "NONE", "execution_authority": False}
 
     if active > 0:
         mode = "ACTIVE"
@@ -345,7 +393,7 @@ def eligibility_readout(path: str | Path) -> Dict[str, Any]:
     else:
         mode = "HEURISTIC"
     return {
-        "ok": True, "status": mode, "graded_contexts": graded_contexts,
+        "ok": True, "status": mode, "eligibility_mode": mode, "read_available": True, "initialized": True, "graded_contexts": graded_contexts,
         "decision_contexts": decision_contexts, "minimum_sample_per_bucket": MIN_SAMPLE,
         "candidate_counts": counts, "active_calibrations": active,
         "automatic_activation": False, "human_activation_required": True,
@@ -355,6 +403,14 @@ def eligibility_readout(path: str | Path) -> Dict[str, Any]:
 
 def activation_status(path: str | Path, limit: int = 100) -> Dict[str, Any]:
     activations = []
+    missing = _empty_read_state(path)
+    if missing:
+        return {"ok": True, **missing, "version": VERSION, "schema_version": SCHEMA_VERSION,
+                "active_count": 0, "activations": [], "production_effect": "NONE",
+                "execution_authority": False,
+                "policy": {"automatic_activation": False, "human_activation_required": True,
+                           "bounded_adjustments": BOUNDS, "execution_authority": False,
+                           "suppression_and_watch_only_immutable": True}}
     try:
         with _readonly_connect(path) as conn:
             if _table_exists(conn, "calibration_activations"):
@@ -371,10 +427,9 @@ def activation_status(path: str | Path, limit: int = 100) -> Dict[str, Any]:
                         "rolled_back_by": row["rolled_back_by"], "rollback_reason": row["rollback_reason"],
                     })
     except Exception as exc:
-        return {"ok": False, "status": "READ_UNAVAILABLE", "version": VERSION,
+        return {"ok": False, **_read_availability(path, exc), "version": VERSION,
                 "schema_version": SCHEMA_VERSION, "active_count": 0, "activations": [],
-                "degraded": True, "error": type(exc).__name__, "production_effect": "NONE",
-                "execution_authority": False}
+                "production_effect": "NONE", "execution_authority": False}
     return {
         "ok": True, "status": "READY", "version": VERSION, "schema_version": SCHEMA_VERSION,
         "lifecycle": ["HEURISTIC", "LEARNING", "ELIGIBLE", "APPROVED", "ACTIVE", "ROLLED_BACK"],

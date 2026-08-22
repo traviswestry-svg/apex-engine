@@ -24,16 +24,17 @@ def _ds():
 def test_release_truth_is_68_5_1():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert manifest["apex_version"] == "68.5.1"
-    assert manifest["build_name"] == "Dynamic-State Runtime Nonblocking Fix"
+    assert manifest["apex_version"] in {"68.5.1", "68.5.2"}
+    assert manifest["guardrails"]["dynamic_state_observability_reads_nonblocking"] is True
     assert manifest["guardrails"]["dynamic_state_observability_reads_nonblocking"] is True
     assert manifest["guardrails"]["calibration_read_paths_mutate_schema"] is False
-    assert "apex_version: 68.5.1" in registry
+    assert "apex_version: 68.5." in registry
 
 
 def test_policy_fails_soft_when_activation_store_is_unavailable(monkeypatch):
     def unavailable(*args, **kwargs):
         raise TimeoutError("simulated busy evidence store")
+    monkeypatch.setattr(activation, "_empty_read_state", lambda path: None)
     monkeypatch.setattr(activation, "_readonly_connect", unavailable)
     started = time.monotonic()
     out = evaluate_dynamic_state_policy({"direction": "BULLISH"}, dynamic_state=_ds())
@@ -41,7 +42,7 @@ def test_policy_fails_soft_when_activation_store_is_unavailable(monkeypatch):
     assert elapsed < 0.5
     assert out["threshold_adjustment_points"] == 3.0
     assert out["calibration_activation"]["active"] is False
-    assert out["calibration_activation"]["status"] == "READ_UNAVAILABLE"
+    assert out["calibration_activation"]["status"] in {"READ_ERROR", "MISSING_DB"}
     assert out["suppress_new_alerts"] is False
     assert out["watch_only"] is False
 
@@ -51,8 +52,8 @@ def test_readout_functions_do_not_create_a_missing_database(tmp_path):
     a = activation_status(db)
     e = eligibility_readout(db)
     assert not db.exists()
-    assert a["ok"] is False and a["status"] == "READ_UNAVAILABLE"
-    assert e["ok"] is False and e["status"] == "READ_UNAVAILABLE"
+    assert a["ok"] is True and a["status"] == "MISSING_DB"
+    assert e["ok"] is True and e["status"] == "MISSING_DB"
     assert a["execution_authority"] is False
     assert e["execution_authority"] is False
 

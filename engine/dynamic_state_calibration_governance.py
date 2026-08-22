@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "68.4.0"
+VERSION = "68.5.2"
 SCHEMA_VERSION = "apex.dynamic_state_calibration_governance.v1"
 DEFAULT_MIN_SAMPLE = 20
 DEFAULT_MIN_EFFECTIVE_SAMPLE = 15.0
@@ -334,32 +334,48 @@ def review_candidate(path: str | Path, candidate_id: str, *, decision: str, acto
 
 
 def governance_overview(path: str | Path, limit: int = 50) -> Dict[str, Any]:
-    """Read-only governance snapshot for observability routes.
+    """Read-only governance snapshot with truthful availability states.
 
-    Never creates schema or waits on the writer policy. Missing/unavailable stores
-    are represented as an empty/degraded snapshot instead of blocking HTTP.
+    A store or governance table that has not been initialized yet is a normal
+    empty state. Busy/locked stores and genuine read faults remain degraded.
     """
+    from .calibration_activation import _read_availability
     from .canonical_persistence import connection as canonical_connection
     candidates = []
+    governance = {"automatic_promotion": False, "automatic_production_activation": False,
+                  "approved_means_recommendation_only": True,
+                  "production_handoff": "engine.calibration_activation",
+                  "production_effect": "NONE"}
+    availability = _read_availability(path)
+    if availability["status"] == "MISSING_DB":
+        return {"ok": True, "version": VERSION, "schema_version": SCHEMA_VERSION,
+                **availability, "lifecycle": list(ALLOWED_STATES),
+                "counts": {state: 0 for state in ALLOWED_STATES}, "candidates": [],
+                "governance": governance}
     try:
         with canonical_connection(path, read_only=True, timeout=0.35, wal=False, heal=False, busy_timeout_ms=250) as conn:
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dynamic_calibration_candidates'"
             ).fetchone()
+            if not exists:
+                return {"ok": True, "version": VERSION, "schema_version": SCHEMA_VERSION,
+                        "status": "EMPTY_NOT_INITIALIZED", "read_available": True,
+                        "initialized": False, "degraded": False,
+                        "reason": "GOVERNANCE_SCHEMA_NOT_CREATED_YET",
+                        "lifecycle": list(ALLOWED_STATES),
+                        "counts": {state: 0 for state in ALLOWED_STATES}, "candidates": [],
+                        "governance": governance}
             rows = conn.execute(
                 "SELECT * FROM dynamic_calibration_candidates ORDER BY created_at DESC LIMIT ?",
                 (max(1, min(int(limit), 500)),),
-            ).fetchall() if exists else []
+            ).fetchall()
     except Exception as exc:
+        availability = _read_availability(path, exc)
         return {
             "ok": False, "version": VERSION, "schema_version": SCHEMA_VERSION,
-            "status": "READ_UNAVAILABLE", "lifecycle": list(ALLOWED_STATES),
+            **availability, "lifecycle": list(ALLOWED_STATES),
             "counts": {state: 0 for state in ALLOWED_STATES}, "candidates": [],
-            "degraded": True, "error": type(exc).__name__,
-            "governance": {"automatic_promotion": False, "automatic_production_activation": False,
-                           "approved_means_recommendation_only": True,
-                           "production_handoff": "engine.calibration_activation",
-                           "production_effect": "NONE"},
+            "governance": governance,
         }
     for r in rows:
         candidates.append({
@@ -372,7 +388,7 @@ def governance_overview(path: str | Path, limit: int = 50) -> Dict[str, Any]:
     counts = {state: sum(1 for c in candidates if c["status"] == state) for state in ALLOWED_STATES}
     return {
         "ok": True, "version": VERSION, "schema_version": SCHEMA_VERSION,
-        "status": "READY", "degraded": False, "lifecycle": list(ALLOWED_STATES), "counts": counts, "candidates": candidates,
+        "status": "READY", "read_available": True, "initialized": True, "degraded": False, "lifecycle": list(ALLOWED_STATES), "counts": counts, "candidates": candidates,
         "integrity": {
             "confidence_intervals": "WILSON_95",
             "comparison_test": "TWO_PROPORTION_Z_TWO_SIDED",
