@@ -1,6 +1,6 @@
 {
-  "apex_version": "68.5.3",
-  "build_name": "Calibration Governance Store Initialization Closure",
+  "apex_version": "68.6.0",
+  "build_name": "Decision Outcome Attribution & Abstention Effectiveness",
   "release_series": "APEX 68",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -114,7 +114,16 @@
     "calibration_governance_get_initialization": false,
     "calibration_governance_durable_render_path": true,
     "calibration_governance_initialization_idempotent": true,
-    "calibration_governance_initialization_changes_execution_authority": false
+    "calibration_governance_initialization_changes_execution_authority": false,
+    "decision_outcome_attribution_observational_only": true,
+    "abstention_counterfactuals_excluded_from_calibration_grades": true,
+    "gate_effectiveness_changes_trade_decisions": false,
+    "entry_effectiveness_changes_trade_decisions": false,
+    "exit_effectiveness_changes_execution_authority": false,
+    "empirical_late_entry_inference_without_evidence": false,
+    "effectiveness_findings_auto_promote_policy": false,
+    "effectiveness_policy_changes_require_human_review": true,
+    "decision_outcome_attribution_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

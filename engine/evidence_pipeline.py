@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
-VERSION="68.5.3"; SCHEMA_VERSION="apex.evidence_readiness.v2"; DEFAULT_DB=persistent_sqlite_path("APEX_EVIDENCE_PIPELINE_DB", "apex_evidence_pipeline.db")
+VERSION="68.6.0"; SCHEMA_VERSION="apex.evidence_readiness.v2"; DEFAULT_DB=persistent_sqlite_path("APEX_EVIDENCE_PIPELINE_DB", "apex_evidence_pipeline.db")
 def _now(): return datetime.now(timezone.utc).isoformat()
 def _connect(path: str|Path=DEFAULT_DB):
  c=canonical_connect(path); c.executescript('''
@@ -27,6 +27,12 @@ def record_snapshot(snapshot: Mapping[str,Any], path: str|Path=DEFAULT_DB)->bool
    from .dynamic_state_outcome_calibration import persist_context
    persist_context(c,did,observed_at,s)
   except Exception:
+   pass
+  try:
+   from .decision_outcome_attribution import capture_context
+   capture_context(c,did,observed_at,s)
+  except Exception:
+   # Attribution is observational and must never block canonical decision capture.
    pass
   return inserted
 def record_price(ticker:str, price:Any, observed_at:str|None=None,path: str|Path=DEFAULT_DB)->bool:

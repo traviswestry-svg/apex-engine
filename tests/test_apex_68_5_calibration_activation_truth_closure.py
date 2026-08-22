@@ -55,9 +55,10 @@ def _seed(db, n=30):
 def test_release_truth_preserves_68_5_series():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert manifest["apex_version"].startswith("68.5.")
-    assert manifest["build_name"] in {"Calibration Activation & Truth Closure", "Dynamic-State Runtime Nonblocking Fix", "Calibration Governance Read Availability Fix", "Calibration Governance Store Initialization Closure"}
-    assert "apex_version: 68.5." in registry
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (68, 5, 0)
+    assert manifest["guardrails"]["calibration_activation_human_approval_required"] is True
+    assert manifest["guardrails"]["calibration_activation_changes_execution_authority"] is False
+    assert "apex_version: 68." in registry
     assert "governed_calibration_activation:" in registry
 
 

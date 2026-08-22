@@ -8,8 +8,7 @@ import engine.dynamic_state_calibration_governance as governance
 def test_release_identity_and_guardrails_are_ratcheted():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "config" / "apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "68.5.3"
-    assert manifest["build_name"] == "Calibration Governance Store Initialization Closure"
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (68, 5, 3)
     guards = manifest["guardrails"]
     assert guards["calibration_governance_startup_initialization"] is True
     assert guards["calibration_governance_get_initialization"] is False

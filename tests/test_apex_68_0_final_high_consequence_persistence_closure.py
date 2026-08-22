@@ -48,6 +48,6 @@ def test_audit_has_no_high_consequence_direct_sqlite():
 
 def test_68_0_closure_capability_remains_registered_after_release_ratchet():
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 68.5." in registry
+    assert "apex_version: 68." in registry
     assert "final_high_consequence_persistence_closure:" in registry
     assert 'version: "68.0.0"' in registry
