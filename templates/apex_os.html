@@ -733,6 +733,9 @@
       var txt='Outcome calibration: '+String(c.status||'COLLECTING').replace(/_/g,' ')+' · '+n2(c.graded_contexts)+' graded / '+n2(c.minimum_sample_per_bucket)+' min per bucket';
       var dims=c.dimensions||{},ev=dims.event_phase||[],ready=ev.filter(function(x){return x.calibration_ready;}).length;
       if(ready){txt+=' · '+ready+' event-phase bucket'+(ready===1?'':'s')+' calibrated';}
+      var pg=c.promotion_governance||{},counts=pg.counts||{};
+      var eligible=Number(counts.ELIGIBLE_FOR_REVIEW||0),approved=Number(counts.APPROVED||0);
+      if(eligible||approved){txt+=' · governance '+eligible+' review / '+approved+' approved';}
       txt+=' · advisory only';el.textContent=txt;
     }
     function load(){
