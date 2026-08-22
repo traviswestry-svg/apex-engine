@@ -1,6 +1,6 @@
 {
-  "apex_version": "68.5.2",
-  "build_name": "Calibration Governance Read Availability Fix",
+  "apex_version": "68.5.3",
+  "build_name": "Calibration Governance Store Initialization Closure",
   "release_series": "APEX 68",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -109,7 +109,12 @@
     "calibration_read_availability_classified": true,
     "missing_calibration_store_is_degraded": false,
     "calibration_busy_state_observable": true,
-    "calibration_read_errors_observable": true
+    "calibration_read_errors_observable": true,
+    "calibration_governance_startup_initialization": true,
+    "calibration_governance_get_initialization": false,
+    "calibration_governance_durable_render_path": true,
+    "calibration_governance_initialization_idempotent": true,
+    "calibration_governance_initialization_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

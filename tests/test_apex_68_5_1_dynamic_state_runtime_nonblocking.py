@@ -24,7 +24,7 @@ def _ds():
 def test_release_truth_is_68_5_1():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert manifest["apex_version"] in {"68.5.1", "68.5.2"}
+    assert manifest["apex_version"] in {"68.5.1", "68.5.2", "68.5.3"}
     assert manifest["guardrails"]["dynamic_state_observability_reads_nonblocking"] is True
     assert manifest["guardrails"]["dynamic_state_observability_reads_nonblocking"] is True
     assert manifest["guardrails"]["calibration_read_paths_mutate_schema"] is False

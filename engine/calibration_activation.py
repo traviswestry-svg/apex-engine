@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "68.5.2"
+VERSION = "68.5.3"
 SCHEMA_VERSION = "apex.calibration_activation.v1"
 
 # Hard production envelopes. Requests outside these limits are rejected rather
@@ -132,6 +132,46 @@ def ensure_schema(conn) -> None:
       ON calibration_activations(candidate_id,activated_at);
     ''')
 
+
+
+def initialize_governance_store(path: str | Path) -> Dict[str, Any]:
+    """Idempotently initialize calibration governance on a controlled write path.
+
+    This function is intended for application composition/startup or an explicit
+    governed writer.  GET/read routes must not call it.  It creates the base
+    evidence schema, the 68.4 candidate/review schema, and the 68.5 activation
+    schema in one canonical writer transaction boundary.
+    """
+    from .evidence_pipeline import _connect
+    from .dynamic_state_calibration_governance import ensure_schema as ensure_candidate_schema
+
+    resolved = Path(path).expanduser()
+    existed_before = resolved.exists() if str(path) not in {":memory:", ""} else True
+    with _connect(path) as conn:
+        ensure_candidate_schema(conn)
+        ensure_schema(conn)
+        conn.commit()
+        candidate_ready = _table_exists(conn, "dynamic_calibration_candidates")
+        review_ready = _table_exists(conn, "dynamic_calibration_reviews")
+        activation_ready = _table_exists(conn, "calibration_activations")
+    initialized = bool(candidate_ready and review_ready and activation_ready)
+    return {
+        "ok": initialized,
+        "status": "READY" if initialized else "INITIALIZATION_INCOMPLETE",
+        "version": VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "initialized": initialized,
+        "created_store": (not existed_before and resolved.exists()) if str(path) not in {":memory:", ""} else False,
+        "path": str(resolved),
+        "persistent_render_path": str(resolved).startswith("/data/"),
+        "tables": {
+            "dynamic_calibration_candidates": candidate_ready,
+            "dynamic_calibration_reviews": review_ready,
+            "calibration_activations": activation_ready,
+        },
+        "automatic_activation": False,
+        "execution_authority": False,
+    }
 
 def _candidate(conn, candidate_id: str):
     from .dynamic_state_calibration_governance import ensure_schema as ensure_candidate_schema

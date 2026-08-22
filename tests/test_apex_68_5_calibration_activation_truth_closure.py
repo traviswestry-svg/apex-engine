@@ -56,7 +56,7 @@ def test_release_truth_preserves_68_5_series():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
     assert manifest["apex_version"].startswith("68.5.")
-    assert manifest["build_name"] in {"Calibration Activation & Truth Closure", "Dynamic-State Runtime Nonblocking Fix", "Calibration Governance Read Availability Fix"}
+    assert manifest["build_name"] in {"Calibration Activation & Truth Closure", "Dynamic-State Runtime Nonblocking Fix", "Calibration Governance Read Availability Fix", "Calibration Governance Store Initialization Closure"}
     assert "apex_version: 68.5." in registry
     assert "governed_calibration_activation:" in registry
 

@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 from .canonical_persistence import connect as canonical_connect
-VERSION="68.4.0"; SCHEMA_VERSION="apex.evidence_readiness.v2"; DEFAULT_DB=os.getenv("APEX_EVIDENCE_PIPELINE_DB","apex_evidence_pipeline.db")
+from .persistent_store import persistent_sqlite_path
+VERSION="68.5.3"; SCHEMA_VERSION="apex.evidence_readiness.v2"; DEFAULT_DB=persistent_sqlite_path("APEX_EVIDENCE_PIPELINE_DB", "apex_evidence_pipeline.db")
 def _now(): return datetime.now(timezone.utc).isoformat()
 def _connect(path: str|Path=DEFAULT_DB):
  c=canonical_connect(path); c.executescript('''
