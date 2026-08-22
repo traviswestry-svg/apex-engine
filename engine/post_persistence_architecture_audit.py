@@ -15,8 +15,8 @@ from typing import Any
 
 from .architecture_integrity import snapshot as architecture_snapshot
 
-VERSION = "67.9.1"
-SCHEMA_VERSION = "apex.post_persistence_architecture_audit.v1"
+VERSION = "68.5.0"
+SCHEMA_VERSION = "apex.post_persistence_architecture_audit.v2"
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "engine"
 MANIFEST = ROOT / "config" / "apex_release_manifest.json"
@@ -25,6 +25,7 @@ MANIFEST = ROOT / "config" / "apex_release_manifest.json"
 # claims of execution authority; they are review priority based on proximity to
 # decision, risk, execution, market-state, eligibility, or canonical state flows.
 HIGH_CONSEQUENCE_MODULES = {
+    "app.py",
     "live_operations.py",
     "premium_strategy_routes.py",
     "trade_director_change_control.py",
@@ -95,7 +96,8 @@ def _classify(name: str) -> str:
 
 def _inventory_direct_sqlite() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for path in sorted(ENGINE.rglob("*.py")):
+    audit_paths = list(ENGINE.rglob("*.py")) + [ROOT / "app.py"]
+    for path in sorted(audit_paths):
         if path.name in {"canonical_persistence.py", Path(__file__).name}:
             continue
         try:
@@ -162,6 +164,7 @@ def snapshot() -> dict[str, Any]:
         "decision_authority": "NONE",
         "execution_authority": "NONE",
         "read_only": True,
+        "audit_scope": ["engine/**/*.py", "app.py"],
         "architecture_integrity": {
             "status": architecture.get("status"),
             "identity_aligned": architecture.get("identity_aligned"),
