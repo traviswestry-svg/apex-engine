@@ -334,11 +334,33 @@ def review_candidate(path: str | Path, candidate_id: str, *, decision: str, acto
 
 
 def governance_overview(path: str | Path, limit: int = 50) -> Dict[str, Any]:
-    from .evidence_pipeline import _connect
-    with _connect(path) as conn:
-        ensure_schema(conn)
-        rows = conn.execute("SELECT * FROM dynamic_calibration_candidates ORDER BY created_at DESC LIMIT ?", (max(1, min(int(limit), 500)),)).fetchall()
+    """Read-only governance snapshot for observability routes.
+
+    Never creates schema or waits on the writer policy. Missing/unavailable stores
+    are represented as an empty/degraded snapshot instead of blocking HTTP.
+    """
+    from .canonical_persistence import connection as canonical_connection
     candidates = []
+    try:
+        with canonical_connection(path, read_only=True, timeout=0.35, wal=False, heal=False, busy_timeout_ms=250) as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dynamic_calibration_candidates'"
+            ).fetchone()
+            rows = conn.execute(
+                "SELECT * FROM dynamic_calibration_candidates ORDER BY created_at DESC LIMIT ?",
+                (max(1, min(int(limit), 500)),),
+            ).fetchall() if exists else []
+    except Exception as exc:
+        return {
+            "ok": False, "version": VERSION, "schema_version": SCHEMA_VERSION,
+            "status": "READ_UNAVAILABLE", "lifecycle": list(ALLOWED_STATES),
+            "counts": {state: 0 for state in ALLOWED_STATES}, "candidates": [],
+            "degraded": True, "error": type(exc).__name__,
+            "governance": {"automatic_promotion": False, "automatic_production_activation": False,
+                           "approved_means_recommendation_only": True,
+                           "production_handoff": "engine.calibration_activation",
+                           "production_effect": "NONE"},
+        }
     for r in rows:
         candidates.append({
             "candidate_id": r["candidate_id"], "created_at": r["created_at"], "dimension": r["dimension"],
@@ -350,7 +372,7 @@ def governance_overview(path: str | Path, limit: int = 50) -> Dict[str, Any]:
     counts = {state: sum(1 for c in candidates if c["status"] == state) for state in ALLOWED_STATES}
     return {
         "ok": True, "version": VERSION, "schema_version": SCHEMA_VERSION,
-        "status": "READY", "lifecycle": list(ALLOWED_STATES), "counts": counts, "candidates": candidates,
+        "status": "READY", "degraded": False, "lifecycle": list(ALLOWED_STATES), "counts": counts, "candidates": candidates,
         "integrity": {
             "confidence_intervals": "WILSON_95",
             "comparison_test": "TWO_PROPORTION_Z_TWO_SIDED",

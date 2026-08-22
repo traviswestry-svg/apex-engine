@@ -39,6 +39,7 @@ def connect(
     foreign_keys: bool = True,
     wal: bool = True,
     heal: bool = True,
+    busy_timeout_ms: int | None = None,
 ) -> sqlite3.Connection:
     """Open a SQLite database using APEX's canonical connection policy."""
     resolved = _resolved(path)
@@ -62,7 +63,8 @@ def connect(
     if row_factory:
         conn.row_factory = sqlite3.Row
 
-    conn.execute(f"PRAGMA busy_timeout={max(0, DEFAULT_BUSY_TIMEOUT_MS)}")
+    effective_busy_timeout_ms = DEFAULT_BUSY_TIMEOUT_MS if busy_timeout_ms is None else int(busy_timeout_ms)
+    conn.execute(f"PRAGMA busy_timeout={max(0, effective_busy_timeout_ms)}")
     if foreign_keys:
         conn.execute("PRAGMA foreign_keys=ON")
 

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "68.5.0"
+VERSION = "68.5.1"
 SCHEMA_VERSION = "apex.calibration_activation.v1"
 
 # Hard production envelopes. Requests outside these limits are rejected rather
@@ -27,6 +27,28 @@ BOUNDS = {
     "conviction_penalty_points": (-3.0, 3.0),
     "consensus_penalty_points": (-2.0, 2.0),
 }
+
+READ_TIMEOUT_SECONDS = 0.35
+READ_BUSY_TIMEOUT_MS = 250
+
+
+def _readonly_connect(path: str | Path):
+    """Open a bounded, non-mutating connection for runtime/readout paths.
+
+    Reads must never wait behind scanner writers long enough to stall a web or
+    decision thread.  No healing, WAL mutation, or schema creation occurs here.
+    """
+    from .canonical_persistence import connection as canonical_connection
+    return canonical_connection(
+        path, read_only=True, timeout=READ_TIMEOUT_SECONDS, wal=False, heal=False,
+        busy_timeout_ms=READ_BUSY_TIMEOUT_MS,
+    )
+
+
+def _table_exists(conn, name: str) -> bool:
+    return bool(conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone())
 
 
 def _now() -> str:
@@ -232,29 +254,40 @@ def _dimension_values(dynamic_state: Mapping[str, Any], *, policy_state: str, al
 
 
 def resolve_active_adjustments(path: str | Path, dynamic_state: Mapping[str, Any], *, policy_state: str, alert_state: str) -> Dict[str, Any]:
-    """Resolve additive adjustments applicable to this immutable dynamic context."""
-    from .evidence_pipeline import _connect
+    """Resolve active adjustments with a bounded, read-only DB lookup.
+
+    If persistence is busy/unavailable, production safely runs the existing
+    heuristic policy for this evaluation rather than blocking the request or
+    decision thread.
+    """
     values = _dimension_values(dynamic_state, policy_state=policy_state, alert_state=alert_state)
     totals = {key: 0.0 for key in BOUNDS}
     applied = []
-    with _connect(path) as conn:
-        ensure_schema(conn)
-        rows = conn.execute(
-            "SELECT * FROM calibration_activations WHERE status='ACTIVE' ORDER BY activated_at"
-        ).fetchall()
-        for row in rows:
-            if values.get(str(row["dimension"])) != str(row["bucket"]).upper():
-                continue
-            adjustment = _load(row["adjustment_json"])
-            for key in totals:
-                value = _f(adjustment.get(key))
-                if value is not None:
-                    totals[key] += value
-            applied.append({
-                "activation_id": row["activation_id"], "candidate_id": row["candidate_id"],
-                "dimension": row["dimension"], "bucket": row["bucket"], "adjustment": adjustment,
-            })
-    # Aggregate safety cap protects against multiple independent active dimensions.
+    try:
+        with _readonly_connect(path) as conn:
+            if not _table_exists(conn, "calibration_activations"):
+                return {"active": False, "adjustment": totals, "applied": [], "context": values,
+                        "status": "NO_ACTIVATION_TABLE", "degraded": False}
+            rows = conn.execute(
+                "SELECT * FROM calibration_activations WHERE status='ACTIVE' ORDER BY activated_at"
+            ).fetchall()
+            for row in rows:
+                if values.get(str(row["dimension"])) != str(row["bucket"]).upper():
+                    continue
+                adjustment = _load(row["adjustment_json"])
+                for key in totals:
+                    value = _f(adjustment.get(key))
+                    if value is not None:
+                        totals[key] += value
+                applied.append({
+                    "activation_id": row["activation_id"], "candidate_id": row["candidate_id"],
+                    "dimension": row["dimension"], "bucket": row["bucket"], "adjustment": adjustment,
+                })
+    except Exception as exc:
+        return {"active": False, "adjustment": totals, "applied": [], "context": values,
+                "status": "READ_UNAVAILABLE", "degraded": True, "error": type(exc).__name__,
+                "execution_authority": False}
+
     aggregate_caps = {
         "threshold_adjustment_points": (-5.0, 5.0),
         "conviction_penalty_points": (-5.0, 5.0),
@@ -263,61 +296,92 @@ def resolve_active_adjustments(path: str | Path, dynamic_state: Mapping[str, Any
     for key, (lo, hi) in aggregate_caps.items():
         totals[key] = round(max(lo, min(hi, totals[key])), 3)
     return {"active": bool(applied), "adjustment": totals, "applied": applied,
-            "context": values, "aggregate_caps": aggregate_caps}
+            "context": values, "aggregate_caps": aggregate_caps, "status": "READY",
+            "degraded": False}
 
 
 def eligibility_readout(path: str | Path) -> Dict[str, Any]:
-    """One truthful at-a-glance view of whether calibration can influence production."""
-    from .dynamic_state_outcome_calibration import calibration_summary
-    from .dynamic_state_calibration_governance import governance_overview
-    calibration = calibration_summary(path)
-    governance = governance_overview(path, limit=500)
-    activation = activation_status(path, limit=500)
-    counts = governance.get("counts") or {}
-    active = int(activation.get("active_count") or 0)
+    """Fast, read-only eligibility summary; never performs calibration aggregation."""
+    from .dynamic_state_outcome_calibration import MIN_SAMPLE
+    counts = {}
+    decision_contexts = 0
+    graded_contexts = 0
+    active = 0
+    try:
+        with _readonly_connect(path) as conn:
+            if _table_exists(conn, "dynamic_state_decision_context"):
+                decision_contexts = int(conn.execute(
+                    "SELECT COUNT(*) n FROM dynamic_state_decision_context"
+                ).fetchone()["n"] or 0)
+            if _table_exists(conn, "dynamic_state_decision_context") and _table_exists(conn, "grading_results"):
+                graded_contexts = int(conn.execute(
+                    "SELECT COUNT(*) n FROM dynamic_state_decision_context c "
+                    "JOIN grading_results g ON g.decision_id=c.decision_id WHERE g.status='GRADED'"
+                ).fetchone()["n"] or 0)
+            if _table_exists(conn, "dynamic_calibration_candidates"):
+                counts = {str(r["status"]): int(r["n"] or 0) for r in conn.execute(
+                    "SELECT status,COUNT(*) n FROM dynamic_calibration_candidates GROUP BY status"
+                ).fetchall()}
+            if _table_exists(conn, "calibration_activations"):
+                active = int(conn.execute(
+                    "SELECT COUNT(*) n FROM calibration_activations WHERE status='ACTIVE'"
+                ).fetchone()["n"] or 0)
+    except Exception as exc:
+        return {"ok": False, "status": "READ_UNAVAILABLE", "graded_contexts": 0,
+                "decision_contexts": 0, "minimum_sample_per_bucket": MIN_SAMPLE,
+                "candidate_counts": {}, "active_calibrations": 0,
+                "automatic_activation": False, "human_activation_required": True,
+                "production_effect": "NONE", "degraded": True, "error": type(exc).__name__,
+                "execution_authority": False}
+
     if active > 0:
         mode = "ACTIVE"
     elif int(counts.get("APPROVED") or 0) > 0:
         mode = "APPROVED"
     elif int(counts.get("ELIGIBLE_FOR_REVIEW") or 0) > 0:
         mode = "ELIGIBLE"
-    elif int(calibration.get("graded_contexts") or 0) > 0:
+    elif graded_contexts > 0:
         mode = "LEARNING"
     else:
         mode = "HEURISTIC"
     return {
-        "ok": True, "status": mode, "graded_contexts": int(calibration.get("graded_contexts") or 0),
-        "decision_contexts": int(calibration.get("decision_contexts") or 0),
-        "minimum_sample_per_bucket": calibration.get("minimum_sample_per_bucket"),
+        "ok": True, "status": mode, "graded_contexts": graded_contexts,
+        "decision_contexts": decision_contexts, "minimum_sample_per_bucket": MIN_SAMPLE,
         "candidate_counts": counts, "active_calibrations": active,
         "automatic_activation": False, "human_activation_required": True,
-        "production_effect": "BOUNDED" if active else "NONE",
+        "production_effect": "BOUNDED" if active else "NONE", "degraded": False,
     }
 
 
 def activation_status(path: str | Path, limit: int = 100) -> Dict[str, Any]:
-    from .evidence_pipeline import _connect
-    with _connect(path) as conn:
-        ensure_schema(conn)
-        rows = conn.execute(
-            "SELECT * FROM calibration_activations ORDER BY activated_at DESC LIMIT ?",
-            (max(1, min(int(limit), 500)),),
-        ).fetchall()
     activations = []
-    for row in rows:
-        activations.append({
-            "activation_id": row["activation_id"], "candidate_id": row["candidate_id"],
-            "dimension": row["dimension"], "bucket": row["bucket"], "activated_at": row["activated_at"],
-            "activated_by": row["activated_by"], "reason": row["reason"], "adjustment": _load(row["adjustment_json"]),
-            "status": row["status"], "rolled_back_at": row["rolled_back_at"],
-            "rolled_back_by": row["rolled_back_by"], "rollback_reason": row["rollback_reason"],
-        })
+    try:
+        with _readonly_connect(path) as conn:
+            if _table_exists(conn, "calibration_activations"):
+                rows = conn.execute(
+                    "SELECT * FROM calibration_activations ORDER BY activated_at DESC LIMIT ?",
+                    (max(1, min(int(limit), 500)),),
+                ).fetchall()
+                for row in rows:
+                    activations.append({
+                        "activation_id": row["activation_id"], "candidate_id": row["candidate_id"],
+                        "dimension": row["dimension"], "bucket": row["bucket"], "activated_at": row["activated_at"],
+                        "activated_by": row["activated_by"], "reason": row["reason"], "adjustment": _load(row["adjustment_json"]),
+                        "status": row["status"], "rolled_back_at": row["rolled_back_at"],
+                        "rolled_back_by": row["rolled_back_by"], "rollback_reason": row["rollback_reason"],
+                    })
+    except Exception as exc:
+        return {"ok": False, "status": "READ_UNAVAILABLE", "version": VERSION,
+                "schema_version": SCHEMA_VERSION, "active_count": 0, "activations": [],
+                "degraded": True, "error": type(exc).__name__, "production_effect": "NONE",
+                "execution_authority": False}
     return {
         "ok": True, "status": "READY", "version": VERSION, "schema_version": SCHEMA_VERSION,
         "lifecycle": ["HEURISTIC", "LEARNING", "ELIGIBLE", "APPROVED", "ACTIVE", "ROLLED_BACK"],
         "active_count": sum(1 for x in activations if x["status"] == "ACTIVE"),
-        "activations": activations,
+        "activations": activations, "degraded": False,
         "policy": {"automatic_activation": False, "human_activation_required": True,
                    "bounded_adjustments": BOUNDS, "execution_authority": False,
                    "suppression_and_watch_only_immutable": True},
     }
+
