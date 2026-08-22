@@ -190,6 +190,15 @@ except Exception as _ds_err:
     register_dynamic_state_routes = None
     print(f"Dynamic State surface unavailable: {_ds_err}", flush=True)
 
+# APEX 68.6.0 — Decision Outcome Attribution & Abstention Effectiveness
+try:
+    from engine.decision_outcome_attribution_routes import register_decision_outcome_attribution_routes
+    DECISION_OUTCOME_ATTRIBUTION_68_6_AVAILABLE = True
+except Exception as _doa686_err:
+    DECISION_OUTCOME_ATTRIBUTION_68_6_AVAILABLE = False
+    register_decision_outcome_attribution_routes = None
+    print(f"Decision Outcome Attribution 68.6 unavailable: {_doa686_err}", flush=True)
+
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
     from engine.trade_director_flow_intelligence import (
@@ -13632,6 +13641,23 @@ try:
                 "APEX 68.5.3 Calibration Governance Store initialization DEGRADED "
                 f"({type(_cal_init_exc).__name__}: {_cal_init_exc}).",
                 flush=True,
+            )
+
+    if DECISION_OUTCOME_ATTRIBUTION_68_6_AVAILABLE and register_decision_outcome_attribution_routes is not None:
+        register_decision_outcome_attribution_routes(app)
+        print("APEX 68.6.0 Decision Outcome Attribution routes registered.", flush=True)
+        try:
+            from engine.decision_outcome_attribution import initialize_store as _initialize_attribution_store
+            _attr_init = _initialize_attribution_store()
+            print(
+                "APEX 68.6.0 Decision Outcome Attribution store initialized "
+                f"(status={_attr_init.get('status')}, path={_attr_init.get('path')}).",
+                flush=True,
+            )
+        except Exception as _attr_init_exc:
+            print(
+                "APEX 68.6.0 Decision Outcome Attribution store initialization DEGRADED "
+                f"({type(_attr_init_exc).__name__}: {_attr_init_exc}).", flush=True,
             )
 
     if INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE and register_institutional_forecast_routes is not None:
