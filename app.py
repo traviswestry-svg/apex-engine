@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from flask import Flask, jsonify, render_template, request, redirect, g
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
+from engine.canonical_persistence import connect as canonical_sqlite_connect
 
 # APEX Trade Director Phase 6 — lazy trade learning/replay persistence
 try:
@@ -3411,7 +3412,7 @@ TRACKING_AVAILABLE = False  # flipped true only after init_tracking_db() succeed
 
 
 def get_db_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn = canonical_sqlite_connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -3613,7 +3614,7 @@ _SPINE_STAGE_RANK = {"WATCH": 0, "PREPARE": 1, "ARMED": 2, "EXECUTE": 3}
 
 
 def _spine_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(SPINE_DB_PATH, timeout=10)
+    conn = canonical_sqlite_connect(SPINE_DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -12395,7 +12396,7 @@ def _init_review_db() -> None:
         db_dir = os.path.dirname(REVIEW_DB_PATH)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=10)
+        conn = canonical_sqlite_connect(REVIEW_DB_PATH, timeout=10)
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("""
@@ -12441,7 +12442,7 @@ def _store_replay_frame(session_date: str, frame_time: str, ticker: str, snapsho
     """Persist a replay frame to SQLite (best-effort; never raises)."""
     try:
         import json
-        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+        conn = canonical_sqlite_connect(REVIEW_DB_PATH, timeout=5)
         try:
             conn.execute(
                 "INSERT INTO replay_snapshots (session_date, frame_time, ticker, snapshot_json) VALUES (?,?,?,?)",
@@ -12498,7 +12499,7 @@ def api_replay_session():
         if not frames:
             # Fallback: query SQLite for historical
             try:
-                conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+                conn = canonical_sqlite_connect(REVIEW_DB_PATH, timeout=5)
                 conn.row_factory = sqlite3.Row
                 try:
                     rows = conn.execute(
@@ -12559,7 +12560,7 @@ def api_replay_frame():
                           if f.get("ticker", "").upper() == ticker]
 
         if not day_frames:
-            conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+            conn = canonical_sqlite_connect(REVIEW_DB_PATH, timeout=5)
             conn.row_factory = sqlite3.Row
             try:
                 rows = conn.execute(
@@ -12656,7 +12657,7 @@ def api_review_trade_post():
         lesson = str(body.get("lesson", ""))
         screenshot_url = str(body.get("screenshot_url", ""))
 
-        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=10)
+        conn = canonical_sqlite_connect(REVIEW_DB_PATH, timeout=10)
         try:
             cursor = conn.execute(
                 """INSERT INTO trade_reviews
@@ -12693,7 +12694,7 @@ def api_review_trades():
     try:
         ticker = request.args.get("ticker", "").upper()
         limit = max(1, min(int(request.args.get("limit", "100")), 500))
-        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+        conn = canonical_sqlite_connect(REVIEW_DB_PATH, timeout=5)
         conn.row_factory = sqlite3.Row
         try:
             if ticker:
@@ -12727,7 +12728,7 @@ def api_review_summary():
     """
     try:
         ticker = request.args.get("ticker", "").upper()
-        conn = sqlite3.connect(REVIEW_DB_PATH, timeout=5)
+        conn = canonical_sqlite_connect(REVIEW_DB_PATH, timeout=5)
         conn.row_factory = sqlite3.Row
         try:
             if ticker:
