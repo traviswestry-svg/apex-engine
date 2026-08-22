@@ -157,6 +157,11 @@ def evaluate_dynamic_state_policy(
         warnings.append("POST_EVENT_NORMALIZATION")
         modifiers.append({"driver": "event_phase", "phase": phase, "effect": "MILD_BUFFER"})
 
+    from .calibration_activation import active_adjustments
+    cal_adj = active_adjustments()
+    if cal_adj.get("active"):
+        threshold_add += cal_adj["threshold_adjustment_points"]
+
     state = "SUPPRESSED" if suppress else "WATCH_ONLY" if watch_only else "NORMAL"
     return {
         "schema_version": SCHEMA_VERSION,
@@ -172,5 +177,6 @@ def evaluate_dynamic_state_policy(
         "blocking_conditions": blockers,
         "warnings": warnings,
         "modifiers": modifiers,
+        "calibration_activation": cal_adj,
         "provenance": {"dynamic_state_available": bool(ds.get("available")), "policy_is_directionally_non_generative": True},
     }
