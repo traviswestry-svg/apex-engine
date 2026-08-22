@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "68.4.0"
+VERSION = "68.5.2"
 SCHEMA_VERSION = "apex.dynamic_state_outcome_calibration.v2"
 MIN_SAMPLE = 20
 
@@ -213,8 +213,17 @@ def _aggregate(conn, field: str, min_sample: int) -> list[Dict[str, Any]]:
 
 
 def calibration_summary(path: str | Path, min_sample: int = MIN_SAMPLE) -> Dict[str, Any]:
-    """Read-only calibration summary with a bounded SQLite wait."""
+    """Read-only calibration summary with bounded, truthful availability."""
+    from .calibration_activation import _read_availability
     from .canonical_persistence import connection as canonical_connection
+    availability = _read_availability(path)
+    if availability["status"] == "MISSING_DB":
+        return {
+            "ok": True, "version": VERSION, "schema_version": SCHEMA_VERSION,
+            **availability, "minimum_sample_per_bucket": min_sample,
+            "decision_contexts": 0, "graded_contexts": 0, "dimensions": {},
+            "execution_authority": False,
+        }
     try:
         with canonical_connection(path, read_only=True, timeout=0.35, wal=False, heal=False, busy_timeout_ms=250) as conn:
             has_ctx = conn.execute(
@@ -244,16 +253,16 @@ def calibration_summary(path: str | Path, min_sample: int = MIN_SAMPLE) -> Dict[
     except Exception as exc:
         return {
             "ok": False, "version": VERSION, "schema_version": SCHEMA_VERSION,
-            "status": "READ_UNAVAILABLE", "minimum_sample_per_bucket": min_sample,
+            **_read_availability(path, exc), "minimum_sample_per_bucket": min_sample,
             "decision_contexts": 0, "graded_contexts": 0, "dimensions": {},
-            "degraded": True, "error": type(exc).__name__, "execution_authority": False,
+            "execution_authority": False,
         }
     return {
         "ok": True,
         "version": VERSION,
         "schema_version": SCHEMA_VERSION,
         "status": "READY" if graded_joined >= min_sample else "COLLECTING",
-        "degraded": False,
+        "read_available": True, "initialized": True, "degraded": False,
         "minimum_sample_per_bucket": min_sample,
         "decision_contexts": context_count,
         "graded_contexts": graded_joined,
