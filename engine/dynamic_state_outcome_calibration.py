@@ -213,25 +213,47 @@ def _aggregate(conn, field: str, min_sample: int) -> list[Dict[str, Any]]:
 
 
 def calibration_summary(path: str | Path, min_sample: int = MIN_SAMPLE) -> Dict[str, Any]:
-    from .evidence_pipeline import _connect
-    with _connect(path) as conn:
-        ensure_schema(conn)
-        context_count = conn.execute("SELECT COUNT(*) n FROM dynamic_state_decision_context").fetchone()["n"]
-        graded_joined = conn.execute(
-            """SELECT COUNT(*) n FROM dynamic_state_decision_context c
-               JOIN grading_results g ON g.decision_id=c.decision_id WHERE g.status='GRADED'"""
-        ).fetchone()["n"]
-        dimensions = {
-            name: _aggregate(conn, name, min_sample) for name in (
-                "event_phase", "gamma_term_divergence", "near_term_gamma_fragility",
-                "residual_pressure_opposes", "flow_independence_bucket", "alert_state",
-            )
+    """Read-only calibration summary with a bounded SQLite wait."""
+    from .canonical_persistence import connection as canonical_connection
+    try:
+        with canonical_connection(path, read_only=True, timeout=0.35, wal=False, heal=False, busy_timeout_ms=250) as conn:
+            has_ctx = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dynamic_state_decision_context'"
+            ).fetchone()
+            has_grades = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='grading_results'"
+            ).fetchone()
+            if not has_ctx:
+                context_count, graded_joined = 0, 0
+                dimensions = {name: [] for name in (
+                    "event_phase", "gamma_term_divergence", "near_term_gamma_fragility",
+                    "residual_pressure_opposes", "flow_independence_bucket", "alert_state",
+                )}
+            else:
+                context_count = conn.execute("SELECT COUNT(*) n FROM dynamic_state_decision_context").fetchone()["n"]
+                graded_joined = conn.execute(
+                    """SELECT COUNT(*) n FROM dynamic_state_decision_context c
+                       JOIN grading_results g ON g.decision_id=c.decision_id WHERE g.status='GRADED'"""
+                ).fetchone()["n"] if has_grades else 0
+                dimensions = {
+                    name: (_aggregate(conn, name, min_sample) if has_grades else []) for name in (
+                        "event_phase", "gamma_term_divergence", "near_term_gamma_fragility",
+                        "residual_pressure_opposes", "flow_independence_bucket", "alert_state",
+                    )
+                }
+    except Exception as exc:
+        return {
+            "ok": False, "version": VERSION, "schema_version": SCHEMA_VERSION,
+            "status": "READ_UNAVAILABLE", "minimum_sample_per_bucket": min_sample,
+            "decision_contexts": 0, "graded_contexts": 0, "dimensions": {},
+            "degraded": True, "error": type(exc).__name__, "execution_authority": False,
         }
     return {
         "ok": True,
         "version": VERSION,
         "schema_version": SCHEMA_VERSION,
         "status": "READY" if graded_joined >= min_sample else "COLLECTING",
+        "degraded": False,
         "minimum_sample_per_bucket": min_sample,
         "decision_contexts": context_count,
         "graded_contexts": graded_joined,

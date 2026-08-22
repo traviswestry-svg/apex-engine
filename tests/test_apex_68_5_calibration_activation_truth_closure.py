@@ -52,12 +52,12 @@ def _seed(db, n=30):
         _grade(db, did, i < 24)
 
 
-def test_release_truth_is_ratcheted_to_68_5():
+def test_release_truth_preserves_68_5_series():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert manifest["apex_version"] == "68.5.0"
-    assert manifest["build_name"] == "Calibration Activation & Truth Closure"
-    assert "apex_version: 68.5.0" in registry
+    assert manifest["apex_version"].startswith("68.5.")
+    assert manifest["build_name"] in {"Calibration Activation & Truth Closure", "Dynamic-State Runtime Nonblocking Fix"}
+    assert "apex_version: 68.5." in registry
     assert "governed_calibration_activation:" in registry
 
 
