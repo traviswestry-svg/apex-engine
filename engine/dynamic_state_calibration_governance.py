@@ -361,7 +361,7 @@ def governance_overview(path: str | Path, limit: int = 50) -> Dict[str, Any]:
             "automatic_promotion": False,
             "automatic_production_activation": False,
             "approved_means_recommendation_only": True,
-            "production_handoff": "engine.production_governance",
+            "production_handoff": "engine.calibration_activation",
             "production_effect": "NONE",
         },
     }

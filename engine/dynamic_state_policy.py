@@ -11,8 +11,8 @@ from typing import Any, Dict, Mapping, Optional
 
 from .dynamic_state import build_dynamic_state
 
-VERSION = "68.2.0"
-SCHEMA_VERSION = "apex.dynamic_state_policy.v1"
+VERSION = "68.5.0"
+SCHEMA_VERSION = "apex.dynamic_state_policy.v2"
 
 
 def _mapping(v: Any) -> Dict[str, Any]:
@@ -157,12 +157,30 @@ def evaluate_dynamic_state_policy(
         warnings.append("POST_EVENT_NORMALIZATION")
         modifiers.append({"driver": "event_phase", "phase": phase, "effect": "MILD_BUFFER"})
 
-    from .calibration_activation import active_adjustments
-    cal_adj = active_adjustments()
-    if cal_adj.get("active"):
-        threshold_add += cal_adj["threshold_adjustment_points"]
-
     state = "SUPPRESSED" if suppress else "WATCH_ONLY" if watch_only else "NORMAL"
+
+    # 68.5 governed calibration activation. This can only adjust numeric policy
+    # margins/penalties inside hard envelopes. It cannot mutate suppression,
+    # watch-only state, direction, risk, or execution authority.
+    calibration = {"active": False, "adjustment": {}, "applied": []}
+    try:
+        from .calibration_activation import resolve_active_adjustments
+        from .evidence_pipeline import DEFAULT_DB
+        calibration = resolve_active_adjustments(
+            DEFAULT_DB, ds, policy_state=state, alert_state=state
+        )
+        adj = _mapping(calibration.get("adjustment"))
+        threshold_add = max(0.0, threshold_add + (_f(adj.get("threshold_adjustment_points"), 0.0) or 0.0))
+        conviction_penalty = max(0.0, conviction_penalty + (_f(adj.get("conviction_penalty_points"), 0.0) or 0.0))
+        consensus_penalty = max(0.0, consensus_penalty + (_f(adj.get("consensus_penalty_points"), 0.0) or 0.0))
+        if calibration.get("active"):
+            warnings.append("GOVERNED_CALIBRATION_ACTIVE")
+            modifiers.append({"driver": "calibration_activation", "effect": "BOUNDED_POLICY_ADJUSTMENT",
+                              "applied_count": len(calibration.get("applied") or [])})
+    except Exception as exc:
+        calibration = {"active": False, "adjustment": {}, "applied": [],
+                       "status": "UNAVAILABLE", "error": type(exc).__name__}
+
     return {
         "schema_version": SCHEMA_VERSION,
         "version": VERSION,
@@ -177,6 +195,7 @@ def evaluate_dynamic_state_policy(
         "blocking_conditions": blockers,
         "warnings": warnings,
         "modifiers": modifiers,
-        "calibration_activation": cal_adj,
-        "provenance": {"dynamic_state_available": bool(ds.get("available")), "policy_is_directionally_non_generative": True},
+        "calibration_activation": calibration,
+        "provenance": {"dynamic_state_available": bool(ds.get("available")), "policy_is_directionally_non_generative": True,
+                       "calibration_activation_version": "68.5.0", "execution_authority": False},
     }
