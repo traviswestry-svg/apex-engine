@@ -15,8 +15,8 @@ from typing import Any
 
 from .architecture_integrity import snapshot as architecture_snapshot
 
-VERSION = "67.9.1"
-SCHEMA_VERSION = "apex.post_persistence_architecture_audit.v1"
+VERSION = "68.5.0"
+SCHEMA_VERSION = "apex.post_persistence_architecture_audit.v2"
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "engine"
 MANIFEST = ROOT / "config" / "apex_release_manifest.json"
@@ -25,6 +25,7 @@ MANIFEST = ROOT / "config" / "apex_release_manifest.json"
 # claims of execution authority; they are review priority based on proximity to
 # decision, risk, execution, market-state, eligibility, or canonical state flows.
 HIGH_CONSEQUENCE_MODULES = {
+    "app.py",
     "live_operations.py",
     "premium_strategy_routes.py",
     "trade_director_change_control.py",
@@ -93,23 +94,10 @@ def _classify(name: str) -> str:
     return "UNCLASSIFIED_REVIEW"
 
 
-def _audit_paths() -> list[Path]:
-    """Return all Python paths included in the persistence audit scope."""
-    paths = []
-    # Root-level application files
-    for p in sorted(ROOT.glob("*.py")):
-        if p.name not in {"canonical_persistence.py"}:
-            paths.append(p)
-    # Engine module files
-    for p in sorted(ENGINE.rglob("*.py")):
-        if p.name not in {"canonical_persistence.py", Path(__file__).name}:
-            paths.append(p)
-    return paths
-
-
 def _inventory_direct_sqlite() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for path in sorted(ENGINE.rglob("*.py")):
+    audit_paths = list(ENGINE.rglob("*.py")) + [ROOT / "app.py"]
+    for path in sorted(audit_paths):
         if path.name in {"canonical_persistence.py", Path(__file__).name}:
             continue
         try:
@@ -156,7 +144,6 @@ def snapshot() -> dict[str, Any]:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     architecture = architecture_snapshot()
     rows = _inventory_direct_sqlite()
-    audit_scope = sorted(str(p.relative_to(ROOT)) for p in _audit_paths())
     by_tier: dict[str, list[str]] = {}
     for row in rows:
         by_tier.setdefault(row["tier"], []).append(row["module"])
@@ -177,7 +164,7 @@ def snapshot() -> dict[str, Any]:
         "decision_authority": "NONE",
         "execution_authority": "NONE",
         "read_only": True,
-        "audit_scope": audit_scope,
+        "audit_scope": ["engine/**/*.py", "app.py"],
         "architecture_integrity": {
             "status": architecture.get("status"),
             "identity_aligned": architecture.get("identity_aligned"),

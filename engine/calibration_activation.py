@@ -1,25 +1,32 @@
-"""APEX 68.5 — Governed Calibration Activation & Truth Closure.
+"""APEX 68.5.0 — Calibration Activation & Truth Closure.
 
-Provides the production activation lifecycle for approved calibration candidates.
-An APPROVED candidate must pass policy bounds before it can be ACTIVE.
-At most one activation per candidate dimension is allowed at a time; rollback
-returns the system to the pre-activation baseline.
-
-This module has *no* execution authority and does not fabricate outcomes.
+Human-approved, bounded activation boundary for dynamic-state calibration
+candidates.  Activation is never automatic and cannot create direction, change
+suppression/watch-only state, mutate execution authority, or modify broker/risk
+configuration.  It may only apply small additive adjustments to the existing
+68.2 dynamic-state policy outputs when the activated candidate's calibrated
+bucket is present.
 """
 from __future__ import annotations
 
 import json
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
 VERSION = "68.5.0"
 SCHEMA_VERSION = "apex.calibration_activation.v1"
 
-# Policy bounds: the maximum absolute threshold_adjustment_points a calibration
-# candidate may propose.  Proposals exceeding this are blocked before activation.
-_MAX_THRESHOLD_ADJUSTMENT_POINTS = 5.0
+# Hard production envelopes. Requests outside these limits are rejected rather
+# than silently clipped so the human reviewer sees exactly what will run.
+ACTIVATION_ROLES = {"SYSTEM_ARCHITECTURE", "TRADING_LOGIC", "RISK_CONTROLS"}
+
+BOUNDS = {
+    "threshold_adjustment_points": (-3.0, 3.0),
+    "conviction_penalty_points": (-3.0, 3.0),
+    "consensus_penalty_points": (-2.0, 2.0),
+}
 
 
 def _now() -> str:
@@ -34,228 +41,283 @@ def _load(v: Any) -> Dict[str, Any]:
         return {}
 
 
-def _connect(path):
-    from .evidence_pipeline import _connect as _ep_connect
-    return _ep_connect(path)
+def _f(v: Any) -> Optional[float]:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
 
 
-def _ensure_schema(conn) -> None:
+def ensure_schema(conn) -> None:
     conn.executescript('''
     CREATE TABLE IF NOT EXISTS calibration_activations(
         activation_id TEXT PRIMARY KEY,
         candidate_id TEXT NOT NULL,
+        dimension TEXT NOT NULL,
+        bucket TEXT NOT NULL,
         activated_at TEXT NOT NULL,
         activated_by TEXT NOT NULL,
-        activation_reason TEXT NOT NULL,
-        dimension TEXT NOT NULL,
-        proposal_json TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        adjustment_json TEXT NOT NULL,
+        candidate_integrity_hash TEXT NOT NULL,
         status TEXT NOT NULL,
         rolled_back_at TEXT,
         rolled_back_by TEXT,
-        rollback_reason TEXT
+        rollback_reason TEXT,
+        metadata_json TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_calibration_activations_candidate
-        ON calibration_activations(candidate_id, status);
-    CREATE INDEX IF NOT EXISTS idx_calibration_activations_status
-        ON calibration_activations(status, activated_at);
+    CREATE INDEX IF NOT EXISTS idx_calibration_activation_status
+      ON calibration_activations(status,dimension,bucket,activated_at);
+    CREATE INDEX IF NOT EXISTS idx_calibration_activation_candidate
+      ON calibration_activations(candidate_id,activated_at);
     ''')
 
 
-def activate_candidate(
-    path,
-    candidate_id: str,
-    *,
-    actor: str,
-    reason: str,
-) -> Dict[str, Any]:
-    """Activate an APPROVED calibration candidate.
+def _candidate(conn, candidate_id: str):
+    from .dynamic_state_calibration_governance import ensure_schema as ensure_candidate_schema
+    ensure_candidate_schema(conn)
+    return conn.execute(
+        "SELECT * FROM dynamic_calibration_candidates WHERE candidate_id=?", (candidate_id,)
+    ).fetchone()
 
-    Returns a dict with ``ok`` (bool) and ``status``.  Possible failure statuses:
-    - ``APPROVAL_REQUIRED`` – candidate is not in APPROVED state.
-    - ``POLICY_BOUNDS_BLOCKED`` – proposal exceeds allowed adjustment range.
-    """
-    from .dynamic_state_calibration_governance import ensure_schema as _gov_schema
 
-    with _connect(path) as conn:
-        _gov_schema(conn)
-        _ensure_schema(conn)
-
-        row = conn.execute(
-            "SELECT * FROM dynamic_calibration_candidates WHERE candidate_id=?",
-            (candidate_id,),
-        ).fetchone()
-        if not row:
-            return {"ok": False, "status": "NOT_FOUND", "error": "candidate not found"}
-
-        current = str(row["status"])
-        if current != "APPROVED":
-            return {
-                "ok": False,
-                "status": "APPROVAL_REQUIRED",
-                "error": f"candidate must be APPROVED to activate; current status: {current}",
-            }
-
-        proposal = _load(row["proposal_json"])
-        tap = float(proposal.get("threshold_adjustment_points", 0.0))
-        if abs(tap) > _MAX_THRESHOLD_ADJUSTMENT_POINTS:
-            return {
-                "ok": False,
-                "status": "POLICY_BOUNDS_BLOCKED",
-                "error": (
-                    f"threshold_adjustment_points {tap} exceeds policy maximum "
-                    f"{_MAX_THRESHOLD_ADJUSTMENT_POINTS}"
-                ),
-            }
-
-        aid = str(uuid.uuid4())
-        now = _now()
-        conn.execute(
-            """INSERT INTO calibration_activations(
-                activation_id, candidate_id, activated_at, activated_by,
-                activation_reason, dimension, proposal_json, status
-            ) VALUES(?,?,?,?,?,?,?,?)""",
-            (
-                aid, candidate_id, now, actor, reason,
-                str(row["dimension"]),
-                json.dumps(proposal, sort_keys=True, default=str),
-                "ACTIVE",
-            ),
-        )
-
-    return {
-        "ok": True,
-        "activation_id": aid,
-        "candidate_id": candidate_id,
-        "status": "ACTIVE",
-        "automatic_activation": False,
-        "dimension": str(row["dimension"]),
-        "proposal": proposal,
+def _candidate_integrity_valid(row) -> bool:
+    from .dynamic_state_calibration_governance import _integrity_hash
+    immutable = {
+        "candidate_id": row["candidate_id"],
+        "created_at": row["created_at"],
+        "dimension": row["dimension"],
+        "challenger_bucket": str(row["challenger_bucket"]),
+        "incumbent_bucket": str(row["incumbent_bucket"]),
+        "expected_relation": str(row["expected_relation"]).upper(),
+        "proposal": _load(row["proposal_json"]),
+        "thresholds": _load(row["thresholds_json"]),
     }
+    return _integrity_hash(immutable) == row["integrity_hash"]
 
 
-def rollback_activation(
-    path,
-    activation_id: str,
-    *,
-    actor: str,
-    reason: str,
-) -> Dict[str, Any]:
-    """Roll back an ACTIVE calibration activation."""
+def _validated_adjustment(proposal: Mapping[str, Any]) -> tuple[Optional[Dict[str, float]], list[str]]:
+    out: Dict[str, float] = {}
+    blockers: list[str] = []
+    for key, value in dict(proposal or {}).items():
+        if key not in BOUNDS:
+            continue
+        number = _f(value)
+        if number is None:
+            blockers.append(f"NON_NUMERIC_{key.upper()}")
+            continue
+        lo, hi = BOUNDS[key]
+        if number < lo or number > hi:
+            blockers.append(f"OUT_OF_BOUNDS_{key.upper()}")
+            continue
+        out[key] = round(number, 3)
+    if not out:
+        blockers.append("NO_SUPPORTED_POLICY_ADJUSTMENT")
+    return (out if not blockers else None), blockers
+
+
+def activate_candidate(path: str | Path, candidate_id: str, *, actor: str, reason: str) -> Dict[str, Any]:
+    """Activate one already-approved calibration recommendation.
+
+    Human activation is a distinct step after 68.4 review approval.  The
+    candidate's immutable integrity hash is re-verified immediately before
+    activation and the requested adjustment must fit the hard 68.5 envelope.
+    """
+    from .evidence_pipeline import _connect
+    if not str(actor or "").strip() or not str(reason or "").strip():
+        return {"ok": False, "status": "APPROVAL_REQUIRED", "error": "actor and reason are required", "production_effect": "NONE"}
+    if str(actor).upper() not in ACTIVATION_ROLES:
+        return {"ok": False, "status": "APPROVAL_REQUIRED", "error": "actor must be an authorized calibration activation role",
+                "required_roles": sorted(ACTIVATION_ROLES), "production_effect": "NONE"}
+    actor = str(actor).upper()
     with _connect(path) as conn:
-        _ensure_schema(conn)
-        row = conn.execute(
-            "SELECT * FROM calibration_activations WHERE activation_id=?",
-            (activation_id,),
-        ).fetchone()
+        ensure_schema(conn)
+        row = _candidate(conn, candidate_id)
         if not row:
-            return {"ok": False, "status": "NOT_FOUND", "error": "activation not found"}
-        if str(row["status"]) != "ACTIVE":
-            return {
-                "ok": False,
-                "status": str(row["status"]),
-                "error": "activation is not in ACTIVE state",
-            }
-        now = _now()
+            return {"ok": False, "status": "UNAVAILABLE", "error": "candidate not found", "production_effect": "NONE"}
+        if str(row["status"]) != "APPROVED":
+            return {"ok": False, "status": str(row["status"]), "error": "candidate must be human-approved before activation", "production_effect": "NONE"}
+        if not _candidate_integrity_valid(row):
+            return {"ok": False, "status": "INTEGRITY_BLOCKED", "error": "candidate integrity hash mismatch", "production_effect": "NONE"}
+        adjustment, blockers = _validated_adjustment(_load(row["proposal_json"]))
+        if blockers:
+            return {"ok": False, "status": "POLICY_BOUNDS_BLOCKED", "blockers": blockers, "bounds": BOUNDS, "production_effect": "NONE"}
+
+        dimension = str(row["dimension"])
+        bucket = str(row["challenger_bucket"])
+        # Only one active calibration may govern a given dimension/bucket.
         conn.execute(
             """UPDATE calibration_activations
-               SET status='ROLLED_BACK', rolled_back_at=?, rolled_back_by=?, rollback_reason=?
-               WHERE activation_id=?""",
-            (now, actor, reason, activation_id),
+               SET status='ROLLED_BACK',rolled_back_at=?,rolled_back_by=?,rollback_reason=?
+               WHERE status='ACTIVE' AND dimension=? AND bucket=?""",
+            (_now(), actor, "SUPERSEDED_BY_NEW_ACTIVATION", dimension, bucket),
+        )
+        aid = str(uuid.uuid4())
+        conn.execute(
+            """INSERT INTO calibration_activations(
+               activation_id,candidate_id,dimension,bucket,activated_at,activated_by,reason,
+               adjustment_json,candidate_integrity_hash,status,metadata_json
+               ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (aid, candidate_id, dimension, bucket, _now(), actor, reason,
+             json.dumps(adjustment, sort_keys=True), row["integrity_hash"], "ACTIVE",
+             json.dumps({
+                 "automatic_activation": False,
+                 "bounded_adjustment": True,
+                 "execution_authority": False,
+                 "direction_generation": False,
+                 "suppression_mutation": False,
+                 "watch_only_mutation": False,
+             }, sort_keys=True)),
         )
     return {
-        "ok": True,
-        "activation_id": activation_id,
-        "status": "ROLLED_BACK",
-        "rolled_back_at": now,
-        "rolled_back_by": actor,
+        "ok": True, "status": "ACTIVE", "activation_id": aid, "candidate_id": candidate_id,
+        "dimension": dimension, "bucket": bucket, "adjustment": adjustment,
+        "production_effect": "BOUNDED_DYNAMIC_STATE_POLICY_ADJUSTMENT",
+        "automatic_activation": False, "rollback_available": True,
+        "execution_authority": False,
     }
 
 
-def activation_status(path) -> Dict[str, Any]:
-    """Return a summary of calibration activations."""
+def rollback_activation(path: str | Path, activation_id: str, *, actor: str, reason: str) -> Dict[str, Any]:
+    from .evidence_pipeline import _connect
+    if not str(actor or "").strip() or not str(reason or "").strip():
+        return {"ok": False, "status": "APPROVAL_REQUIRED", "error": "actor and reason are required"}
+    if str(actor).upper() not in ACTIVATION_ROLES:
+        return {"ok": False, "status": "APPROVAL_REQUIRED", "error": "actor must be an authorized calibration activation role",
+                "required_roles": sorted(ACTIVATION_ROLES)}
+    actor = str(actor).upper()
     with _connect(path) as conn:
-        _ensure_schema(conn)
+        ensure_schema(conn)
+        row = conn.execute("SELECT * FROM calibration_activations WHERE activation_id=?", (activation_id,)).fetchone()
+        if not row:
+            return {"ok": False, "status": "UNAVAILABLE", "error": "activation not found"}
+        if row["status"] != "ACTIVE":
+            return {"ok": False, "status": row["status"], "error": "activation is not active"}
+        conn.execute(
+            """UPDATE calibration_activations
+               SET status='ROLLED_BACK',rolled_back_at=?,rolled_back_by=?,rollback_reason=?
+               WHERE activation_id=?""",
+            (_now(), actor, reason, activation_id),
+        )
+    return {"ok": True, "status": "ROLLED_BACK", "activation_id": activation_id,
+            "production_effect": "REMOVED", "execution_authority": False}
+
+
+def _dimension_values(dynamic_state: Mapping[str, Any], *, policy_state: str, alert_state: str) -> Dict[str, str]:
+    ds = dict(dynamic_state or {})
+    event = dict(ds.get("event_phase") or {})
+    term = dict(ds.get("gamma_term_structure") or {})
+    residual = dict(ds.get("residual_pressure") or {})
+    flow = dict(ds.get("flow_excitation") or {})
+    ief = _f(flow.get("independent_evidence_factor"))
+    if ief is None:
+        flow_bucket = str(flow.get("independence_bucket") or "UNKNOWN").upper()
+    elif ief < 0.25:
+        flow_bucket = "HIGHLY_REDUNDANT"
+    elif ief < 0.50:
+        flow_bucket = "PARTLY_REDUNDANT"
+    elif ief < 0.75:
+        flow_bucket = "MOSTLY_INDEPENDENT"
+    else:
+        flow_bucket = "INDEPENDENT"
+    return {
+        "event_phase": str(event.get("phase") or "NORMAL").upper(),
+        "gamma_term_divergence": "1" if bool(term.get("term_divergence")) else "0",
+        "near_term_gamma_fragility": "1" if bool(term.get("near_term_fragility")) else "0",
+        "residual_pressure_opposes": "1" if bool(residual.get("opposes_direction")) else "0",
+        "flow_independence_bucket": flow_bucket,
+        "alert_state": str(alert_state or "UNKNOWN").upper(),
+        "policy_state": str(policy_state or "UNKNOWN").upper(),
+    }
+
+
+def resolve_active_adjustments(path: str | Path, dynamic_state: Mapping[str, Any], *, policy_state: str, alert_state: str) -> Dict[str, Any]:
+    """Resolve additive adjustments applicable to this immutable dynamic context."""
+    from .evidence_pipeline import _connect
+    values = _dimension_values(dynamic_state, policy_state=policy_state, alert_state=alert_state)
+    totals = {key: 0.0 for key in BOUNDS}
+    applied = []
+    with _connect(path) as conn:
+        ensure_schema(conn)
         rows = conn.execute(
-            "SELECT * FROM calibration_activations WHERE status='ACTIVE' ORDER BY activated_at DESC"
+            "SELECT * FROM calibration_activations WHERE status='ACTIVE' ORDER BY activated_at"
         ).fetchall()
-        total = conn.execute(
-            "SELECT COUNT(*) FROM calibration_activations"
-        ).fetchone()[0]
-    active = [
-        {
-            "activation_id": r["activation_id"],
-            "candidate_id": r["candidate_id"],
-            "dimension": r["dimension"],
-            "proposal": _load(r["proposal_json"]),
-            "activated_at": r["activated_at"],
-            "activated_by": r["activated_by"],
-        }
-        for r in rows
-    ]
+        for row in rows:
+            if values.get(str(row["dimension"])) != str(row["bucket"]).upper():
+                continue
+            adjustment = _load(row["adjustment_json"])
+            for key in totals:
+                value = _f(adjustment.get(key))
+                if value is not None:
+                    totals[key] += value
+            applied.append({
+                "activation_id": row["activation_id"], "candidate_id": row["candidate_id"],
+                "dimension": row["dimension"], "bucket": row["bucket"], "adjustment": adjustment,
+            })
+    # Aggregate safety cap protects against multiple independent active dimensions.
+    aggregate_caps = {
+        "threshold_adjustment_points": (-5.0, 5.0),
+        "conviction_penalty_points": (-5.0, 5.0),
+        "consensus_penalty_points": (-3.0, 3.0),
+    }
+    for key, (lo, hi) in aggregate_caps.items():
+        totals[key] = round(max(lo, min(hi, totals[key])), 3)
+    return {"active": bool(applied), "adjustment": totals, "applied": applied,
+            "context": values, "aggregate_caps": aggregate_caps}
+
+
+def eligibility_readout(path: str | Path) -> Dict[str, Any]:
+    """One truthful at-a-glance view of whether calibration can influence production."""
+    from .dynamic_state_outcome_calibration import calibration_summary
+    from .dynamic_state_calibration_governance import governance_overview
+    calibration = calibration_summary(path)
+    governance = governance_overview(path, limit=500)
+    activation = activation_status(path, limit=500)
+    counts = governance.get("counts") or {}
+    active = int(activation.get("active_count") or 0)
+    if active > 0:
+        mode = "ACTIVE"
+    elif int(counts.get("APPROVED") or 0) > 0:
+        mode = "APPROVED"
+    elif int(counts.get("ELIGIBLE_FOR_REVIEW") or 0) > 0:
+        mode = "ELIGIBLE"
+    elif int(calibration.get("graded_contexts") or 0) > 0:
+        mode = "LEARNING"
+    else:
+        mode = "HEURISTIC"
     return {
-        "ok": True,
-        "active_count": len(active),
-        "total_count": total,
-        "active_activations": active,
+        "ok": True, "status": mode, "graded_contexts": int(calibration.get("graded_contexts") or 0),
+        "decision_contexts": int(calibration.get("decision_contexts") or 0),
+        "minimum_sample_per_bucket": calibration.get("minimum_sample_per_bucket"),
+        "candidate_counts": counts, "active_calibrations": active,
+        "automatic_activation": False, "human_activation_required": True,
+        "production_effect": "BOUNDED" if active else "NONE",
     }
 
 
-def eligibility_readout(path) -> Dict[str, Any]:
-    """Return the most recently approved candidate's status."""
-    from .dynamic_state_calibration_governance import ensure_schema as _gov_schema
-
+def activation_status(path: str | Path, limit: int = 100) -> Dict[str, Any]:
+    from .evidence_pipeline import _connect
     with _connect(path) as conn:
-        _gov_schema(conn)
-        row = conn.execute(
-            """SELECT * FROM dynamic_calibration_candidates
-               WHERE status IN ('APPROVED','ELIGIBLE_FOR_REVIEW','COLLECTING','REJECTED')
-               ORDER BY
-                 CASE status
-                   WHEN 'APPROVED' THEN 0
-                   WHEN 'ELIGIBLE_FOR_REVIEW' THEN 1
-                   WHEN 'COLLECTING' THEN 2
-                   ELSE 3
-                 END,
-                 created_at DESC
-               LIMIT 1"""
-        ).fetchone()
-    if not row:
-        return {"ok": True, "status": "NO_CANDIDATES", "candidate_id": None}
-    return {
-        "ok": True,
-        "status": str(row["status"]),
-        "candidate_id": row["candidate_id"],
-        "dimension": row["dimension"],
-    }
-
-
-def active_adjustments(path=None) -> Dict[str, Any]:
-    """Return the aggregated proposal adjustments from all ACTIVE activations.
-
-    Used by ``engine.dynamic_state_policy`` to incorporate governed calibration
-    into live policy outputs.  When *path* is ``None`` the evidence pipeline's
-    ``DEFAULT_DB`` is used so that callers do not need to thread the path through
-    the entire call chain.
-    """
-    import engine.evidence_pipeline as _ep
-    resolved = path if path is not None else _ep.DEFAULT_DB
-    try:
-        with _connect(resolved) as conn:
-            _ensure_schema(conn)
-            rows = conn.execute(
-                "SELECT proposal_json, dimension FROM calibration_activations WHERE status='ACTIVE'"
-            ).fetchall()
-    except Exception:
-        return {"active": False, "threshold_adjustment_points": 0.0, "activations": []}
-    total_tap = 0.0
+        ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT * FROM calibration_activations ORDER BY activated_at DESC LIMIT ?",
+            (max(1, min(int(limit), 500)),),
+        ).fetchall()
     activations = []
-    for r in rows:
-        p = _load(r["proposal_json"])
-        tap = float(p.get("threshold_adjustment_points", 0.0))
-        total_tap += tap
-        activations.append({"dimension": r["dimension"], "threshold_adjustment_points": tap})
+    for row in rows:
+        activations.append({
+            "activation_id": row["activation_id"], "candidate_id": row["candidate_id"],
+            "dimension": row["dimension"], "bucket": row["bucket"], "activated_at": row["activated_at"],
+            "activated_by": row["activated_by"], "reason": row["reason"], "adjustment": _load(row["adjustment_json"]),
+            "status": row["status"], "rolled_back_at": row["rolled_back_at"],
+            "rolled_back_by": row["rolled_back_by"], "rollback_reason": row["rollback_reason"],
+        })
     return {
-        "active": bool(activations),
-        "threshold_adjustment_points": total_tap,
+        "ok": True, "status": "READY", "version": VERSION, "schema_version": SCHEMA_VERSION,
+        "lifecycle": ["HEURISTIC", "LEARNING", "ELIGIBLE", "APPROVED", "ACTIVE", "ROLLED_BACK"],
+        "active_count": sum(1 for x in activations if x["status"] == "ACTIVE"),
         "activations": activations,
+        "policy": {"automatic_activation": False, "human_activation_required": True,
+                   "bounded_adjustments": BOUNDS, "execution_authority": False,
+                   "suppression_and_watch_only_immutable": True},
     }
