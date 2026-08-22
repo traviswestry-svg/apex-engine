@@ -1,179 +1,250 @@
-"""APEX 68.3 — dynamic-state outcome calibration context and summaries."""
+"""APEX 68.3 — Dynamic-State Outcome Calibration.
+
+Persists frozen decision-time dynamic-state context beside the existing APEX
+47 evidence ledger and computes advisory, outcome-linked calibration summaries.
+It never mutates live thresholds, confidence, consensus weights, or execution.
+"""
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Dict, Mapping, Optional
 
-from .evidence_pipeline import _connect
-
-
-def _to_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+VERSION = "68.4.0"
+SCHEMA_VERSION = "apex.dynamic_state_outcome_calibration.v2"
+MIN_SAMPLE = 20
 
 
-def _to_float(value: Any, default: float = 0.0) -> float:
+def _m(v: Any) -> Dict[str, Any]:
+    return dict(v) if isinstance(v, Mapping) else {}
+
+
+def _f(v: Any, default: Optional[float] = None) -> Optional[float]:
     try:
-        return float(value)
+        return float(v)
     except (TypeError, ValueError):
         return default
 
 
-def _flow_bucket(ief: Any) -> str:
-    v = _to_float(ief, 0.0)
-    if v <= 0.33:
-        return "HIGHLY_REDUNDANT"
-    if v <= 0.66:
-        return "PARTIALLY_INDEPENDENT"
-    return "HIGHLY_INDEPENDENT"
+def _b(v: Any) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    return str(v or "").strip().upper() in {"1", "TRUE", "YES", "Y", "ON"}
 
 
-def extract_context(snapshot: Mapping[str, Any]) -> dict[str, Any]:
-    dynamic_state = snapshot.get("dynamic_state") if isinstance(snapshot, Mapping) else {}
-    dynamic_state = dynamic_state if isinstance(dynamic_state, Mapping) else {}
-    decision_quality = snapshot.get("decision_quality") if isinstance(snapshot, Mapping) else {}
-    decision_quality = decision_quality if isinstance(decision_quality, Mapping) else {}
-    policy = decision_quality.get("dynamic_state_policy") if isinstance(decision_quality, Mapping) else {}
-    policy = policy if isinstance(policy, Mapping) else {}
-    alert_quality = decision_quality.get("alert_quality") if isinstance(decision_quality, Mapping) else {}
-    alert_quality = alert_quality if isinstance(alert_quality, Mapping) else {}
-    event_phase = dynamic_state.get("event_phase") if isinstance(dynamic_state, Mapping) else {}
-    event_phase = event_phase if isinstance(event_phase, Mapping) else {}
-    gamma_term_structure = dynamic_state.get("gamma_term_structure") if isinstance(dynamic_state, Mapping) else {}
-    gamma_term_structure = gamma_term_structure if isinstance(gamma_term_structure, Mapping) else {}
-    flow_excitation = dynamic_state.get("flow_excitation") if isinstance(dynamic_state, Mapping) else {}
-    flow_excitation = flow_excitation if isinstance(flow_excitation, Mapping) else {}
-    modifiers = policy.get("modifiers")
-    modifiers = modifiers if isinstance(modifiers, list) else []
-    residual_opposes = any(
-        isinstance(m, Mapping)
-        and str(m.get("driver", "")).strip().lower() == "residual_pressure"
-        and str(m.get("effect", "")).strip().upper() == "OPPOSES"
-        for m in modifiers
-    )
-    alert_state = str(alert_quality.get("state") or policy.get("state") or "UNKNOWN")
+def _policy(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
+    direct = _m(snapshot.get("dynamic_state_policy"))
+    if direct:
+        return direct
+    dq = _m(snapshot.get("decision_quality"))
+    direct = _m(dq.get("dynamic_state_policy"))
+    if direct:
+        return direct
+    conviction = _m(snapshot.get("conviction"))
+    return _m(conviction.get("dynamic_state_policy"))
+
+
+def _dynamic(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
+    direct = _m(snapshot.get("dynamic_state"))
+    if direct:
+        return direct
+    dq = _m(snapshot.get("decision_quality"))
+    return _m(dq.get("dynamic_state"))
+
+
+def _alert_state(snapshot: Mapping[str, Any], policy: Mapping[str, Any]) -> str:
+    dq = _m(snapshot.get("decision_quality"))
+    aq = _m(dq.get("alert_quality"))
+    return str(aq.get("state") or snapshot.get("alert_state") or policy.get("state") or "UNKNOWN").upper()
+
+
+def extract_context(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
+    """Freeze only decision-time state used for later outcome attribution."""
+    s = dict(snapshot or {})
+    policy = _policy(s)
+    ds = _dynamic(s)
+    flow = _m(ds.get("flow_excitation")) or _m(s.get("flow_excitation"))
+    gamma = _m(ds.get("gamma_path")) or _m(s.get("gamma_path"))
+    term = _m(ds.get("gamma_term_structure")) or _m(s.get("gamma_term_structure"))
+    residual = _m(ds.get("residual_pressure")) or _m(s.get("residual_pressure"))
+    event = _m(ds.get("event_phase")) or _m(s.get("event_phase"))
+
+    modifiers = policy.get("modifiers") if isinstance(policy.get("modifiers"), list) else []
+    residual_opposes = any(_m(x).get("driver") == "residual_pressure" and _m(x).get("effect") == "OPPOSES" for x in modifiers)
+
+    ief = _f(flow.get("independent_evidence_factor"))
+    if ief is None:
+        independence_bucket = "UNKNOWN"
+    elif ief < 0.25:
+        independence_bucket = "HIGHLY_REDUNDANT"
+    elif ief < 0.50:
+        independence_bucket = "PARTLY_REDUNDANT"
+    elif ief < 0.80:
+        independence_bucket = "MOSTLY_INDEPENDENT"
+    else:
+        independence_bucket = "INDEPENDENT"
+
     return {
-        "event_phase": str(event_phase.get("phase") or "UNKNOWN"),
-        "gamma_term_divergence": _to_bool(gamma_term_structure.get("term_divergence")),
-        "gamma_term_fragility": _to_bool(gamma_term_structure.get("near_term_fragility")),
+        "schema_version": SCHEMA_VERSION,
+        "policy_version": policy.get("version"),
+        "policy_state": str(policy.get("state") or "UNKNOWN").upper(),
+        "alert_state": _alert_state(s, policy),
+        "threshold_adjustment_points": _f(policy.get("threshold_adjustment_points"), 0.0) or 0.0,
+        "conviction_penalty_points": _f(policy.get("conviction_penalty_points"), 0.0) or 0.0,
+        "consensus_penalty_points": _f(policy.get("consensus_penalty_points"), 0.0) or 0.0,
+        "suppress_new_alerts": _b(policy.get("suppress_new_alerts")),
+        "watch_only": _b(policy.get("watch_only")),
+        "event_phase": str(event.get("phase") or "NORMAL").upper(),
+        "event_name": event.get("event_name") or event.get("name"),
+        "minutes_to_event": _f(event.get("minutes_to_event")),
+        "gamma_term_divergence": _b(term.get("term_divergence")),
+        "near_term_gamma_fragility": _b(term.get("near_term_fragility")),
+        "gamma_immediate_regime": term.get("immediate_regime") or gamma.get("current_regime"),
+        "gamma_path_version": gamma.get("path_version"),
+        "gamma_level_version": gamma.get("level_version"),
+        "residual_pressure_unresolved": _b(residual.get("unresolved")),
+        "residual_pressure_direction": residual.get("direction"),
+        "residual_pressure_remaining": _f(residual.get("remaining_pressure")),
         "residual_pressure_opposes": residual_opposes,
-        "flow_independence_bucket": _flow_bucket(flow_excitation.get("independent_evidence_factor")),
-        "alert_state": alert_state,
-        "threshold_adjustment_points": _to_float(policy.get("threshold_adjustment_points")),
-        "conviction_penalty_points": _to_float(policy.get("conviction_penalty_points")),
-        "consensus_penalty_points": _to_float(policy.get("consensus_penalty_points")),
+        "flow_independent_evidence_factor": ief,
+        "flow_independence_bucket": independence_bucket,
+        "warnings": list(policy.get("warnings") or []),
+        "blocking_conditions": list(policy.get("blocking_conditions") or []),
     }
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS dynamic_state_decision_context(
-          decision_id TEXT PRIMARY KEY,
-          context_json TEXT NOT NULL,
-          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE INDEX IF NOT EXISTS idx_dynamic_state_context_created_at ON dynamic_state_decision_context(created_at);
-        """
-    )
+def ensure_schema(conn) -> None:
+    conn.executescript('''
+    CREATE TABLE IF NOT EXISTS dynamic_state_decision_context(
+        decision_id TEXT PRIMARY KEY,
+        captured_at TEXT NOT NULL,
+        schema_version TEXT NOT NULL,
+        policy_version TEXT,
+        policy_state TEXT,
+        alert_state TEXT,
+        event_phase TEXT,
+        gamma_term_divergence INTEGER NOT NULL DEFAULT 0,
+        near_term_gamma_fragility INTEGER NOT NULL DEFAULT 0,
+        residual_pressure_opposes INTEGER NOT NULL DEFAULT 0,
+        flow_independence_bucket TEXT,
+        threshold_adjustment_points REAL,
+        conviction_penalty_points REAL,
+        consensus_penalty_points REAL,
+        context_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_dynamic_context_event ON dynamic_state_decision_context(event_phase);
+    CREATE INDEX IF NOT EXISTS idx_dynamic_context_gamma ON dynamic_state_decision_context(gamma_term_divergence);
+    CREATE INDEX IF NOT EXISTS idx_dynamic_context_residual ON dynamic_state_decision_context(residual_pressure_opposes);
+    CREATE INDEX IF NOT EXISTS idx_dynamic_context_flow ON dynamic_state_decision_context(flow_independence_bucket);
+    CREATE INDEX IF NOT EXISTS idx_dynamic_context_alert ON dynamic_state_decision_context(alert_state);
+    ''')
 
 
-def persist_context(conn: sqlite3.Connection, decision_id: str, snapshot: Mapping[str, Any]) -> bool:
-    if not decision_id:
-        return False
+def persist_context(conn, decision_id: str, captured_at: str, snapshot: Mapping[str, Any]) -> bool:
     ensure_schema(conn)
-    payload = json.dumps(extract_context(snapshot), sort_keys=True, separators=(",", ":"))
+    ctx = extract_context(snapshot)
     conn.execute(
-        "INSERT OR IGNORE INTO dynamic_state_decision_context(decision_id,context_json) VALUES(?,?)",
-        (decision_id, payload),
+        """INSERT OR IGNORE INTO dynamic_state_decision_context(
+        decision_id,captured_at,schema_version,policy_version,policy_state,alert_state,event_phase,
+        gamma_term_divergence,near_term_gamma_fragility,residual_pressure_opposes,flow_independence_bucket,
+        threshold_adjustment_points,conviction_penalty_points,consensus_penalty_points,context_json
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            decision_id, captured_at, SCHEMA_VERSION, ctx.get("policy_version"), ctx.get("policy_state"),
+            ctx.get("alert_state"), ctx.get("event_phase"), int(ctx.get("gamma_term_divergence", False)),
+            int(ctx.get("near_term_gamma_fragility", False)), int(ctx.get("residual_pressure_opposes", False)),
+            ctx.get("flow_independence_bucket"), ctx.get("threshold_adjustment_points"),
+            ctx.get("conviction_penalty_points"), ctx.get("consensus_penalty_points"), json.dumps(ctx, default=str),
+        ),
     )
-    return bool(conn.total_changes)
+    return conn.total_changes > 0
 
 
-def calibration_summary(path: str | Path, min_sample: int = 20) -> dict[str, Any]:
-    min_sample = max(1, int(min_sample))
-    with _connect(path) as conn:
-        ensure_schema(conn)
-        rows = conn.execute(
-            """
-            SELECT dc.context_json context_json, gr.outcome_json outcome_json
-            FROM dynamic_state_decision_context dc
-            JOIN grading_results gr ON gr.decision_id = dc.decision_id
-            WHERE gr.status='GRADED'
-            """
-        ).fetchall()
-    dataset: list[dict[str, Any]] = []
-    for row in rows:
+def _aggregate(conn, field: str, min_sample: int) -> list[Dict[str, Any]]:
+    allowed = {
+        "event_phase", "gamma_term_divergence", "near_term_gamma_fragility",
+        "residual_pressure_opposes", "flow_independence_bucket", "alert_state", "policy_state",
+    }
+    if field not in allowed:
+        raise ValueError("unsupported calibration dimension")
+    rows = conn.execute(
+        f"""SELECT c.{field} bucket, g.outcome_json
+            FROM dynamic_state_decision_context c
+            JOIN grading_results g ON g.decision_id=c.decision_id
+            WHERE g.status='GRADED'"""
+    ).fetchall()
+    buckets: Dict[str, list[Dict[str, Any]]] = {}
+    for r in rows:
+        key = str(r["bucket"] if r["bucket"] is not None else "UNKNOWN")
         try:
-            context = json.loads(row["context_json"] or "{}")
-        except Exception:
-            context = {}
-        try:
-            outcome = json.loads(row["outcome_json"] or "{}")
+            outcome = json.loads(r["outcome_json"] or "{}")
         except Exception:
             outcome = {}
-        won = _to_bool(outcome.get("won"))
-        dataset.append(
-            {
-                "event_phase": str(context.get("event_phase") or "UNKNOWN"),
-                "gamma_term_divergence": str(_to_bool(context.get("gamma_term_divergence"))),
-                "gamma_term_fragility": str(_to_bool(context.get("gamma_term_fragility"))),
-                "residual_pressure_opposes": str(_to_bool(context.get("residual_pressure_opposes"))),
-                "flow_independence_bucket": str(context.get("flow_independence_bucket") or "UNKNOWN"),
-                "alert_state": str(context.get("alert_state") or "UNKNOWN"),
-                "won": won,
-                "directional_move": _to_float(outcome.get("directional_move"), 0.0),
-                "mfe": _to_float(outcome.get("mfe"), 0.0),
-                "mae": _to_float(outcome.get("mae"), 0.0),
-            }
-        )
+        buckets.setdefault(key, []).append(outcome)
 
-    def summarize(key: str) -> list[dict[str, Any]]:
-        grouped: dict[str, list[dict[str, Any]]] = {}
-        for item in dataset:
-            grouped.setdefault(str(item.get(key) or "UNKNOWN"), []).append(item)
-        out = []
-        for bucket in sorted(grouped):
-            samples = grouped[bucket]
-            n = len(samples)
-            wins = sum(1 for sample in samples if sample["won"])
-            out.append(
-                {
-                    "bucket": bucket,
-                    "sample_size": n,
-                    "win_rate_pct": round((wins * 100.0 / n), 2) if n else 0.0,
-                    "avg_directional_move": round(sum(sample["directional_move"] for sample in samples) / n, 4) if n else 0.0,
-                    "avg_mfe": round(sum(sample["mfe"] for sample in samples) / n, 4) if n else 0.0,
-                    "avg_mae": round(sum(sample["mae"] for sample in samples) / n, 4) if n else 0.0,
-                    "calibration_ready": n >= min_sample,
-                }
+    out = []
+    for key, vals in sorted(buckets.items()):
+        n = len(vals)
+        wins = sum(1 for x in vals if _b(x.get("won") or x.get("direction_correct")))
+        moves = [_f(x.get("directional_move")) for x in vals]
+        mfes = [_f(x.get("mfe")) for x in vals]
+        maes = [_f(x.get("mae")) for x in vals]
+        moves = [x for x in moves if x is not None]
+        mfes = [x for x in mfes if x is not None]
+        maes = [x for x in maes if x is not None]
+        try:
+            from .dynamic_state_calibration_governance import wilson_interval
+            ci = wilson_interval(float(wins), float(n))
+        except Exception:
+            ci = {"lower_pct": None, "upper_pct": None}
+        out.append({
+            "bucket": key,
+            "sample_size": n,
+            "calibration_ready": n >= min_sample,
+            "win_rate_pct": round(100.0 * wins / n, 2) if n else None,
+            "win_rate_confidence_interval_95": ci,
+            "avg_directional_move": round(sum(moves) / len(moves), 4) if moves else None,
+            "avg_mfe": round(sum(mfes) / len(mfes), 4) if mfes else None,
+            "avg_mae": round(sum(maes) / len(maes), 4) if maes else None,
+        })
+    return out
+
+
+def calibration_summary(path: str | Path, min_sample: int = MIN_SAMPLE) -> Dict[str, Any]:
+    from .evidence_pipeline import _connect
+    with _connect(path) as conn:
+        ensure_schema(conn)
+        context_count = conn.execute("SELECT COUNT(*) n FROM dynamic_state_decision_context").fetchone()["n"]
+        graded_joined = conn.execute(
+            """SELECT COUNT(*) n FROM dynamic_state_decision_context c
+               JOIN grading_results g ON g.decision_id=c.decision_id WHERE g.status='GRADED'"""
+        ).fetchone()["n"]
+        dimensions = {
+            name: _aggregate(conn, name, min_sample) for name in (
+                "event_phase", "gamma_term_divergence", "near_term_gamma_fragility",
+                "residual_pressure_opposes", "flow_independence_bucket", "alert_state",
             )
-        return out
-
-    dimensions = {
-        "event_phase": summarize("event_phase"),
-        "gamma_term_divergence": summarize("gamma_term_divergence"),
-        "gamma_term_fragility": summarize("gamma_term_fragility"),
-        "residual_pressure_opposes": summarize("residual_pressure_opposes"),
-        "flow_independence_bucket": summarize("flow_independence_bucket"),
-        "alert_state": summarize("alert_state"),
-    }
-    all_buckets = [bucket for values in dimensions.values() for bucket in values]
-    ready = bool(all_buckets) and all(bucket["calibration_ready"] for bucket in all_buckets)
+        }
     return {
-        "status": "READY" if ready else "COLLECTING",
-        "graded_contexts": len(dataset),
-        "minimum_bucket_sample": min_sample,
+        "ok": True,
+        "version": VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "status": "READY" if graded_joined >= min_sample else "COLLECTING",
+        "minimum_sample_per_bucket": min_sample,
+        "decision_contexts": context_count,
+        "graded_contexts": graded_joined,
         "dimensions": dimensions,
         "governance": {
             "advisory_only": True,
             "automatic_threshold_mutation": False,
             "automatic_confidence_mutation": False,
             "automatic_consensus_weight_mutation": False,
+            "human_approval_required_for_policy_change": True,
+            "decision_time_context_is_immutable": True,
+            "promotion_governance_version": "68.4.0",
+            "promotion_lifecycle": ["COLLECTING", "ELIGIBLE_FOR_REVIEW", "APPROVED", "REJECTED"],
+            "production_handoff_required": True,
         },
     }

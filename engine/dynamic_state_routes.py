@@ -34,3 +34,26 @@ def register_dynamic_state_routes(app, *, last_result_provider: Optional[Callabl
         state = build_dynamic_state(lr, _ss())
         state["alert_policy"] = evaluate_dynamic_state_policy(lr, dynamic_state=state)
         return jsonify(state)
+
+    @app.get("/api/dynamic-state/calibration")
+    def dynamic_state_calibration():
+        try:
+            from .dynamic_state_outcome_calibration import calibration_summary
+            from .dynamic_state_calibration_governance import governance_overview
+            from .evidence_pipeline import DEFAULT_DB
+            out = calibration_summary(DEFAULT_DB)
+            out["promotion_governance"] = governance_overview(DEFAULT_DB)
+            return jsonify(out)
+        except Exception as exc:
+            return jsonify({"ok": False, "status": "UNAVAILABLE", "error": str(exc),
+                            "execution_authority": False}), 200
+
+    @app.get("/api/dynamic-state/calibration-governance")
+    def dynamic_state_calibration_governance():
+        try:
+            from .dynamic_state_calibration_governance import governance_overview
+            from .evidence_pipeline import DEFAULT_DB
+            return jsonify(governance_overview(DEFAULT_DB))
+        except Exception as exc:
+            return jsonify({"ok": False, "status": "UNAVAILABLE", "error": str(exc),
+                            "production_effect": "NONE", "execution_authority": False}), 200
