@@ -24,11 +24,13 @@ HIGH_CONSEQUENCE = {
 }
 
 
-def test_release_identity_is_68_0():
+def test_release_preserves_68_0_closure_guarantees():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "68.0.0"
-    assert manifest["build_name"] == "Final High-Consequence Persistence Closure"
+    major, minor, patch = (int(x) for x in manifest["apex_version"].split("."))
+    assert (major, minor, patch) >= (68, 0, 0)
     assert manifest["release_series"] == "APEX 68"
+    assert manifest["guardrails"]["canonical_persistence_final_high_consequence_closure"] is True
+    assert manifest["guardrails"]["high_consequence_direct_sqlite_remaining"] is False
 
 
 def test_high_consequence_modules_use_canonical_persistence():
@@ -44,8 +46,8 @@ def test_audit_has_no_high_consequence_direct_sqlite():
     assert report["audit_state"] != "HIGH_CONSEQUENCE_REMAINS"
 
 
-def test_68_capability_registered():
+def test_68_0_closure_capability_remains_registered_after_release_ratchet():
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 68.0.0" in registry
+    assert "apex_version: 68.5.0" in registry
     assert "final_high_consequence_persistence_closure:" in registry
     assert 'version: "68.0.0"' in registry

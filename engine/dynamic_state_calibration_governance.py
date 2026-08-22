@@ -327,7 +327,7 @@ def review_candidate(path: str | Path, candidate_id: str, *, decision: str, acto
     return {
         "ok": True, "candidate_id": candidate_id, "status": new_status,
         "handoff_required": new_status == "APPROVED",
-        "handoff_target": "engine.production_governance" if new_status == "APPROVED" else None,
+        "handoff_target": "engine.calibration_activation" if new_status == "APPROVED" else None,
         "automatic_production_activation": False,
         "production_effect": "NONE",
     }

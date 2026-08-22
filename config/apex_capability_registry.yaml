@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 68.0.0
+apex_version: 68.5.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -286,3 +286,12 @@ capabilities:
     api_routes: [/api/diagnostics/degradations, /apex_os/degradations]
     decision_authority: none
     guardrails: [observability_only, never_raise_into_caller, no_execution_authority, fail_closed_authority_marking]
+
+  governed_calibration_activation:
+    canonical_module: engine.calibration_activation
+    status: active
+    version: "68.5.0"
+    inputs: [approved_calibration_candidates, dynamic_state_policy]
+    outputs: [activation_lifecycle, rollback_lifecycle, activation_status, eligibility_readout]
+    decision_authority: none
+    guardrails: [approval_required_before_activation, policy_bounds_enforced, rollback_supported, no_execution_authority, read_only_eligibility_readout]

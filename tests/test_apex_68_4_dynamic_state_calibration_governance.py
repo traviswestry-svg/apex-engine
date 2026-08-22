@@ -82,7 +82,7 @@ def test_approval_is_human_and_has_no_production_effect(tmp_path):
     assert r["status"] == "APPROVED"
     assert r["production_effect"] == "NONE"
     assert r["handoff_required"] is True
-    assert r["handoff_target"] == "engine.production_governance"
+    assert r["handoff_target"] == "engine.calibration_activation"
     ov=governance_overview(db)
     assert ov["counts"]["APPROVED"] == 1
     assert ov["governance"]["automatic_production_activation"] is False

@@ -93,6 +93,20 @@ def _classify(name: str) -> str:
     return "UNCLASSIFIED_REVIEW"
 
 
+def _audit_paths() -> list[Path]:
+    """Return all Python paths included in the persistence audit scope."""
+    paths = []
+    # Root-level application files
+    for p in sorted(ROOT.glob("*.py")):
+        if p.name not in {"canonical_persistence.py"}:
+            paths.append(p)
+    # Engine module files
+    for p in sorted(ENGINE.rglob("*.py")):
+        if p.name not in {"canonical_persistence.py", Path(__file__).name}:
+            paths.append(p)
+    return paths
+
+
 def _inventory_direct_sqlite() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in sorted(ENGINE.rglob("*.py")):
@@ -142,6 +156,7 @@ def snapshot() -> dict[str, Any]:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     architecture = architecture_snapshot()
     rows = _inventory_direct_sqlite()
+    audit_scope = sorted(str(p.relative_to(ROOT)) for p in _audit_paths())
     by_tier: dict[str, list[str]] = {}
     for row in rows:
         by_tier.setdefault(row["tier"], []).append(row["module"])
@@ -162,6 +177,7 @@ def snapshot() -> dict[str, Any]:
         "decision_authority": "NONE",
         "execution_authority": "NONE",
         "read_only": True,
+        "audit_scope": audit_scope,
         "architecture_integrity": {
             "status": architecture.get("status"),
             "identity_aligned": architecture.get("identity_aligned"),

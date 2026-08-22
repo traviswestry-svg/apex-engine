@@ -1,6 +1,6 @@
 {
-  "apex_version": "68.0.0",
-  "build_name": "Final High-Consequence Persistence Closure",
+  "apex_version": "68.5.0",
+  "build_name": "Calibration Activation & Truth Closure",
   "release_series": "APEX 68",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
