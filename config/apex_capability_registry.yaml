@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 68.5.2
+apex_version: 68.5.3
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -12,7 +12,7 @@ capabilities:
   release_manifest:
     canonical_module: engine.release_manifest
     status: active
-    version: "68.5.2"
+    version: "68.5.3"
     inputs: [environment, capability_registry]
     outputs: [release_manifest]
     api_routes: [/api/version, /api/release-manifest]
@@ -300,7 +300,7 @@ capabilities:
   dynamic_state_alert_governance:
     canonical_module: engine.dynamic_state_policy
     status: active
-    version: "68.5.2"
+    version: "68.5.3"
     inputs: [dynamic_state, proposed_direction, governed_calibration_activation]
     outputs: [threshold_adjustment, conviction_penalty, consensus_penalty, alert_suppression, watch_only]
     api_routes: [/api/dynamic-state]
@@ -310,7 +310,7 @@ capabilities:
   dynamic_state_outcome_calibration:
     canonical_module: engine.dynamic_state_outcome_calibration
     status: active
-    version: "68.5.2"
+    version: "68.5.3"
     inputs: [immutable_dynamic_state_decision_context, governed_grading_results]
     outputs: [outcome_linked_dynamic_state_calibration, sample_sufficiency]
     api_routes: [/api/dynamic-state/calibration]
@@ -320,7 +320,7 @@ capabilities:
   dynamic_state_calibration_governance:
     canonical_module: engine.dynamic_state_calibration_governance
     status: active
-    version: "68.5.2"
+    version: "68.5.3"
     inputs: [dynamic_state_outcomes, independence_adjusted_samples]
     outputs: [calibration_candidates, integrity_assessments, human_review_decisions]
     api_routes: [/api/dynamic-state/calibration-governance]
@@ -330,17 +330,17 @@ capabilities:
   governed_calibration_activation:
     canonical_module: engine.calibration_activation
     status: active
-    version: "68.5.2"
+    version: "68.5.3"
     inputs: [human_approved_calibration_candidate, candidate_integrity_hash, bounded_policy_proposal]
-    outputs: [active_calibration_adjustment, activation_provenance, rollback_record, eligibility_status]
+    outputs: [active_calibration_adjustment, activation_provenance, rollback_record, eligibility_status, initialized_governance_store]
     api_routes: [/api/dynamic-state/calibration-activation, /api/dynamic-state/calibration-governance/activate, /api/dynamic-state/calibration-governance/rollback]
     decision_authority: advisory
-    guardrails: [manual_activation_only, bounded_numeric_adjustments, integrity_recheck, rollback_supported, no_direction_generation, no_suppression_mutation, no_watch_only_mutation, no_execution_authority]
+    guardrails: [manual_activation_only, bounded_numeric_adjustments, integrity_recheck, rollback_supported, writer_side_startup_initialization, get_routes_read_only, durable_render_store, no_direction_generation, no_suppression_mutation, no_watch_only_mutation, no_execution_authority]
 
   calibration_truth_closure:
     canonical_module: engine.post_persistence_architecture_audit
     status: active
-    version: "68.5.2"
+    version: "68.5.3"
     inputs: [canonical_release_manifest, capability_registry, engine_source_tree, root_app, direct_sqlite_inventory]
     outputs: [truthful_release_identity, root_app_persistence_inventory, persistence_scope_diagnostics]
     api_routes: [/api/post-persistence-architecture-audit, /apex_os/post-persistence-architecture-audit]

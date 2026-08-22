@@ -13613,6 +13613,26 @@ try:
         register_dynamic_state_routes(app, last_result_provider=_ds_last_result,
                                       scanner_state_provider=_ds_scanner_state)
         print("APEX 66.7.0 Dynamic State routes registered.", flush=True)
+        # APEX 68.5.3: controlled writer-side initialization.  Read/GET routes
+        # remain strictly non-mutating; this idempotent startup boundary ensures
+        # a fresh Render deployment has the governance schema before observability
+        # reads begin.  Failure is visible but does not prevent safe app boot.
+        try:
+            from engine.evidence_pipeline import DEFAULT_DB as _calibration_governance_db
+            from engine.calibration_activation import initialize_governance_store
+            _cal_init = initialize_governance_store(_calibration_governance_db)
+            print(
+                "APEX 68.5.3 Calibration Governance Store initialized "
+                f"(status={_cal_init.get('status')}, path={_cal_init.get('path')}, "
+                f"persistent={_cal_init.get('persistent_render_path')}).",
+                flush=True,
+            )
+        except Exception as _cal_init_exc:
+            print(
+                "APEX 68.5.3 Calibration Governance Store initialization DEGRADED "
+                f"({type(_cal_init_exc).__name__}: {_cal_init_exc}).",
+                flush=True,
+            )
 
     if INSTITUTIONAL_FORECAST_ENGINE_AVAILABLE and register_institutional_forecast_routes is not None:
         def _ife_last_result():

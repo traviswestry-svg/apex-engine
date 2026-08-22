@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "68.5.2"
+VERSION = "68.5.3"
 SCHEMA_VERSION = "apex.dynamic_state_outcome_calibration.v2"
 MIN_SAMPLE = 20
 

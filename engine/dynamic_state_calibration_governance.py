@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "68.5.2"
+VERSION = "68.5.3"
 SCHEMA_VERSION = "apex.dynamic_state_calibration_governance.v1"
 DEFAULT_MIN_SAMPLE = 20
 DEFAULT_MIN_EFFECTIVE_SAMPLE = 15.0
