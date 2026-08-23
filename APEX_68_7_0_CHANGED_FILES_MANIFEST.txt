@@ -1,0 +1,11 @@
+APEX 68.7.0 — Market Microstructure Intelligence Foundation
+
+ADDED
+engine/market_microstructure.py
+engine/market_microstructure_routes.py
+tests/test_apex_68_7_market_microstructure_intelligence.py
+APEX_68_7_0_MARKET_MICROSTRUCTURE_INTELLIGENCE_FOUNDATION.md
+APEX_68_7_0_CHANGED_FILES_MANIFEST.txt
+
+MODIFIED
+app.py
