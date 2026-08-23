@@ -1,4 +1,4 @@
-"""APEX 68.7.0 — Market Microstructure Intelligence foundation.
+"""APEX 68.8.0 — Market Microstructure Intelligence + depth persistence.
 
 Observation-only normalization and interpretation of exchange order-book / trade
 microstructure.  This module intentionally does *not* fetch a provider, alter a
@@ -16,8 +16,8 @@ from datetime import datetime, timezone
 import os
 from typing import Any, Iterable, Mapping, Sequence
 
-VERSION = "68.7.0"
-SCHEMA_VERSION = "apex.market_microstructure.v1"
+VERSION = "68.8.0"
+SCHEMA_VERSION = "apex.market_microstructure.v2"
 
 
 def _now() -> str:
@@ -61,9 +61,11 @@ def capability_audit(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     """
     env = env or os.environ
     polygon_configured = bool(str(env.get("POLYGON_API_KEY", "")).strip())
+    depth_provider = str(env.get("MICROSTRUCTURE_FEED_PROVIDER", "")).strip()
+    ingest_enabled = str(env.get("MICROSTRUCTURE_INGEST_ENABLED", "false")).strip().lower() in {"1", "true", "yes", "on"}
     return {
         "ok": True,
-        "status": "FOUNDATION_READY_FEED_REQUIRED",
+        "status": "DEPTH_BRIDGE_READY" if depth_provider and ingest_enabled else "DEPTH_BRIDGE_CONFIG_REQUIRED",
         "version": VERSION,
         "schema_version": SCHEMA_VERSION,
         "as_of": _now(),
@@ -74,19 +76,25 @@ def capability_audit(env: Mapping[str, str] | None = None) -> dict[str, Any]:
             "massive_polygon_futures_aggregate_bars": True,
             "massive_polygon_api_key_configured": polygon_configured,
             "es_mes_front_month_aggregate_probe": True,
-            "resting_l2_depth": False,
-            "market_by_order_mbo": False,
+            "resting_l2_depth": bool(depth_provider and ingest_enabled),
+            "market_by_order_mbo": False,  # runtime evidence, not config, determines authoritative MBO
             "order_add_cancel_modify_events": False,
             "exchange_sequence_ids": False,
             "aggressor_classified_tick_trades": False,
-            "true_order_book_heatmap": False,
-            "true_cvd": False,
+            "true_order_book_heatmap": bool(depth_provider and ingest_enabled),
+            "true_cvd": bool(depth_provider and ingest_enabled),
             "native_iceberg_detection": False,
+            "normalized_depth_bridge": True,
+            "bounded_liquidity_persistence": True,
+            "configured_depth_provider": depth_provider or None,
+            "microstructure_ingest_enabled": ingest_enabled,
         },
         "what_can_be_built_from_current_feed": [
             "ES price/structure context",
             "aggregate volume context",
             "bar-based proxy analytics explicitly labeled as proxy",
+            "real L2/MBO analytics when a licensed external bridge posts normalized observations",
+            "bounded liquidity history and rolling CVD from persisted true depth/trade observations",
         ],
         "what_requires_new_depth_feed": [
             "resting bid/ask liquidity",
@@ -102,6 +110,13 @@ def capability_audit(env: Mapping[str, str] | None = None) -> dict[str, Any]:
             "trades": "timestamp, instrument, price, size, aggressor_side; trade_id/sequence strongly preferred",
             "minimum_for_l2": ["depth snapshots or incremental L2 updates", "aggressor-classified trades"],
             "minimum_for_mbo_icebergs": ["order_id", "add/modify/cancel/execute events", "exchange ordering/sequence"],
+        },
+        "ingestion_contract": {
+            "endpoint": "/api/microstructure/ingest",
+            "accepted_feed_quality": ["L2", "MBO"],
+            "aggregate_bar_proxies_rejected": True,
+            "provider_neutral": True,
+            "configuration": ["MICROSTRUCTURE_FEED_PROVIDER", "MICROSTRUCTURE_INGEST_ENABLED", "MICROSTRUCTURE_DB_PATH"],
         },
         "governance": {
             "production_effect": "NONE",
