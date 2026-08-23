@@ -13,7 +13,7 @@ ET = ZoneInfo("America/New_York")
 def test_release_identity_69_0_2():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
     assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 0, 2)
-    assert manifest["build_name"] in {"Flow Settlement Scheduler Closure", "Flow Excursion Evidence & Identity Closure"}
+    assert manifest["build_name"] in {"Flow Settlement Scheduler Closure", "Flow Excursion Evidence & Identity Closure", "Unified All-Components Dashboard"}
     assert tuple(map(int, H.VERSION.split("."))) >= (69, 0, 2)
     assert H.SCHEMA_VERSION.startswith("apex.historical_evidence_lifecycle.v1.")
     assert "apex_version: 69." in Path("config/apex_capability_registry.yaml").read_text()

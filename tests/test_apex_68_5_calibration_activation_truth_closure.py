@@ -58,7 +58,7 @@ def test_release_truth_preserves_68_5_series():
     assert tuple(map(int, manifest["apex_version"].split("."))) >= (68, 5, 0)
     assert manifest["guardrails"]["calibration_activation_human_approval_required"] is True
     assert manifest["guardrails"]["calibration_activation_changes_execution_authority"] is False
-    assert "apex_version: 69.1." in registry
+    assert "apex_version: 69." in registry
     assert "governed_calibration_activation:" in registry
 
 

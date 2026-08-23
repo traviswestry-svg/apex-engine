@@ -34,7 +34,10 @@ def _vector(sample_id, decision='2026-08-24T10:00:00-04:00'):
 def test_release_identity_69_1():
     assert VERSION == '69.1.0'
     assert SCHEMA_VERSION == 'apex.historical_evidence_lifecycle.v1.3'
-    assert 'apex_version: 69.1.0' in Path('config/apex_capability_registry.yaml').read_text()
+    registry = Path('config/apex_capability_registry.yaml').read_text()
+    import re
+    m = re.search(r'^apex_version:\s*([0-9]+\.[0-9]+\.[0-9]+)', registry, re.M)
+    assert m and tuple(map(int, m.group(1).split('.'))) >= (69, 1, 0)
 
 
 def test_canonical_sample_excursion_settles_exact_sample(monkeypatch):

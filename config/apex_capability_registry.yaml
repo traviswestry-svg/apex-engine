@@ -1,6 +1,14 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.1.0
+apex_version: 69.2.1
 capabilities:
+  unified_all_components_dashboard:
+    canonical_module: app
+    status: active
+    version: "69.2.1"
+    inputs: [mission_control, execution_os, institutional_decision, chart_data, flow, market_story, levels, flow_tape, replay, signal_log]
+    outputs: [single_screen_workspace]
+    api_routes: [/apex_os/all, /apex_dashboard]
+    decision_authority: none
   api_explorer:
     canonical_module: engine.operations_routes
     status: active
