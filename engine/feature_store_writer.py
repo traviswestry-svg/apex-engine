@@ -62,7 +62,7 @@ from .feature_store import (
 )
 from . import feature_store_db, flow_pl_store, decision_provenance
 
-WRITER_VERSION = "69.1.0_FEATURE_STORE_WRITER"
+WRITER_VERSION = "69.3.0_FEATURE_STORE_WRITER"
 
 _GAP_S = float(os.getenv("FLOW_CLUSTER_GAP_S", "120"))
 # A decision informed by a 20-minute-old frame is barely informed. Recorded per
@@ -139,6 +139,9 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
     """
     report = {"written": 0, "already_present": 0, "not_sealed": 0,
               "no_frame": 0, "refused": 0, "reasons": [],
+              "excursion_capture_attempts": 0, "excursions_inserted": 0,
+              "excursions_updated": 0, "excursion_missing_pl": 0,
+              "excursion_capture_errors": 0,
               "writer_version": WRITER_VERSION}
     if not feature_store_db.is_ready():
         report["reasons"].append("feature store not ready")
@@ -161,18 +164,34 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
             ckey = cl.get("cluster_key_string") or _key_string(cl)
             sid = make_sample_id(ticker=cl.get("ticker") or ticker,
                                  decision_time=decision_time, cluster_key=ckey)
-            # APEX 69.1: once sealed, the exact immutable sample_id becomes the
-            # excursion identity. Record on every observation, including samples
-            # whose feature vector was frozen on an earlier pass.
+            # APEX 69.3: canonical excursion evidence may only exist for an
+            # immutable feature sample that actually exists. This prevents
+            # orphan excursion rows and makes the prospective capture lifecycle
+            # auditable. Existing sealed samples are updated on every real P/L
+            # observation; new samples receive their first excursion only after
+            # the feature write succeeds.
             xo = cl.get("_excursion_observation") or {}
-            if xo.get("pl_dollars") is not None and flow_pl_store.is_ready():
-                flow_pl_store.record_sample_excursion(
-                    sample_id=sid, session_date=session_date,
-                    ticker=xo.get("ticker") or cl.get("ticker") or ticker,
-                    pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
-                    decision_time=decision_time, legacy_cluster_key=ckey)
-            if feature_store_db.get_features(sid):
+            existing = feature_store_db.get_features(sid)
+            if existing:
                 report["already_present"] += 1
+                report["excursion_capture_attempts"] += 1
+                if xo.get("pl_dollars") is None:
+                    report["excursion_missing_pl"] += 1
+                    flow_pl_store.record_capture_audit(
+                        attempted=1, missing_pl=1, sample_id=sid)
+                elif flow_pl_store.is_ready():
+                    cap = flow_pl_store.record_sample_excursion(
+                        sample_id=sid, session_date=session_date,
+                        ticker=xo.get("ticker") or cl.get("ticker") or ticker,
+                        pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
+                        decision_time=decision_time, legacy_cluster_key=ckey)
+                    if cap:
+                        if cap.get("first_sample"):
+                            report["excursions_inserted"] += 1
+                        else:
+                            report["excursions_updated"] += 1
+                    else:
+                        report["excursion_capture_errors"] += 1
                 continue
 
             frame = resolve_frame_at_or_before(
@@ -198,6 +217,24 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 continue
             if feature_store_db.write_features(vec):
                 report["written"] += 1
+                # First canonical excursion sample is recorded only after the
+                # immutable feature row is confirmed persisted. No P/L means no
+                # excursion row — the missing evidence is counted, never filled.
+                report["excursion_capture_attempts"] += 1
+                if xo.get("pl_dollars") is None:
+                    report["excursion_missing_pl"] += 1
+                    flow_pl_store.record_capture_audit(
+                        attempted=1, missing_pl=1, sample_id=sid)
+                elif flow_pl_store.is_ready():
+                    cap = flow_pl_store.record_sample_excursion(
+                        sample_id=sid, session_date=session_date,
+                        ticker=xo.get("ticker") or cl.get("ticker") or ticker,
+                        pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
+                        decision_time=decision_time, legacy_cluster_key=ckey)
+                    if cap:
+                        report["excursions_inserted"] += 1
+                    else:
+                        report["excursion_capture_errors"] += 1
                 frame_quality = frame.get("chain_quality") or frame.get("chain_quality_gate") or {}
                 snap = decision_provenance.build_snapshot(
                     sample_id=sid,
@@ -282,7 +319,7 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         "write_failures": 0,
         "skipped": 0,
         "writer_version": WRITER_VERSION,
-        "observability_version": "69.1.0",
+        "observability_version": "69.3.0",
     }
     if not feature_store_db.is_ready():
         report["state"] = "FEATURE_STORE_NOT_READY"
@@ -420,7 +457,7 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
         "skipped": 0,
         "session_reports": [],
         "writer_version": WRITER_VERSION,
-        "observability_version": "69.1.0",
+        "observability_version": "69.3.0",
     }
     if not feature_store_db.is_ready():
         report["state"] = "FEATURE_STORE_NOT_READY"
