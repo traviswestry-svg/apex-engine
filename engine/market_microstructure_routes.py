@@ -1,6 +1,7 @@
 """APEX 68.9.0 — depth ingestion, calibration, and promotion-readiness routes."""
 from __future__ import annotations
 
+import logging
 import os
 from flask import jsonify, request
 
@@ -10,6 +11,7 @@ from .market_microstructure_store import MicrostructureStore
 from .market_microstructure_calibration import integrity_report, calibration_report, promotion_readiness, shadow_confirmation
 
 VERSION = "68.9.0"
+LOGGER = logging.getLogger(__name__)
 
 
 def _enabled() -> bool:
@@ -57,8 +59,15 @@ def register_market_microstructure_routes(app) -> None:
         try:
             result = ingest(body, _store())
             return jsonify(result), 201
-        except MicrostructureValidationError:
-            return jsonify({"ok": False, "status": "REJECTED", "version": VERSION, "error": "invalid microstructure payload"}), 400
+        except MicrostructureValidationError as exc:
+            LOGGER.warning("Rejected microstructure payload: %s", exc)
+            return jsonify({
+                "ok": False,
+                "status": "REJECTED",
+                "version": VERSION,
+                "error": "MICROSTRUCTURE_VALIDATION_FAILED",
+                "detail": "Submitted microstructure payload failed validation.",
+            }), 400
 
     @app.get("/api/microstructure/state")
     def market_microstructure_state():
