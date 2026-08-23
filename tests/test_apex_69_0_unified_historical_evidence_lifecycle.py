@@ -32,7 +32,7 @@ def _result(ts: str, *, actionable: bool = True):
 
 def test_capture_decision_writes_canonical_snapshot_and_is_idempotent(tmp_path, monkeypatch):
     db = tmp_path / "evidence.db"
-    monkeypatch.setenv("APEX_69_MARKET_MEMORY_CAPTURE_ENABLED", "false")
+    monkeypatch.setenv("APEX_MARKET_MEMORY_CAPTURE_ENABLED", "false")
     ts = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=6)).isoformat()
     first = H.capture_decision(_result(ts), session_state="MARKET_OPEN", path=db)
     second = H.capture_decision(_result(ts), session_state="MARKET_OPEN", path=db)
@@ -45,7 +45,7 @@ def test_capture_decision_writes_canonical_snapshot_and_is_idempotent(tmp_path, 
 
 def test_price_sampling_and_automatic_grading_close_lifecycle(tmp_path, monkeypatch):
     db = tmp_path / "evidence.db"
-    monkeypatch.setenv("APEX_69_MARKET_MEMORY_CAPTURE_ENABLED", "false")
+    monkeypatch.setenv("APEX_MARKET_MEMORY_CAPTURE_ENABLED", "false")
     now = dt.datetime.now(dt.timezone.utc)
     observed = now - dt.timedelta(minutes=6)
     H.capture_decision(_result(observed.isoformat()), session_state="MARKET_OPEN", path=db)
@@ -60,7 +60,7 @@ def test_price_sampling_and_automatic_grading_close_lifecycle(tmp_path, monkeypa
 
 def test_abstention_is_captured_but_not_calibration_eligible(tmp_path, monkeypatch):
     db = tmp_path / "evidence.db"
-    monkeypatch.setenv("APEX_69_MARKET_MEMORY_CAPTURE_ENABLED", "false")
+    monkeypatch.setenv("APEX_MARKET_MEMORY_CAPTURE_ENABLED", "false")
     ts = dt.datetime.now(dt.timezone.utc).isoformat()
     out = H.capture_decision(_result(ts, actionable=False), session_state="MARKET_OPEN", path=db)
     assert out["inserted"] is True
