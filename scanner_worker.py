@@ -276,7 +276,7 @@ def main() -> int:
             print(f"[HLCE] collector recovery failed: {exc}", flush=True)
             return 3
 
-        # APEX 69.0 — feed the canonical decision evidence ledger from the same
+        # APEX 69.0.1 — feed the canonical decision evidence ledger from the same
         # real SPX observation source already trusted by HLCE. No proxy/synthetic
         # price is permitted. Grade matured rows on a bounded cadence.
         try:

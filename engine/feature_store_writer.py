@@ -252,33 +252,78 @@ def _classify_outcome(mfe: Optional[float], mae: Optional[float],
 def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
     """Write label records for unlabelled samples, measured to session close.
 
-    Called after the cash close. Never raises.
+    APEX 69.0.1 adds reason-level observability only. Settlement semantics are
+    unchanged: no label is written without persisted excursion evidence.
     """
-    report = {"labelled": 0, "no_excursion": 0, "skipped": 0,
-              "writer_version": WRITER_VERSION}
-    if not feature_store_db.is_ready() or not flow_pl_store.is_ready():
+    report = {
+        "attempted_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "session_date": session_date,
+        "pending": 0,
+        "vectors_loaded": 0,
+        "excursion_keys": 0,
+        "excursion_rows_found": 0,
+        "labelled": 0,
+        "no_excursion": 0,
+        "missing_feature_vector": 0,
+        "missing_excursion_row": 0,
+        "missing_mfe": 0,
+        "missing_cost_basis": 0,
+        "leakage_rejected": 0,
+        "write_failures": 0,
+        "skipped": 0,
+        "writer_version": WRITER_VERSION,
+        "observability_version": "69.0.1",
+    }
+    if not feature_store_db.is_ready():
+        report["state"] = "FEATURE_STORE_NOT_READY"
+        return report
+    if not flow_pl_store.is_ready():
+        report["state"] = "FLOW_PL_STORE_NOT_READY"
         return report
     try:
         pending = feature_store_db.unlabelled_samples(session_date)
+        report["pending"] = len(pending)
         if not pending:
+            report["state"] = "NO_UNLABELLED_SAMPLES"
             return report
-        vectors = [feature_store_db.get_features(sid) for sid in pending]
-        vectors = [v for v in vectors if v]
-        keys = []
+
+        vectors = []
+        for sid in pending:
+            v = feature_store_db.get_features(sid)
+            if v:
+                vectors.append(v)
+            else:
+                report["missing_feature_vector"] += 1
+                report["skipped"] += 1
+        report["vectors_loaded"] = len(vectors)
+
+        keyed = []
         for v in vectors:
             f = v.get("features") or {}
-            keys.append(f"{v.get('ticker')}|{f.get('cluster_option_type')}|"
-                        f"{f.get('cluster_expiration')}|"
-                        f"{f.get('cluster_directional_interpretation')}")
-        exc = flow_pl_store.get_cluster_excursions(list(set(keys)), session_date)
+            key = (f"{v.get('ticker')}|{f.get('cluster_option_type')}|"
+                   f"{f.get('cluster_expiration')}|"
+                   f"{f.get('cluster_directional_interpretation')}")
+            keyed.append((v, key))
+        keys = [key for _, key in keyed]
+        unique_keys = list(set(keys))
+        report["excursion_keys"] = len(unique_keys)
+        exc = flow_pl_store.get_cluster_excursions(unique_keys, session_date)
+        report["excursion_rows_found"] = len(exc or {})
 
         settled_at = f"{session_date}T16:00:00"
-        for v, key in zip(vectors, keys):
-            e = exc.get(key)
-            if not e or e.get("mfe_dollars") is None:
+        for v, key in keyed:
+            e = (exc or {}).get(key)
+            if not e:
+                report["missing_excursion_row"] += 1
+                report["no_excursion"] += 1
+                continue
+            if e.get("mfe_dollars") is None:
+                report["missing_mfe"] += 1
                 report["no_excursion"] += 1
                 continue
             cost = e.get("cost_basis")
+            if cost in (None, 0, 0.0):
+                report["missing_cost_basis"] += 1
             oc = _classify_outcome(e.get("mfe_dollars"), e.get("mae_dollars"), cost,
                                    e.get("time_to_mfe_seconds"), e.get("time_to_mae_seconds"))
             labels = {
@@ -291,8 +336,7 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
             }
             labels.update({k: val for k, val in oc.items() if val is not None})
             if cost:
-                labels["final_return_pct"] = round(
-                    (e.get("last_pl") or 0.0) / cost * 100.0, 2)
+                labels["final_return_pct"] = round((e.get("last_pl") or 0.0) / cost * 100.0, 2)
             try:
                 rec = build_label_record(
                     sample_id=v["sample_id"], decision_time=v["decision_time"],
@@ -304,35 +348,60 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
                         f"Excursions are sampled on the scanner interval, so MFE/MAE are lower "
                         f"bounds and ordering within one interval is not observable."))
             except LeakageError:
+                report["leakage_rejected"] += 1
                 report["skipped"] += 1
                 continue
             if feature_store_db.write_label(rec):
                 report["labelled"] += 1
+            else:
+                report["write_failures"] += 1
+        report["state"] = "SETTLED" if report["labelled"] else "NO_LABELS_CREATED"
         return report
     except Exception as e:  # pragma: no cover
-        report["error"] = str(e)
+        report["state"] = "ERROR"
+        report["error"] = f"{type(e).__name__}: {e}"
         return report
-
 
 
 def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: str = "SPX",
                           max_sessions: int = 30) -> Dict[str, Any]:
     """Recover missed session-close label settlement across prior sessions.
 
-    APEX 69.0 closes the restart/weekend gap where the scanner previously only
-    attempted the current calendar date. No labels are fabricated: each session
-    is delegated to settle_labels(), which still requires persisted excursion
-    evidence from flow_pl_store.
+    APEX 69.0.1 exposes why historical rows remain unlabelled without weakening
+    any evidence requirement or creating synthetic outcomes.
     """
-    report = {"sessions_checked": 0, "sessions_with_unlabelled": 0,
-              "labelled": 0, "no_excursion": 0, "skipped": 0,
-              "session_reports": [], "writer_version": WRITER_VERSION}
+    report = {
+        "attempted_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "sessions_checked": 0,
+        "sessions_with_unlabelled": 0,
+        "pending": 0,
+        "vectors_loaded": 0,
+        "excursion_rows_found": 0,
+        "labelled": 0,
+        "no_excursion": 0,
+        "missing_feature_vector": 0,
+        "missing_excursion_row": 0,
+        "missing_mfe": 0,
+        "missing_cost_basis": 0,
+        "leakage_rejected": 0,
+        "write_failures": 0,
+        "skipped": 0,
+        "session_reports": [],
+        "writer_version": WRITER_VERSION,
+        "observability_version": "69.0.1",
+    }
     if not feature_store_db.is_ready():
+        report["state"] = "FEATURE_STORE_NOT_READY"
         return report
     try:
         sessions = list(feature_store_db.sessions("features") or [])
         cutoff = str(before_session_date or "9999-12-31")[:10]
         eligible = sorted({str(x)[:10] for x in sessions if str(x)[:10] < cutoff}, reverse=True)[:max(1, int(max_sessions))]
+        aggregate_fields = (
+            "pending", "vectors_loaded", "excursion_rows_found", "labelled", "no_excursion",
+            "missing_feature_vector", "missing_excursion_row", "missing_mfe",
+            "missing_cost_basis", "leakage_rejected", "write_failures", "skipped",
+        )
         for session_date in eligible:
             report["sessions_checked"] += 1
             pending = feature_store_db.unlabelled_samples(session_date)
@@ -340,14 +409,21 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
                 continue
             report["sessions_with_unlabelled"] += 1
             row = settle_labels(session_date=session_date, ticker=ticker)
-            report["labelled"] += int(row.get("labelled") or 0)
-            report["no_excursion"] += int(row.get("no_excursion") or 0)
-            report["skipped"] += int(row.get("skipped") or 0)
+            for field in aggregate_fields:
+                report[field] += int(row.get(field) or 0)
             report["session_reports"].append({"session_date": session_date, **row})
+        if report["labelled"]:
+            report["state"] = "RECOVERED_LABELS"
+        elif report["sessions_with_unlabelled"]:
+            report["state"] = "UNLABELLED_REMAINS"
+        else:
+            report["state"] = "NO_PRIOR_UNLABELLED_SESSIONS"
         return report
     except Exception as exc:
+        report["state"] = "ERROR"
         report["error"] = f"{type(exc).__name__}: {exc}"
         return report
+
 
 def health() -> Dict[str, Any]:
     return {
