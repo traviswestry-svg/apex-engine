@@ -67,8 +67,8 @@ def _sealed_seconds():
 
 def test_release_identity_69_3_and_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "69.3.0"
-    assert manifest["build_name"] == "Canonical Excursion Capture & Learning Activation Closure"
+    assert manifest["apex_version"] == "69.3.1"
+    assert manifest["build_name"] == "Environment Governance Drift Closure"
     assert VERSION == "69.3.0"
     assert SCHEMA_VERSION == "apex.historical_evidence_lifecycle.v1.4"
     g = manifest["guardrails"]
