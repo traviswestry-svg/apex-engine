@@ -28,7 +28,7 @@ def test_release_truth_is_68_5_1():
     assert manifest["guardrails"]["dynamic_state_observability_reads_nonblocking"] is True
     assert manifest["guardrails"]["dynamic_state_observability_reads_nonblocking"] is True
     assert manifest["guardrails"]["calibration_read_paths_mutate_schema"] is False
-    assert "apex_version: 69.0." in registry
+    assert "apex_version: 69.1." in registry
 
 
 def test_policy_fails_soft_when_activation_store_is_unavailable(monkeypatch):

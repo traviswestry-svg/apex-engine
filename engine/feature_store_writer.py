@@ -62,7 +62,7 @@ from .feature_store import (
 )
 from . import feature_store_db, flow_pl_store, decision_provenance
 
-WRITER_VERSION = "9.5.1_FEATURE_STORE_WRITER"
+WRITER_VERSION = "69.1.0_FEATURE_STORE_WRITER"
 
 _GAP_S = float(os.getenv("FLOW_CLUSTER_GAP_S", "120"))
 # A decision informed by a 20-minute-old frame is barely informed. Recorded per
@@ -161,6 +161,16 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
             ckey = cl.get("cluster_key_string") or _key_string(cl)
             sid = make_sample_id(ticker=cl.get("ticker") or ticker,
                                  decision_time=decision_time, cluster_key=ckey)
+            # APEX 69.1: once sealed, the exact immutable sample_id becomes the
+            # excursion identity. Record on every observation, including samples
+            # whose feature vector was frozen on an earlier pass.
+            xo = cl.get("_excursion_observation") or {}
+            if xo.get("pl_dollars") is not None and flow_pl_store.is_ready():
+                flow_pl_store.record_sample_excursion(
+                    sample_id=sid, session_date=session_date,
+                    ticker=xo.get("ticker") or cl.get("ticker") or ticker,
+                    pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
+                    decision_time=decision_time, legacy_cluster_key=ckey)
             if feature_store_db.get_features(sid):
                 report["already_present"] += 1
                 continue
@@ -272,7 +282,7 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         "write_failures": 0,
         "skipped": 0,
         "writer_version": WRITER_VERSION,
-        "observability_version": "69.0.2",
+        "observability_version": "69.1.0",
     }
     if not feature_store_db.is_ready():
         report["state"] = "FEATURE_STORE_NOT_READY"
@@ -297,22 +307,44 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
                 report["skipped"] += 1
         report["vectors_loaded"] = len(vectors)
 
-        keyed = []
+        sample_ids = [str(v.get("sample_id")) for v in vectors if v.get("sample_id")]
+        report["excursion_keys"] = len(set(sample_ids))
+        exc = flow_pl_store.get_sample_excursions(sample_ids)
+        report["canonical_excursion_rows_found"] = len(exc or {})
+        report["identity_basis"] = "CANONICAL_FEATURE_SAMPLE_ID"
+
+        # Evidence-backed compatibility only: a legacy coarse key may be used
+        # when exactly ONE pending feature vector maps to that key for the
+        # session. Multiple vectors sharing the key are ambiguous and are never
+        # guessed or backfilled. This preserves old singleton tests/data without
+        # reintroducing the collision that 69.1 closes.
+        legacy_key_by_sid = {}
+        legacy_counts = {}
         for v in vectors:
             f = v.get("features") or {}
             key = (f"{v.get('ticker')}|{f.get('cluster_option_type')}|"
                    f"{f.get('cluster_expiration')}|"
                    f"{f.get('cluster_directional_interpretation')}")
-            keyed.append((v, key))
-        keys = [key for _, key in keyed]
-        unique_keys = list(set(keys))
-        report["excursion_keys"] = len(unique_keys)
-        exc = flow_pl_store.get_cluster_excursions(unique_keys, session_date)
-        report["excursion_rows_found"] = len(exc or {})
+            legacy_key_by_sid[v.get("sample_id")] = key
+            legacy_counts[key] = legacy_counts.get(key, 0) + 1
+        singleton_legacy_keys = [k for k, n in legacy_counts.items() if n == 1]
+        legacy_exc = flow_pl_store.get_cluster_excursions(singleton_legacy_keys, session_date)
+        report["legacy_singleton_candidates"] = len(singleton_legacy_keys)
+        report["legacy_singleton_rows_found"] = len(legacy_exc or {})
+        report["ambiguous_legacy_vectors"] = sum(n for n in legacy_counts.values() if n > 1)
+        report["excursion_rows_found"] = int(report.get("canonical_excursion_rows_found") or 0) + int(report.get("legacy_singleton_rows_found") or 0)
 
         settled_at = f"{session_date}T16:00:00"
-        for v, key in keyed:
-            e = (exc or {}).get(key)
+        for v in vectors:
+            sid = v.get("sample_id")
+            e = (exc or {}).get(sid)
+            if not e:
+                lk = legacy_key_by_sid.get(sid)
+                if lk and legacy_counts.get(lk) == 1:
+                    e = (legacy_exc or {}).get(lk)
+                    if e:
+                        report["legacy_singleton_recoveries"] = int(report.get("legacy_singleton_recoveries") or 0) + 1
+        
             if not e:
                 report["missing_excursion_row"] += 1
                 report["no_excursion"] += 1
@@ -388,7 +420,7 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
         "skipped": 0,
         "session_reports": [],
         "writer_version": WRITER_VERSION,
-        "observability_version": "69.0.2",
+        "observability_version": "69.1.0",
     }
     if not feature_store_db.is_ready():
         report["state"] = "FEATURE_STORE_NOT_READY"

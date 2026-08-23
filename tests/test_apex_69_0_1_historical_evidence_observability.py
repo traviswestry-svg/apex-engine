@@ -9,8 +9,8 @@ def test_release_versions_are_at_least_69_0_1():
     assert H.SCHEMA_VERSION.startswith("apex.historical_evidence_lifecycle.v1.")
     registry = Path("config/apex_capability_registry.yaml").read_text()
     manifest = Path("config/apex_release_manifest.json").read_text()
-    assert "apex_version: 69.0." in registry
-    assert '"apex_version": "69.0.' in manifest
+    assert "apex_version: 69." in registry
+    assert '"apex_version": "69.' in manifest
 
 
 def test_lifecycle_route_prefers_fresh_scanner_heartbeat_runtime():

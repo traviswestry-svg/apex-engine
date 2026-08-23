@@ -215,6 +215,15 @@ def run_flow_pl(
             # descriptive stats are P/L outputs.
             src = dict(cl)
             src["cluster_key_string"] = ckey_s
+            # Private writer handoff, never a model feature. The feature writer
+            # records this aggregate P/L under the immutable sample_id only once
+            # the cluster is sealed.
+            src["_excursion_observation"] = {
+                "pl_dollars": priced.get("estimated_pl_dollars"),
+                "cost_basis": priced.get("cost_basis_dollars"),
+                "ticker": priced.get("ticker") or ckey.get("ticker"),
+                "legacy_cluster_key": ckey_s,
+            }
             sources.append(src)
             return priced
 

@@ -185,6 +185,13 @@ _REGISTRY_DATA.extend([
 {'name':'MICROSTRUCTURE_PROMOTION_MIN_COVERAGE_PCT','category':'MARKET_DATA','classification':'OPTIONAL','required_when':None,'default':'95','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum L2 and true-delta evidence coverage percentage for review eligibility.','safety_critical':False,'used_in_code':True},
 ])
 
+_REGISTRY_DATA.extend([
+ {'name':'APEX_69_MARKET_MEMORY_CAPTURE_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'true','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables observational market-memory capture for APEX 69 historical evidence lifecycle.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_FLOW_SETTLEMENT_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'300','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cadence in seconds for the flow-settlement scheduler background loop.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_FLOW_SETTLEMENT_MAX_SESSIONS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'30','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum feature sessions recovered per flow-settlement scheduler pass.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_FLOW_SETTLEMENT_SCHEDULER_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'true','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables the dedicated flow-settlement scheduler loop.','safety_critical':False,'used_in_code':True},
+])
+
 
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 

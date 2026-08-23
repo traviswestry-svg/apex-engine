@@ -39,7 +39,7 @@ _DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "9.4.0_FLOW_PL_STORE"
+STORE_VERSION = "69.1.0_FLOW_EXCURSION_IDENTITY"
 
 
 def _conn() -> sqlite3.Connection:
@@ -118,6 +118,31 @@ def init_db() -> bool:
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_fplc_session "
                       "ON flow_pl_cluster_tracking(session_date)")
+            # APEX 69.1: canonical sample-scoped excursion ledger. The previous
+            # cluster_key is intentionally retained above as lineage only; it is
+            # too coarse to identify one immutable feature sample.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_sample_excursions (
+                       sample_id        TEXT PRIMARY KEY,
+                       session_date     TEXT NOT NULL,
+                       ticker           TEXT,
+                       legacy_cluster_key TEXT,
+                       decision_time    TEXT,
+                       first_seen       TEXT,
+                       last_seen        TEXT,
+                       cost_basis       REAL,
+                       last_pl          REAL,
+                       mfe_dollars      REAL,
+                       mfe_at           TEXT,
+                       mae_dollars      REAL,
+                       mae_at           TEXT,
+                       samples          INTEGER DEFAULT 0
+                   )"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_fse_session "
+                      "ON flow_sample_excursions(session_date)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_fse_legacy "
+                      "ON flow_sample_excursions(legacy_cluster_key, session_date)")
             c.commit()
         _DB_READY = True
     except Exception as e:  # pragma: no cover
@@ -256,6 +281,109 @@ def get_excursions(event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         return {}
 
 
+def record_sample_excursion(*, sample_id: str, session_date: str,
+                            ticker: Optional[str], pl_dollars: Optional[float],
+                            cost_basis: Optional[float], decision_time: Optional[str] = None,
+                            legacy_cluster_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Persist MFE/MAE under the exact immutable feature ``sample_id``.
+
+    APEX 69.1 closes the historical join by making the feature sample itself the
+    excursion identity. ``legacy_cluster_key`` is lineage only and is never used
+    to choose a label row.
+    """
+    if not _DB_READY or not sample_id or pl_dollars is None:
+        return None
+    try:
+        now = _now_iso()
+        with _LOCK, _conn() as c:
+            row = c.execute("SELECT * FROM flow_sample_excursions WHERE sample_id=?",
+                            (sample_id,)).fetchone()
+            if row is None:
+                c.execute(
+                    """INSERT INTO flow_sample_excursions
+                       (sample_id, session_date, ticker, legacy_cluster_key, decision_time,
+                        first_seen, last_seen, cost_basis, last_pl, mfe_dollars, mfe_at,
+                        mae_dollars, mae_at, samples)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (sample_id, session_date, ticker, legacy_cluster_key, decision_time,
+                     now, now, cost_basis, pl_dollars, pl_dollars, now, pl_dollars, now, 1))
+                c.commit()
+                return {"sample_id": sample_id, "samples": 1, "first_sample": True}
+            mfe = row["mfe_dollars"] if row["mfe_dollars"] is not None else pl_dollars
+            mae = row["mae_dollars"] if row["mae_dollars"] is not None else pl_dollars
+            mfe_at, mae_at = row["mfe_at"], row["mae_at"]
+            if pl_dollars > mfe:
+                mfe, mfe_at = pl_dollars, now
+            if pl_dollars < mae:
+                mae, mae_at = pl_dollars, now
+            c.execute(
+                """UPDATE flow_sample_excursions
+                   SET last_seen=?, last_pl=?, mfe_dollars=?, mfe_at=?, mae_dollars=?,
+                       mae_at=?, samples=samples+1, cost_basis=COALESCE(?, cost_basis),
+                       legacy_cluster_key=COALESCE(?, legacy_cluster_key)
+                   WHERE sample_id=?""",
+                (now, pl_dollars, mfe, mfe_at, mae, mae_at, cost_basis,
+                 legacy_cluster_key, sample_id))
+            c.commit()
+            return {"sample_id": sample_id, "samples": (row["samples"] or 0) + 1,
+                    "first_sample": False, "mfe_dollars": mfe, "mae_dollars": mae}
+    except Exception as e:  # pragma: no cover
+        record_degradation(
+            component="flow_pl_store", operation="record_sample_excursion", exc=e,
+            fallback="SAMPLE_EXCURSION_NOT_PERSISTED", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH, "sample_id": sample_id},
+        )
+        return None
+
+
+def get_sample_excursions(sample_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Return exact sample-scoped excursions. No legacy-key fallback is allowed."""
+    if not _DB_READY or not sample_ids:
+        return {}
+    try:
+        out: Dict[str, Dict[str, Any]] = {}
+        with _conn() as c:
+            for i in range(0, len(sample_ids), 400):
+                chunk = sample_ids[i:i + 400]
+                q = ",".join("?" * len(chunk))
+                for r in c.execute(
+                        f"SELECT * FROM flow_sample_excursions WHERE sample_id IN ({q})", chunk):
+                    out[r["sample_id"]] = {
+                        "mfe_dollars": r["mfe_dollars"], "mae_dollars": r["mae_dollars"],
+                        "cost_basis": r["cost_basis"], "last_pl": r["last_pl"],
+                        "time_to_mfe_seconds": _secs_between(r["first_seen"], r["mfe_at"]),
+                        "time_to_mae_seconds": _secs_between(r["first_seen"], r["mae_at"]),
+                        "samples": r["samples"], "first_seen": r["first_seen"],
+                        "last_seen": r["last_seen"], "decision_time": r["decision_time"],
+                        "legacy_cluster_key": r["legacy_cluster_key"],
+                        "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+                    }
+        return out
+    except Exception as e:  # pragma: no cover
+        record_degradation(
+            component="flow_pl_store", operation="get_sample_excursions", exc=e,
+            fallback="EMPTY_SAMPLE_EXCURSION_HISTORY", decision_authority_suppressed=False,
+            source=__name__, context={"db_path": _DB_PATH},
+        )
+        return {}
+
+
+def sample_excursion_health() -> Dict[str, Any]:
+    out = {"ok": _DB_READY, "version": "69.1.0", "sample_excursions": 0,
+           "sessions": 0, "latest_at": None, "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID"}
+    if not _DB_READY:
+        return out
+    try:
+        with _conn() as c:
+            row = c.execute("""SELECT COUNT(*) n, COUNT(DISTINCT session_date) s,
+                                MAX(last_seen) latest FROM flow_sample_excursions""").fetchone()
+            out.update({"sample_excursions": row["n"], "sessions": row["s"],
+                        "latest_at": row["latest"]})
+    except Exception as exc:  # pragma: no cover
+        out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+    return out
+
+
 def health() -> Dict[str, Any]:
     info: Dict[str, Any] = {"ready": _DB_READY, "store_version": STORE_VERSION,
                             "db_path": _DB_PATH, "tracked_events": None}
@@ -266,6 +394,8 @@ def health() -> Dict[str, Any]:
                     "SELECT COUNT(*) n FROM flow_pl_tracking").fetchone()["n"]
                 info["total_samples"] = c.execute(
                     "SELECT COALESCE(SUM(samples),0) s FROM flow_pl_tracking").fetchone()["s"]
+                info["canonical_sample_excursions"] = c.execute(
+                    "SELECT COUNT(*) n FROM flow_sample_excursions").fetchone()["n"]
         except Exception as e:  # pragma: no cover
             info["error"] = str(e)
     return info
