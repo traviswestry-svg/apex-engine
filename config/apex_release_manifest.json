@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.2.1",
-  "build_name": "Unified All-Components Dashboard",
+  "apex_version": "69.3.0",
+  "build_name": "Canonical Excursion Capture & Learning Activation Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -140,7 +140,13 @@
     "flow_excursion_identity": "CANONICAL_FEATURE_SAMPLE_ID",
     "legacy_flow_key_labeling": "UNAMBIGUOUS_SINGLETON_ONLY",
     "unified_dashboard_read_only": true,
-    "dashboard_changes_decision_authority": false
+    "dashboard_changes_decision_authority": false,
+    "canonical_excursion_capture_requires_feature_sample": true,
+    "canonical_excursion_identity_is_feature_sample_id": true,
+    "flow_excursion_capture_creates_synthetic_evidence": false,
+    "flow_excursion_capture_changes_trade_decisions": false,
+    "flow_excursion_capture_changes_execution_authority": false,
+    "flow_label_requirements_relaxed": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

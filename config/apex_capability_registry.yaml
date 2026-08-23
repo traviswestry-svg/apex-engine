@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.2.1
+apex_version: 69.3.0
 capabilities:
   unified_all_components_dashboard:
     canonical_module: app
@@ -366,7 +366,7 @@ capabilities:
     guardrails: [observational_only, abstention_counterfactuals_do_not_enter_calibration_grading_results, no_policy_auto_promotion, no_late_entry_fabrication, human_review_required_for_policy_change, no_execution_authority]
 
   unified_historical_evidence_lifecycle:
-    version: 69.0.2
+    version: 69.3.0
     state: observational_only
     routes:
       - /api/learning/evidence-lifecycle
@@ -375,5 +375,8 @@ capabilities:
       - real_spx_price_sampling_no_fabrication
       - automatic_maturity_grading
       - prior_session_flow_label_recovery
+      - canonical_flow_excursion_capture_by_feature_sample_id
+      - durable_excursion_capture_observability
+      - no_synthetic_excursion_backfill
       - market_memory_observational_capture
       - no_execution_authority

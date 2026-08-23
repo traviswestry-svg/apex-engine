@@ -17,8 +17,8 @@ from typing import Any, Dict, Mapping, Optional
 from .evidence_pipeline import DEFAULT_DB, readiness, record_price, record_snapshot
 from .outcome_grader import run_grader
 
-VERSION = "69.1.0"
-SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.3"
+VERSION = "69.3.0"
+SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.4"
 
 _LOCK = threading.RLock()
 _RUNTIME: Dict[str, Any] = {

@@ -39,7 +39,7 @@ _DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.1.0_FLOW_EXCURSION_IDENTITY"
+STORE_VERSION = "69.3.0_CANONICAL_EXCURSION_CAPTURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -143,6 +143,24 @@ def init_db() -> bool:
                       "ON flow_sample_excursions(session_date)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_fse_legacy "
                       "ON flow_sample_excursions(legacy_cluster_key, session_date)")
+            # APEX 69.3: durable capture audit. This is observability only; it
+            # never manufactures excursion evidence and never participates in
+            # label selection.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_excursion_capture_audit (
+                       id INTEGER PRIMARY KEY CHECK (id=1),
+                       capture_attempts INTEGER DEFAULT 0,
+                       excursions_inserted INTEGER DEFAULT 0,
+                       excursions_updated INTEGER DEFAULT 0,
+                       missing_feature_sample INTEGER DEFAULT 0,
+                       missing_pl INTEGER DEFAULT 0,
+                       capture_errors INTEGER DEFAULT 0,
+                       last_attempt_at TEXT,
+                       last_success_at TEXT,
+                       last_sample_id TEXT
+                   )"""
+            )
+            c.execute("INSERT OR IGNORE INTO flow_excursion_capture_audit(id) VALUES (1)")
             c.commit()
         _DB_READY = True
     except Exception as e:  # pragma: no cover
@@ -281,20 +299,50 @@ def get_excursions(event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         return {}
 
 
+def record_capture_audit(*, attempted: int = 0, inserted: int = 0, updated: int = 0,
+                         missing_feature: int = 0, missing_pl: int = 0,
+                         errors: int = 0, sample_id: Optional[str] = None,
+                         success: bool = False) -> None:
+    """Persist scanner/web-process-neutral excursion capture telemetry."""
+    if not _DB_READY:
+        return
+    try:
+        now = _now_iso()
+        with _LOCK, _conn() as c:
+            c.execute(
+                """UPDATE flow_excursion_capture_audit SET
+                     capture_attempts=capture_attempts+?,
+                     excursions_inserted=excursions_inserted+?,
+                     excursions_updated=excursions_updated+?,
+                     missing_feature_sample=missing_feature_sample+?,
+                     missing_pl=missing_pl+?,
+                     capture_errors=capture_errors+?,
+                     last_attempt_at=CASE WHEN ?>0 THEN ? ELSE last_attempt_at END,
+                     last_success_at=CASE WHEN ? THEN ? ELSE last_success_at END,
+                     last_sample_id=COALESCE(?, last_sample_id)
+                   WHERE id=1""",
+                (attempted, inserted, updated, missing_feature, missing_pl, errors,
+                 attempted, now, 1 if success else 0, now, sample_id),
+            )
+            c.commit()
+    except Exception:
+        return
+
+
 def record_sample_excursion(*, sample_id: str, session_date: str,
                             ticker: Optional[str], pl_dollars: Optional[float],
                             cost_basis: Optional[float], decision_time: Optional[str] = None,
                             legacy_cluster_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Persist MFE/MAE under the exact immutable feature ``sample_id``.
 
-    APEX 69.1 closes the historical join by making the feature sample itself the
-    excursion identity. ``legacy_cluster_key`` is lineage only and is never used
-    to choose a label row.
+    APEX 69.3 keeps the immutable sample as the only label-selecting identity and
+    records durable capture telemetry outside the database write lock.
     """
     if not _DB_READY or not sample_id or pl_dollars is None:
         return None
     try:
         now = _now_iso()
+        audit_inserted = audit_updated = 0
         with _LOCK, _conn() as c:
             row = c.execute("SELECT * FROM flow_sample_excursions WHERE sample_id=?",
                             (sample_id,)).fetchone()
@@ -308,33 +356,39 @@ def record_sample_excursion(*, sample_id: str, session_date: str,
                     (sample_id, session_date, ticker, legacy_cluster_key, decision_time,
                      now, now, cost_basis, pl_dollars, pl_dollars, now, pl_dollars, now, 1))
                 c.commit()
-                return {"sample_id": sample_id, "samples": 1, "first_sample": True}
-            mfe = row["mfe_dollars"] if row["mfe_dollars"] is not None else pl_dollars
-            mae = row["mae_dollars"] if row["mae_dollars"] is not None else pl_dollars
-            mfe_at, mae_at = row["mfe_at"], row["mae_at"]
-            if pl_dollars > mfe:
-                mfe, mfe_at = pl_dollars, now
-            if pl_dollars < mae:
-                mae, mae_at = pl_dollars, now
-            c.execute(
-                """UPDATE flow_sample_excursions
-                   SET last_seen=?, last_pl=?, mfe_dollars=?, mfe_at=?, mae_dollars=?,
-                       mae_at=?, samples=samples+1, cost_basis=COALESCE(?, cost_basis),
-                       legacy_cluster_key=COALESCE(?, legacy_cluster_key)
-                   WHERE sample_id=?""",
-                (now, pl_dollars, mfe, mfe_at, mae, mae_at, cost_basis,
-                 legacy_cluster_key, sample_id))
-            c.commit()
-            return {"sample_id": sample_id, "samples": (row["samples"] or 0) + 1,
-                    "first_sample": False, "mfe_dollars": mfe, "mae_dollars": mae}
+                result = {"sample_id": sample_id, "samples": 1, "first_sample": True}
+                audit_inserted = 1
+            else:
+                mfe = row["mfe_dollars"] if row["mfe_dollars"] is not None else pl_dollars
+                mae = row["mae_dollars"] if row["mae_dollars"] is not None else pl_dollars
+                mfe_at, mae_at = row["mfe_at"], row["mae_at"]
+                if pl_dollars > mfe:
+                    mfe, mfe_at = pl_dollars, now
+                if pl_dollars < mae:
+                    mae, mae_at = pl_dollars, now
+                c.execute(
+                    """UPDATE flow_sample_excursions
+                       SET last_seen=?, last_pl=?, mfe_dollars=?, mfe_at=?, mae_dollars=?,
+                           mae_at=?, samples=samples+1, cost_basis=COALESCE(?, cost_basis),
+                           legacy_cluster_key=COALESCE(?, legacy_cluster_key)
+                       WHERE sample_id=?""",
+                    (now, pl_dollars, mfe, mfe_at, mae, mae_at, cost_basis,
+                     legacy_cluster_key, sample_id))
+                c.commit()
+                result = {"sample_id": sample_id, "samples": (row["samples"] or 0) + 1,
+                          "first_sample": False, "mfe_dollars": mfe, "mae_dollars": mae}
+                audit_updated = 1
+        record_capture_audit(attempted=1, inserted=audit_inserted, updated=audit_updated,
+                             sample_id=sample_id, success=True)
+        return result
     except Exception as e:  # pragma: no cover
+        record_capture_audit(attempted=1, errors=1, sample_id=sample_id)
         record_degradation(
             component="flow_pl_store", operation="record_sample_excursion", exc=e,
             fallback="SAMPLE_EXCURSION_NOT_PERSISTED", decision_authority_suppressed=False,
             source=__name__, context={"db_path": _DB_PATH, "sample_id": sample_id},
         )
         return None
-
 
 def get_sample_excursions(sample_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     """Return exact sample-scoped excursions. No legacy-key fallback is allowed."""
@@ -369,8 +423,12 @@ def get_sample_excursions(sample_ids: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def sample_excursion_health() -> Dict[str, Any]:
-    out = {"ok": _DB_READY, "version": "69.1.0", "sample_excursions": 0,
-           "sessions": 0, "latest_at": None, "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID"}
+    out = {"ok": _DB_READY, "version": "69.3.0", "sample_excursions": 0,
+           "sessions": 0, "latest_at": None, "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+           "capture": {"capture_attempts": 0, "excursions_inserted": 0,
+                       "excursions_updated": 0, "missing_feature_sample": 0,
+                       "missing_pl": 0, "capture_errors": 0, "last_attempt_at": None,
+                       "last_success_at": None, "last_sample_id": None}}
     if not _DB_READY:
         return out
     try:
@@ -379,6 +437,9 @@ def sample_excursion_health() -> Dict[str, Any]:
                                 MAX(last_seen) latest FROM flow_sample_excursions""").fetchone()
             out.update({"sample_excursions": row["n"], "sessions": row["s"],
                         "latest_at": row["latest"]})
+            audit = c.execute("SELECT * FROM flow_excursion_capture_audit WHERE id=1").fetchone()
+            if audit is not None:
+                out["capture"] = {k: audit[k] for k in audit.keys() if k != "id"}
     except Exception as exc:  # pragma: no cover
         out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
     return out
