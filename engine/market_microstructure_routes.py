@@ -57,8 +57,8 @@ def register_market_microstructure_routes(app) -> None:
         try:
             result = ingest(body, _store())
             return jsonify(result), 201
-        except MicrostructureValidationError as exc:
-            return jsonify({"ok": False, "status": "REJECTED", "version": VERSION, "error": str(exc)}), 400
+        except MicrostructureValidationError:
+            return jsonify({"ok": False, "status": "REJECTED", "version": VERSION, "error": "invalid microstructure payload"}), 400
 
     @app.get("/api/microstructure/state")
     def market_microstructure_state():
@@ -136,4 +136,3 @@ def register_market_microstructure_routes(app) -> None:
                             "governance": {"future_outcome_live_use": False, "production_effect": "NONE"}}), 201
         except (TypeError, ValueError) as exc:
             return jsonify({"ok": False, "status": "REJECTED", "version": VERSION, "error": str(exc)}), 400
-
