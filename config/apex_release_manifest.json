@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.0.2",
-  "build_name": "Flow Settlement Scheduler Closure",
+  "apex_version": "69.1.0",
+  "build_name": "Flow Excursion Evidence & Identity Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -136,7 +136,9 @@
     "flow_settlement_scheduler_scanner_owned": true,
     "flow_settlement_scheduler_creates_evidence": false,
     "flow_settlement_scheduler_changes_decisions": false,
-    "flow_settlement_scheduler_changes_execution_authority": false
+    "flow_settlement_scheduler_changes_execution_authority": false,
+    "flow_excursion_identity": "CANONICAL_FEATURE_SAMPLE_ID",
+    "legacy_flow_key_labeling": "UNAMBIGUOUS_SINGLETON_ONLY"
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

@@ -36,7 +36,7 @@ def register_evidence_accumulation_routes(app):
         """Unified proof of capture -> persistence -> grading -> learning readiness."""
         from flask import jsonify
         from .historical_evidence_lifecycle import runtime_status
-        from . import feature_store_db
+        from . import feature_store_db, flow_pl_store
         from .market_memory_engine_v220 import status as market_memory_status
         payload = runtime_status()
         # APEX 69.0.1 — scanner is the authoritative runtime owner. Gunicorn
@@ -70,6 +70,10 @@ def register_evidence_accumulation_routes(app):
         except Exception as exc:
             mm = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         r = payload.get("readiness") or {}
+        try:
+            flow_linkage = flow_pl_store.sample_excursion_health()
+        except Exception as exc:
+            flow_linkage = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         payload["families"] = {
             "decisions": {
                 "captured": r.get("decisions_recorded", 0),
@@ -91,6 +95,7 @@ def register_evidence_accumulation_routes(app):
                     "state": "SCANNER_SETTLEMENT_DIAGNOSTICS_UNAVAILABLE",
                     "reason": "SCANNER_HEARTBEAT_STALE_OR_NO_SETTLEMENT_ATTEMPT",
                 },
+                "excursion_linkage": flow_linkage,
             },
             "market_memory": {
                 "captured": mm.get("sessions", 0),
