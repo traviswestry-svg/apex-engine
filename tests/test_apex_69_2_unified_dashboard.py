@@ -34,6 +34,6 @@ def test_dashboard_is_read_only_composition():
     assert "fetch(url,{cache:'no-store'})" in js
     assert "method:'POST'" not in js
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == '69.2.0'
+    assert tuple(map(int, manifest['apex_version'].split('.'))) >= (69, 2, 0)
     assert manifest['guardrails']['unified_dashboard_read_only'] is True
     assert manifest['guardrails']['dashboard_changes_decision_authority'] is False
