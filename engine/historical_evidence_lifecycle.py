@@ -178,7 +178,7 @@ def _capture_market_memory(result: Mapping[str, Any], snap: Mapping[str, Any]) -
     APEX 69 makes canonical scanner-owned historical capture active by default,
     but it remains observational and can be disabled independently.
     """
-    if str(os.getenv("APEX_MARKET_MEMORY_CAPTURE_ENABLED", "true")).lower() not in {"1", "true", "yes", "on"}:
+    if str(os.getenv("APEX_69_MARKET_MEMORY_CAPTURE_ENABLED", "true")).lower() not in {"1", "true", "yes", "on"}:
         return
     timestamp = str(snap.get("timestamp") or _now())
     key = f"{timestamp[:10]}|{snap.get('ticker')}|{snap.get('session')}"
