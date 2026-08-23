@@ -5,7 +5,12 @@ from pathlib import Path
 def test_release_manifest_preserves_68_6_guardrails_under_69_0():
     data = json.loads(Path('config/apex_release_manifest.json').read_text())
     assert tuple(map(int, data['apex_version'].split('.'))) >= (69, 0, 1)
-    assert data['build_name'] in {'Unified Historical Evidence Lifecycle Closure', 'Flow Settlement Scheduler Closure', 'Flow Excursion Evidence & Identity Closure'}
+    assert data['build_name'] in {
+        'Unified Historical Evidence Lifecycle Closure',
+        'Flow Settlement Scheduler Closure',
+        'Flow Excursion Evidence & Identity Closure',
+        'Unified All-Components Dashboard',
+    }
     g = data['guardrails']
     assert g['abstention_counterfactuals_excluded_from_calibration_grades'] is True
     assert g['effectiveness_findings_auto_promote_policy'] is False
