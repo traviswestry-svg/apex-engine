@@ -199,6 +199,15 @@ except Exception as _doa686_err:
     register_decision_outcome_attribution_routes = None
     print(f"Decision Outcome Attribution 68.6 unavailable: {_doa686_err}", flush=True)
 
+# APEX 68.7.0 — Market Microstructure Intelligence Foundation
+try:
+    from engine.market_microstructure_routes import register_market_microstructure_routes
+    MARKET_MICROSTRUCTURE_68_7_AVAILABLE = True
+except Exception as _mmi687_err:
+    MARKET_MICROSTRUCTURE_68_7_AVAILABLE = False
+    register_market_microstructure_routes = None
+    print(f"Market Microstructure Intelligence 68.7 unavailable: {_mmi687_err}", flush=True)
+
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
     from engine.trade_director_flow_intelligence import (
@@ -13622,6 +13631,10 @@ try:
         register_dynamic_state_routes(app, last_result_provider=_ds_last_result,
                                       scanner_state_provider=_ds_scanner_state)
         print("APEX 66.7.0 Dynamic State routes registered.", flush=True)
+
+    if MARKET_MICROSTRUCTURE_68_7_AVAILABLE and register_market_microstructure_routes is not None:
+        register_market_microstructure_routes(app)
+        print("APEX 68.7.0 Market Microstructure Intelligence routes registered.", flush=True)
         # APEX 68.5.3: controlled writer-side initialization.  Read/GET routes
         # remain strictly non-mutating; this idempotent startup boundary ensures
         # a fresh Render deployment has the governance schema before observability
