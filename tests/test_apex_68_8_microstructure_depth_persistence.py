@@ -1,6 +1,8 @@
 from engine.market_microstructure import capability_audit
 from engine.market_microstructure_ingest import ingest, validate_observation, MicrostructureValidationError
+from engine.market_microstructure_routes import register_market_microstructure_routes
 from engine.market_microstructure_store import MicrostructureStore
+from flask import Flask
 
 
 def _payload(ts, bid=6499.75, bid_size=100, ask=6500.0, ask_size=100, buy=20, sell=10):
@@ -52,6 +54,20 @@ def test_aggregate_proxy_is_rejected_at_ingestion_boundary():
         assert False, "expected validation error"
     except MicrostructureValidationError as exc:
         assert "L2 or MBO" in str(exc)
+
+
+def test_ingest_route_sanitizes_validation_failures(monkeypatch, tmp_path):
+    monkeypatch.setenv("MICROSTRUCTURE_INGEST_ENABLED", "true")
+    monkeypatch.setenv("MICROSTRUCTURE_DB_PATH", str(tmp_path / "micro.sqlite3"))
+    app = Flask(__name__)
+    register_market_microstructure_routes(app)
+    response = app.test_client().post("/api/microstructure/ingest", json={"instrument": "NQ"})
+    body = response.get_json()
+    assert response.status_code == 400
+    assert body["status"] == "REJECTED"
+    assert body["error"] == "MICROSTRUCTURE_VALIDATION_FAILED"
+    assert body["detail"] == "Submitted microstructure payload failed validation."
+    assert "ES or MES only" not in str(body)
 
 
 def test_ingest_attaches_prior_book_and_persists_liquidity_change(tmp_path):
