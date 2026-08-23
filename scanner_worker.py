@@ -72,11 +72,15 @@ from engine.historical_evidence_lifecycle import (  # noqa: E402
     grade as evidence_grade,
     runtime_status as evidence_runtime_status,
 )
+from engine.flow_settlement_scheduler import FlowSettlementScheduler  # noqa: E402
 
 _RUNNING = True
 _HLCE_PROVIDER_CACHE: Dict[str, Any] = {"at": 0.0, "snapshot": {}}
 _HLCE_RUNTIME: Dict[str, Any] = {"provider_ok": False, "provider_error": None, "restart_count": 0, "last_tick": None}
 _EVIDENCE_RUNTIME: Dict[str, Any] = {"last_grade_monotonic": 0.0, "last_price_result": None, "last_grade_result": None}
+_FLOW_SETTLEMENT_SCHEDULER = FlowSettlementScheduler(
+    ticker=getattr(apex_app, "ASSISTANT_TICKER", "SPX") if apex_app is not None else "SPX"
+)
 _LIVE_LEVEL_PUBLISHER = LiveActiveLevelPublisher(
     apex_app,
     symbol=getattr(apex_app, "ASSISTANT_TICKER", "SPX"),
@@ -302,6 +306,20 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
+        # APEX 69.0.2 — explicit scanner-owned settlement cadence. The first
+        # loop performs an immediate recovery pass; later loops are bounded by
+        # APEX_FLOW_SETTLEMENT_SECONDS. No label is fabricated when persisted
+        # excursion evidence is absent.
+        try:
+            _FLOW_SETTLEMENT_SCHEDULER.run_if_due()
+        except Exception as exc:
+            record_degradation(
+                component="flow_settlement_scheduler",
+                operation="settle_pending_labels", exc=exc,
+                fallback="CONTINUE_SCANNER_WITHOUT_FLOW_LABEL_SETTLEMENT",
+                decision_authority_suppressed=False, source="scanner_worker.py",
+            )
+
         service = get_hlce_service()
         db = service.status().get("database") or {}
         write_scanner_heartbeat({
@@ -325,7 +343,7 @@ def main() -> int:
             "hlce_restart_count": int(_HLCE_RUNTIME.get("restart_count") or 0),
             "live_active_level_publisher": _LIVE_LEVEL_PUBLISHER.diagnostics() if _LIVE_LEVEL_PUBLISHER is not None else {"state": "UNAVAILABLE"},
             "historical_evidence_lifecycle": evidence_runtime_status(),
-            "feature_label_settlement": getattr(apex_app, "_LAST_LABEL_SETTLE_RESULT", None),
+            "feature_label_settlement": _FLOW_SETTLEMENT_SCHEDULER.status(),
         })
         time.sleep(max(5, int(os.getenv("APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS", "15"))))
     if _LIVE_LEVEL_PUBLISHER is not None:

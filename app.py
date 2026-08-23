@@ -4434,7 +4434,9 @@ def scanner_loop() -> None:
         # APEX 9 Step 5a.1: settle labels once the cash session has closed. Labels
         # are measured to session close, so this runs after it — never before.
         if (WRITE_FEATURES_IN_SCANNER and FEATURE_WRITER_AVAILABLE
-                and _fs_writer is not None):
+                and _fs_writer is not None
+                and str(os.getenv("APEX_FLOW_SETTLEMENT_SCHEDULER_ENABLED", "true")).lower()
+                    not in {"1", "true", "yes", "on"}):
             try:
                 _n = now_et()
                 _sess = _n.strftime("%Y-%m-%d")
