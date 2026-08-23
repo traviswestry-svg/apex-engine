@@ -8220,7 +8220,7 @@ def api_institutional_os():
             except Exception as _mn45_err:
                 print(f"Market narrative error (non-fatal): {_mn45_err}", flush=True)
 
-            # APEX 69.0 — freeze the authoritative decision at composition time.
+            # APEX 69.0.1 — freeze the authoritative decision at composition time.
             # This is evidence-only and deliberately occurs after the canonical
             # decision is finalized; it cannot influence that decision.
             try:
@@ -8230,14 +8230,14 @@ def api_institutional_os():
                     "ok": bool(_apex69_capture.get("ok")),
                     "inserted": bool(_apex69_capture.get("inserted")),
                     "decision_id": _apex69_capture.get("decision_id"),
-                    "version": "69.0.0",
+                    "version": "69.0.1",
                     "execution_authority": False,
                 }
             except Exception as _apex69_capture_err:
                 result["historical_evidence_capture"] = {
                     "ok": False, "inserted": False,
                     "error": f"{type(_apex69_capture_err).__name__}: {_apex69_capture_err}",
-                    "version": "69.0.0", "execution_authority": False,
+                    "version": "69.0.1", "execution_authority": False,
                 }
 
             _record_confidence_timeline_point(ticker, result)

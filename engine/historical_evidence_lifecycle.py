@@ -17,8 +17,8 @@ from typing import Any, Dict, Mapping, Optional
 from .evidence_pipeline import DEFAULT_DB, readiness, record_price, record_snapshot
 from .outcome_grader import run_grader
 
-VERSION = "69.0.0"
-SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1"
+VERSION = "69.0.1"
+SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.1"
 
 _LOCK = threading.RLock()
 _RUNTIME: Dict[str, Any] = {
@@ -178,7 +178,7 @@ def _capture_market_memory(result: Mapping[str, Any], snap: Mapping[str, Any]) -
     APEX 69 makes canonical scanner-owned historical capture active by default,
     but it remains observational and can be disabled independently.
     """
-    if str(os.getenv("APEX_MARKET_MEMORY_CAPTURE_ENABLED", "true")).lower() not in {"1", "true", "yes", "on"}:
+    if str(os.getenv("APEX_69_MARKET_MEMORY_CAPTURE_ENABLED", "true")).lower() not in {"1", "true", "yes", "on"}:
         return
     timestamp = str(snap.get("timestamp") or _now())
     key = f"{timestamp[:10]}|{snap.get('ticker')}|{snap.get('session')}"
