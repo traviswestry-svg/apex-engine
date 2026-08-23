@@ -30,3 +30,53 @@ def register_evidence_accumulation_routes(app):
             "errors": summary.get("errors", []),
             "generated_at": result.get("generated_at"),
         }), (200 if result.get("ok") else 503)
+
+    @app.route("/api/learning/evidence-lifecycle", methods=["GET"])
+    def apex_69_historical_evidence_lifecycle():
+        """Unified proof of capture -> persistence -> grading -> learning readiness."""
+        from flask import jsonify
+        from .historical_evidence_lifecycle import runtime_status
+        from . import feature_store_db
+        from .market_memory_engine_v220 import status as market_memory_status
+        payload = runtime_status()
+        try:
+            fs = feature_store_db.health()
+        except Exception as exc:
+            fs = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        try:
+            mm = market_memory_status()
+        except Exception as exc:
+            mm = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        r = payload.get("readiness") or {}
+        payload["families"] = {
+            "decisions": {
+                "captured": r.get("decisions_recorded", 0),
+                "persisted": r.get("decisions_recorded", 0),
+                "pending": r.get("pending_decisions", 0),
+                "graded": r.get("graded_outcomes", 0),
+                "excluded": r.get("excluded_outcomes", 0),
+                "price_samples": r.get("price_samples", 0),
+                "state": r.get("status"),
+            },
+            "flow_features": {
+                "captured": fs.get("feature_rows", 0),
+                "persisted": fs.get("feature_rows", 0),
+                "graded": fs.get("label_rows", 0),
+                "unlabelled": fs.get("unlabelled", 0),
+                "sessions": fs.get("feature_sessions", fs.get("sessions_covered", 0)),
+                "state": "ACCUMULATING" if fs.get("feature_rows", 0) else "COLD",
+            },
+            "market_memory": {
+                "captured": mm.get("sessions", 0),
+                "graded": mm.get("graded_sessions", 0),
+                "learning_ready": mm.get("learning_ready", False),
+                "state": mm.get("state"),
+            },
+        }
+        payload["guardrails"].update({
+            "read_only_endpoint": True,
+            "automatic_recalibration": False,
+            "human_promotion_required": True,
+        })
+        return jsonify(payload), (200 if payload.get("ok") else 503)
+

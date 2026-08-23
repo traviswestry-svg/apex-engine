@@ -4442,10 +4442,21 @@ def scanner_loop() -> None:
                         and _sess != globals().get("_LAST_LABEL_SETTLE_DATE"):
                     _lr = _fs_writer.settle_labels(session_date=_sess,
                                                    ticker=ASSISTANT_TICKER)
+                    _recovery = _fs_writer.settle_pending_labels(
+                        before_session_date=_sess, ticker=ASSISTANT_TICKER, max_sessions=30
+                    )
                     globals()["_LAST_LABEL_SETTLE_DATE"] = _sess
-                    if _lr.get("labelled"):
-                        print(f"feature_store: labelled {_lr['labelled']} sample(s) "
-                              f"for {_sess}.", flush=True)
+                    globals()["_LAST_LABEL_SETTLE_RESULT"] = {
+                        "attempted_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                        "session_date": _sess,
+                        "current_session": _lr,
+                        "prior_session_recovery": _recovery,
+                    }
+                    _labelled_total = int(_lr.get("labelled") or 0) + int(_recovery.get("labelled") or 0)
+                    if _labelled_total:
+                        print(f"feature_store: labelled {_labelled_total} sample(s); "
+                              f"recovered {_recovery.get('labelled', 0)} prior-session sample(s).",
+                              flush=True)
             except Exception as e:
                 print(f"feature label settle error (recovered): {e}", flush=True)
         time.sleep(SCAN_INTERVAL_SECONDS)
@@ -8208,6 +8219,26 @@ def api_institutional_os():
                 result["market_narrative"] = _evaluate_market_narrative(result)
             except Exception as _mn45_err:
                 print(f"Market narrative error (non-fatal): {_mn45_err}", flush=True)
+
+            # APEX 69.0 — freeze the authoritative decision at composition time.
+            # This is evidence-only and deliberately occurs after the canonical
+            # decision is finalized; it cannot influence that decision.
+            try:
+                from engine.historical_evidence_lifecycle import capture_decision as _apex69_capture_decision
+                _apex69_capture = _apex69_capture_decision(result, session_state=_session_state_now)
+                result["historical_evidence_capture"] = {
+                    "ok": bool(_apex69_capture.get("ok")),
+                    "inserted": bool(_apex69_capture.get("inserted")),
+                    "decision_id": _apex69_capture.get("decision_id"),
+                    "version": "69.0.0",
+                    "execution_authority": False,
+                }
+            except Exception as _apex69_capture_err:
+                result["historical_evidence_capture"] = {
+                    "ok": False, "inserted": False,
+                    "error": f"{type(_apex69_capture_err).__name__}: {_apex69_capture_err}",
+                    "version": "69.0.0", "execution_authority": False,
+                }
 
             _record_confidence_timeline_point(ticker, result)
             # APEX 7.6.0 Premium Strategy — dispatch on the composition cycle

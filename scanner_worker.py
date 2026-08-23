@@ -67,10 +67,16 @@ from engine.historical_level_calibration import (  # noqa: E402
 )
 from engine.canonical_session_context import latest as latest_canonical_context, active_levels as canonical_active_levels  # noqa: E402
 from engine.live_active_level_publisher import LiveActiveLevelPublisher  # noqa: E402
+from engine.historical_evidence_lifecycle import (  # noqa: E402
+    sample_price as evidence_sample_price,
+    grade as evidence_grade,
+    runtime_status as evidence_runtime_status,
+)
 
 _RUNNING = True
 _HLCE_PROVIDER_CACHE: Dict[str, Any] = {"at": 0.0, "snapshot": {}}
 _HLCE_RUNTIME: Dict[str, Any] = {"provider_ok": False, "provider_error": None, "restart_count": 0, "last_tick": None}
+_EVIDENCE_RUNTIME: Dict[str, Any] = {"last_grade_monotonic": 0.0, "last_price_result": None, "last_grade_result": None}
 _LIVE_LEVEL_PUBLISHER = LiveActiveLevelPublisher(
     apex_app,
     symbol=getattr(apex_app, "ASSISTANT_TICKER", "SPX"),
@@ -270,6 +276,32 @@ def main() -> int:
             print(f"[HLCE] collector recovery failed: {exc}", flush=True)
             return 3
 
+        # APEX 69.0 — feed the canonical decision evidence ledger from the same
+        # real SPX observation source already trusted by HLCE. No proxy/synthetic
+        # price is permitted. Grade matured rows on a bounded cadence.
+        try:
+            _evidence_snap = _hlce_snapshot_provider() or {}
+            _evidence_spot = _safe_positive(
+                _evidence_snap.get("spot")
+                or (_evidence_snap.get("market_state") or {}).get("price")
+            )
+            if _evidence_spot is not None:
+                _EVIDENCE_RUNTIME["last_price_result"] = evidence_sample_price(
+                    getattr(apex_app, "ASSISTANT_TICKER", "SPX"), _evidence_spot
+                )
+            _grade_every = max(30, int(os.getenv("APEX_EVIDENCE_GRADER_SECONDS", "60")))
+            _mono = time.monotonic()
+            if _mono - float(_EVIDENCE_RUNTIME.get("last_grade_monotonic") or 0.0) >= _grade_every:
+                _EVIDENCE_RUNTIME["last_grade_result"] = evidence_grade()
+                _EVIDENCE_RUNTIME["last_grade_monotonic"] = _mono
+        except Exception as exc:
+            record_degradation(
+                component="historical_evidence_lifecycle",
+                operation="sample_and_grade", exc=exc,
+                fallback="CONTINUE_SCANNER_WITHOUT_EVIDENCE_TICK",
+                decision_authority_suppressed=False, source="scanner_worker.py",
+            )
+
         service = get_hlce_service()
         db = service.status().get("database") or {}
         write_scanner_heartbeat({
@@ -292,6 +324,8 @@ def main() -> int:
             "hlce_last_database_write": service.collector.last_write_ts,
             "hlce_restart_count": int(_HLCE_RUNTIME.get("restart_count") or 0),
             "live_active_level_publisher": _LIVE_LEVEL_PUBLISHER.diagnostics() if _LIVE_LEVEL_PUBLISHER is not None else {"state": "UNAVAILABLE"},
+            "historical_evidence_lifecycle": evidence_runtime_status(),
+            "feature_label_settlement": getattr(apex_app, "_LAST_LABEL_SETTLE_RESULT", None),
         })
         time.sleep(max(5, int(os.getenv("APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS", "15"))))
     if _LIVE_LEVEL_PUBLISHER is not None:

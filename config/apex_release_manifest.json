@@ -1,12 +1,12 @@
 {
-  "apex_version": "68.6.0",
-  "build_name": "Decision Outcome Attribution & Abstention Effectiveness",
-  "release_series": "APEX 68",
+  "apex_version": "69.0.0",
+  "build_name": "Unified Historical Evidence Lifecycle Closure",
+  "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-22",
+  "released_at": "2026-08-23",
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
@@ -123,7 +123,16 @@
     "empirical_late_entry_inference_without_evidence": false,
     "effectiveness_findings_auto_promote_policy": false,
     "effectiveness_policy_changes_require_human_review": true,
-    "decision_outcome_attribution_changes_execution_authority": false
+    "decision_outcome_attribution_changes_execution_authority": false,
+    "unified_historical_evidence_lifecycle": true,
+    "decision_snapshot_capture_automatic": true,
+    "spx_price_sampling_automatic": true,
+    "outcome_grading_automatic": true,
+    "missed_flow_label_settlement_recovery": true,
+    "market_memory_capture_observational_only": true,
+    "historical_backfill_fabrication": false,
+    "historical_evidence_changes_trade_decisions": false,
+    "historical_evidence_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
