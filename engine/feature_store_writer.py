@@ -314,6 +314,41 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         return report
 
 
+
+def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: str = "SPX",
+                          max_sessions: int = 30) -> Dict[str, Any]:
+    """Recover missed session-close label settlement across prior sessions.
+
+    APEX 69.0 closes the restart/weekend gap where the scanner previously only
+    attempted the current calendar date. No labels are fabricated: each session
+    is delegated to settle_labels(), which still requires persisted excursion
+    evidence from flow_pl_store.
+    """
+    report = {"sessions_checked": 0, "sessions_with_unlabelled": 0,
+              "labelled": 0, "no_excursion": 0, "skipped": 0,
+              "session_reports": [], "writer_version": WRITER_VERSION}
+    if not feature_store_db.is_ready():
+        return report
+    try:
+        sessions = list(feature_store_db.sessions("features") or [])
+        cutoff = str(before_session_date or "9999-12-31")[:10]
+        eligible = sorted({str(x)[:10] for x in sessions if str(x)[:10] < cutoff}, reverse=True)[:max(1, int(max_sessions))]
+        for session_date in eligible:
+            report["sessions_checked"] += 1
+            pending = feature_store_db.unlabelled_samples(session_date)
+            if not pending:
+                continue
+            report["sessions_with_unlabelled"] += 1
+            row = settle_labels(session_date=session_date, ticker=ticker)
+            report["labelled"] += int(row.get("labelled") or 0)
+            report["no_excursion"] += int(row.get("no_excursion") or 0)
+            report["skipped"] += int(row.get("skipped") or 0)
+            report["session_reports"].append({"session_date": session_date, **row})
+        return report
+    except Exception as exc:
+        report["error"] = f"{type(exc).__name__}: {exc}"
+        return report
+
 def health() -> Dict[str, Any]:
     return {
         "writer_version": WRITER_VERSION,

@@ -28,7 +28,7 @@ def test_release_preserves_68_0_closure_guarantees():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     major, minor, patch = (int(x) for x in manifest["apex_version"].split("."))
     assert (major, minor, patch) >= (68, 0, 0)
-    assert manifest["release_series"] == "APEX 68"
+    assert manifest["release_series"] in {"APEX 68", "APEX 69"}
     assert manifest["guardrails"]["canonical_persistence_final_high_consequence_closure"] is True
     assert manifest["guardrails"]["high_consequence_direct_sqlite_remaining"] is False
 
@@ -48,6 +48,6 @@ def test_audit_has_no_high_consequence_direct_sqlite():
 
 def test_68_0_closure_capability_remains_registered_after_release_ratchet():
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 68." in registry
+    assert "apex_version: 69.0.0" in registry
     assert "final_high_consequence_persistence_closure:" in registry
     assert 'version: "68.0.0"' in registry

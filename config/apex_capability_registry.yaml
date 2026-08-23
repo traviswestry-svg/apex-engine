@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 68.6.0
+apex_version: 69.0.0
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -356,3 +356,16 @@ capabilities:
     api_routes: [/api/effectiveness, /api/effectiveness/attribution, /api/effectiveness/abstentions, /api/effectiveness/exits]
     decision_authority: none
     guardrails: [observational_only, abstention_counterfactuals_do_not_enter_calibration_grading_results, no_policy_auto_promotion, no_late_entry_fabrication, human_review_required_for_policy_change, no_execution_authority]
+
+  unified_historical_evidence_lifecycle:
+    version: 69.0.0
+    state: observational_only
+    routes:
+      - /api/learning/evidence-lifecycle
+    guarantees:
+      - canonical_decision_snapshot_capture
+      - real_spx_price_sampling_no_fabrication
+      - automatic_maturity_grading
+      - prior_session_flow_label_recovery
+      - market_memory_observational_capture
+      - no_execution_authority
