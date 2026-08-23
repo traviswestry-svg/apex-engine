@@ -167,6 +167,13 @@ _REGISTRY_DATA.extend([
 ])
 
 _REGISTRY_DATA.extend([
+{'name':'APEX_69_MARKET_MEMORY_CAPTURE_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'true','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables observational market-memory snapshot capture for the APEX 69 historical evidence lifecycle.','safety_critical':False,'used_in_code':True},
+{'name':'APEX_FLOW_SETTLEMENT_SCHEDULER_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'true','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables the background flow-settlement scheduler.','safety_critical':True,'used_in_code':True},
+{'name':'APEX_FLOW_SETTLEMENT_SECONDS','category':'EXECUTION','classification':'OPTIONAL','required_when':None,'default':'300','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Interval in seconds between flow-settlement scheduler runs.','safety_critical':True,'used_in_code':True},
+{'name':'APEX_FLOW_SETTLEMENT_MAX_SESSIONS','category':'EXECUTION','classification':'OPTIONAL','required_when':None,'default':'30','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum number of sessions processed per flow-settlement scheduler cycle.','safety_critical':True,'used_in_code':True},
+])
+
+_REGISTRY_DATA.extend([
 {'name':'APEX_DATA_DIR','category':'APPLICATION','classification':'OPTIONAL','required_when':None,'default':'data','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Base directory for local APEX data stores when a component-specific path is not configured.','safety_critical':False,'used_in_code':True},
 {'name':'MICROSTRUCTURE_DB_PATH','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite path for persisted normalized microstructure observations.','safety_critical':False,'used_in_code':True},
 {'name':'MICROSTRUCTURE_FEED_PROVIDER','category':'MARKET_DATA','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Identifier for the licensed depth feed bridge posting normalized microstructure observations.','safety_critical':False,'used_in_code':True},

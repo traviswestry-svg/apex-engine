@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.0.1
+apex_version: 69.0.2
 capabilities:
   api_explorer:
     canonical_module: engine.operations_routes
@@ -358,7 +358,7 @@ capabilities:
     guardrails: [observational_only, abstention_counterfactuals_do_not_enter_calibration_grading_results, no_policy_auto_promotion, no_late_entry_fabrication, human_review_required_for_policy_change, no_execution_authority]
 
   unified_historical_evidence_lifecycle:
-    version: 69.0.1
+    version: 69.0.2
     state: observational_only
     routes:
       - /api/learning/evidence-lifecycle

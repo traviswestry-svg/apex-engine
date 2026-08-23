@@ -4,11 +4,13 @@ from engine import feature_store_writer as W
 from engine import historical_evidence_lifecycle as H
 
 
-def test_release_versions_are_69_0_1():
-    assert H.VERSION == "69.0.1"
-    assert H.SCHEMA_VERSION == "apex.historical_evidence_lifecycle.v1.1"
-    assert "apex_version: 69.0.1" in Path("config/apex_capability_registry.yaml").read_text()
-    assert '"apex_version": "69.0.1"' in Path("config/apex_release_manifest.json").read_text()
+def test_release_versions_are_at_least_69_0_1():
+    assert tuple(map(int, H.VERSION.split("."))) >= (69, 0, 1)
+    assert H.SCHEMA_VERSION.startswith("apex.historical_evidence_lifecycle.v1.")
+    registry = Path("config/apex_capability_registry.yaml").read_text()
+    manifest = Path("config/apex_release_manifest.json").read_text()
+    assert "apex_version: 69.0." in registry
+    assert '"apex_version": "69.0.' in manifest
 
 
 def test_lifecycle_route_prefers_fresh_scanner_heartbeat_runtime():

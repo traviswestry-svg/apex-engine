@@ -252,7 +252,7 @@ def _classify_outcome(mfe: Optional[float], mae: Optional[float],
 def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
     """Write label records for unlabelled samples, measured to session close.
 
-    APEX 69.0.1 adds reason-level observability only. Settlement semantics are
+    APEX 69.0.2 retains reason-level observability; scheduler ownership is external. Settlement semantics are
     unchanged: no label is written without persisted excursion evidence.
     """
     report = {
@@ -272,7 +272,7 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         "write_failures": 0,
         "skipped": 0,
         "writer_version": WRITER_VERSION,
-        "observability_version": "69.0.1",
+        "observability_version": "69.0.2",
     }
     if not feature_store_db.is_ready():
         report["state"] = "FEATURE_STORE_NOT_READY"
@@ -367,7 +367,7 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
                           max_sessions: int = 30) -> Dict[str, Any]:
     """Recover missed session-close label settlement across prior sessions.
 
-    APEX 69.0.1 exposes why historical rows remain unlabelled without weakening
+    APEX 69.0.2 exposes why historical rows remain unlabelled without weakening
     any evidence requirement or creating synthetic outcomes.
     """
     report = {
@@ -388,7 +388,7 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
         "skipped": 0,
         "session_reports": [],
         "writer_version": WRITER_VERSION,
-        "observability_version": "69.0.1",
+        "observability_version": "69.0.2",
     }
     if not feature_store_db.is_ready():
         report["state"] = "FEATURE_STORE_NOT_READY"
