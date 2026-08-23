@@ -120,6 +120,11 @@ This reference is generated from the authoritative registry in `engine/configura
 | `MASSIVE_BASE_URL` | MARKET_DATA | OPTIONAL | — | string | — | No | APEX runtime setting used by market data components. | `<value>` |
 | `MASSIVE_S3_ACCESS_KEY` | MARKET_DATA | OPTIONAL | — | string | — | Yes | APEX runtime setting used by market data components. | `[REDACTED_SECRET]` |
 | `MASSIVE_S3_SECRET_KEY` | MARKET_DATA | OPTIONAL | — | string | — | Yes | APEX runtime setting used by market data components. | `[REDACTED_SECRET]` |
+| `MICROSTRUCTURE_INGEST_ENABLED` | MARKET_DATA | OPTIONAL | `false` | boolean | `true`, `false` | No | Enables the authenticated normalized ES/MES L2/MBO ingestion boundary. | `<value>` |
+| `MICROSTRUCTURE_FEED_PROVIDER` | MARKET_DATA | CONDITIONAL | — | string | — | No | Concrete licensed depth provider/bridge name when microstructure ingestion is enabled. | `<value>` |
+| `MICROSTRUCTURE_DB_PATH` | MARKET_DATA | OPTIONAL | `data/market_microstructure.sqlite3` | string | — | No | SQLite persistence path for bounded market-microstructure observations. | `<value>` |
+| `MICROSTRUCTURE_MAX_SNAPSHOTS` | MARKET_DATA | OPTIONAL | `12000` | integer | — | No | Maximum retained depth observations per instrument. | `<value>` |
+| `MICROSTRUCTURE_MAX_AGE_MINUTES` | MARKET_DATA | OPTIONAL | `480` | integer | — | No | Maximum depth-observation retention age in minutes. | `<value>` |
 | `MAX_DYNAMIC_TICKERS` | APPLICATION | OPTIONAL | — | integer | — | No | APEX runtime setting used by application components. | `<value>` |
 | `MAX_RISK_PER_TRADE` | RISK | OPTIONAL | — | number | — | No | APEX runtime setting used by risk components. | `<value>` |
 | `MIN_ACCUMULATION_SCORE` | APPLICATION | OPTIONAL | — | number | — | No | APEX runtime setting used by application components. | `<value>` |
