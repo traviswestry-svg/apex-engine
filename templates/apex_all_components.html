@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>APEX All Components</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/apex_os.css') }}?v={{ asset_version or version }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/apex_all_components.css') }}?v={{ asset_version or version }}">
+</head>
+<body>
+<nav class="apex-nav unified-topnav" aria-label="APEX primary navigation">
+  <a href="/apex_os" class="nav-logo">APEX</a>
+  <a href="/scanner">Scanner</a>
+  <a href="/apex_os">Terminal</a>
+  <a href="/assistant">Assistant</a>
+  <a href="/flow">Flow / GEX</a>
+  <a href="/apex_os/trade_command">Trade Command</a>
+  <a href="/apex_os/operations">Operations</a>
+  <a href="/apex_os/execution">Execution OS</a>
+  <a href="/apex_os/readiness">Morning Readiness</a>
+  <a href="/api/v45/status" target="_blank">Status</a>
+  <a href="/health" target="_blank">Health</a>
+  <a href="/apex_os/all" class="active all-components-link">All Components</a>
+  <div class="nav-right">
+    <span id="topClock" class="nav-clock">-- ET</span>
+    <span class="nav-version">{{ version or 'APEX' }}</span>
+  </div>
+</nav>
+
+<main class="uc-shell">
+  <header class="uc-header">
+    <div>
+      <div class="uc-eyebrow">APEX UNIFIED WORKSPACE</div>
+      <h1>All Components</h1>
+      <p>Mission Control, execution, institutional intelligence, chart, flow, story, levels, tape, replay, and signal history on one live screen.</p>
+    </div>
+    <div class="uc-actions">
+      <label>Ticker
+        <select id="tickerSelect"><option>SPX</option><option>SPY</option><option>QQQ</option><option>IWM</option></select>
+      </label>
+      <button id="refreshAll" type="button">Refresh All</button>
+      <div class="uc-refresh-state"><span id="liveDot" class="live-dot"></span><span id="refreshState">Connecting…</span></div>
+    </div>
+  </header>
+
+  <section class="uc-status-strip" aria-label="live status">
+    <div><span>Session</span><strong id="statusSession">—</strong></div>
+    <div><span>SPX</span><strong id="statusPrice">—</strong></div>
+    <div><span>Decision</span><strong id="statusDecision">—</strong></div>
+    <div><span>ICI</span><strong id="statusIci">—</strong></div>
+    <div><span>Flow</span><strong id="statusFlow">—</strong></div>
+    <div><span>Updated</span><strong id="statusUpdated">—</strong></div>
+  </section>
+
+  <div class="uc-grid">
+    <section class="uc-card span-6" id="missionCard">
+      <div class="uc-card-head"><div><span class="uc-index">01</span><h2>Mission Control</h2></div><span class="source-pill">/api/mission_control</span></div>
+      <div id="missionContent" class="uc-content loading">Loading Mission Control…</div>
+    </section>
+
+    <section class="uc-card span-6" id="executionCard">
+      <div class="uc-card-head"><div><span class="uc-index">02</span><h2>Execution</h2></div><span class="source-pill">Execution OS</span></div>
+      <div id="executionContent" class="uc-content loading">Loading execution state…</div>
+    </section>
+
+    <section class="uc-card span-4" id="analysisCard">
+      <div class="uc-card-head"><div><span class="uc-index">03</span><h2>Analysis</h2></div><span class="source-pill">Institutional Decision</span></div>
+      <div id="analysisContent" class="uc-content loading">Loading analysis…</div>
+    </section>
+
+    <section class="uc-card span-8 chart-card" id="chartCard">
+      <div class="uc-card-head"><div><span class="uc-index">04</span><h2>Chart</h2></div><div class="chart-controls"><button data-tf="1">1m</button><button data-tf="5" class="active">5m</button><button data-tf="15">15m</button></div></div>
+      <div id="chartMeta" class="chart-meta"></div>
+      <canvas id="priceChart" height="230"></canvas>
+    </section>
+
+    <section class="uc-card span-6" id="flowCard">
+      <div class="uc-card-head"><div><span class="uc-index">05</span><h2>Flow</h2></div><span class="source-pill">Flow / GEX</span></div>
+      <div id="flowContent" class="uc-content loading">Loading institutional flow…</div>
+    </section>
+
+    <section class="uc-card span-6" id="storyCard">
+      <div class="uc-card-head"><div><span class="uc-index">06</span><h2>Story</h2></div><span class="source-pill">Market Narrative</span></div>
+      <div id="storyContent" class="uc-content loading">Loading market story…</div>
+    </section>
+
+    <section class="uc-card span-6" id="levelsCard">
+      <div class="uc-card-head"><div><span class="uc-index">07</span><h2>Levels</h2></div><span class="source-pill">Institutional Levels</span></div>
+      <div id="levelsContent" class="uc-content loading">Loading levels…</div>
+    </section>
+
+    <section class="uc-card span-6" id="tapeCard">
+      <div class="uc-card-head"><div><span class="uc-index">08</span><h2>Tape</h2></div><span class="source-pill">Institutional Tape</span></div>
+      <div id="tapeContent" class="uc-content loading">Loading tape…</div>
+    </section>
+
+    <section class="uc-card span-6" id="replayCard">
+      <div class="uc-card-head"><div><span class="uc-index">09</span><h2>Replay</h2></div><span class="source-pill">Historical Replay</span></div>
+      <div id="replayContent" class="uc-content loading">Loading replay status…</div>
+    </section>
+
+    <section class="uc-card span-6" id="signalCard">
+      <div class="uc-card-head"><div><span class="uc-index">10</span><h2>Signal Log</h2></div><span class="source-pill">Pine + APEX Signals</span></div>
+      <div id="signalContent" class="uc-content loading">Loading signals…</div>
+    </section>
+  </div>
+</main>
+<script>window.APEX_ALL_COMPONENTS_VERSION={{ version|tojson }};</script>
+<script src="{{ url_for('static', filename='js/apex_all_components.js') }}?v={{ asset_version or version }}"></script>
+</body>
+</html>

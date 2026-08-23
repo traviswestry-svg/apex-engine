@@ -7064,6 +7064,22 @@ def apex_os_dashboard():
     )
 
 
+@app.route("/apex_os/all")
+@app.route("/apex_dashboard")
+def apex_all_components_dashboard():
+    """APEX 69.2 — unified read-only workspace for all high-use dashboard components.
+
+    The page composes existing read-only APIs in the browser. It does not create a
+    second decision engine, does not trigger execution, and does not change source
+    authority. Each component retains its canonical API owner.
+    """
+    return render_template(
+        "apex_all_components.html",
+        version=VERSION,
+        asset_version=STATIC_ASSET_VERSION,
+    )
+
+
 # ── Institutional OS response cache ──────────────────────────────────────────
 # Per-ticker cache to return stale data instantly when a refresh is in progress
 # or when the last response was < CACHE_TTL seconds ago.
