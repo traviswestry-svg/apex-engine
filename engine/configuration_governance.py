@@ -166,6 +166,18 @@ _REGISTRY_DATA.extend([
 ])
 
 
+# APEX 68.x - market microstructure feature variables
+_REGISTRY_DATA.extend([
+ {'name':'APEX_DATA_DIR','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'data','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Base directory for APEX data files including the microstructure database.','safety_critical':False,'used_in_code':True},
+ {'name':'MICROSTRUCTURE_DB_PATH','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Explicit path to the microstructure SQLite database; overrides APEX_DATA_DIR derivation.','safety_critical':False,'used_in_code':True},
+ {'name':'MICROSTRUCTURE_INGEST_ENABLED','category':'FEATURE','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false','1','0','yes','no','on','off'],'secret':False,'deprecated':False,'replacement':None,'description':'Enable the market microstructure depth-data ingest endpoint. Requires a licensed depth bridge.','safety_critical':True,'used_in_code':True},
+ {'name':'MICROSTRUCTURE_MAX_SNAPSHOTS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'12000','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum number of depth snapshots retained in the microstructure store before eviction.','safety_critical':False,'used_in_code':True},
+ {'name':'MICROSTRUCTURE_MAX_AGE_MINUTES','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'480','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum age in minutes of depth snapshots retained in the microstructure store.','safety_critical':False,'used_in_code':True},
+ {'name':'MICROSTRUCTURE_PROMOTION_MIN_LABELED','category':'MICROSTRUCTURE','classification':'OPTIONAL','required_when':None,'default':'100','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum number of labeled samples required before a microstructure model may be promoted.','safety_critical':False,'used_in_code':True},
+ {'name':'MICROSTRUCTURE_PROMOTION_MIN_ACCURACY_PCT','category':'MICROSTRUCTURE','classification':'OPTIONAL','required_when':None,'default':'55','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum accuracy percentage (0-100) required before a microstructure model may be promoted.','safety_critical':False,'used_in_code':True},
+ {'name':'MICROSTRUCTURE_PROMOTION_MIN_COVERAGE_PCT','category':'MICROSTRUCTURE','classification':'OPTIONAL','required_when':None,'default':'95','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum coverage percentage (0-100) required before a microstructure model may be promoted.','safety_critical':False,'used_in_code':True},
+])
+
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
 def _utcnow() -> str: return datetime.now(timezone.utc).isoformat()
