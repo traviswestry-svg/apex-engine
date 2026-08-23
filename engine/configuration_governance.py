@@ -165,6 +165,14 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_DEGRADATION_MEMORY_EVENTS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'500','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'In-memory ring buffer size used as a fallback when the degradation-events database is unavailable.','safety_critical':False,'used_in_code':True},
 ])
 
+# APEX 69.x — historical evidence lifecycle / scanner-owned settlement controls.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_69_MARKET_MEMORY_CAPTURE_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'true','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables observational Market Memory capture from the canonical APEX 69 historical-evidence lifecycle.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_FLOW_SETTLEMENT_SCHEDULER_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'true','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables the scanner-owned prior-session flow-label settlement scheduler.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_FLOW_SETTLEMENT_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'300','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum scanner cadence in seconds between flow-label settlement attempts.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_FLOW_SETTLEMENT_MAX_SESSIONS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'30','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum prior sessions inspected during one flow-label settlement recovery pass.','safety_critical':False,'used_in_code':True},
+])
+
 _REGISTRY_DATA.extend([
 {'name':'APEX_DATA_DIR','category':'APPLICATION','classification':'OPTIONAL','required_when':None,'default':'data','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Base directory for local APEX data stores when a component-specific path is not configured.','safety_critical':False,'used_in_code':True},
 {'name':'MICROSTRUCTURE_DB_PATH','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite path for persisted normalized microstructure observations.','safety_critical':False,'used_in_code':True},
