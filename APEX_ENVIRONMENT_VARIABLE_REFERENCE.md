@@ -125,6 +125,10 @@ This reference is generated from the authoritative registry in `engine/configura
 | `MICROSTRUCTURE_DB_PATH` | MARKET_DATA | OPTIONAL | `data/market_microstructure.sqlite3` | string | — | No | SQLite persistence path for bounded market-microstructure observations. | `<value>` |
 | `MICROSTRUCTURE_MAX_SNAPSHOTS` | MARKET_DATA | OPTIONAL | `12000` | integer | — | No | Maximum retained depth observations per instrument. | `<value>` |
 | `MICROSTRUCTURE_MAX_AGE_MINUTES` | MARKET_DATA | OPTIONAL | `480` | integer | — | No | Maximum depth-observation retention age in minutes. | `<value>` |
+| `MICROSTRUCTURE_PROMOTION_MIN_LABELED` | MARKET_DATA | OPTIONAL | `100` | integer | — | No | Minimum explicitly graded microstructure outcomes before promotion review eligibility. | `<value>` |
+| `MICROSTRUCTURE_PROMOTION_MIN_ACCURACY_PCT` | MARKET_DATA | OPTIONAL | `55` | number | — | No | Minimum observed directional accuracy percentage for microstructure promotion review. | `<value>` |
+| `MICROSTRUCTURE_PROMOTION_MIN_COVERAGE_PCT` | MARKET_DATA | OPTIONAL | `95` | number | — | No | Minimum L2 and true-delta evidence coverage percentage for review eligibility. | `<value>` |
+| `MICROSTRUCTURE_PROMOTION_APPROVED` | FEATURE_FLAGS | OPTIONAL | `false` | boolean | `true`, `false` | No | Human-review metadata only in 68.9; does not activate production decision influence. | `<value>` |
 | `MAX_DYNAMIC_TICKERS` | APPLICATION | OPTIONAL | — | integer | — | No | APEX runtime setting used by application components. | `<value>` |
 | `MAX_RISK_PER_TRADE` | RISK | OPTIONAL | — | number | — | No | APEX runtime setting used by risk components. | `<value>` |
 | `MIN_ACCUMULATION_SCORE` | APPLICATION | OPTIONAL | — | number | — | No | APEX runtime setting used by application components. | `<value>` |

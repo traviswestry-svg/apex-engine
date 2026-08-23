@@ -1,4 +1,4 @@
-"""APEX 68.8.0 — read/diagnostic + normalized depth-ingestion routes."""
+"""APEX 68.9.0 — depth ingestion, calibration, and promotion-readiness routes."""
 from __future__ import annotations
 
 import logging
@@ -8,8 +8,9 @@ from flask import jsonify, request
 from .market_microstructure import analyze, capability_audit
 from .market_microstructure_ingest import ingest, MicrostructureValidationError
 from .market_microstructure_store import MicrostructureStore
+from .market_microstructure_calibration import integrity_report, calibration_report, promotion_readiness, shadow_confirmation
 
-VERSION = "68.8.0"
+VERSION = "68.9.0"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -103,3 +104,44 @@ def register_market_microstructure_routes(app) -> None:
         out = _store().heatmap(instrument, limit=limit, min_persistence=persistence)
         out.update({"ok": True, "version": VERSION})
         return jsonify(out)
+    @app.get("/api/microstructure/integrity")
+    def market_microstructure_integrity():
+        instrument = str(request.args.get("instrument") or "ES").upper()
+        return jsonify(integrity_report(_store(), instrument))
+
+    @app.get("/api/microstructure/calibration")
+    def market_microstructure_calibration():
+        instrument = str(request.args.get("instrument") or "ES").upper()
+        return jsonify(calibration_report(_store(), instrument))
+
+    @app.get("/api/microstructure/promotion-readiness")
+    def market_microstructure_promotion_readiness():
+        instrument = str(request.args.get("instrument") or "ES").upper()
+        return jsonify(promotion_readiness(_store(), instrument))
+
+    @app.get("/api/microstructure/shadow-confirmation")
+    def market_microstructure_shadow_confirmation():
+        instrument = str(request.args.get("instrument") or "ES").upper()
+        store = _store()
+        latest = store.latest_analysis(instrument)
+        calibration = calibration_report(store, instrument)
+        return jsonify({"ok": True, "version": VERSION, "instrument": instrument,
+                        "shadow_confirmation": shadow_confirmation(latest, calibration),
+                        "promotion_readiness": promotion_readiness(store, instrument)})
+
+    @app.post("/api/microstructure/outcomes")
+    def market_microstructure_record_outcome():
+        body = request.get_json(silent=True) or {}
+        try:
+            observation_id = int(body.get("observation_id"))
+            horizon_seconds = int(body.get("horizon_seconds"))
+            forward_move_ticks = float(body.get("forward_move_ticks"))
+            grader_source = str(body.get("grader_source") or "EXPLICIT_OUTCOME_GRADER")
+            extra = body.get("extra") if isinstance(body.get("extra"), dict) else {}
+            result = _store().record_outcome(observation_id, horizon_seconds=horizon_seconds,
+                                             forward_move_ticks=forward_move_ticks,
+                                             grader_source=grader_source, extra=extra)
+            return jsonify({"ok": True, "version": VERSION, **result,
+                            "governance": {"future_outcome_live_use": False, "production_effect": "NONE"}}), 201
+        except (TypeError, ValueError) as exc:
+            return jsonify({"ok": False, "status": "REJECTED", "version": VERSION, "error": str(exc)}), 400

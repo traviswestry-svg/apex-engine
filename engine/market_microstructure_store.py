@@ -13,8 +13,8 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Mapping
 
-VERSION = "68.8.0"
-SCHEMA_VERSION = "apex.market_microstructure.store.v1"
+VERSION = "68.9.0"
+SCHEMA_VERSION = "apex.market_microstructure.store.v2"
 
 
 def _now() -> str:
@@ -72,6 +72,19 @@ class MicrostructureStore:
                     ON microstructure_observations(instrument, observed_at DESC, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_microstructure_obs_received
                     ON microstructure_observations(received_at DESC, id DESC);
+                CREATE TABLE IF NOT EXISTS microstructure_outcomes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    observation_id INTEGER NOT NULL UNIQUE,
+                    instrument TEXT NOT NULL,
+                    graded_at TEXT NOT NULL,
+                    horizon_seconds INTEGER NOT NULL,
+                    forward_move_ticks REAL NOT NULL,
+                    outcome_json TEXT NOT NULL,
+                    grader_source TEXT NOT NULL,
+                    FOREIGN KEY(observation_id) REFERENCES microstructure_observations(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_microstructure_outcomes_inst
+                    ON microstructure_outcomes(instrument,graded_at DESC,id DESC);
                 """
             )
 
@@ -238,6 +251,53 @@ class MicrostructureStore:
             "min_persistence": min_persistence,
             "levels": levels_out,
         }
+
+
+    def calibration_rows(self, instrument: str = "ES", *, limit: int = 1000) -> list[dict[str, Any]]:
+        limit = min(max(int(limit), 1), 10000)
+        with self._connect() as con:
+            rows = con.execute(
+                """SELECT id,observed_at,received_at,instrument,source,feed_quality,sequence_id,analysis_json
+                   FROM microstructure_observations WHERE instrument=?
+                   ORDER BY observed_at DESC,id DESC LIMIT ?""",
+                (instrument.upper(), limit),
+            ).fetchall()
+        out=[]
+        for r in rows:
+            item=dict(r); item["analysis"]=self._load(item.pop("analysis_json", None)); out.append(item)
+        return out
+
+    def record_outcome(self, observation_id: int, *, horizon_seconds: int, forward_move_ticks: float,
+                       grader_source: str = "EXPLICIT_OUTCOME_GRADER", extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        if int(horizon_seconds) <= 0:
+            raise ValueError("horizon_seconds must be positive")
+        with self._connect() as con:
+            obs = con.execute("SELECT id,instrument,observed_at FROM microstructure_observations WHERE id=?", (int(observation_id),)).fetchone()
+            if not obs:
+                raise ValueError("observation_id not found")
+            outcome={"forward_move_ticks": float(forward_move_ticks), "horizon_seconds": int(horizon_seconds), **dict(extra or {})}
+            con.execute(
+                """INSERT INTO microstructure_outcomes(observation_id,instrument,graded_at,horizon_seconds,forward_move_ticks,outcome_json,grader_source)
+                   VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(observation_id) DO UPDATE SET graded_at=excluded.graded_at,horizon_seconds=excluded.horizon_seconds,
+                   forward_move_ticks=excluded.forward_move_ticks,outcome_json=excluded.outcome_json,grader_source=excluded.grader_source""",
+                (int(observation_id), obs["instrument"], _now(), int(horizon_seconds), float(forward_move_ticks), self._dump(outcome), str(grader_source)),
+            )
+        return {"stored": True, "observation_id": int(observation_id), "instrument": obs["instrument"], "outcome": outcome, "grader_source": str(grader_source)}
+
+    def calibration_samples(self, instrument: str = "ES", *, limit: int = 5000) -> list[dict[str, Any]]:
+        limit=min(max(int(limit),1),20000)
+        with self._connect() as con:
+            rows=con.execute(
+                """SELECT o.id,o.observed_at,o.source,o.feed_quality,o.analysis_json,x.outcome_json,x.graded_at,x.grader_source
+                   FROM microstructure_observations o JOIN microstructure_outcomes x ON x.observation_id=o.id
+                   WHERE o.instrument=? ORDER BY o.observed_at DESC,o.id DESC LIMIT ?""",
+                (instrument.upper(),limit),
+            ).fetchall()
+        out=[]
+        for r in rows:
+            item=dict(r); item["analysis"]=self._load(item.pop("analysis_json",None)); item["outcome"]=self._load(item.pop("outcome_json",None)); out.append(item)
+        return out
 
     def health(self, instrument: str = "ES") -> dict[str, Any]:
         history = self.history(instrument, limit=1)
