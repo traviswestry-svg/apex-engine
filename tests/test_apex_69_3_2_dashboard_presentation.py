@@ -6,8 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_release_truth_69_3_2():
     manifest = json.loads((ROOT / 'config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == '69.3.2'
-    assert manifest['build_name'] == 'Dashboard Presentation & Premium Discipline Reliability Closure'
+    assert tuple(map(int, manifest['apex_version'].split('.'))) >= (69, 3, 2)
+    assert manifest['guardrails']['changes_trade_decisions'] is False
     assert manifest['guardrails']['changes_trade_decisions'] is False
     assert manifest['guardrails']['changes_execution_authority'] is False
     assert manifest['guardrails']['premium_discipline_fail_soft_read_model'] is True

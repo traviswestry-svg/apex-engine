@@ -224,6 +224,30 @@ def run_flow_pl(
                 "ticker": priced.get("ticker") or ckey.get("ticker"),
                 "legacy_cluster_key": ckey_s,
             }
+
+            # APEX 69.4: prospective live excursion capture is owned by the
+            # live P/L observation path as well as the feature writer.  Once a
+            # sealed feature sample exists, every subsequent real mark widens
+            # the exact sample_id MFE/MAE envelope.  No sample -> no excursion.
+            try:
+                end_time = cl.get("end_time")
+                if end_time and priced.get("estimated_pl_dollars") is not None:
+                    from .feature_store import make_sample_id
+                    from . import feature_store_db
+                    decision_time = f"{session}T{end_time}"
+                    sample_id = make_sample_id(
+                        ticker=priced.get("ticker") or ckey.get("ticker") or default_ticker,
+                        decision_time=decision_time, cluster_key=ckey_s)
+                    if feature_store_db.get_features(sample_id):
+                        flow_pl_store.record_sample_excursion(
+                            sample_id=sample_id, session_date=session,
+                            ticker=priced.get("ticker") or ckey.get("ticker") or default_ticker,
+                            pl_dollars=priced.get("estimated_pl_dollars"),
+                            cost_basis=priced.get("cost_basis_dollars"),
+                            decision_time=decision_time, legacy_cluster_key=ckey_s)
+            except Exception:
+                # Observational learning must never break live flow pricing.
+                pass
             sources.append(src)
             return priced
 

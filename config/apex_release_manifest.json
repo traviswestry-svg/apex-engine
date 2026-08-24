@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.3.2",
-  "build_name": "Dashboard Presentation & Premium Discipline Reliability Closure",
+  "apex_version": "69.4.0",
+  "build_name": "Live Excursion Wiring & Decision Eligibility Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-23",
+  "released_at": "2026-08-24",
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
