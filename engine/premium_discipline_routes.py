@@ -33,6 +33,28 @@ except Exception:  # pragma: no cover
     ET = dt.timezone.utc
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively normalize advisory payloads for stable JSON responses."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    return str(value)
+
+
+def _safe_advisory_section(name: str, fn: Callable[[], Any], default: Any, diagnostics: list[dict[str, str]]) -> Any:
+    """Keep optional command-center enrichments from taking down the core read model."""
+    try:
+        return fn()
+    except Exception as exc:  # fail-soft operator surface; no execution authority
+        diagnostics.append({"section": name, "error": type(exc).__name__, "message": str(exc)[:240]})
+        return default
+
+
 def register_premium_discipline_routes(app, *, last_result_provider: Callable[[], Dict[str, Any]],
                                        chain_fetcher: Optional[Callable[..., Any]] = None,
                                        get_intraday_bars: Optional[Callable[..., Any]] = None,
@@ -74,63 +96,87 @@ def register_premium_discipline_routes(app, *, last_result_provider: Callable[[]
             limit = max(1, min(int(request.args.get("limit") or 100), 500))
         except ValueError:
             limit = 100
-        current = snapshot(ticker)
-        runs = calibration.recent(limit=20)
-        policy = calibration.active_policy()
+        diagnostics: list[dict[str, str]] = []
         lr = (last_result_provider() or {}) if last_result_provider else {}
         now = dt.datetime.now(ET)
-        intelligence = rank_premium_strategies(
-            lr, chain_fetcher=chain_fetcher, now_et=now, symbol=ticker,
-            expiration=now.date().isoformat(), threshold=policy.get("threshold"),
-            weights=policy.get("weights"))
-        expectancy_intelligence = build_expectancy_intelligence(
-            lr, store=expectancy, ticker=ticker, chain_fetcher=chain_fetcher,
-            now_et=now, expiration=now.date().isoformat(), threshold=policy.get("threshold"),
-            weights=policy.get("weights"))
-        payload = build_command_center(
-            snapshot=current, decisions=ledger.recent(limit=limit),
-            scorecard=ledger.scorecard(), replay=ledger.replay_scorecard(),
-            active_policy=policy, calibration_runs=runs,
-            premium_intelligence=intelligence,
-        )
+        policy = _safe_advisory_section("active_policy", calibration.active_policy, {"source": "UNAVAILABLE", "weights": {}}, diagnostics)
+        current = _safe_advisory_section(
+            "snapshot", lambda: snapshot(ticker),
+            {"candidate": {}, "eligibility": {"decision": "UNAVAILABLE", "headline": "Premium eligibility unavailable", "blockers": ["ADVISORY_DATA_UNAVAILABLE"]}, "ledger": None}, diagnostics)
+        runs = _safe_advisory_section("calibration_runs", lambda: calibration.recent(limit=20), [], diagnostics)
+        intelligence = _safe_advisory_section(
+            "premium_intelligence",
+            lambda: rank_premium_strategies(lr, chain_fetcher=chain_fetcher, now_et=now, symbol=ticker,
+                                            expiration=now.date().isoformat(), threshold=policy.get("threshold"),
+                                            weights=policy.get("weights")), {}, diagnostics)
+        expectancy_intelligence = _safe_advisory_section(
+            "expectancy_intelligence",
+            lambda: build_expectancy_intelligence(lr, store=expectancy, ticker=ticker, chain_fetcher=chain_fetcher,
+                                                   now_et=now, expiration=now.date().isoformat(), threshold=policy.get("threshold"),
+                                                   weights=policy.get("weights")), {}, diagnostics)
+        decisions = _safe_advisory_section("decision_ledger", lambda: ledger.recent(limit=limit), [], diagnostics)
+        scorecard = _safe_advisory_section("decision_scorecard", ledger.scorecard, {}, diagnostics)
+        replay = _safe_advisory_section("replay_scorecard", ledger.replay_scorecard, {}, diagnostics)
+        payload = build_command_center(snapshot=current, decisions=decisions, scorecard=scorecard, replay=replay,
+                                       active_policy=policy, calibration_runs=runs, premium_intelligence=intelligence)
         payload["expectancy_intelligence"] = expectancy_intelligence
-        payload["position_sizing"] = build_position_sizing(expectancy_intelligence, daily_realized_pnl=float(request.args.get("daily_pnl") or 0), open_risk=float(request.args.get("open_risk") or 0))
-        payload["portfolio_optimizer"] = build_portfolio_optimizer(expectancy_intelligence, daily_realized_pnl=float(request.args.get("daily_pnl") or 0), open_risk=float(request.args.get("open_risk") or 0), account_size=float(request.args["account_size"]) if request.args.get("account_size") else None, allocation_policy=portfolio_calibration.active_policy())
-        payload["portfolio_outcome_record"] = portfolio_outcomes.record(ticker, payload["portfolio_optimizer"], observed_at=now)
-        payload["portfolio_outcome_attribution"] = portfolio_outcomes.scorecard()
-        payload["portfolio_calibration"] = {"active_policy": portfolio_calibration.active_policy(), "runs": portfolio_calibration.recent(limit=10)}
-        payload["execution_reality"] = build_execution_reality(expectancy_intelligence)
-        recommendation = payload["execution_reality"].get("recommendation")
-        payload["execution_reality_record"] = execution_reality_store.record_shadow(ticker, recommendation, observed_at=now) if recommendation else None
-        payload["execution_reality_scorecard"] = execution_reality_store.scorecard()
-        payload["portfolio_risk_governor"] = evaluate_portfolio_risk(
-            payload["portfolio_optimizer"], payload["execution_reality"],
-            daily_realized_pnl=float(request.args.get("daily_pnl") or 0),
-            open_risk=float(request.args.get("open_risk") or 0),
-            trades_today=int(request.args.get("trades_today") or 0),
-            losses_today=int(request.args.get("losses_today") or 0),
-            account_size=float(request.args["account_size"]) if request.args.get("account_size") else None)
-        payload["portfolio_risk_governor_record"] = risk_governor_store.record(ticker, payload["portfolio_risk_governor"], observed_at=now)
-        payload["execution_orchestrator"] = {"recent_intents": execution_orchestrator.recent(10), "execution_enabled": False, "confirmation_required": True}
+        daily_pnl = float(request.args.get("daily_pnl") or 0)
+        open_risk = float(request.args.get("open_risk") or 0)
+        account_size = float(request.args["account_size"]) if request.args.get("account_size") else None
+        trades_today = int(request.args.get("trades_today") or 0)
+        losses_today = int(request.args.get("losses_today") or 0)
+        payload["position_sizing"] = _safe_advisory_section(
+            "position_sizing", lambda: build_position_sizing(expectancy_intelligence, daily_realized_pnl=daily_pnl, open_risk=open_risk), {}, diagnostics)
+        payload["portfolio_optimizer"] = _safe_advisory_section(
+            "portfolio_optimizer", lambda: build_portfolio_optimizer(expectancy_intelligence, daily_realized_pnl=daily_pnl,
+                                                                       open_risk=open_risk, account_size=account_size,
+                                                                       allocation_policy=portfolio_calibration.active_policy()), {}, diagnostics)
+        payload["portfolio_outcome_record"] = _safe_advisory_section(
+            "portfolio_outcome_record", lambda: portfolio_outcomes.record(ticker, payload["portfolio_optimizer"], observed_at=now), None, diagnostics)
+        payload["portfolio_outcome_attribution"] = _safe_advisory_section("portfolio_outcome_attribution", portfolio_outcomes.scorecard, {}, diagnostics)
+        payload["portfolio_calibration"] = {
+            "active_policy": _safe_advisory_section("portfolio_calibration_policy", portfolio_calibration.active_policy, {}, diagnostics),
+            "runs": _safe_advisory_section("portfolio_calibration_runs", lambda: portfolio_calibration.recent(limit=10), [], diagnostics),
+        }
+        payload["execution_reality"] = _safe_advisory_section("execution_reality", lambda: build_execution_reality(expectancy_intelligence), {}, diagnostics)
+        recommendation = payload["execution_reality"].get("recommendation") if isinstance(payload["execution_reality"], dict) else None
+        payload["execution_reality_record"] = _safe_advisory_section(
+            "execution_reality_record", lambda: execution_reality_store.record_shadow(ticker, recommendation, observed_at=now) if recommendation else None, None, diagnostics)
+        payload["execution_reality_scorecard"] = _safe_advisory_section("execution_reality_scorecard", execution_reality_store.scorecard, {}, diagnostics)
+        payload["portfolio_risk_governor"] = _safe_advisory_section(
+            "portfolio_risk_governor", lambda: evaluate_portfolio_risk(payload["portfolio_optimizer"], payload["execution_reality"],
+                                                                         daily_realized_pnl=daily_pnl, open_risk=open_risk,
+                                                                         trades_today=trades_today, losses_today=losses_today,
+                                                                         account_size=account_size), {}, diagnostics)
+        payload["portfolio_risk_governor_record"] = _safe_advisory_section(
+            "portfolio_risk_governor_record", lambda: risk_governor_store.record(ticker, payload["portfolio_risk_governor"], observed_at=now), None, diagnostics)
+        payload["execution_orchestrator"] = {
+            "recent_intents": _safe_advisory_section("execution_orchestrator", lambda: execution_orchestrator.recent(10), [], diagnostics),
+            "execution_enabled": False, "confirmation_required": True}
         current_context = {
             "ticker": ticker,
-            "premium_regime": (intelligence or {}).get("regime"),
-            "direction": (intelligence or {}).get("direction"),
-            "auction_state": lr.get("auction_state") or lr.get("auction", {}).get("state") if isinstance(lr, dict) else None,
+            "premium_regime": (intelligence or {}).get("regime") if isinstance(intelligence, dict) else None,
+            "direction": (intelligence or {}).get("direction") if isinstance(intelligence, dict) else None,
+            "auction_state": (lr.get("auction_state") or ((lr.get("auction") or {}).get("state") if isinstance(lr.get("auction"), dict) else None)) if isinstance(lr, dict) else None,
             "gamma_regime": lr.get("gamma_regime") if isinstance(lr, dict) else None,
             "vix_regime": lr.get("vix_regime") if isinstance(lr, dict) else None,
         }
-        payload["institutional_learning"] = build_learning_intelligence(learning_store, current_context)
-        payload["decision_narrative"] = build_decision_narrative(
-            eligibility=current.get("eligibility") or {}, intelligence=intelligence or {},
-            portfolio=payload["portfolio_optimizer"], execution=payload["execution_reality"],
-            risk=payload["portfolio_risk_governor"], learning=payload["institutional_learning"])
-        payload["trade_lifecycle_intelligence"] = {"recent_events": lifecycle_store.recent(20), "advisory_only": True}
-        payload["strategy_discovery"] = build_strategy_discovery(strategy_discovery_store, current_context)
-        payload["institutional_playbook"] = payload["strategy_discovery"]["institutional_playbook"]
-        payload["pattern_similarity"] = payload["strategy_discovery"].get("pattern_similarity")
-        payload["pattern_drift"] = payload["strategy_discovery"]["pattern_drift"]
-        return jsonify({"ok": True, "ticker": ticker, "command_center": payload})
+        payload["institutional_learning"] = _safe_advisory_section(
+            "institutional_learning", lambda: build_learning_intelligence(learning_store, current_context), {}, diagnostics)
+        payload["decision_narrative"] = _safe_advisory_section(
+            "decision_narrative", lambda: build_decision_narrative(eligibility=current.get("eligibility") or {}, intelligence=intelligence or {},
+                                                                     portfolio=payload["portfolio_optimizer"], execution=payload["execution_reality"],
+                                                                     risk=payload["portfolio_risk_governor"], learning=payload["institutional_learning"]), {}, diagnostics)
+        payload["trade_lifecycle_intelligence"] = {
+            "recent_events": _safe_advisory_section("trade_lifecycle", lambda: lifecycle_store.recent(20), [], diagnostics), "advisory_only": True}
+        payload["strategy_discovery"] = _safe_advisory_section(
+            "strategy_discovery", lambda: build_strategy_discovery(strategy_discovery_store, current_context), {}, diagnostics)
+        payload["institutional_playbook"] = (payload["strategy_discovery"] or {}).get("institutional_playbook")
+        payload["pattern_similarity"] = (payload["strategy_discovery"] or {}).get("pattern_similarity")
+        payload["pattern_drift"] = (payload["strategy_discovery"] or {}).get("pattern_drift")
+        payload["component_diagnostics"] = diagnostics
+        payload["degraded"] = bool(diagnostics)
+        return jsonify(_json_safe({"ok": True, "ticker": ticker, "command_center": payload}))
 
     @app.route("/api/premium_discipline/expectancy")
     def premium_discipline_expectancy():

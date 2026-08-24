@@ -1,10 +1,19 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.3.1
+apex_version: 69.3.2
 capabilities:
+  dashboard_presentation_reliability:
+    canonical_module: app
+    status: active
+    version: "69.3.2"
+    inputs: [premium_discipline, mission_control, institutional_similarity, historical_readiness]
+    outputs: [operator_readable_cards, fail_soft_advisory_status, bounded_technical_details]
+    api_routes: [/api/premium_discipline/command-center, /apex_os/all, /apex_os/premium_discipline, /apex_os/historical_readiness]
+    decision_authority: none
+    execution_authority: none
   unified_all_components_dashboard:
     canonical_module: app
     status: active
-    version: "69.2.1"
+    version: "69.3.2"
     inputs: [mission_control, execution_os, institutional_decision, chart_data, flow, market_story, levels, flow_tape, replay, signal_log]
     outputs: [single_screen_workspace]
     api_routes: [/apex_os/all, /apex_dashboard]
