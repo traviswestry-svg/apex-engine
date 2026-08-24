@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.3.1",
-  "build_name": "Environment Governance Drift Closure",
+  "apex_version": "69.3.2",
+  "build_name": "Dashboard Presentation & Premium Discipline Reliability Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -146,7 +146,9 @@
     "flow_excursion_capture_creates_synthetic_evidence": false,
     "flow_excursion_capture_changes_trade_decisions": false,
     "flow_excursion_capture_changes_execution_authority": false,
-    "flow_label_requirements_relaxed": false
+    "flow_label_requirements_relaxed": false,
+    "dashboard_presentation_only": true,
+    "premium_discipline_fail_soft_read_model": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
