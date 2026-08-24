@@ -109,7 +109,17 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
     timestamp = str(ido.get("timestamp") or ido.get("generated_at") or root.get("generated_at") or _now())
     action = str(ido.get("action") or ido.get("decision_state") or "NO_TRADE").upper()
     direction = str(ido.get("direction") or "NEUTRAL").upper()
-    actionable = bool(ido.get("actionable")) and action not in {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
+    blocked_actions = {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
+    explicit_actionable = bool(ido.get("actionable"))
+    actionable = explicit_actionable and action not in blocked_actions
+    if action in blocked_actions:
+        eligibility_reason = f"ACTION_{action}"
+    elif not explicit_actionable:
+        eligibility_reason = "IDO_ACTIONABLE_FALSE_OR_MISSING"
+    elif direction in {"", "NEUTRAL", "UNKNOWN", "NONE"}:
+        eligibility_reason = "DIRECTION_NOT_DIRECTIONAL"
+    else:
+        eligibility_reason = "ELIGIBLE"
     price = _extract_price(root, ido)
     confidence = _extract_confidence(root, ido)
 
@@ -129,6 +139,8 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         "confidence": confidence,
         "learning_eligible": actionable,
         "actionable": actionable,
+        "eligibility_reason": eligibility_reason,
+        "eligibility_inputs": {"ido_actionable": explicit_actionable, "action": action, "direction": direction},
         "setup": ido.get("strategy") or root.get("setup") or root.get("playbook"),
         "institutional_decision_object": ido,
         "trade_horizon_intelligence": _m(root.get("trade_horizon_intelligence")),

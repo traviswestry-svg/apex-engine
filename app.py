@@ -11597,7 +11597,7 @@ def api_morning_brief_archive_detail(session_date):
     """Return the immutable official Morning Brief for a historical session."""
     try:
         dt.date.fromisoformat(session_date)
-        from engine.evening_recap import get_morning_snapshot
+        from engine.evening_recap_service import get_morning_snapshot
         payload = get_morning_snapshot(session_date)
         if payload is None:
             return jsonify({"ok": False, "status": "NOT_FOUND", "session_date": session_date}), 404
@@ -11609,7 +11609,7 @@ def api_morning_brief_archive_detail(session_date):
 def api_morning_brief_archive_status():
     """Return whether an immutable official forecast exists for a session."""
     try:
-        from engine.evening_recap import morning_archive_status
+        from engine.evening_recap_service import morning_archive_status
         requested = request.args.get("date", "").strip()
         session_date = dt.date.fromisoformat(requested).isoformat() if requested else now_et().date().isoformat()
         return jsonify(morning_archive_status(session_date))
@@ -11631,7 +11631,7 @@ def api_evening_recap():
     ticker = request.args.get("ticker", "SPX").strip().upper() or "SPX"
     force = str(request.args.get("refresh", "")).strip().lower() in {"1", "true", "yes", "on"}
     try:
-        from engine.evening_recap import generate_evening_recap, get_morning_snapshot
+        from engine.evening_recap_service import generate_evening_recap, get_morning_snapshot
         now = now_et()
         requested = request.args.get("date", "").strip()
         if requested:
@@ -11684,7 +11684,7 @@ def api_evening_recap():
 def api_evening_recap_history():
     """APEX 49 rolling forecast-validation record."""
     try:
-        from engine.evening_recap import recap_history
+        from engine.evening_recap_service import recap_history
         return jsonify(recap_history(request.args.get("limit", 30)))
     except Exception as exc:
         return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}", "version": VERSION}), 500
@@ -13135,7 +13135,7 @@ try:
                     cand -= _dt.timedelta(days=1)
                 snapshot = None
                 try:
-                    from engine.evening_recap import get_morning_snapshot
+                    from engine.evening_recap_service import get_morning_snapshot
                     snapshot = get_morning_snapshot(now.date().isoformat()) or get_morning_snapshot(cand.isoformat())
                 except Exception:
                     snapshot = None
@@ -13645,7 +13645,7 @@ try:
                 # Prefer today's brief if one exists; else the recap candidate.
                 snapshot = None
                 try:
-                    from engine.evening_recap import get_morning_snapshot
+                    from engine.evening_recap_service import get_morning_snapshot
                     snapshot = get_morning_snapshot(now.date().isoformat()) or get_morning_snapshot(candidate.isoformat())
                 except Exception:
                     snapshot = None

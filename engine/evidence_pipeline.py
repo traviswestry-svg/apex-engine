@@ -46,8 +46,15 @@ def readiness(path: str|Path=DEFAULT_DB)->dict[str,Any]:
   graded=c.execute("SELECT COUNT(*) n FROM grading_results WHERE status='GRADED'").fetchone()['n']; excluded=c.execute("SELECT COUNT(*) n FROM grading_results WHERE status='EXCLUDED'").fetchone()['n']; pending=c.execute("SELECT COUNT(*) n FROM decisions WHERE status='PENDING'").fetchone()['n']; samples=c.execute('SELECT COUNT(*) n FROM price_samples').fetchone()['n'];
   lastd=c.execute('SELECT MAX(observed_at) v FROM decisions').fetchone()['v']; lastg=c.execute("SELECT MAX(graded_at) v FROM grading_results WHERE status='GRADED'").fetchone()['v'];
   reasons={r['exclusion_reason']:r['n'] for r in c.execute("SELECT exclusion_reason,COUNT(*) n FROM grading_results WHERE status='EXCLUDED' GROUP BY exclusion_reason") if r['exclusion_reason']}
+  eligibility_reasons={}
+  for row in c.execute('SELECT snapshot_json FROM decisions'):
+   try:
+    reason=(json.loads(row['snapshot_json']) or {}).get('eligibility_reason') or 'LEGACY_UNSPECIFIED'
+   except Exception:
+    reason='UNREADABLE_SNAPSHOT'
+   eligibility_reasons[reason]=eligibility_reasons.get(reason,0)+1
  if total==0: status='WAITING_FOR_LIVE_DATA'
  elif actionable==0: status='NO_ACTIONABLE_DECISIONS'
  elif pending>0 and samples==0: status='GRADING_WINDOW_NOT_MATURED'
  else: status='HEALTHY'
- return {'ok':True,'status':status,'decisions_recorded':total,'actionable_decisions':actionable,'feature_vectors_stored':actionable,'matured_outcomes':graded+excluded,'graded_outcomes':graded,'excluded_outcomes':excluded,'pending_decisions':pending,'price_samples':samples,'shadow_observations':graded,'last_decision_write':lastd,'last_successful_grade':lastg,'exclusion_reasons':reasons,'schema_version':SCHEMA_VERSION,'engine_version':VERSION,'execution_authority':False}
+ return {'ok':True,'status':status,'decisions_recorded':total,'actionable_decisions':actionable,'feature_vectors_stored':actionable,'matured_outcomes':graded+excluded,'graded_outcomes':graded,'excluded_outcomes':excluded,'pending_decisions':pending,'price_samples':samples,'shadow_observations':graded,'last_decision_write':lastd,'last_successful_grade':lastg,'exclusion_reasons':reasons,'eligibility_reasons':eligibility_reasons,'schema_version':SCHEMA_VERSION,'engine_version':VERSION,'execution_authority':False}

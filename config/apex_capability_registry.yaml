@@ -1,6 +1,24 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.3.2
+apex_version: 69.4.0
 capabilities:
+  live_excursion_wiring_decision_eligibility:
+    canonical_module: engine.flow_pl_pipeline
+    status: active
+    version: "69.4.0"
+    inputs: [live_flow_cluster, canonical_feature_sample, real_theoretical_pl, institutional_decision_object]
+    outputs: [canonical_sample_excursion, decision_eligibility_reason]
+    api_routes: [/api/learning/evidence-lifecycle]
+    decision_authority: none
+    execution_authority: none
+  evening_recap_import_boundary:
+    canonical_module: engine.evening_recap_service
+    status: active
+    version: "69.3.3"
+    inputs: [morning_archive, completed_session_bars]
+    outputs: [evening_recap]
+    api_routes: [/api/evening-recap, /api/evening-recap/history]
+    decision_authority: none
+    execution_authority: none
   dashboard_presentation_reliability:
     canonical_module: app
     status: active
