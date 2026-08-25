@@ -15,7 +15,7 @@ from typing import Any
 
 from .architecture_integrity import snapshot as architecture_snapshot
 
-VERSION = "68.5.0"
+VERSION = "69.4.2"
 SCHEMA_VERSION = "apex.post_persistence_architecture_audit.v2"
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "engine"
@@ -53,6 +53,22 @@ INFRASTRUCTURE_MODULES = {
     "shadow_validation.py",
 }
 
+SPECIALIZED_OBSERVATIONAL_BUFFER_MODULES = {
+    "market_microstructure_store.py",
+}
+
+SPECIALIZED_PERSISTENCE_POLICY = {
+    "market_microstructure_store.py": {
+        "classification": "SPECIALIZED_OBSERVATIONAL_BUFFER",
+        "canonical_high_consequence_persistence_required": False,
+        "direct_sqlite_exception_approved": True,
+        "high_consequence_state": False,
+        "decision_authority": "NONE",
+        "execution_authority": "NONE",
+        "production_effect": "NONE",
+    }
+}
+
 LOWER_AUTHORITY_MODULES = {
     "explainable_intelligence_assistant.py",
     "institutional_playbook_engine.py",
@@ -85,6 +101,8 @@ def _function_for_line(tree: ast.AST, lineno: int) -> str | None:
 
 
 def _classify(name: str) -> str:
+    if name in SPECIALIZED_OBSERVATIONAL_BUFFER_MODULES:
+        return "SPECIALIZED_OBSERVATIONAL_BUFFER"
     if name in HIGH_CONSEQUENCE_MODULES:
         return "HIGH_CONSEQUENCE_REVIEW"
     if name in INFRASTRUCTURE_MODULES:
@@ -113,6 +131,7 @@ def _inventory_direct_sqlite() -> list[dict[str, Any]]:
             rel = str(path.relative_to(ROOT))
             context = "\n".join(lines[max(0, lineno - 8): min(len(lines), lineno + 8)])
             for occurrence, _match in enumerate(matches, 1):
+                policy = SPECIALIZED_PERSISTENCE_POLICY.get(path.name)
                 rows.append({
                     "module": rel,
                     "file": path.name,
@@ -121,6 +140,7 @@ def _inventory_direct_sqlite() -> list[dict[str, Any]]:
                     "function": _function_for_line(tree, lineno),
                     "tier": _classify(path.name),
                     "explicit_policy_nearby": bool(_POLICY_RE.search(context)),
+                    "specialized_persistence": dict(policy) if policy else None,
                     "source_excerpt": line.strip()[:240],
                 })
     return rows
@@ -182,6 +202,10 @@ def snapshot() -> dict[str, Any]:
             "by_tier": by_tier,
             "direct_sqlite_sites": rows,
             "competing_policy_sites": competing,
+            "approved_specialized_observational_buffers": [
+                {"module": row["module"], **row["specialized_persistence"]}
+                for row in rows if row.get("specialized_persistence")
+            ],
         },
         "findings": [
             {
