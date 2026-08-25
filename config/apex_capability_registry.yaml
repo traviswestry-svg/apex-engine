@@ -1,6 +1,35 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.4.1
+apex_version: 69.4.2
 capabilities:
+  market_microstructure_governance_truth_closure:
+    canonical_module: engine.market_microstructure
+    deployed_modules: [engine.market_microstructure, engine.market_microstructure_ingest, engine.market_microstructure_store, engine.market_microstructure_calibration, engine.market_microstructure_routes]
+    status: observational
+    version: "69.4.2"
+    subsystem_version: "68.9.0"
+    inputs: [licensed_es_l2_mbo_depth, aggressor_classified_trades, explicit_microstructure_outcomes]
+    outputs: [microstructure_analysis, bounded_depth_history, rolling_cvd, liquidity_heatmap, shadow_calibration, promotion_readiness]
+    api_routes: [/api/microstructure/capability, /api/microstructure/health, /api/microstructure/analyze, /api/microstructure/ingest, /api/microstructure/state, /api/microstructure/history, /api/microstructure/heatmap, /api/microstructure/integrity, /api/microstructure/calibration, /api/microstructure/promotion-readiness, /api/microstructure/shadow-confirmation, /api/microstructure/outcomes]
+    decision_authority: none
+    execution_authority: none
+    production_effect: NONE
+    observational_only: true
+    real_l2_mbo_required: true
+    synthetic_depth_allowed: false
+    aggregate_futures_bars_are_depth_substitute: false
+    shadow_calibration_only: true
+    automatic_promotion: false
+    operator_approval_alone_activates_production: false
+    persistence:
+      classification: SPECIALIZED_OBSERVATIONAL_BUFFER
+      module: engine.market_microstructure_store
+      canonical_high_consequence_persistence_required: false
+      direct_sqlite_exception_approved: true
+      high_consequence_state: false
+      decision_authority: none
+      execution_authority: none
+    guardrails: [observational_only, no_decision_authority, no_execution_authority, production_effect_none, licensed_real_depth_only, no_synthetic_depth, aggregate_bars_not_depth, shadow_calibration_only, no_automatic_promotion, human_promotion_required_for_any_future_activation, preserve_separate_evidence_stores]
+    future_integration_note: Decision Outcome Attribution and Microstructure Shadow Calibration measure related phenomena in separate stores; reconciliation is deferred and must not merge stores or activate production influence without an explicitly approved future build.
   production_flow_hook_pre_governance_capture:
     canonical_module: engine.historical_evidence_lifecycle
     status: active
