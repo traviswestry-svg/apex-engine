@@ -143,6 +143,21 @@ def init_db() -> bool:
                       "ON flow_sample_excursions(session_date)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_fse_legacy "
                       "ON flow_sample_excursions(legacy_cluster_key, session_date)")
+            # APEX 69.4.1: authoritative identity bridge from the exact persisted
+            # feature sample to the live flow cluster lineage. The live P/L path
+            # must resolve this map; it may not reconstruct sample_id independently.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_sample_identity_map (
+                       session_date TEXT NOT NULL,
+                       legacy_cluster_key TEXT NOT NULL,
+                       decision_time TEXT NOT NULL,
+                       sample_id TEXT NOT NULL UNIQUE,
+                       registered_at TEXT NOT NULL,
+                       PRIMARY KEY(session_date, legacy_cluster_key, decision_time)
+                   )"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_fsim_lookup "
+                      "ON flow_sample_identity_map(session_date, legacy_cluster_key)")
             # APEX 69.3: durable capture audit. This is observability only; it
             # never manufactures excursion evidence and never participates in
             # label selection.
@@ -298,6 +313,48 @@ def get_excursions(event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         print(f"flow_pl_store.get_excursions failed (non-fatal): {e}", flush=True)
         return {}
 
+
+
+def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluster_key: str,
+                             decision_time: str) -> bool:
+    """Register the exact immutable feature identity for later live excursion marks."""
+    if not _DB_READY or not sample_id or not session_date or not legacy_cluster_key or not decision_time:
+        return False
+    try:
+        with _LOCK, _conn() as c:
+            c.execute(
+                """INSERT OR IGNORE INTO flow_sample_identity_map
+                   (session_date, legacy_cluster_key, decision_time, sample_id, registered_at)
+                   VALUES (?,?,?,?,?)""",
+                (session_date, legacy_cluster_key, decision_time, sample_id, _now_iso()),
+            )
+            c.commit()
+        return True
+    except Exception:
+        return False
+
+
+def resolve_sample_identity(*, session_date: str, legacy_cluster_key: str) -> Optional[Dict[str, Any]]:
+    """Resolve one canonical sample from persisted identity lineage.
+
+    If more than one sample shares the coarse legacy key, return the most recent
+    decision_time. That is safe for the live path because only sealed samples are
+    registered and later observations belong to the latest sealed incarnation.
+    """
+    if not _DB_READY or not session_date or not legacy_cluster_key:
+        return None
+    try:
+        with _conn() as c:
+            row = c.execute(
+                """SELECT sample_id,decision_time,session_date,legacy_cluster_key
+                   FROM flow_sample_identity_map
+                   WHERE session_date=? AND legacy_cluster_key=?
+                   ORDER BY decision_time DESC LIMIT 1""",
+                (session_date, legacy_cluster_key),
+            ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
 
 def record_capture_audit(*, attempted: int = 0, inserted: int = 0, updated: int = 0,
                          missing_feature: int = 0, missing_pl: int = 0,

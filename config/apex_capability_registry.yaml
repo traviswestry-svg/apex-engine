@@ -1,6 +1,15 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.4.0
+apex_version: 69.4.1
 capabilities:
+  production_flow_hook_pre_governance_capture:
+    canonical_module: engine.historical_evidence_lifecycle
+    status: active
+    version: "69.4.1"
+    inputs: [persisted_flow_feature_sample, live_flow_mark, institutional_thesis, final_execution_action]
+    outputs: [canonical_sample_identity_map, canonical_sample_excursion, observational_decision_snapshot]
+    api_routes: [/api/learning/evidence-lifecycle]
+    decision_authority: none
+    execution_authority: none
   live_excursion_wiring_decision_eligibility:
     canonical_module: engine.flow_pl_pipeline
     status: active

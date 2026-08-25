@@ -30,8 +30,12 @@ def run_grader(path: str|Path=DEFAULT_DB,horizon_seconds:int=DEFAULT_HORIZON,lim
     outcome={'won':won,'direction_correct':won,'entry_price':entry,'forward_price':final,'directional_move':round(move,4),'mfe':round(mfe,4),'mae':round(mae,4),'horizon_seconds':horizon_seconds}
     c.execute("INSERT OR IGNORE INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",(did,now.isoformat(),'GRADED',None,horizon_seconds,json.dumps(outcome))); c.execute("UPDATE decisions SET status='GRADED' WHERE decision_id=?",(did,)); counts['graded']+=1
     try:
-     from engine.adaptive_learning import record_outcome
-     snap=json.loads(r['snapshot_json']); record_outcome({'ticker':r['ticker'],'direction':r['direction'],'confidence':r['confidence'],'won':won,'realized_return':move,'horizon_seconds':horizon_seconds,'features':snap.get('feature_vector') or {},'metadata':{'decision_id':did,'source':'APEX_47_AUTO_GRADER'}})
+     # Observational NO_TRADE thesis grading is diagnostic only. It must never
+     # feed adaptive calibration/promotion as though an executed trade occurred.
+     snap=json.loads(r['snapshot_json'])
+     if not bool(snap.get('observational_only')):
+      from engine.adaptive_learning import record_outcome
+      record_outcome({'ticker':r['ticker'],'direction':r['direction'],'confidence':r['confidence'],'won':won,'realized_return':move,'horizon_seconds':horizon_seconds,'features':snap.get('feature_vector') or {},'metadata':{'decision_id':did,'source':'APEX_47_AUTO_GRADER'}})
     except Exception: pass
    except Exception: counts['errors']+=1
  try:
