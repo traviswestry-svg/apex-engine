@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.4.0",
-  "build_name": "Live Excursion Wiring & Decision Eligibility Closure",
+  "apex_version": "69.4.1",
+  "build_name": "Production Flow Hook & Pre-Governance Decision Capture Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-24",
+  "released_at": "2026-08-25",
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
@@ -148,7 +148,10 @@
     "flow_excursion_capture_changes_execution_authority": false,
     "flow_label_requirements_relaxed": false,
     "dashboard_presentation_only": true,
-    "premium_discipline_fail_soft_read_model": true
+    "premium_discipline_fail_soft_read_model": true,
+    "observational_no_trade_does_not_change_execution_authority": true,
+    "observational_no_trade_excluded_from_adaptive_promotion": true,
+    "canonical_flow_identity_mapping_required": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

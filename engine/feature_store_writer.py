@@ -62,7 +62,7 @@ from .feature_store import (
 )
 from . import feature_store_db, flow_pl_store, decision_provenance
 
-WRITER_VERSION = "69.3.0_FEATURE_STORE_WRITER"
+WRITER_VERSION = "69.4.1_FEATURE_STORE_WRITER"
 
 _GAP_S = float(os.getenv("FLOW_CLUSTER_GAP_S", "120"))
 # A decision informed by a 20-minute-old frame is barely informed. Recorded per
@@ -174,6 +174,9 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
             existing = feature_store_db.get_features(sid)
             if existing:
                 report["already_present"] += 1
+                flow_pl_store.register_sample_identity(
+                    sample_id=sid, session_date=session_date, legacy_cluster_key=ckey,
+                    decision_time=decision_time)
                 report["excursion_capture_attempts"] += 1
                 if xo.get("pl_dollars") is None:
                     report["excursion_missing_pl"] += 1
@@ -217,6 +220,12 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 continue
             if feature_store_db.write_features(vec):
                 report["written"] += 1
+                # Publish the exact persisted feature identity before excursion
+                # capture. Live marks resolve this authoritative mapping instead
+                # of rebuilding sample_id from mutable cluster formatting.
+                flow_pl_store.register_sample_identity(
+                    sample_id=sid, session_date=session_date, legacy_cluster_key=ckey,
+                    decision_time=decision_time)
                 # First canonical excursion sample is recorded only after the
                 # immutable feature row is confirmed persisted. No P/L means no
                 # excursion row — the missing evidence is counted, never filled.

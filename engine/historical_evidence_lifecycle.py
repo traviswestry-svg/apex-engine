@@ -111,17 +111,39 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
     direction = str(ido.get("direction") or "NEUTRAL").upper()
     blocked_actions = {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
     explicit_actionable = bool(ido.get("actionable"))
-    actionable = explicit_actionable and action not in blocked_actions
-    if action in blocked_actions:
+    execution_actionable = explicit_actionable and action not in blocked_actions
+    price = _extract_price(root, ido)
+    confidence = _extract_confidence(root, ido)
+
+    # APEX 69.4.1 — preserve the directional thesis BEFORE final execution
+    # governance separately from the final action. A governed NO_TRADE remains
+    # non-executable, but a real-time BULLISH/BEARISH thesis with a contemporaneous
+    # price may be graded observationally as an abstention/counterfactual.
+    thesis = _m(ido.get("institutional_thesis") or ido.get("thesis"))
+    consensus = _m(ido.get("institutional_consensus") or ido.get("consensus"))
+    conviction = _m(ido.get("conviction"))
+    thesis_direction = str(
+        thesis.get("dominant_direction") or consensus.get("dominant_direction") or direction
+    ).upper()
+    observational_eligible = (
+        thesis_direction in {"BULLISH", "BEARISH"}
+        and price is not None
+        and str(session_state or root.get("session") or "UNKNOWN").upper()
+            not in {"CLOSED", "MARKET_CLOSED", "AFTER_HOURS"}
+    )
+    learning_eligible = execution_actionable or observational_eligible
+    if execution_actionable:
+        eligibility_reason = "EXECUTION_ELIGIBLE"
+    elif observational_eligible:
+        eligibility_reason = "OBSERVATIONAL_DIRECTIONAL_THESIS"
+    elif action in blocked_actions:
         eligibility_reason = f"ACTION_{action}"
     elif not explicit_actionable:
         eligibility_reason = "IDO_ACTIONABLE_FALSE_OR_MISSING"
     elif direction in {"", "NEUTRAL", "UNKNOWN", "NONE"}:
         eligibility_reason = "DIRECTION_NOT_DIRECTIONAL"
     else:
-        eligibility_reason = "ELIGIBLE"
-    price = _extract_price(root, ido)
-    confidence = _extract_confidence(root, ido)
+        eligibility_reason = "NOT_GRADE_ELIGIBLE"
 
     # Preserve exactly the decision-time fields consumed by effectiveness,
     # dynamic-state calibration and attribution. Avoid persisting raw providers.
@@ -134,13 +156,31 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         "session": str(session_state or root.get("session") or "UNKNOWN").upper(),
         "action": action,
         "decision_state": action,
-        "direction": direction,
+        "direction": thesis_direction if thesis_direction in {"BULLISH", "BEARISH"} else direction,
         "entry_reference": price,
         "confidence": confidence,
-        "learning_eligible": actionable,
-        "actionable": actionable,
+        "learning_eligible": learning_eligible,
+        "actionable": execution_actionable,
+        "execution_actionable": execution_actionable,
+        "observational_learning_eligible": observational_eligible and not execution_actionable,
+        "observational_only": observational_eligible and not execution_actionable,
         "eligibility_reason": eligibility_reason,
-        "eligibility_inputs": {"ido_actionable": explicit_actionable, "action": action, "direction": direction},
+        "eligibility_inputs": {
+            "ido_actionable": explicit_actionable, "final_action": action,
+            "final_direction": direction, "pre_governance_direction": thesis_direction,
+            "entry_reference_available": price is not None,
+        },
+        "pre_governance_decision": {
+            "direction": thesis_direction,
+            "thesis_state": thesis.get("state"),
+            "current_thesis": thesis.get("current_thesis"),
+            "raw_conviction": conviction.get("raw_conviction"),
+            "calibrated_conviction": conviction.get("calibrated_conviction"),
+            "score": conviction.get("score"),
+            "blocking_conditions": conviction.get("blocking_conditions") or [],
+            "execution_action_after_governance": action,
+            "execution_actionable_after_governance": execution_actionable,
+        },
         "setup": ido.get("strategy") or root.get("setup") or root.get("playbook"),
         "institutional_decision_object": ido,
         "trade_horizon_intelligence": _m(root.get("trade_horizon_intelligence")),
