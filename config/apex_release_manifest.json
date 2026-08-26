@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.4.3",
-  "build_name": "Live Flow Excursion Invocation Closure",
+  "apex_version": "69.4.3.1",
+  "build_name": "Storage Retention Audit & Safe Maintenance Guardrails",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -177,5 +177,21 @@
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
+  },
+  "semantic_version": "69.4.3.1",
+  "application_version": "69.4.3.1",
+  "storage_retention_guardrails": {
+    "automatic_delete": false,
+    "automatic_vacuum": false,
+    "canonical_evidence_delete": false,
+    "human_approval_required": true,
+    "aged_corrupt_quarantine_operator_cleanup_allowed": true,
+    "wal_checkpoint_only": true,
+    "mature_price_sample_pruning_bounded_by_pending_decisions": true,
+    "decisions_preserved": true,
+    "grading_results_preserved": true,
+    "flow_features_preserved": true,
+    "excursion_evidence_preserved": true,
+    "calibration_evidence_preserved": true
   }
 }

@@ -35,7 +35,7 @@ def _cluster(pl=125.0):
 
 def test_release_truth_6943():
     d=json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert d['apex_version']=='69.4.3'
+    assert tuple(map(int,d['apex_version'].split('.'))) >= (69,4,3)
     g=d['guardrails']
     assert g['scanner_flow_excursion_capture_post_feature_persistence'] is True
     assert g['scanner_flow_excursion_capture_uses_canonical_sample_id_only'] is True
