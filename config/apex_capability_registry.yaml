@@ -1,6 +1,18 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.4.3
+apex_version: 69.4.4
 capabilities:
+  decision_evidence_storage_amplification_closure:
+    canonical_module: engine.evidence_pipeline
+    deployed_modules: [engine.evidence_pipeline, engine.storage_retention, engine.historical_evidence_lifecycle, engine.outcome_grader, engine.decision_outcome_attribution]
+    status: active
+    version: "69.4.4"
+    inputs: [canonical_decision_snapshot, institutional_decision_object, persistent_evidence_ledger]
+    outputs: [bounded_persisted_decision_snapshot, decision_storage_amplification_audit]
+    api_routes: [/api/admin/storage/audit]
+    decision_authority: none
+    execution_authority: none
+    production_effect: STORAGE_SHAPE_ONLY
+    guardrails: [no_trade_decision_change, no_execution_authority_change, no_grade_eligibility_change, source_snapshot_hash_preserved, no_automatic_historical_rewrite, no_canonical_evidence_delete, audit_payload_values_not_exposed]
   live_flow_excursion_invocation_closure:
     canonical_module: engine.flow_pl_pipeline
     deployed_modules: [engine.flow_pl_pipeline, engine.feature_store_writer, engine.flow_pl_store, scanner_worker, app]

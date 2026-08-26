@@ -14329,7 +14329,7 @@ def _apex65_runtime_health_payload():
 
 @app.get("/api/admin/storage/audit")
 def api_admin_storage_audit():
-    """APEX 69.4.3 read-only persistent-storage audit.
+    """APEX 69.4.4 read-only persistent-storage and decision-amplification audit.
 
     This route is protected by the application-wide APEX auth layer. It may
     inspect SQLite metadata and file sizes but never invokes maintenance
@@ -14349,7 +14349,7 @@ def api_admin_storage_audit():
         })
         return jsonify(payload)
     except Exception as exc:
-        app.logger.exception("APEX 69.4.3 storage audit failed")
+        app.logger.exception("APEX 69.4.4 storage audit failed")
         return jsonify({
             "ok": False,
             "schema_version": "apex.storage_audit.v1",

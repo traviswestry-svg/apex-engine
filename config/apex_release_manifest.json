@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.4.3",
-  "build_name": "Storage Retention Audit & Safe Maintenance Guardrails \u2014 Observability Fix",
+  "apex_version": "69.4.4",
+  "build_name": "Decision Evidence Storage Amplification Audit & Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -171,15 +171,23 @@
     "scanner_flow_excursion_capture_uses_canonical_sample_id_only": true,
     "scanner_flow_learning_store_initialization_explicit": true,
     "flow_excursion_backfill_fabrication_allowed": false,
-    "flow_settlement_requirements_relaxed": false
+    "flow_settlement_requirements_relaxed": false,
+    "decision_snapshot_storage_projection_bounded": true,
+    "decision_snapshot_full_institutional_object_replicated": false,
+    "decision_snapshot_projection_changes_trade_decisions": false,
+    "decision_snapshot_projection_changes_execution_authority": false,
+    "decision_snapshot_projection_changes_grade_eligibility": false,
+    "decision_snapshot_source_hash_preserved": true,
+    "historical_decision_rows_rewritten_automatically": false,
+    "decision_storage_amplification_audit_read_only": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.4.3",
-  "application_version": "69.4.3",
+  "semantic_version": "69.4.4",
+  "application_version": "69.4.4",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
@@ -197,6 +205,12 @@
     "storage_audit_endpoint_read_only": true,
     "storage_audit_endpoint_authenticated": true,
     "storage_audit_endpoint_applies_maintenance": false,
-    "storage_audit_endpoint_vacuum_performed": false
+    "storage_audit_endpoint_vacuum_performed": false,
+    "decision_storage_amplification_audit": true,
+    "decision_storage_payload_values_exposed": false,
+    "existing_decision_rows_preserved": true,
+    "future_decision_snapshot_projection": "BOUNDED_CANONICAL_PROJECTION",
+    "future_decision_projection_version": "69.4.4",
+    "automatic_historical_decision_rewrite": false
   }
 }
