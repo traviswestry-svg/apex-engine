@@ -457,3 +457,14 @@ capabilities:
       - no_synthetic_excursion_backfill
       - market_memory_observational_capture
       - no_execution_authority
+
+  governed_storage_retention:
+    canonical_module: engine.storage_retention
+    status: active
+    version: 69.4.3
+    inputs: [persistent_disk_inventory, sqlite_wal_state, evidence_pipeline_price_samples, pending_decision_floor, db_resilience_quarantine_artifacts]
+    outputs: [storage_retention_audit, operator_maintenance_plan, bounded_price_sample_prune, wal_checkpoint_result]
+    decision_authority: none
+    execution_authority: none
+    production_effect: OPERATIONS_ONLY
+    guardrails: [no_automatic_delete, no_automatic_vacuum, preserve_canonical_decisions, preserve_grading_results, preserve_flow_features, preserve_excursion_evidence, preserve_calibration_evidence, human_approval_required_for_quarantine_cleanup, pending_decision_floor_protects_price_samples]

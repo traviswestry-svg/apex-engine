@@ -200,6 +200,11 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_FLOW_SETTLEMENT_SCHEDULER_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'true','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables the dedicated flow-settlement scheduler loop.','safety_critical':False,'used_in_code':True},
 ])
 
+# APEX 69.4.3 — governed storage-retention operational controls.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_CORRUPT_DB_RETENTION_DAYS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'14','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum operator-governed retention window in days before quarantined corrupt database artifacts become cleanup-eligible.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_EVIDENCE_PRICE_RETENTION_DAYS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'14','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Retention window in days for mature forward price samples; pending-decision evidence is preserved regardless of this setting.','safety_critical':False,'used_in_code':True},
+])
 
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
