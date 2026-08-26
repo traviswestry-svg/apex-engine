@@ -131,7 +131,8 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                   replay_rows: List[Dict[str, Any]],
                   session_date: str,
                   now_et_seconds: int,
-                  ticker: str = "SPX") -> Dict[str, Any]:
+                  ticker: str = "SPX",
+                  defer_excursion_capture: bool = False) -> Dict[str, Any]:
     """Write pre-decision vectors for every SEALED cluster. Never raises.
 
     Returns a report — counts plus why samples were skipped, so a store that
@@ -142,6 +143,8 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
               "excursion_capture_attempts": 0, "excursions_inserted": 0,
               "excursions_updated": 0, "excursion_missing_pl": 0,
               "excursion_capture_errors": 0,
+              "capture_targets": [],
+              "excursion_capture_deferred": bool(defer_excursion_capture),
               "writer_version": WRITER_VERSION}
     if not feature_store_db.is_ready():
         report["reasons"].append("feature store not ready")
@@ -177,24 +180,32 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 flow_pl_store.register_sample_identity(
                     sample_id=sid, session_date=session_date, legacy_cluster_key=ckey,
                     decision_time=decision_time)
-                report["excursion_capture_attempts"] += 1
-                if xo.get("pl_dollars") is None:
-                    report["excursion_missing_pl"] += 1
-                    flow_pl_store.record_capture_audit(
-                        attempted=1, missing_pl=1, sample_id=sid)
-                elif flow_pl_store.is_ready():
-                    cap = flow_pl_store.record_sample_excursion(
-                        sample_id=sid, session_date=session_date,
-                        ticker=xo.get("ticker") or cl.get("ticker") or ticker,
-                        pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
-                        decision_time=decision_time, legacy_cluster_key=ckey)
-                    if cap:
-                        if cap.get("first_sample"):
-                            report["excursions_inserted"] += 1
+                if defer_excursion_capture:
+                    report["capture_targets"].append({
+                        "sample_id": sid, "session_date": session_date,
+                        "ticker": xo.get("ticker") or cl.get("ticker") or ticker,
+                        "pl_dollars": xo.get("pl_dollars"), "cost_basis": xo.get("cost_basis"),
+                        "decision_time": decision_time, "legacy_cluster_key": ckey,
+                    })
+                else:
+                    report["excursion_capture_attempts"] += 1
+                    if xo.get("pl_dollars") is None:
+                        report["excursion_missing_pl"] += 1
+                        flow_pl_store.record_capture_audit(
+                            attempted=1, missing_pl=1, sample_id=sid)
+                    elif flow_pl_store.is_ready():
+                        cap = flow_pl_store.record_sample_excursion(
+                            sample_id=sid, session_date=session_date,
+                            ticker=xo.get("ticker") or cl.get("ticker") or ticker,
+                            pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
+                            decision_time=decision_time, legacy_cluster_key=ckey)
+                        if cap:
+                            if cap.get("first_sample"):
+                                report["excursions_inserted"] += 1
+                            else:
+                                report["excursions_updated"] += 1
                         else:
-                            report["excursions_updated"] += 1
-                    else:
-                        report["excursion_capture_errors"] += 1
+                            report["excursion_capture_errors"] += 1
                 continue
 
             frame = resolve_frame_at_or_before(
@@ -229,21 +240,29 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 # First canonical excursion sample is recorded only after the
                 # immutable feature row is confirmed persisted. No P/L means no
                 # excursion row — the missing evidence is counted, never filled.
-                report["excursion_capture_attempts"] += 1
-                if xo.get("pl_dollars") is None:
-                    report["excursion_missing_pl"] += 1
-                    flow_pl_store.record_capture_audit(
-                        attempted=1, missing_pl=1, sample_id=sid)
-                elif flow_pl_store.is_ready():
-                    cap = flow_pl_store.record_sample_excursion(
-                        sample_id=sid, session_date=session_date,
-                        ticker=xo.get("ticker") or cl.get("ticker") or ticker,
-                        pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
-                        decision_time=decision_time, legacy_cluster_key=ckey)
-                    if cap:
-                        report["excursions_inserted"] += 1
-                    else:
-                        report["excursion_capture_errors"] += 1
+                if defer_excursion_capture:
+                    report["capture_targets"].append({
+                        "sample_id": sid, "session_date": session_date,
+                        "ticker": xo.get("ticker") or cl.get("ticker") or ticker,
+                        "pl_dollars": xo.get("pl_dollars"), "cost_basis": xo.get("cost_basis"),
+                        "decision_time": decision_time, "legacy_cluster_key": ckey,
+                    })
+                else:
+                    report["excursion_capture_attempts"] += 1
+                    if xo.get("pl_dollars") is None:
+                        report["excursion_missing_pl"] += 1
+                        flow_pl_store.record_capture_audit(
+                            attempted=1, missing_pl=1, sample_id=sid)
+                    elif flow_pl_store.is_ready():
+                        cap = flow_pl_store.record_sample_excursion(
+                            sample_id=sid, session_date=session_date,
+                            ticker=xo.get("ticker") or cl.get("ticker") or ticker,
+                            pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
+                            decision_time=decision_time, legacy_cluster_key=ckey)
+                        if cap:
+                            report["excursions_inserted"] += 1
+                        else:
+                            report["excursion_capture_errors"] += 1
                 frame_quality = frame.get("chain_quality") or frame.get("chain_quality_gate") or {}
                 snap = decision_provenance.build_snapshot(
                     sample_id=sid,

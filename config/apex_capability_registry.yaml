@@ -1,6 +1,18 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.4.2
+apex_version: 69.4.3
 capabilities:
+  live_flow_excursion_invocation_closure:
+    canonical_module: engine.flow_pl_pipeline
+    deployed_modules: [engine.flow_pl_pipeline, engine.feature_store_writer, engine.flow_pl_store, scanner_worker, app]
+    status: active
+    version: "69.4.3"
+    inputs: [real_live_flow_marks, sealed_feature_samples, canonical_sample_identity_map]
+    outputs: [canonical_sample_excursion, scanner_capture_telemetry]
+    api_routes: [/api/learning/evidence-lifecycle]
+    decision_authority: none
+    execution_authority: none
+    production_effect: OBSERVATIONAL_LEARNING_ONLY
+    guardrails: [post_feature_persistence_capture, canonical_sample_id_only, no_historical_backfill, no_synthetic_pl, no_settlement_relaxation, no_decision_authority, no_execution_authority]
   market_microstructure_governance_truth_closure:
     canonical_module: engine.market_microstructure
     deployed_modules: [engine.market_microstructure, engine.market_microstructure_ingest, engine.market_microstructure_store, engine.market_microstructure_calibration, engine.market_microstructure_routes]

@@ -73,11 +73,16 @@ from engine.historical_evidence_lifecycle import (  # noqa: E402
     runtime_status as evidence_runtime_status,
 )
 from engine.flow_settlement_scheduler import FlowSettlementScheduler  # noqa: E402
+from engine import flow_pl_store as _flow_pl_store  # noqa: E402
+from engine import feature_store_db as _feature_store_db  # noqa: E402
 
 _RUNNING = True
 _HLCE_PROVIDER_CACHE: Dict[str, Any] = {"at": 0.0, "snapshot": {}}
 _HLCE_RUNTIME: Dict[str, Any] = {"provider_ok": False, "provider_error": None, "restart_count": 0, "last_tick": None}
 _EVIDENCE_RUNTIME: Dict[str, Any] = {"last_grade_monotonic": 0.0, "last_price_result": None, "last_grade_result": None}
+_FLOW_LEARNING_STORE_RUNTIME: Dict[str, Any] = {
+    "flow_pl_store_ready": False, "feature_store_ready": False, "initialized": False,
+}
 _FLOW_SETTLEMENT_SCHEDULER = FlowSettlementScheduler(
     ticker=getattr(apex_app, "ASSISTANT_TICKER", "SPX") if apex_app is not None else "SPX"
 )
@@ -241,6 +246,29 @@ def _ensure_hlce_running() -> None:
         _HLCE_RUNTIME["last_tick"] = tick
 
 
+
+def _ensure_flow_learning_stores() -> Dict[str, Any]:
+    """Initialize scanner-owned observational learning stores explicitly.
+
+    APEX 69.4.3 removes the prior dependency on Flask route registration to make
+    module-local DB readiness true inside the dedicated scanner process.
+    """
+    try:
+        if not _feature_store_db.is_ready():
+            _feature_store_db.init_db()
+        if not _flow_pl_store.is_ready():
+            _flow_pl_store.init_db()
+        _FLOW_LEARNING_STORE_RUNTIME.update({
+            "feature_store_ready": bool(_feature_store_db.is_ready()),
+            "flow_pl_store_ready": bool(_flow_pl_store.is_ready()),
+            "initialized": True,
+        })
+    except Exception as exc:
+        _FLOW_LEARNING_STORE_RUNTIME.update({
+            "initialized": True, "error": f"{type(exc).__name__}: {exc}",
+        })
+    return dict(_FLOW_LEARNING_STORE_RUNTIME)
+
 def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -261,6 +289,7 @@ def main() -> int:
         "bootstrap_source": os.getenv("APEX_SCANNER_BOOTSTRAP_SOURCE", "start_render"),
         "scanner_lease": _PROCESS_LEASE,
     })
+    _ensure_flow_learning_stores()
     apex_app.start_background_scanner()
     try:
         _ensure_hlce_running()
@@ -344,6 +373,8 @@ def main() -> int:
             "live_active_level_publisher": _LIVE_LEVEL_PUBLISHER.diagnostics() if _LIVE_LEVEL_PUBLISHER is not None else {"state": "UNAVAILABLE"},
             "historical_evidence_lifecycle": evidence_runtime_status(),
             "feature_label_settlement": _FLOW_SETTLEMENT_SCHEDULER.status(),
+            "flow_learning_stores": dict(_FLOW_LEARNING_STORE_RUNTIME),
+            "flow_excursion_capture": _flow_pl_store.sample_excursion_health(),
         })
         time.sleep(max(5, int(os.getenv("APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS", "15"))))
     if _LIVE_LEVEL_PUBLISHER is not None:
