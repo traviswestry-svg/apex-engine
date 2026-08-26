@@ -5,7 +5,7 @@ excursions, calibration evidence, or active SQLite databases.
 """
 from __future__ import annotations
 import datetime as dt
-import os, re, sqlite3
+import hashlib, json, os, re, sqlite3
 from pathlib import Path
 from typing import Any
 from .operational_runtime import persistent_root, storage_status
@@ -16,6 +16,74 @@ VERSION = APP_VERSION
 QUARANTINE_RE = re.compile(r"\.corrupt-(\d{8,14})(?:\.bak)?$")
 PRICE_RETENTION_DAYS = int(os.getenv("APEX_EVIDENCE_PRICE_RETENTION_DAYS", "14"))
 QUARANTINE_RETENTION_DAYS = int(os.getenv("APEX_CORRUPT_DB_RETENTION_DAYS", "14"))
+
+DECISION_AUDIT_SAMPLE_LIMIT = 20
+
+
+def _decision_storage_amplification(c: sqlite3.Connection) -> dict[str, Any]:
+    """Read-only size diagnostics for decisions.snapshot_json.
+
+    The aggregate is computed in SQLite. Only a bounded set of the largest and
+    latest rows is parsed in Python, so the endpoint does not materialize the
+    entire evidence ledger in application memory. Payload values are never
+    returned; only byte counts and hashes are exposed.
+    """
+    agg = c.execute(
+        "SELECT COUNT(*) n, COALESCE(SUM(LENGTH(snapshot_json)),0) total_bytes, "
+        "COALESCE(AVG(LENGTH(snapshot_json)),0) avg_bytes, COALESCE(MAX(LENGTH(snapshot_json)),0) max_bytes "
+        "FROM decisions"
+    ).fetchone()
+    latest = c.execute(
+        "SELECT decision_id,observed_at,LENGTH(snapshot_json) bytes FROM decisions "
+        "ORDER BY observed_at DESC LIMIT ?", (DECISION_AUDIT_SAMPLE_LIMIT,)
+    ).fetchall()
+    largest = c.execute(
+        "SELECT decision_id,observed_at,snapshot_json,LENGTH(snapshot_json) bytes FROM decisions "
+        "ORDER BY LENGTH(snapshot_json) DESC LIMIT ?", (DECISION_AUDIT_SAMPLE_LIMIT,)
+    ).fetchall()
+    key_bytes: dict[str, int] = {}
+    key_hashes: dict[str, dict[str, int]] = {}
+    projection_versions: dict[str, int] = {}
+    for row in largest:
+        try:
+            snap = json.loads(row["snapshot_json"] or "{}")
+        except Exception:
+            continue
+        if not isinstance(snap, dict):
+            continue
+        projection = snap.get("storage_projection")
+        if isinstance(projection, dict):
+            v = str(projection.get("projection_version") or "UNKNOWN")
+            projection_versions[v] = projection_versions.get(v, 0) + 1
+        for key, value in snap.items():
+            try:
+                raw = json.dumps(value, default=str, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            except Exception:
+                continue
+            key = str(key)
+            key_bytes[key] = key_bytes.get(key, 0) + len(raw)
+            digest = hashlib.sha256(raw).hexdigest()
+            key_hashes.setdefault(key, {})[digest] = key_hashes.setdefault(key, {}).get(digest, 0) + 1
+    repeated = []
+    for key, hashes in key_hashes.items():
+        repeats = max(hashes.values()) if hashes else 0
+        if repeats > 1:
+            repeated.append({"key": key, "max_identical_occurrences_in_largest_sample": repeats})
+    repeated.sort(key=lambda x: (-x["max_identical_occurrences_in_largest_sample"], x["key"]))
+    top_keys = sorted(key_bytes.items(), key=lambda kv: kv[1], reverse=True)[:20]
+    return {
+        "rows": int(agg["n"]),
+        "snapshot_json_total_bytes": int(agg["total_bytes"] or 0),
+        "snapshot_json_average_bytes": round(float(agg["avg_bytes"] or 0), 2),
+        "snapshot_json_max_bytes": int(agg["max_bytes"] or 0),
+        "latest_rows": [{"decision_id": r["decision_id"], "observed_at": r["observed_at"], "bytes": int(r["bytes"] or 0)} for r in latest],
+        "largest_rows": [{"decision_id": r["decision_id"], "observed_at": r["observed_at"], "bytes": int(r["bytes"] or 0)} for r in largest],
+        "largest_sample_top_level_bytes": [{"key": k, "bytes": v} for k, v in top_keys],
+        "repeated_top_level_values_in_largest_sample": repeated[:20],
+        "storage_projection_versions_in_largest_sample": projection_versions,
+        "payload_values_exposed": False,
+        "historical_rows_mutated": False,
+    }
 
 
 def _age_days(path: Path, now: dt.datetime) -> float:
@@ -47,6 +115,7 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
                 evidence["oldest_price_sample_at"]=c.execute("SELECT MIN(observed_at) FROM price_samples").fetchone()[0]
                 evidence["newest_price_sample_at"]=c.execute("SELECT MAX(observed_at) FROM price_samples").fetchone()[0]
                 evidence["pending_decisions"]=c.execute("SELECT COUNT(*) FROM decisions WHERE status='PENDING'").fetchone()[0]
+                evidence["decision_storage_amplification"]=_decision_storage_amplification(c)
                 try:
                     rows=c.execute("SELECT name, SUM(pgsize) bytes FROM dbstat GROUP BY name ORDER BY bytes DESC").fetchall()
                     evidence["table_bytes"]=[{"name":r[0],"bytes":r[1]} for r in rows]

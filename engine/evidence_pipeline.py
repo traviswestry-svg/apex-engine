@@ -1,6 +1,6 @@
 """APEX 47.0.3 — durable decision/evidence ledger and readiness diagnostics."""
 from __future__ import annotations
-import json, os, sqlite3
+import hashlib, json, os, sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -8,6 +8,58 @@ from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 VERSION="68.6.0"; SCHEMA_VERSION="apex.evidence_readiness.v2"; DEFAULT_DB=persistent_sqlite_path("APEX_EVIDENCE_PIPELINE_DB", "apex_evidence_pipeline.db")
 def _now(): return datetime.now(timezone.utc).isoformat()
+
+
+# APEX 69.4.4 — bounded persistence projection for canonical decision snapshots.
+# The full institutional decision object is consumed contemporaneously by attribution
+# before this projection is stored. Historical consumers require only this compact
+# compatibility surface; raw narrative/provider/evidence graphs are intentionally not
+# duplicated into every decision row.
+_IDO_PERSIST_KEYS = (
+    "schema_version", "engine_version", "recommendation_id", "timestamp", "generated_at",
+    "ticker", "instrument", "strategy", "playbook", "action", "decision_state",
+    "direction", "status", "actionable", "authoritative_contract", "decision_authority",
+    "raw_conviction", "calibrated_conviction", "calibration_state", "execution_score",
+    "position_quality", "fail_closed", "historical_performance_claimed",
+    "regime", "gamma_regime", "volatility_regime", "auction_regime",
+)
+
+def _json_bytes(value: Any) -> bytes:
+    return json.dumps(value, default=str, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+def _persisted_snapshot_projection(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the bounded canonical form stored in decisions.snapshot_json.
+
+    This is a storage-shape closure only. It does not alter the in-memory decision,
+    decision authority, grading eligibility, or contemporaneous attribution capture.
+    """
+    source = dict(snapshot or {})
+    raw = _json_bytes(source)
+    projected = dict(source)
+    ido = source.get("institutional_decision_object")
+    omitted: list[str] = []
+    if isinstance(ido, Mapping):
+        compact = {key: ido.get(key) for key in _IDO_PERSIST_KEYS if key in ido}
+        projected["institutional_decision_object"] = compact
+        omitted = sorted(str(k) for k in ido.keys() if k not in _IDO_PERSIST_KEYS)
+    projected["storage_projection"] = {
+        "schema_version": "apex.decision_snapshot_storage.v1",
+        "projection_version": "69.4.4",
+        "source_snapshot_bytes": len(raw),
+        "source_snapshot_sha256": hashlib.sha256(raw).hexdigest(),
+        "institutional_decision_object_projected": isinstance(ido, Mapping),
+        "omitted_ido_fields": omitted,
+        "omitted_fields_are_redundant_runtime_bulk": True,
+        "canonical_decision_semantics_preserved": True,
+    }
+    # Resolve the self-reported persisted byte count to a stable exact value.
+    projected["storage_projection"]["persisted_snapshot_bytes"] = 0
+    for _ in range(3):
+        exact = len(_json_bytes(projected))
+        if projected["storage_projection"]["persisted_snapshot_bytes"] == exact:
+            break
+        projected["storage_projection"]["persisted_snapshot_bytes"] = exact
+    return projected
 def _connect(path: str|Path=DEFAULT_DB):
  c=canonical_connect(path); c.executescript('''
  CREATE TABLE IF NOT EXISTS decisions(decision_id TEXT PRIMARY KEY,observed_at TEXT NOT NULL,ticker TEXT NOT NULL,session TEXT,direction TEXT,action TEXT,entry_price REAL,confidence REAL,learning_eligible INTEGER NOT NULL,snapshot_json TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'PENDING');
@@ -21,7 +73,8 @@ def record_snapshot(snapshot: Mapping[str,Any], path: str|Path=DEFAULT_DB)->bool
  with _connect(path) as c:
   observed_at=str(s.get('timestamp') or _now())
   before=c.total_changes
-  c.execute("INSERT OR IGNORE INTO decisions(decision_id,observed_at,ticker,session,direction,action,entry_price,confidence,learning_eligible,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?)",(did,observed_at,str(s.get('ticker') or 'SPX'),str(s.get('session') or 'UNKNOWN'),str(s.get('direction') or 'NEUTRAL'),str(s.get('action') or 'STAND_DOWN'),s.get('entry_reference'),s.get('confidence'),int(bool(s.get('learning_eligible'))),json.dumps(s,default=str)))
+  persisted_snapshot=_persisted_snapshot_projection(s)
+  c.execute("INSERT OR IGNORE INTO decisions(decision_id,observed_at,ticker,session,direction,action,entry_price,confidence,learning_eligible,snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?)",(did,observed_at,str(s.get('ticker') or 'SPX'),str(s.get('session') or 'UNKNOWN'),str(s.get('direction') or 'NEUTRAL'),str(s.get('action') or 'STAND_DOWN'),s.get('entry_reference'),s.get('confidence'),int(bool(s.get('learning_eligible'))),json.dumps(persisted_snapshot,default=str,separators=(',',':'),sort_keys=True)))
   inserted=c.total_changes>before
   try:
    from .dynamic_state_outcome_calibration import persist_context

@@ -6,11 +6,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_release_identity_stays_three_part_69_4_3():
+def test_release_identity_stays_three_part_and_preserves_69_4_3_or_later():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "69.4.3"
-    assert manifest["semantic_version"] == "69.4.3"
-    assert manifest["application_version"] == "69.4.3"
+    version = manifest["apex_version"]
+    parts = tuple(int(x) for x in version.split("."))
+    assert len(parts) == 3
+    assert parts >= (69, 4, 3)
+    assert manifest["semantic_version"] == version
+    assert manifest["application_version"] == version
 
 
 def test_storage_audit_route_is_registered_read_only_and_authenticated_by_global_layer():
