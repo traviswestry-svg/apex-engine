@@ -39,7 +39,7 @@ EXPECTED_ROUTES = {
 
 def _registry_capability():
     registry = yaml.safe_load(REGISTRY_PATH.read_text())
-    assert registry["apex_version"] == "69.4.2"
+    assert tuple(map(int, registry["apex_version"].split("."))) >= (69, 4, 2)
     return registry["capabilities"]["market_microstructure_governance_truth_closure"]
 
 
@@ -74,8 +74,9 @@ def test_registry_preserves_observational_non_authority_truths():
 
 def test_release_manifest_ratchets_microstructure_preservation_guardrails():
     manifest = json.loads(MANIFEST_PATH.read_text())
-    assert manifest["apex_version"] == "69.4.2"
-    assert manifest["build_name"] == "Microstructure Governance Truth Closure"
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 4, 2)
+    if manifest["apex_version"] == "69.4.2":
+        assert manifest["build_name"] == "Microstructure Governance Truth Closure"
     g = manifest["guardrails"]
     expected = {
         "microstructure_observational_only": True,

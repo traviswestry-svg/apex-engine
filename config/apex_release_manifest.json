@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.4.2",
-  "build_name": "Microstructure Governance Truth Closure",
+  "apex_version": "69.4.3",
+  "build_name": "Live Flow Excursion Invocation Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-25",
+  "released_at": "2026-08-26",
   "guardrails": {
     "changes_trade_decisions": false,
     "changes_execution_authority": false,
@@ -166,7 +166,12 @@
     "microstructure_canonical_high_consequence_persistence_required": false,
     "microstructure_direct_sqlite_exception_approved": true,
     "microstructure_high_consequence_state": false,
-    "microstructure_evidence_store_merge_deferred": true
+    "microstructure_evidence_store_merge_deferred": true,
+    "scanner_flow_excursion_capture_post_feature_persistence": true,
+    "scanner_flow_excursion_capture_uses_canonical_sample_id_only": true,
+    "scanner_flow_learning_store_initialization_explicit": true,
+    "flow_excursion_backfill_fabrication_allowed": false,
+    "flow_settlement_requirements_relaxed": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",

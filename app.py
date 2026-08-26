@@ -772,10 +772,14 @@ except Exception as _fpl_err:
 # describe the polling pattern rather than the session — and Step 5 would train
 # on that artefact.
 try:
-    from engine.flow_pl_pipeline import run_flow_pl as _flow_pl_run
+    from engine.flow_pl_pipeline import (
+        run_flow_pl as _flow_pl_run,
+        capture_persisted_feature_excursions as _flow_pl_capture_persisted,
+    )
     FLOW_PL_SAMPLER_AVAILABLE = True
 except Exception as _fpls_err:
     _flow_pl_run = None  # type: ignore[assignment]
+    _flow_pl_capture_persisted = None  # type: ignore[assignment]
     FLOW_PL_SAMPLER_AVAILABLE = False
     print(f"APEX Flow P/L sampler unavailable (non-fatal): {_fpls_err}", flush=True)
 
@@ -4422,7 +4426,21 @@ def scanner_loop() -> None:
                             priced_clusters=_res["source_clusters"], replay_rows=_frames,
                             session_date=_sess,
                             now_et_seconds=_n.hour * 3600 + _n.minute * 60 + _n.second,
-                            ticker=ASSISTANT_TICKER)
+                            ticker=ASSISTANT_TICKER,
+                            defer_excursion_capture=True)
+                        # APEX 69.4.3: invoke canonical excursion capture only after
+                        # feature persistence/identity publication. This is the scanner-
+                        # owned production invocation boundary; no sample_id is rebuilt.
+                        if _flow_pl_capture_persisted is not None:
+                            _cap = _flow_pl_capture_persisted(
+                                _rep.get("capture_targets") or [])
+                            if _cap.get("attempted"):
+                                print(
+                                    "flow_excursion: attempted "
+                                    f"{_cap['attempted']} canonical mark(s); "
+                                    f"inserted={_cap['inserted']} updated={_cap['updated']} "
+                                    f"missing_pl={_cap['missing_pl']} errors={_cap['errors']}",
+                                    flush=True)
                         if _rep.get("written"):
                             print(f"feature_store: wrote {_rep['written']} sample(s).",
                                   flush=True)

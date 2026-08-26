@@ -292,3 +292,51 @@ def sample_flow_pl(**kwargs) -> int:
     kwargs["attach_excursions"] = False
     res = run_flow_pl(**kwargs)
     return int(res.get("samples_recorded") or 0)
+
+
+def capture_persisted_feature_excursions(targets: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Capture real live P/L marks for canonical feature identities after persistence.
+
+    APEX 69.4.3 production boundary: scanner feature persistence happens before this
+    function is invoked. ``targets`` are emitted by the feature writer only for
+    sealed samples whose immutable feature row exists and whose exact sample_id was
+    registered. No identity is reconstructed and no missing P/L is synthesized.
+    """
+    report = {"attempted": 0, "inserted": 0, "updated": 0,
+              "missing_pl": 0, "errors": 0, "store_ready": 0}
+    try:
+        if not flow_pl_store.is_ready():
+            flow_pl_store.init_db()
+        report["store_ready"] = 1 if flow_pl_store.is_ready() else 0
+        if not flow_pl_store.is_ready():
+            return report
+        for target in targets or []:
+            sid = target.get("sample_id")
+            if not sid:
+                continue
+            report["attempted"] += 1
+            if target.get("pl_dollars") is None:
+                report["missing_pl"] += 1
+                flow_pl_store.record_capture_audit(
+                    attempted=1, missing_pl=1, sample_id=sid)
+                continue
+            cap = flow_pl_store.record_sample_excursion(
+                sample_id=sid,
+                session_date=target.get("session_date"),
+                ticker=target.get("ticker"),
+                pl_dollars=target.get("pl_dollars"),
+                cost_basis=target.get("cost_basis"),
+                decision_time=target.get("decision_time"),
+                legacy_cluster_key=target.get("legacy_cluster_key"),
+            )
+            if cap:
+                if cap.get("first_sample"):
+                    report["inserted"] += 1
+                else:
+                    report["updated"] += 1
+            else:
+                report["errors"] += 1
+        return report
+    except Exception:
+        report["errors"] += 1
+        return report
