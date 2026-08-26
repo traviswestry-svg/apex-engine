@@ -1,5 +1,5 @@
 {
-  "apex_version": "69.4.3.1",
+  "apex_version": "69.4.3",
   "build_name": "Storage Retention Audit & Safe Maintenance Guardrails",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
@@ -178,8 +178,8 @@
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.4.3.1",
-  "application_version": "69.4.3.1",
+  "semantic_version": "69.4.3",
+  "application_version": "69.4.3",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

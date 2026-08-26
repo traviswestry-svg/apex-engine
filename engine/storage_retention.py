@@ -1,4 +1,4 @@
-"""APEX 69.4.3.1 — governed storage retention and maintenance.
+"""APEX 69.4.3 — governed storage retention and maintenance.
 
 Operational only. Never deletes canonical decisions, outcomes, feature vectors,
 excursions, calibration evidence, or active SQLite databases.
@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any
 from .operational_runtime import persistent_root, storage_status
 from .evidence_pipeline import DEFAULT_DB
+from .release_manager import APP_VERSION
 
-VERSION = "69.4.3.1"
+VERSION = APP_VERSION
 QUARANTINE_RE = re.compile(r"\.corrupt-(\d{8,14})(?:\.bak)?$")
 PRICE_RETENTION_DAYS = int(os.getenv("APEX_EVIDENCE_PRICE_RETENTION_DAYS", "14"))
 QUARANTINE_RETENTION_DAYS = int(os.getenv("APEX_CORRUPT_DB_RETENTION_DAYS", "14"))

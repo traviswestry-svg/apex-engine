@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.4.3.1
+apex_version: 69.4.3
 capabilities:
   live_flow_excursion_invocation_closure:
     canonical_module: engine.flow_pl_pipeline
@@ -461,7 +461,7 @@ capabilities:
   governed_storage_retention:
     canonical_module: engine.storage_retention
     status: active
-    version: 69.4.3.1
+    version: 69.4.3
     inputs: [persistent_disk_inventory, sqlite_wal_state, evidence_pipeline_price_samples, pending_decision_floor, db_resilience_quarantine_artifacts]
     outputs: [storage_retention_audit, operator_maintenance_plan, bounded_price_sample_prune, wal_checkpoint_result]
     decision_authority: none
