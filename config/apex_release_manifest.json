@@ -1,6 +1,6 @@
 {
   "apex_version": "69.4.3",
-  "build_name": "Storage Retention Audit & Safe Maintenance Guardrails",
+  "build_name": "Storage Retention Audit & Safe Maintenance Guardrails \u2014 Observability Fix",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -192,6 +192,11 @@
     "grading_results_preserved": true,
     "flow_features_preserved": true,
     "excursion_evidence_preserved": true,
-    "calibration_evidence_preserved": true
+    "calibration_evidence_preserved": true,
+    "storage_audit_endpoint": "/api/admin/storage/audit",
+    "storage_audit_endpoint_read_only": true,
+    "storage_audit_endpoint_authenticated": true,
+    "storage_audit_endpoint_applies_maintenance": false,
+    "storage_audit_endpoint_vacuum_performed": false
   }
 }

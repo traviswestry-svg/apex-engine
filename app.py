@@ -17,6 +17,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from flask import Flask, jsonify, render_template, request, redirect, g
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
+from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
 
@@ -14323,6 +14324,41 @@ def _apex65_runtime_health_payload():
     ]
     return payload
 
+
+
+
+@app.get("/api/admin/storage/audit")
+def api_admin_storage_audit():
+    """APEX 69.4.3 read-only persistent-storage audit.
+
+    This route is protected by the application-wide APEX auth layer. It may
+    inspect SQLite metadata and file sizes but never invokes maintenance
+    mutators (prune, cleanup, checkpoint, VACUUM, or unlink).
+    """
+    try:
+        payload = dict(apex_storage_retention_audit())
+        payload["schema_version"] = "apex.storage_audit.v1"
+        payload["endpoint"] = "/api/admin/storage/audit"
+        payload["read_only"] = True
+        payload["authenticated_by"] = "APEX_APPLICATION_AUTH"
+        payload["maintenance_applied"] = False
+        payload.setdefault("guardrails", {}).update({
+            "endpoint_read_only": True,
+            "maintenance_mutators_invoked": False,
+            "vacuum_performed": False,
+        })
+        return jsonify(payload)
+    except Exception as exc:
+        app.logger.exception("APEX 69.4.3 storage audit failed")
+        return jsonify({
+            "ok": False,
+            "schema_version": "apex.storage_audit.v1",
+            "endpoint": "/api/admin/storage/audit",
+            "read_only": True,
+            "maintenance_applied": False,
+            "version": VERSION,
+            "error": type(exc).__name__,
+        }), 500
 
 @app.get("/api/runtime/health")
 def api_apex65_runtime_health():
