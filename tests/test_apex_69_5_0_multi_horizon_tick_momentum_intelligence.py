@@ -15,10 +15,11 @@ def _tx(n:int, *, up:bool=True):
     return [{"observed_at":(t0+timedelta(milliseconds=10*i)).isoformat(),
              "price":base + (i*0.25 if up else -i*0.25),"size":1.0} for i in range(n)]
 
-def test_release_truth_and_registry_are_69_5_0_observational():
+def test_release_truth_and_registry_preserve_69_5_0_observational():
     m=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-    assert m['apex_version']=='69.5.0'
-    assert m['semantic_version']==m['application_version']=='69.5.0'
+    parts=tuple(int(x) for x in m['apex_version'].split('.'))
+    assert parts >= (69,5,0)
+    assert m['semantic_version']==m['application_version']==m['apex_version']
     g=m['guardrails']
     assert g['tick_momentum_observational_only'] is True
     assert g['tick_momentum_changes_trade_decisions'] is False
@@ -29,7 +30,8 @@ def test_release_truth_and_registry_are_69_5_0_observational():
     assert g['tick_momentum_synthetic_depth_allowed'] is False
     assert g['tick_momentum_automatic_promotion'] is False
     r=(ROOT/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.5.0' in r
+    assert 'multi_horizon_tick_momentum_intelligence:' in r
+    assert 'version: "69.5.1"' in r or 'version: "69.5.0"' in r
     assert 'multi_horizon_tick_momentum_intelligence:' in r
     for route in ['/api/tick-momentum/capability','/api/tick-momentum/health','/api/tick-momentum/state','/api/tick-momentum/history','/api/tick-momentum/ingest']:
         assert route in r

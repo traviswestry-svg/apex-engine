@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo
 
-VERSION = "69.5.0"
+VERSION = "69.5.1"
 SCHEMA_VERSION = "apex.tick_momentum.v1"
 HORIZONS = (233, 512, 1000, 2000)
 WEIGHTS = {233: 1, 512: 2, 1000: 2, 2000: 3}

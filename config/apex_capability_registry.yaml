@@ -1,12 +1,12 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.5.0
+apex_version: 69.5.1
 capabilities:
   multi_horizon_tick_momentum_intelligence:
     canonical_module: engine.tick_momentum
-    deployed_modules: [engine.tick_momentum, engine.tick_momentum_store, engine.tick_momentum_routes, engine.market_microstructure_ingest, app]
+    deployed_modules: [engine.tick_momentum, engine.tick_momentum_store, engine.tick_momentum_routes, engine.tick_momentum_feed, engine.market_microstructure_ingest, scanner_worker, app]
     status: observational
-    version: "69.5.0"
-    inputs: [licensed_individual_es_mes_transactions, optional_real_trade_batch_from_microstructure_bridge]
+    version: "69.5.1"
+    inputs: [licensed_individual_es_mes_transactions, production_massive_polygon_futures_trades, optional_real_trade_batch_from_microstructure_bridge]
     outputs: [tick_horizon_states, signed_alignment_score, horizon_disagreement, bounded_bucket_history]
     api_routes: [/api/tick-momentum/capability, /api/tick-momentum/health, /api/tick-momentum/state, /api/tick-momentum/history, /api/tick-momentum/ingest]
     horizons: [233, 512, 1000, 2000]
@@ -31,7 +31,15 @@ capabilities:
       shared_states: [BULL, BEAR, NEUTRAL]
       shared_alignment_states: [STRONG_BULL, BULL, MIXED, BEAR, STRONG_BEAR]
       server_to_pine_direct_variable_bridge: false
-    guardrails: [observational_only, no_decision_authority, no_execution_authority, production_effect_none, genuine_transactions_only, aggregate_bars_not_ticks, not_l2_mbo_depth, no_synthetic_depth, no_automatic_promotion, human_promotion_required_for_future_influence, separate_from_microstructure_evidence_store]
+    production_feed:
+      module: engine.tick_momentum_feed
+      owner: scanner_worker
+      provider_family: MASSIVE_POLYGON_FUTURES_TRADES
+      endpoint: /futures/v1/trades/{ticker}
+      aggregate_bars_allowed: false
+      cursor_dedup_required: true
+      failure_mode: observable_fail_soft
+    guardrails: [observational_only, no_decision_authority, no_execution_authority, production_effect_none, genuine_transactions_only, aggregate_bars_not_ticks, not_l2_mbo_depth, no_synthetic_depth, no_automatic_promotion, human_promotion_required_for_future_influence, separate_from_microstructure_evidence_store, scanner_owned_production_trade_feed, cursor_dedup_required, feed_failures_do_not_change_trade_decisions]
   decision_evidence_storage_amplification_closure:
     canonical_module: engine.evidence_pipeline
     deployed_modules: [engine.evidence_pipeline, engine.storage_retention, engine.historical_evidence_lifecycle, engine.outcome_grader, engine.decision_outcome_attribution]

@@ -1,4 +1,4 @@
-"""APEX 69.5.0 routes for observational ES multi-horizon tick momentum."""
+"""APEX 69.5.1 routes for observational ES multi-horizon tick momentum."""
 from __future__ import annotations
 from flask import jsonify, request
 from .tick_momentum import VERSION, capability, process_transactions, validate_transactions
@@ -13,7 +13,7 @@ def register_tick_momentum_routes(app) -> None:
 
     @app.get('/api/tick-momentum/health')
     def tick_momentum_health():
-        h=store().health('ES'); h.update({"status":"READY" if h["transactions_seen"] else "WAITING_FOR_TRANSACTION_FEED","production_effect":"NONE","execution_authority":False}); return jsonify(h)
+        h=store().health('ES'); h.update({"production_effect":"NONE","execution_authority":False}); return jsonify(h)
 
     @app.get('/api/tick-momentum/state')
     def tick_momentum_state():
