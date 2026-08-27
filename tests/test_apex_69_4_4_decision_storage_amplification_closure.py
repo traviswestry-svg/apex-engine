@@ -44,9 +44,10 @@ def _large_snapshot(decision_id: str = "d1") -> dict:
 
 def test_release_is_69_4_4_three_part_and_manifest_truths_hold():
     m = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert m["apex_version"] == "69.4.4"
-    assert m["semantic_version"] == "69.4.4"
-    assert m["application_version"] == "69.4.4"
+    def v(x): return tuple(int(part) for part in str(x).split("."))
+    assert v(m["apex_version"]) >= (69, 4, 4)
+    assert m["semantic_version"] == m["apex_version"]
+    assert m["application_version"] == m["apex_version"]
     g = m["guardrails"]
     assert g["decision_snapshot_storage_projection_bounded"] is True
     assert g["decision_snapshot_full_institutional_object_replicated"] is False
@@ -118,7 +119,6 @@ def test_amplification_audit_returns_sizes_only_and_mutates_nothing(tmp_path):
 
 def test_registry_accounts_for_69_4_4_without_new_authority():
     r = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert 'apex_version: 69.4.4' in r
     assert 'decision_evidence_storage_amplification_closure:' in r
     assert 'production_effect: STORAGE_SHAPE_ONLY' in r
     assert 'decision_authority: none' in r

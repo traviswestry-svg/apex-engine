@@ -209,6 +209,15 @@ except Exception as _mmi688_err:
     register_market_microstructure_routes = None
     print(f"Market Microstructure Intelligence 68.9 unavailable: {_mmi688_err}", flush=True)
 
+# APEX 69.5.0 — Multi-Horizon ES Tick Momentum Intelligence
+try:
+    from engine.tick_momentum_routes import register_tick_momentum_routes
+    TICK_MOMENTUM_69_5_AVAILABLE = True
+except Exception as _tm695_err:
+    TICK_MOMENTUM_69_5_AVAILABLE = False
+    register_tick_momentum_routes = None
+    print(f"Tick Momentum Intelligence 69.5 unavailable: {_tm695_err}", flush=True)
+
 # APEX Trade Director Phase 18 — institutional flow intelligence
 try:
     from engine.trade_director_flow_intelligence import (
@@ -13699,6 +13708,10 @@ try:
         register_dynamic_state_routes(app, last_result_provider=_ds_last_result,
                                       scanner_state_provider=_ds_scanner_state)
         print("APEX 66.7.0 Dynamic State routes registered.", flush=True)
+
+    if TICK_MOMENTUM_69_5_AVAILABLE and register_tick_momentum_routes is not None:
+        register_tick_momentum_routes(app)
+        print("APEX 69.5.0 Multi-Horizon Tick Momentum routes registered.", flush=True)
 
     if MARKET_MICROSTRUCTURE_68_9_AVAILABLE and register_market_microstructure_routes is not None:
         register_market_microstructure_routes(app)

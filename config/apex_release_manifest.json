@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.4.4",
-  "build_name": "Decision Evidence Storage Amplification Audit & Closure",
+  "apex_version": "69.5.0",
+  "build_name": "Multi-Horizon Tick Momentum Intelligence",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -179,15 +179,33 @@
     "decision_snapshot_projection_changes_grade_eligibility": false,
     "decision_snapshot_source_hash_preserved": true,
     "historical_decision_rows_rewritten_automatically": false,
-    "decision_storage_amplification_audit_read_only": true
+    "decision_storage_amplification_audit_read_only": true,
+    "tick_momentum_observational_only": true,
+    "tick_momentum_changes_trade_decisions": false,
+    "tick_momentum_changes_execution_authority": false,
+    "tick_momentum_production_effect": "NONE",
+    "tick_momentum_individual_transactions_required": true,
+    "tick_momentum_aggregate_bars_allowed_as_ticks": false,
+    "tick_momentum_l2_mbo_depth_equivalent": false,
+    "tick_momentum_synthetic_depth_allowed": false,
+    "tick_momentum_automatic_promotion": false,
+    "tick_momentum_human_promotion_required_for_future_influence": true,
+    "tick_momentum_horizons": [
+      233,
+      512,
+      1000,
+      2000
+    ],
+    "tick_momentum_pine_vocabulary_compatible": true,
+    "tick_momentum_microstructure_store_merge": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.4.4",
-  "application_version": "69.4.4",
+  "semantic_version": "69.5.0",
+  "application_version": "69.5.0",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

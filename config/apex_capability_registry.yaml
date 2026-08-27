@@ -1,6 +1,37 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.4.4
+apex_version: 69.5.0
 capabilities:
+  multi_horizon_tick_momentum_intelligence:
+    canonical_module: engine.tick_momentum
+    deployed_modules: [engine.tick_momentum, engine.tick_momentum_store, engine.tick_momentum_routes, engine.market_microstructure_ingest, app]
+    status: observational
+    version: "69.5.0"
+    inputs: [licensed_individual_es_mes_transactions, optional_real_trade_batch_from_microstructure_bridge]
+    outputs: [tick_horizon_states, signed_alignment_score, horizon_disagreement, bounded_bucket_history]
+    api_routes: [/api/tick-momentum/capability, /api/tick-momentum/health, /api/tick-momentum/state, /api/tick-momentum/history, /api/tick-momentum/ingest]
+    horizons: [233, 512, 1000, 2000]
+    decision_authority: none
+    execution_authority: none
+    production_effect: NONE
+    observational_only: true
+    individual_transactions_required: true
+    aggregate_bars_allowed_as_ticks: false
+    l2_mbo_depth_equivalent: false
+    synthetic_depth_allowed: false
+    automatic_promotion: false
+    human_promotion_required_for_future_influence: true
+    persistence:
+      classification: CANONICAL_OBSERVATIONAL_STATE
+      module: engine.tick_momentum_store
+      connection_policy: engine.persistence
+      high_consequence_state: false
+      decision_authority: none
+      execution_authority: none
+    pine_contract:
+      shared_states: [BULL, BEAR, NEUTRAL]
+      shared_alignment_states: [STRONG_BULL, BULL, MIXED, BEAR, STRONG_BEAR]
+      server_to_pine_direct_variable_bridge: false
+    guardrails: [observational_only, no_decision_authority, no_execution_authority, production_effect_none, genuine_transactions_only, aggregate_bars_not_ticks, not_l2_mbo_depth, no_synthetic_depth, no_automatic_promotion, human_promotion_required_for_future_influence, separate_from_microstructure_evidence_store]
   decision_evidence_storage_amplification_closure:
     canonical_module: engine.evidence_pipeline
     deployed_modules: [engine.evidence_pipeline, engine.storage_retention, engine.historical_evidence_lifecycle, engine.outcome_grader, engine.decision_outcome_attribution]
