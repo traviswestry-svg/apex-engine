@@ -1,0 +1,304 @@
+//@version=6
+indicator("APEX ES Tick Momentum [233/512/1000/2000]", shorttitle="APEXESTICK", overlay=false, max_labels_count=100)
+
+// Standalone ES confirmation layer for the APEX SPX scalper.
+// RUN ON AN ES 1T CHART.
+// Transaction/tick momentum only. This is NOT L2/MBO market depth.
+
+// ---------- Inputs ----------
+bool resetSession = input.bool(true, "Reset Buckets At Session Open", group="Session")
+
+int emaLen = input.int(5, "Synthetic Bucket EMA", minval=2, maxval=30, group="Model")
+float wBody = input.float(0.30, "Bucket Body Weight", minval=0, maxval=1, step=0.05, group="Model")
+float wPress = input.float(0.35, "Tick Pressure Weight", minval=0, maxval=1, step=0.05, group="Model")
+float wTrend = input.float(0.35, "Trend Weight", minval=0, maxval=1, step=0.05, group="Model")
+float neutral = input.float(0.12, "Neutral Band", minval=0.01, maxval=0.75, step=0.01, group="Model")
+
+int p233  = input.int(1, "233T Weight", minval=1, maxval=5, group="Alignment")
+int p512  = input.int(2, "512T Weight", minval=1, maxval=5, group="Alignment")
+int p1000 = input.int(2, "1000T Weight", minval=1, maxval=5, group="Alignment")
+int p2000 = input.int(3, "2000T Weight", minval=1, maxval=5, group="Alignment")
+int strongThreshold = input.int(7, "Strong Threshold", minval=4, maxval=8, group="Alignment")
+
+bool showTable = input.bool(true, "Show Dashboard", group="Display")
+bool showBg = input.bool(true, "Shade Strong Alignment", group="Display")
+bool showFlips = input.bool(true, "Show Strong Flip Markers", group="Display")
+
+// ---------- Safety / session ----------
+bool esLike = str.contains(str.upper(syminfo.ticker), "ES")
+bool chartReady = timeframe.period == "1T" and esLike
+int nyHour = hour(time, "America/New_York")
+int nyMinute = minute(time, "America/New_York")
+int nyTOD = nyHour * 60 + nyMinute
+bool inSess = nyTOD >= 570 and nyTOD < 960
+bool newSess = inSess and (bar_index == 0 or not inSess[1])
+bool processTick = inSess and chartReady
+
+f_state(float body, float press, float trend) =>
+    float raw = wBody * body + wPress * press + wTrend * trend
+    int st = raw > neutral ? 1 : raw < -neutral ? -1 : 0
+    [st, raw]
+
+f_txt(int s) => s == 1 ? "BULL" : s == -1 ? "BEAR" : "NEUTRAL"
+f_col(int s) => s == 1 ? color.green : s == -1 ? color.red : color.gray
+
+// ============================================================================
+// 233T FAST
+// ============================================================================
+var int n233 = 0
+var float o233 = na
+var float h233 = na
+var float l233 = na
+var float c233 = na
+var float uv233 = 0.0
+var float dv233 = 0.0
+var float e233 = na
+var int s233 = 0
+var float r233 = 0.0
+
+if resetSession and newSess
+    n233 := 0
+    o233 := na
+    h233 := na
+    l233 := na
+    c233 := na
+    uv233 := 0.0
+    dv233 := 0.0
+
+if processTick
+    if n233 == 0
+        o233 := close
+        h233 := close
+        l233 := close
+        uv233 := 0.0
+        dv233 := 0.0
+    h233 := math.max(nz(h233, close), close)
+    l233 := math.min(nz(l233, close), close)
+    c233 := close
+    float dir233 = na(close[1]) ? 0 : close > close[1] ? 1 : close < close[1] ? -1 : 0
+    uv233 += dir233 > 0 ? nz(volume, 1) : 0
+    dv233 += dir233 < 0 ? nz(volume, 1) : 0
+    n233 += 1
+    if n233 >= 233
+        float rg = math.max(h233 - l233, syminfo.mintick)
+        float body = math.max(-1.0, math.min(1.0, (c233 - o233) / rg))
+        float tv = uv233 + dv233
+        float press = tv > 0 ? (uv233 - dv233) / tv : 0
+        float a = 2.0 / (emaLen + 1.0)
+        e233 := na(e233) ? c233 : e233 + a * (c233 - e233)
+        float trend = math.max(-1.0, math.min(1.0, (c233 - e233) / rg))
+        [ns, nr] = f_state(body, press, trend)
+        s233 := ns
+        r233 := nr
+        n233 := 0
+
+// ============================================================================
+// 512T ENTRY
+// ============================================================================
+var int n512 = 0
+var float o512 = na
+var float h512 = na
+var float l512 = na
+var float c512 = na
+var float uv512 = 0.0
+var float dv512 = 0.0
+var float e512 = na
+var int s512 = 0
+var float r512 = 0.0
+
+if resetSession and newSess
+    n512 := 0
+    o512 := na
+    h512 := na
+    l512 := na
+    c512 := na
+    uv512 := 0.0
+    dv512 := 0.0
+
+if processTick
+    if n512 == 0
+        o512 := close
+        h512 := close
+        l512 := close
+        uv512 := 0.0
+        dv512 := 0.0
+    h512 := math.max(nz(h512, close), close)
+    l512 := math.min(nz(l512, close), close)
+    c512 := close
+    float dir512 = na(close[1]) ? 0 : close > close[1] ? 1 : close < close[1] ? -1 : 0
+    uv512 += dir512 > 0 ? nz(volume, 1) : 0
+    dv512 += dir512 < 0 ? nz(volume, 1) : 0
+    n512 += 1
+    if n512 >= 512
+        float rg = math.max(h512 - l512, syminfo.mintick)
+        float body = math.max(-1.0, math.min(1.0, (c512 - o512) / rg))
+        float tv = uv512 + dv512
+        float press = tv > 0 ? (uv512 - dv512) / tv : 0
+        float a = 2.0 / (emaLen + 1.0)
+        e512 := na(e512) ? c512 : e512 + a * (c512 - e512)
+        float trend = math.max(-1.0, math.min(1.0, (c512 - e512) / rg))
+        [ns, nr] = f_state(body, press, trend)
+        s512 := ns
+        r512 := nr
+        n512 := 0
+
+// ============================================================================
+// 1000T STRUCTURE
+// ============================================================================
+var int n1000 = 0
+var float o1000 = na
+var float h1000 = na
+var float l1000 = na
+var float c1000 = na
+var float uv1000 = 0.0
+var float dv1000 = 0.0
+var float e1000 = na
+var int s1000 = 0
+var float r1000 = 0.0
+
+if resetSession and newSess
+    n1000 := 0
+    o1000 := na
+    h1000 := na
+    l1000 := na
+    c1000 := na
+    uv1000 := 0.0
+    dv1000 := 0.0
+
+if processTick
+    if n1000 == 0
+        o1000 := close
+        h1000 := close
+        l1000 := close
+        uv1000 := 0.0
+        dv1000 := 0.0
+    h1000 := math.max(nz(h1000, close), close)
+    l1000 := math.min(nz(l1000, close), close)
+    c1000 := close
+    float dir1000 = na(close[1]) ? 0 : close > close[1] ? 1 : close < close[1] ? -1 : 0
+    uv1000 += dir1000 > 0 ? nz(volume, 1) : 0
+    dv1000 += dir1000 < 0 ? nz(volume, 1) : 0
+    n1000 += 1
+    if n1000 >= 1000
+        float rg = math.max(h1000 - l1000, syminfo.mintick)
+        float body = math.max(-1.0, math.min(1.0, (c1000 - o1000) / rg))
+        float tv = uv1000 + dv1000
+        float press = tv > 0 ? (uv1000 - dv1000) / tv : 0
+        float a = 2.0 / (emaLen + 1.0)
+        e1000 := na(e1000) ? c1000 : e1000 + a * (c1000 - e1000)
+        float trend = math.max(-1.0, math.min(1.0, (c1000 - e1000) / rg))
+        [ns, nr] = f_state(body, press, trend)
+        s1000 := ns
+        r1000 := nr
+        n1000 := 0
+
+// ============================================================================
+// 2000T TREND
+// ============================================================================
+var int n2000 = 0
+var float o2000 = na
+var float h2000 = na
+var float l2000 = na
+var float c2000 = na
+var float uv2000 = 0.0
+var float dv2000 = 0.0
+var float e2000 = na
+var int s2000 = 0
+var float r2000 = 0.0
+
+if resetSession and newSess
+    n2000 := 0
+    o2000 := na
+    h2000 := na
+    l2000 := na
+    c2000 := na
+    uv2000 := 0.0
+    dv2000 := 0.0
+
+if processTick
+    if n2000 == 0
+        o2000 := close
+        h2000 := close
+        l2000 := close
+        uv2000 := 0.0
+        dv2000 := 0.0
+    h2000 := math.max(nz(h2000, close), close)
+    l2000 := math.min(nz(l2000, close), close)
+    c2000 := close
+    float dir2000 = na(close[1]) ? 0 : close > close[1] ? 1 : close < close[1] ? -1 : 0
+    uv2000 += dir2000 > 0 ? nz(volume, 1) : 0
+    dv2000 += dir2000 < 0 ? nz(volume, 1) : 0
+    n2000 += 1
+    if n2000 >= 2000
+        float rg = math.max(h2000 - l2000, syminfo.mintick)
+        float body = math.max(-1.0, math.min(1.0, (c2000 - o2000) / rg))
+        float tv = uv2000 + dv2000
+        float press = tv > 0 ? (uv2000 - dv2000) / tv : 0
+        float a = 2.0 / (emaLen + 1.0)
+        e2000 := na(e2000) ? c2000 : e2000 + a * (c2000 - e2000)
+        float trend = math.max(-1.0, math.min(1.0, (c2000 - e2000) / rg))
+        [ns, nr] = f_state(body, press, trend)
+        s2000 := ns
+        r2000 := nr
+        n2000 := 0
+
+// ---------- Alignment ----------
+int bull = (s233 == 1 ? p233 : 0) + (s512 == 1 ? p512 : 0) + (s1000 == 1 ? p1000 : 0) + (s2000 == 1 ? p2000 : 0)
+int bear = (s233 == -1 ? p233 : 0) + (s512 == -1 ? p512 : 0) + (s1000 == -1 ? p1000 : 0) + (s2000 == -1 ? p2000 : 0)
+int score = bull - bear
+
+string align = score >= strongThreshold ? "STRONG BULL" : score >= 5 ? "BULL" : score <= -strongThreshold ? "STRONG BEAR" : score <= -5 ? "BEAR" : "MIXED"
+color ac = score >= strongThreshold ? color.green : score >= 5 ? color.new(color.green, 35) : score <= -strongThreshold ? color.red : score <= -5 ? color.new(color.red, 35) : color.gray
+bool strongBull = score >= strongThreshold and s2000 >= 0
+bool strongBear = score <= -strongThreshold and s2000 <= 0
+bool bullFlip = strongBull and not strongBull[1]
+bool bearFlip = strongBear and not strongBear[1]
+
+// ---------- Display ----------
+hline(0, "Neutral", color=color.new(color.gray, 70))
+hline(7, "Strong Bull", color=color.new(color.green, 80), linestyle=hline.style_dotted)
+hline(-7, "Strong Bear", color=color.new(color.red, 80), linestyle=hline.style_dotted)
+plot(score, "ES Alignment Score", style=plot.style_columns, color=ac, linewidth=3)
+plot(r233 * 2, "233T FAST", color=color.aqua)
+plot(r512 * 3, "512T ENTRY", color=color.blue)
+plot(r1000 * 4, "1000T STRUCTURE", color=color.orange)
+plot(r2000 * 5, "2000T TREND", color=color.purple, linewidth=2)
+bgcolor(showBg and strongBull ? color.new(color.green, 90) : showBg and strongBear ? color.new(color.red, 90) : na)
+plotshape(showFlips and bullFlip, "Strong Bull Flip", shape.triangleup, location.bottom, color.green, size=size.tiny, text="ES↑")
+plotshape(showFlips and bearFlip, "Strong Bear Flip", shape.triangledown, location.top, color.red, size=size.tiny, text="ES↓")
+
+// ---------- Dashboard ----------
+var table t = table.new(position.top_right, 3, 7, border_width=1)
+if showTable and barstate.islast
+    table.cell(t, 0, 0, "APEX ES", text_color=color.white, bgcolor=color.black)
+    table.cell(t, 1, 0, "STATE", text_color=color.white, bgcolor=color.black)
+    table.cell(t, 2, 0, "PROGRESS", text_color=color.white, bgcolor=color.black)
+
+    table.cell(t, 0, 1, "233 FAST", text_color=color.white)
+    table.cell(t, 1, 1, f_txt(s233), text_color=color.white, bgcolor=f_col(s233))
+    table.cell(t, 2, 1, str.tostring(n233) + "/233", text_color=color.white)
+
+    table.cell(t, 0, 2, "512 ENTRY", text_color=color.white)
+    table.cell(t, 1, 2, f_txt(s512), text_color=color.white, bgcolor=f_col(s512))
+    table.cell(t, 2, 2, str.tostring(n512) + "/512", text_color=color.white)
+
+    table.cell(t, 0, 3, "1000 STRUCT", text_color=color.white)
+    table.cell(t, 1, 3, f_txt(s1000), text_color=color.white, bgcolor=f_col(s1000))
+    table.cell(t, 2, 3, str.tostring(n1000) + "/1000", text_color=color.white)
+
+    table.cell(t, 0, 4, "2000 TREND", text_color=color.white)
+    table.cell(t, 1, 4, f_txt(s2000), text_color=color.white, bgcolor=f_col(s2000))
+    table.cell(t, 2, 4, str.tostring(n2000) + "/2000", text_color=color.white)
+
+    table.cell(t, 0, 5, "ALIGN", text_color=color.white)
+    table.cell(t, 1, 5, align, text_color=color.white, bgcolor=ac)
+    table.cell(t, 2, 5, str.tostring(score) + "/8", text_color=color.white, bgcolor=ac)
+
+    table.cell(t, 0, 6, esLike ? "ES OK" : "CHECK SYMBOL", text_color=color.white, bgcolor=esLike ? color.new(color.green, 40) : color.orange)
+    table.cell(t, 1, 6, not chartReady ? "USE ES 1T" : inSess ? "RTH ACTIVE" : "OUTSIDE RTH", text_color=color.white, bgcolor=not chartReady ? color.orange : inSess ? color.new(color.green, 60) : color.gray)
+    table.cell(t, 2, 6, "1T", text_color=color.white, bgcolor=color.black)
+
+// TradingView currently does not support server-side alerts on tick intervals.
+// Definitions are retained for future platform support / code portability.
+alertcondition(bullFlip, "APEX ES Strong Bull", "APEX ES TICK: STRONG BULL")
+alertcondition(bearFlip, "APEX ES Strong Bear", "APEX ES TICK: STRONG BEAR")
