@@ -31,7 +31,10 @@ def test_release_truth_and_registry_preserve_69_5_0_observational():
     assert g['tick_momentum_automatic_promotion'] is False
     r=(ROOT/'config/apex_capability_registry.yaml').read_text()
     assert 'multi_horizon_tick_momentum_intelligence:' in r
-    assert 'version: "69.5.1"' in r or 'version: "69.5.0"' in r
+    import re
+    match = re.search(r'multi_horizon_tick_momentum_intelligence:.*?version: "(\d+)\.(\d+)\.(\d+)"', r, re.S)
+    assert match is not None
+    assert tuple(int(x) for x in match.groups()) >= (69, 5, 0)
     assert 'multi_horizon_tick_momentum_intelligence:' in r
     for route in ['/api/tick-momentum/capability','/api/tick-momentum/health','/api/tick-momentum/state','/api/tick-momentum/history','/api/tick-momentum/ingest']:
         assert route in r

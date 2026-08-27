@@ -1,4 +1,4 @@
-"""APEX 69.5.1 canonical-persistence observational store for ES tick momentum."""
+"""APEX 69.5.2 canonical-persistence observational store for ES tick momentum."""
 from __future__ import annotations
 import json
 from pathlib import Path

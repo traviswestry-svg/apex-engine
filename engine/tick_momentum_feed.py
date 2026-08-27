@@ -1,4 +1,4 @@
-"""APEX 69.5.1 — production ES transaction-feed wiring.
+"""APEX 69.5.2 — futures trade entitlement & response diagnostics closure.
 
 Consumes genuine individual futures trades from the configured Massive/Polygon
 Futures REST trades endpoint and feeds them into the observational 69.5 tick
@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from .tick_momentum import process_transactions, validate_transactions
 from .tick_momentum_store import TickMomentumStore
 
-VERSION = "69.5.1"
+VERSION = "69.5.2"
 SCHEMA_VERSION = "apex.tick_momentum.feed.v1"
 SOURCE = "MASSIVE_POLYGON_FUTURES_TRADES"
 DEFAULT_LIMIT = 5000
@@ -108,6 +108,51 @@ def _safe_next_url(url: Any, configured_base_url: str) -> str | None:
     return text
 
 
+def _unwrap_provider_response(result: Any) -> tuple[Mapping[str, Any] | None, dict[str, Any]]:
+    """Accept legacy JSON mappings or the 69.5.2 diagnostic transport envelope."""
+    if isinstance(result, Mapping) and result.get("__apex_provider_response__") is True:
+        payload = result.get("payload")
+        diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), Mapping) else {}
+        return (payload if isinstance(payload, Mapping) else None, dict(diagnostics))
+    return (result if isinstance(result, Mapping) else None, {})
+
+
+def _entitlement_state(diag: Mapping[str, Any], payload: Mapping[str, Any] | None) -> str:
+    status = diag.get("provider_http_status")
+    try:
+        status_i = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status_i = None
+    if status_i == 401:
+        return "AUTHENTICATION_FAILED"
+    if status_i == 403:
+        return "NOT_ENTITLED_OR_FORBIDDEN"
+    if status_i == 404:
+        return "ENDPOINT_OR_CONTRACT_NOT_FOUND"
+    if status_i == 429:
+        return "RATE_LIMITED"
+    if status_i is not None and status_i >= 500:
+        return "PROVIDER_ERROR"
+    if status_i is not None and 200 <= status_i < 300 and isinstance(payload, Mapping):
+        return "ACCESS_CONFIRMED"
+    if diag.get("provider_response_kind") == "TRANSPORT_ERROR":
+        return "TRANSPORT_ERROR"
+    return "UNKNOWN"
+
+
+def _diagnostic_feed_fields(diag: Mapping[str, Any], payload: Mapping[str, Any] | None, credential_source: str) -> dict[str, Any]:
+    allowed = (
+        "provider_http_status", "provider_content_type", "provider_response_bytes",
+        "provider_response_kind", "provider_json_parse_error", "provider_error_code",
+        "provider_error_message", "provider_request_host",
+    )
+    out = {k: diag.get(k) for k in allowed}
+    out["credential_source"] = credential_source or "UNKNOWN"
+    out["entitlement_state"] = _entitlement_state(diag, payload)
+    out["api_key_exposed"] = False
+    return out
+
+
 def poll_futures_trades(
     get_json: Callable[..., Mapping[str, Any] | None],
     *,
@@ -118,6 +163,7 @@ def poll_futures_trades(
     store: TickMomentumStore | None = None,
     limit: int = DEFAULT_LIMIT,
     max_pages: int = MAX_INCREMENTAL_PAGES,
+    credential_source: str = "UNKNOWN",
 ) -> dict[str, Any]:
     """Poll the configured individual-trades endpoint once and persist state.
 
@@ -155,8 +201,15 @@ def poll_futures_trades(
     if not bootstrap:
         params["timestamp.gte"] = cursor[0]
 
-    payload = get_json(endpoint, params=params, timeout=15)
-    if not isinstance(payload, Mapping):
+    raw_response = get_json(endpoint, params=params, timeout=15)
+    payload, provider_diag = _unwrap_provider_response(raw_response)
+    diagnostic_fields = _diagnostic_feed_fields(provider_diag, payload, credential_source)
+    http_status = provider_diag.get("provider_http_status")
+    try:
+        http_failed = http_status is not None and not (200 <= int(http_status) < 300)
+    except (TypeError, ValueError):
+        http_failed = False
+    if http_failed or not isinstance(payload, Mapping):
         feed = {
             **dict(prior_feed),
             "schema_version": SCHEMA_VERSION,
@@ -166,6 +219,7 @@ def poll_futures_trades(
             "ticker": ticker,
             "endpoint": "/futures/v1/trades/{ticker}",
             "last_error": "provider request returned no usable JSON",
+            **diagnostic_fields,
         }
         state["feed"] = feed
         store.save(state, [])
@@ -182,7 +236,8 @@ def poll_futures_trades(
         next_url = _safe_next_url(current.get("next_url"), base)
         if not next_url:
             break
-        current = get_json(next_url, params={"apiKey": api_key}, timeout=15)
+        next_raw = get_json(next_url, params={"apiKey": api_key}, timeout=15)
+        current, _next_diag = _unwrap_provider_response(next_raw)
         if not isinstance(current, Mapping):
             break
 
@@ -209,6 +264,7 @@ def poll_futures_trades(
                 "version": VERSION,
                 "source": SOURCE,
                 "status": "STALE_TRANSACTION_FEED",
+                **diagnostic_fields,
                 "ticker": ticker,
                 "endpoint": "/futures/v1/trades/{ticker}",
                 "provider_timestamp_ns": int(last["provider_timestamp_ns"]),
@@ -240,6 +296,7 @@ def poll_futures_trades(
             "version": VERSION,
             "source": SOURCE,
             "status": "OBSERVING",
+                **diagnostic_fields,
             "ticker": ticker,
             "endpoint": "/futures/v1/trades/{ticker}",
             "provider_timestamp_ns": int(last["provider_timestamp_ns"]),
@@ -266,6 +323,7 @@ def poll_futures_trades(
         "version": VERSION,
         "source": SOURCE,
         "status": "NO_NEW_TRANSACTIONS",
+        **diagnostic_fields,
         "ticker": ticker,
         "endpoint": "/futures/v1/trades/{ticker}",
         "last_success_at": datetime.now(timezone.utc).isoformat(),

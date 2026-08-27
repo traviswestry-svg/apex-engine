@@ -20,8 +20,9 @@ def _payload(rows):
 
 def test_release_truth_registers_production_trade_feed_without_authority():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "69.5.1"
-    assert manifest["semantic_version"] == manifest["application_version"] == "69.5.1"
+    major, minor, patch = (int(x) for x in manifest["apex_version"].split("."))
+    assert (major, minor, patch) >= (69, 5, 1)
+    assert manifest["semantic_version"] == manifest["application_version"] == manifest["apex_version"]
     g = manifest["guardrails"]
     assert g["tick_momentum_production_es_transaction_feed_wired"] is True
     assert g["tick_momentum_feed_source"] == "MASSIVE_POLYGON_FUTURES_TRADES"
@@ -37,7 +38,7 @@ def test_release_truth_registers_production_trade_feed_without_authority():
 
 
 def test_provider_normalization_accepts_individual_trades_and_rejects_aggregate_rows():
-    now = datetime.now(timezone.utc)
+    now = datetime(2026, 8, 27, 15, 0, tzinfo=timezone.utc)
     rows = normalize_provider_results(_payload([
         {"ticker": "ESU6", "price": 6500.25, "size": 2, "timestamp": _ns(now), "sequence_number": 2},
         {"ticker": "ESU6", "open": 6500, "high": 6501, "low": 6499, "close": 6500.5, "window_start": _ns(now)},
@@ -48,8 +49,9 @@ def test_provider_normalization_accepts_individual_trades_and_rejects_aggregate_
     assert rows[0]["provider_timestamp_ns"] == _ns(now)
 
 
-def test_bootstrap_live_provider_trades_feed_canonical_tick_state(tmp_path):
-    now = datetime.now(timezone.utc)
+def test_bootstrap_live_provider_trades_feed_canonical_tick_state(tmp_path, monkeypatch):
+    monkeypatch.setattr("engine.tick_momentum_feed.MAX_LIVE_LAG_SECONDS", 10**12)
+    now = datetime(2026, 8, 27, 15, 0, tzinfo=timezone.utc)
     base_ns = _ns(now)
     response = _payload([
         {"ticker": "ESU6", "price": 6500 + i * 0.25, "size": 1, "timestamp": base_ns + i * 1_000_000, "sequence_number": i + 1}
@@ -71,8 +73,9 @@ def test_bootstrap_live_provider_trades_feed_canonical_tick_state(tmp_path):
     assert calls[0][1]["sort"] == "timestamp.desc"
 
 
-def test_incremental_overlap_deduplicates_cursor_trade(tmp_path):
-    now = datetime.now(timezone.utc)
+def test_incremental_overlap_deduplicates_cursor_trade(tmp_path, monkeypatch):
+    monkeypatch.setattr("engine.tick_momentum_feed.MAX_LIVE_LAG_SECONDS", 10**12)
+    now = datetime(2026, 8, 27, 15, 0, tzinfo=timezone.utc)
     base_ns = _ns(now)
     store = TickMomentumStore(tmp_path / "tick.db")
     first = _payload([

@@ -1,11 +1,11 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.5.1
+apex_version: 69.5.2
 capabilities:
   multi_horizon_tick_momentum_intelligence:
     canonical_module: engine.tick_momentum
     deployed_modules: [engine.tick_momentum, engine.tick_momentum_store, engine.tick_momentum_routes, engine.tick_momentum_feed, engine.market_microstructure_ingest, scanner_worker, app]
     status: observational
-    version: "69.5.1"
+    version: "69.5.2"
     inputs: [licensed_individual_es_mes_transactions, production_massive_polygon_futures_trades, optional_real_trade_batch_from_microstructure_bridge]
     outputs: [tick_horizon_states, signed_alignment_score, horizon_disagreement, bounded_bucket_history]
     api_routes: [/api/tick-momentum/capability, /api/tick-momentum/health, /api/tick-momentum/state, /api/tick-momentum/history, /api/tick-momentum/ingest]
@@ -39,7 +39,10 @@ capabilities:
       aggregate_bars_allowed: false
       cursor_dedup_required: true
       failure_mode: observable_fail_soft
-    guardrails: [observational_only, no_decision_authority, no_execution_authority, production_effect_none, genuine_transactions_only, aggregate_bars_not_ticks, not_l2_mbo_depth, no_synthetic_depth, no_automatic_promotion, human_promotion_required_for_future_influence, separate_from_microstructure_evidence_store, scanner_owned_production_trade_feed, cursor_dedup_required, feed_failures_do_not_change_trade_decisions]
+      response_diagnostics: [provider_http_status, provider_content_type, provider_response_bytes, provider_response_kind, provider_error_code, provider_error_message, provider_request_host, credential_source, entitlement_state]
+      api_key_exposed: false
+      explicit_caller_credential_preserved: true
+    guardrails: [observational_only, no_decision_authority, no_execution_authority, production_effect_none, genuine_transactions_only, aggregate_bars_not_ticks, not_l2_mbo_depth, no_synthetic_depth, no_automatic_promotion, human_promotion_required_for_future_influence, separate_from_microstructure_evidence_store, scanner_owned_production_trade_feed, cursor_dedup_required, feed_failures_do_not_change_trade_decisions, provider_http_diagnostics_secret_safe, explicit_provider_credential_not_clobbered]
   decision_evidence_storage_amplification_closure:
     canonical_module: engine.evidence_pipeline
     deployed_modules: [engine.evidence_pipeline, engine.storage_retention, engine.historical_evidence_lifecycle, engine.outcome_grader, engine.decision_outcome_attribution]

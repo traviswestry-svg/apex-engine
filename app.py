@@ -2090,7 +2090,10 @@ _sf = safe_float
 def safe_get_json(url: str, params: Optional[dict] = None, headers: Optional[dict] = None, timeout: Optional[int] = None) -> Optional[dict]:
     params = dict(params or {})
     if "polygon.io" in url and POLYGON_API_KEY:
-        params["apiKey"] = POLYGON_API_KEY
+        # APEX 69.5.2: preserve an explicit caller-supplied provider key.
+        # The prior assignment silently replaced MASSIVE_API_KEY on polygon.io
+        # compatibility hosts, which could downgrade futures entitlements.
+        params.setdefault("apiKey", POLYGON_API_KEY)
     try:
         r = requests.get(url, params=params, headers=headers or {}, timeout=timeout or REQUEST_TIMEOUT)
         if r.status_code != 200:
@@ -2100,6 +2103,68 @@ def safe_get_json(url: str, params: Optional[dict] = None, headers: Optional[dic
     except Exception as e:
         print(f"GET {url} exception: {e}", flush=True)
         return None
+
+
+def safe_get_json_diagnostic(url: str, params: Optional[dict] = None, headers: Optional[dict] = None, timeout: Optional[int] = None) -> dict:
+    """Return provider JSON plus bounded, secret-free HTTP diagnostics.
+
+    APEX 69.5.2 uses this only for provider observability. Query strings, API
+    keys, response bodies, and headers are never returned or persisted.
+    """
+    params = dict(params or {})
+    if "polygon.io" in url and POLYGON_API_KEY:
+        params.setdefault("apiKey", POLYGON_API_KEY)
+    parsed = urlparse(url)
+    host = parsed.netloc
+    try:
+        r = requests.get(url, params=params, headers=headers or {}, timeout=timeout or REQUEST_TIMEOUT)
+        content_type = str(r.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        body_len = len(r.content or b"")
+        payload = None
+        json_error = None
+        try:
+            parsed_json = r.json()
+            if isinstance(parsed_json, dict):
+                payload = parsed_json
+            else:
+                json_error = "JSON_TOP_LEVEL_NOT_OBJECT"
+        except Exception as exc:
+            json_error = type(exc).__name__
+        kind = "JSON" if payload is not None else ("EMPTY" if body_len == 0 else ("HTML" if "html" in content_type else "NON_JSON"))
+        err_code = None
+        err_message = None
+        if isinstance(payload, dict):
+            err_code = payload.get("code") or payload.get("error_code") or payload.get("status")
+            err_message = payload.get("error") or payload.get("message") or payload.get("detail")
+        return {
+            "__apex_provider_response__": True,
+            "payload": payload,
+            "diagnostics": {
+                "provider_http_status": int(r.status_code),
+                "provider_content_type": content_type or None,
+                "provider_response_bytes": int(body_len),
+                "provider_response_kind": kind,
+                "provider_json_parse_error": json_error,
+                "provider_error_code": str(err_code)[:120] if err_code is not None else None,
+                "provider_error_message": str(err_message)[:240] if err_message is not None else None,
+                "provider_request_host": host,
+            },
+        }
+    except Exception as exc:
+        return {
+            "__apex_provider_response__": True,
+            "payload": None,
+            "diagnostics": {
+                "provider_http_status": None,
+                "provider_content_type": None,
+                "provider_response_bytes": 0,
+                "provider_response_kind": "TRANSPORT_ERROR",
+                "provider_json_parse_error": None,
+                "provider_error_code": type(exc).__name__,
+                "provider_error_message": str(exc)[:240],
+                "provider_request_host": host,
+            },
+        }
 
 
 def safe_post_json(url: str, payload: dict, headers: Optional[dict] = None, timeout: Optional[int] = None) -> Optional[dict]:
