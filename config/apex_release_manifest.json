@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.5.1",
-  "build_name": "Production ES Transaction Feed Wiring Closure",
+  "apex_version": "69.5.2",
+  "build_name": "Massive Futures Trade Entitlement & Response Diagnostics Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -204,15 +204,21 @@
     "tick_momentum_feed_cursor_dedup_required": true,
     "tick_momentum_feed_scanner_owned": true,
     "tick_momentum_feed_failure_changes_trade_decisions": false,
-    "tick_momentum_feed_failure_changes_execution_authority": false
+    "tick_momentum_feed_failure_changes_execution_authority": false,
+    "tick_momentum_feed_http_diagnostics_exposed": true,
+    "tick_momentum_feed_api_key_exposed": false,
+    "tick_momentum_feed_explicit_credential_preserved": true,
+    "tick_momentum_feed_entitlement_state_classified": true,
+    "tick_momentum_feed_diagnostics_change_trade_decisions": false,
+    "tick_momentum_feed_diagnostics_change_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.5.1",
-  "application_version": "69.5.1",
+  "semantic_version": "69.5.2",
+  "application_version": "69.5.2",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

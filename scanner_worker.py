@@ -298,10 +298,13 @@ def _poll_production_tick_momentum() -> Dict[str, Any]:
         return result
 
     ticker = apex_app._resolve_polygon_futures_ticker("ES")
+    massive_key = getattr(apex_app, "MASSIVE_API_KEY", "")
+    polygon_key = getattr(apex_app, "POLYGON_API_KEY", "")
     result = _poll_futures_trades(
-        apex_app.safe_get_json,
+        getattr(apex_app, "safe_get_json_diagnostic", apex_app.safe_get_json),
         base_url=getattr(apex_app, "MASSIVE_BASE_URL", "https://api.polygon.io"),
-        api_key=getattr(apex_app, "MASSIVE_API_KEY", "") or getattr(apex_app, "POLYGON_API_KEY", ""),
+        api_key=massive_key or polygon_key,
+        credential_source="MASSIVE_API_KEY" if massive_key else ("POLYGON_API_KEY" if polygon_key else "NONE"),
         ticker=ticker,
         instrument="ES",
         store=_TICK_MOMENTUM_STORE,
@@ -394,7 +397,7 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
-        # APEX 69.5.1 — scanner-owned production ES transaction feed. This uses
+        # APEX 69.5.2 — scanner-owned production ES transaction feed diagnostics. This uses
         # the individual futures trades endpoint only; aggregate bars are never
         # converted into tick evidence. The call is observational and fail-soft.
         try:

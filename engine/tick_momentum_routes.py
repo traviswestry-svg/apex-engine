@@ -1,4 +1,4 @@
-"""APEX 69.5.1 routes for observational ES multi-horizon tick momentum."""
+"""APEX 69.5.2 routes for observational ES multi-horizon tick momentum."""
 from __future__ import annotations
 from flask import jsonify, request
 from .tick_momentum import VERSION, capability, process_transactions, validate_transactions
