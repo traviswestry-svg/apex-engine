@@ -1,4 +1,4 @@
-"""APEX 69.5.0 canonical-persistence observational store for ES tick momentum."""
+"""APEX 69.5.1 canonical-persistence observational store for ES tick momentum."""
 from __future__ import annotations
 import json
 from pathlib import Path
@@ -36,4 +36,7 @@ class TickMomentumStore:
         return [dict(r) for r in rows]
     def health(self, instrument: str="ES") -> dict[str,Any]:
         state=self.load_state(instrument); hist=self.history(instrument,1)
-        return {"ok":True,"version":VERSION,"schema_version":SCHEMA_VERSION,"instrument":instrument.upper(),"transactions_seen":state.get("transactions_seen",0),"last_trade_at":state.get("last_trade_at"),"snapshots_present":bool(hist),"persistence_policy":"CANONICAL_PERSISTENCE_OBSERVATIONAL_STATE"}
+        feed=state.get("feed") if isinstance(state.get("feed"),dict) else {}
+        tx=int(state.get("transactions_seen",0) or 0)
+        status="READY" if tx else str(feed.get("status") or "WAITING_FOR_TRANSACTION_FEED")
+        return {"ok":True,"version":VERSION,"schema_version":SCHEMA_VERSION,"instrument":instrument.upper(),"transactions_seen":tx,"last_trade_at":state.get("last_trade_at"),"snapshots_present":bool(hist),"status":status,"feed":feed,"persistence_policy":"CANONICAL_PERSISTENCE_OBSERVATIONAL_STATE"}

@@ -75,6 +75,8 @@ from engine.historical_evidence_lifecycle import (  # noqa: E402
 from engine.flow_settlement_scheduler import FlowSettlementScheduler  # noqa: E402
 from engine import flow_pl_store as _flow_pl_store  # noqa: E402
 from engine import feature_store_db as _feature_store_db  # noqa: E402
+from engine.tick_momentum_feed import poll_futures_trades as _poll_futures_trades  # noqa: E402
+from engine.tick_momentum_store import TickMomentumStore as _TickMomentumStore  # noqa: E402
 
 _RUNNING = True
 _HLCE_PROVIDER_CACHE: Dict[str, Any] = {"at": 0.0, "snapshot": {}}
@@ -83,6 +85,10 @@ _EVIDENCE_RUNTIME: Dict[str, Any] = {"last_grade_monotonic": 0.0, "last_price_re
 _FLOW_LEARNING_STORE_RUNTIME: Dict[str, Any] = {
     "flow_pl_store_ready": False, "feature_store_ready": False, "initialized": False,
 }
+_TICK_MOMENTUM_RUNTIME: Dict[str, Any] = {
+    "status": "NOT_POLLED", "last_poll_monotonic": 0.0, "last_result": None,
+}
+_TICK_MOMENTUM_STORE = _TickMomentumStore()
 _FLOW_SETTLEMENT_SCHEDULER = FlowSettlementScheduler(
     ticker=getattr(apex_app, "ASSISTANT_TICKER", "SPX") if apex_app is not None else "SPX"
 )
@@ -269,6 +275,45 @@ def _ensure_flow_learning_stores() -> Dict[str, Any]:
         })
     return dict(_FLOW_LEARNING_STORE_RUNTIME)
 
+def _tick_momentum_rth_now() -> bool:
+    now = dt.datetime.now(ZoneInfo("America/New_York"))
+    minute = now.hour * 60 + now.minute
+    return now.weekday() < 5 and 570 <= minute < 960
+
+
+def _poll_production_tick_momentum() -> Dict[str, Any]:
+    """Poll genuine ES futures trades on a bounded scanner-owned cadence.
+
+    Aggregate futures bars remain ineligible. If the configured provider does
+    not expose the individual-trades endpoint for the current entitlement, the
+    failure is observable and the 69.5 state remains unchanged.
+    """
+    if apex_app is None:
+        result = {"ok": False, "status": "APP_UNAVAILABLE"}
+        _TICK_MOMENTUM_RUNTIME.update({"status": result["status"], "last_result": result})
+        return result
+    if not _tick_momentum_rth_now():
+        result = {"ok": True, "status": "SCHEDULED_IDLE_OUTSIDE_RTH", "transactions_accepted": 0}
+        _TICK_MOMENTUM_RUNTIME.update({"status": result["status"], "last_result": result})
+        return result
+
+    ticker = apex_app._resolve_polygon_futures_ticker("ES")
+    result = _poll_futures_trades(
+        apex_app.safe_get_json,
+        base_url=getattr(apex_app, "MASSIVE_BASE_URL", "https://api.polygon.io"),
+        api_key=getattr(apex_app, "MASSIVE_API_KEY", "") or getattr(apex_app, "POLYGON_API_KEY", ""),
+        ticker=ticker,
+        instrument="ES",
+        store=_TICK_MOMENTUM_STORE,
+    )
+    _TICK_MOMENTUM_RUNTIME.update({
+        "status": result.get("status"),
+        "last_result": result,
+        "last_poll_monotonic": time.monotonic(),
+    })
+    return result
+
+
 def main() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -349,6 +394,22 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
+        # APEX 69.5.1 — scanner-owned production ES transaction feed. This uses
+        # the individual futures trades endpoint only; aggregate bars are never
+        # converted into tick evidence. The call is observational and fail-soft.
+        try:
+            _poll_production_tick_momentum()
+        except Exception as exc:
+            _TICK_MOMENTUM_RUNTIME.update({
+                "status": "POLL_ERROR", "last_result": {"error": f"{type(exc).__name__}: {exc}"},
+            })
+            record_degradation(
+                component="tick_momentum_transaction_feed",
+                operation="poll_es_futures_trades", exc=exc,
+                fallback="CONTINUE_SCANNER_WITHOUT_TICK_MOMENTUM_UPDATE",
+                decision_authority_suppressed=False, source="scanner_worker.py",
+            )
+
         service = get_hlce_service()
         db = service.status().get("database") or {}
         write_scanner_heartbeat({
@@ -375,6 +436,7 @@ def main() -> int:
             "feature_label_settlement": _FLOW_SETTLEMENT_SCHEDULER.status(),
             "flow_learning_stores": dict(_FLOW_LEARNING_STORE_RUNTIME),
             "flow_excursion_capture": _flow_pl_store.sample_excursion_health(),
+            "tick_momentum_feed": dict(_TICK_MOMENTUM_RUNTIME),
         })
         time.sleep(max(5, int(os.getenv("APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS", "15"))))
     if _LIVE_LEVEL_PUBLISHER is not None:
