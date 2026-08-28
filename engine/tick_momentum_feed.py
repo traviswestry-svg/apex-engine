@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from .tick_momentum import process_transactions, validate_transactions
 from .tick_momentum_store import TickMomentumStore
 
-VERSION = "69.5.2"
+VERSION = "69.6.1"
 SCHEMA_VERSION = "apex.tick_momentum.feed.v1"
 SOURCE = "MASSIVE_POLYGON_FUTURES_TRADES"
 DEFAULT_LIMIT = 5000
@@ -152,6 +152,76 @@ def _diagnostic_feed_fields(diag: Mapping[str, Any], payload: Mapping[str, Any] 
     out["api_key_exposed"] = False
     return out
 
+
+
+def probe_futures_trade_access(
+    get_json: Callable[..., Mapping[str, Any] | None],
+    *,
+    base_url: str,
+    api_key: str,
+    ticker: str,
+    credential_source: str = "UNKNOWN",
+) -> dict[str, Any]:
+    """Perform one bounded, diagnostic-only futures-trade provider probe.
+
+    This path never normalizes trades, never calls ``process_transactions``,
+    never advances the canonical cursor, and never writes tick-momentum state or
+    snapshots.  It exists only to classify provider access outside the RTH
+    evidence-ingestion window without manufacturing historical-learning evidence.
+    """
+    observed_at = datetime.now(timezone.utc).isoformat()
+    base = str(base_url or "").rstrip("/")
+    if not base or not api_key or not ticker:
+        return {
+            "ok": False,
+            "version": VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "source": SOURCE,
+            "status": "NOT_CONFIGURED",
+            "ticker": ticker or None,
+            "endpoint": "/futures/v1/trades/{ticker}",
+            "diagnostic_probe_at": observed_at,
+            "diagnostic_probe_only": True,
+            "evidence_ingestion_permitted": False,
+            "credential_source": credential_source or "UNKNOWN",
+            "entitlement_state": "UNKNOWN",
+            "api_key_exposed": False,
+            "execution_authority": False,
+            "production_effect": "NONE",
+        }
+
+    endpoint = f"{base}/futures/v1/trades/{ticker}"
+    raw_response = get_json(
+        endpoint,
+        params={"limit": 1, "sort": "timestamp.desc", "apiKey": api_key},
+        timeout=15,
+    )
+    payload, provider_diag = _unwrap_provider_response(raw_response)
+    diagnostic_fields = _diagnostic_feed_fields(provider_diag, payload, credential_source)
+    http_status = provider_diag.get("provider_http_status")
+    try:
+        http_ok = http_status is not None and 200 <= int(http_status) < 300
+    except (TypeError, ValueError):
+        http_ok = False
+    return {
+        "ok": bool(http_ok and isinstance(payload, Mapping)),
+        "version": VERSION,
+        "schema_version": SCHEMA_VERSION,
+        "source": SOURCE,
+        "status": "ACCESS_CONFIRMED" if http_ok and isinstance(payload, Mapping) else "PROVIDER_UNAVAILABLE_OR_NOT_ENTITLED",
+        "ticker": ticker,
+        "endpoint": "/futures/v1/trades/{ticker}",
+        "diagnostic_probe_at": observed_at,
+        "diagnostic_probe_only": True,
+        "evidence_ingestion_permitted": False,
+        "transactions_accepted": 0,
+        "buckets_closed": 0,
+        "state_persisted": False,
+        "snapshots_persisted": False,
+        "execution_authority": False,
+        "production_effect": "NONE",
+        **diagnostic_fields,
+    }
 
 def poll_futures_trades(
     get_json: Callable[..., Mapping[str, Any] | None],
