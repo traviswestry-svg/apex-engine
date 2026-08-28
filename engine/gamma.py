@@ -174,7 +174,9 @@ def _build_gamma_term_structure(curves: Dict[str, Dict[float, Dict[str, float]]]
         total_abs = sum(abs(float(v.get("call", 0.0) or 0.0)) + abs(float(v.get("put", 0.0) or 0.0)) for v in curve.values()) or 1.0
         ratio = total_net / total_abs
         regime = "POSITIVE_GAMMA" if ratio > 0.05 else "NEGATIVE_GAMMA" if ratio < -0.05 else "MIXED_GAMMA"
+        abs_exposure = sum(abs(float(v.get("call", 0.0) or 0.0)) + abs(float(v.get("put", 0.0) or 0.0)) for v in curve.values())
         rows.append({"expiration": expiration, "dte": dte, "regime": regime, "net_gamma_ratio": round(ratio, 4),
+                     "absolute_exposure": round(abs_exposure, 4),
                      "local_regime_at_spot": _gamma_regime_at_price(curve, spot)})
     rows.sort(key=lambda x: (9999 if x["dte"] is None else x["dte"], x["expiration"]))
     finite = [r for r in rows if r["dte"] is not None]
@@ -182,11 +184,34 @@ def _build_gamma_term_structure(curves: Dict[str, Dict[float, Dict[str, float]]]
     forward = [r for r in finite if r["dte"] is not None and r["dte"] >= 2][:3]
     regimes = [r["regime"] for r in ([immediate] if immediate else []) + forward]
     alignment = len(set(regimes)) <= 1 if regimes else None
+    total_abs_exposure = sum(float(r.get("absolute_exposure", 0.0) or 0.0) for r in finite) or 0.0
+    def _share(predicate):
+        if total_abs_exposure <= 0:
+            return None
+        return sum(float(r.get("absolute_exposure", 0.0) or 0.0) for r in finite if predicate(r)) / total_abs_exposure
+    zero_share = _share(lambda r: r.get("dte") == 0)
+    zero_one_share = _share(lambda r: r.get("dte") is not None and r.get("dte") <= 1)
+    weekly_share = _share(lambda r: r.get("dte") is not None and r.get("dte") <= 7)
+    if zero_one_share is None:
+        durability = "UNKNOWN"
+    elif zero_one_share >= 0.65:
+        durability = "LOW"
+    elif zero_one_share >= 0.40:
+        durability = "MEDIUM"
+    else:
+        durability = "HIGH"
     return {"available": bool(rows), "as_of": today.isoformat(), "expirations": rows[:12],
             "immediate": immediate, "forward": forward, "term_alignment": alignment,
             "term_divergence": bool(alignment is False),
             "near_term_fragility": bool(immediate and forward and any(r["regime"] != immediate["regime"] for r in forward)),
-            "zero_dte_dominance": bool(immediate and immediate.get("dte") == 0)}
+            "zero_dte_dominance": bool(immediate and immediate.get("dte") == 0),
+            "maturity_concentration": {
+                "zero_dte_gamma_share": None if zero_share is None else round(zero_share, 4),
+                "zero_one_dte_gamma_share": None if zero_one_share is None else round(zero_one_share, 4),
+                "seven_dte_gamma_share": None if weekly_share is None else round(weekly_share, 4),
+                "structure_durability": durability,
+                "method": "absolute_exposure_share_by_expiration",
+            }}
 
 
 def _gamma_regime_at_price(by_strike: Dict[float, Dict[str, float]], price: float) -> str:
@@ -234,7 +259,7 @@ def _build_gamma_path(by_strike: Dict[float, Dict[str, float]], spot: float, *,
     path_material = f"{round(spot,2)}|{current}|{level_material}"
     path_version = hashlib.sha1(path_material.encode()).hexdigest()[:12]
     return {
-        "available": bool(candidates), "current_regime": current,
+        "available": bool(candidates), "spot": _round_level(spot), "current_regime": current,
         "nearest_transition": nearest, "upside_destination": up_dest,
         "downside_destination": down_dest,
         "path_levels": candidates,

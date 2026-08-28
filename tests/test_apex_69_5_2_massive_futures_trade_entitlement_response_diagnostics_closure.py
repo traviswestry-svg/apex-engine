@@ -28,8 +28,8 @@ def _envelope(status: int, *, payload=None, kind="JSON", content_type="applicati
 
 def test_release_truth_registers_secret_safe_feed_diagnostics():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "69.5.2"
-    assert manifest["semantic_version"] == manifest["application_version"] == "69.5.2"
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 5, 2)
+    assert manifest["semantic_version"] == manifest["application_version"] == manifest["apex_version"]
     g = manifest["guardrails"]
     assert g["tick_momentum_feed_http_diagnostics_exposed"] is True
     assert g["tick_momentum_feed_api_key_exposed"] is False

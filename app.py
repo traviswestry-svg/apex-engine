@@ -3086,6 +3086,8 @@ def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
         "stock_price": gex.get("stock_price"),
         "raw_stock_price": gex.get("raw_stock_price"),
         "quality_flags": gex.get("quality_flags", []),
+        "gamma_path": gex.get("gamma_path"),
+        "gamma_term_structure": gex.get("gamma_term_structure"),
         "gamma_diagnostics": gex.get("diagnostics"),
         "notes": (decision.get("decision_reasons") or []) + (flow.get("flow_notes") or []) + (order.get("order_flow_notes") or []) + (gex.get("gex_notes") or []),
     }

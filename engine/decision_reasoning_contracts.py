@@ -196,6 +196,11 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
     drivers = _dict(last.get("market_drivers"))
     execution = _dict(last.get("execution_intelligence") or last.get("execution_os"))
     liquidity = _dict(last.get("liquidity_intelligence"))
+    try:
+        from .dynamic_state import build_dynamic_state
+        dynamic_state = build_dynamic_state(last)
+    except Exception:
+        dynamic_state = {}
 
     auction_raw = (
         auction.get("bias") or
@@ -251,7 +256,7 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
         available = _engine_available(evidence)
         missing = [] if raw not in (None, "") and available else [f"{origin}.direction"]
         freshness = _engine_freshness(evidence, evidence.get("freshness") or evidence.get("freshness_state"), missing=not available)
-        out.append(make_engine_opinion(
+        opinion = make_engine_opinion(
             engine_name=name, raw_direction=raw if available else None, reliability=rel,
             correlation_cluster=CORRELATION_CLUSTERS.get(name), confidence=conf,
             freshness=freshness, evidence=evidence, missing_data=missing,
@@ -259,7 +264,17 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
             engine_version=_engine_version(evidence), timestamp=_engine_timestamp(evidence),
             abstain_reason="PROVIDER_UNAVAILABLE" if not available else None,
             independence_factor=flow_independence if name == "flow" else 1.0,
-        ))
+        )
+        try:
+            from .evidence_eligibility import evaluate_evidence_eligibility
+            eligibility = evaluate_evidence_eligibility(name, opinion, dynamic_state)
+        except Exception:
+            eligibility = {"state": "FULL", "weight_factor": 1.0, "reasons": [],
+                           "consensus_eligible": True, "execution_authority": False}
+        opinion["evidence_eligibility"] = eligibility
+        opinion["eligibility_state"] = eligibility.get("state")
+        opinion["eligibility_weight_factor"] = eligibility.get("weight_factor", 1.0)
+        out.append(opinion)
     return out
 
 
@@ -313,13 +328,20 @@ def build_correlation_aware_consensus(opinions: List[Mapping[str, Any]]) -> Dict
     abstaining = [o["engine_name"] for o in ops if o.get("direction") == "ABSTAIN"]
     stale = [o["engine_name"] for o in ops if o.get("freshness_state") in {"STALE", "DEGRADED"}]
     unavailable = [o["engine_name"] for o in ops if o.get("freshness_state") == "UNAVAILABLE" or o.get("abstain_reason") == "PROVIDER_UNAVAILABLE"]
-    eligible = [o for o in ops if o.get("direction") not in {"ABSTAIN", "UNKNOWN"} and o.get("freshness_state") != "UNAVAILABLE"]
+    eligible = [o for o in ops if o.get("direction") not in {"ABSTAIN", "UNKNOWN"}
+                and o.get("freshness_state") != "UNAVAILABLE"
+                and _dict(o.get("evidence_eligibility")).get("consensus_eligible", True)]
+    context_only = [o["engine_name"] for o in ops if str(o.get("eligibility_state") or "").upper() == "CONTEXT_ONLY"]
+    watch_only = [o["engine_name"] for o in ops if str(o.get("eligibility_state") or "").upper() == "WATCH_ONLY"]
+    ineligible = [o["engine_name"] for o in ops if str(o.get("eligibility_state") or "").upper() == "INELIGIBLE"]
+    discounted = [o["engine_name"] for o in ops if str(o.get("eligibility_state") or "").upper() == "DISCOUNTED"]
 
     def weight(o: Mapping[str, Any]) -> float:
         freshness_factor = 0.25 if o.get("freshness_state") == "STALE" else 0.60 if o.get("freshness_state") == "DEGRADED" else 1.0
         strength = _num(o.get("strength"), 0.0) or 0.0
         independence = max(0.0, min(1.0, _num(o.get("independence_factor"), 1.0) or 0.0))
-        return max(0.0, (_num(o.get("reliability"), 0.0) or 0.0) * strength * freshness_factor * independence)
+        eligibility_factor = max(0.0, min(1.0, _num(o.get("eligibility_weight_factor"), 1.0) or 0.0))
+        return max(0.0, (_num(o.get("reliability"), 0.0) or 0.0) * strength * freshness_factor * independence * eligibility_factor)
 
     raw = {"BULLISH": 0.0, "BEARISH": 0.0, "NEUTRAL": 0.0}
     by_cluster: Dict[str, List[tuple[Dict[str, Any], float]]] = {}
@@ -398,6 +420,12 @@ def build_correlation_aware_consensus(opinions: List[Mapping[str, Any]]) -> Dict
         "abstaining_engines": abstaining,
         "stale_engines": stale,
         "unavailable_engines": unavailable,
+        "evidence_eligibility": {
+            "full": [o["engine_name"] for o in ops if str(o.get("eligibility_state") or "FULL").upper() == "FULL"],
+            "discounted": discounted, "context_only": context_only,
+            "watch_only": watch_only, "ineligible": ineligible,
+            "raw_evidence_count": len(ops), "consensus_eligible_count": len(eligible),
+        },
         "active_clusters": active_clusters,
         "conflicted_clusters": conflicted_clusters,
         "clusters": cluster_detail,
@@ -406,7 +434,8 @@ def build_correlation_aware_consensus(opinions: List[Mapping[str, Any]]) -> Dict
         "status": status,
         "configured_decorrelation": True,
         "historical_correlation_statistics_applied": False,
-        "provenance": {"method": "configured_cluster_diminishing_returns", "secondary_cluster_factor": 0.35},
+        "provenance": {"method": "configured_cluster_diminishing_returns", "secondary_cluster_factor": 0.35,
+                       "pre_consensus_evidence_eligibility": True},
         # compatibility fields used by existing dashboards/consumers
         "score": round(effective_consensus, 1),
         "agreement_percentage": round(effective_consensus, 1),

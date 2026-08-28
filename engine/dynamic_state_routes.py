@@ -33,6 +33,13 @@ def register_dynamic_state_routes(app, *, last_result_provider: Optional[Callabl
         lr = _lr()
         state = build_dynamic_state(lr, _ss())
         state["alert_policy"] = evaluate_dynamic_state_policy(lr, dynamic_state=state)
+        try:
+            from .decision_reasoning_contracts import build_engine_opinions
+            from .evidence_eligibility import summarize_evidence_eligibility
+            state["evidence_eligibility"] = summarize_evidence_eligibility(build_engine_opinions(lr))
+        except Exception as exc:
+            state["evidence_eligibility"] = {"available": False, "status": "UNAVAILABLE",
+                                             "error": type(exc).__name__, "execution_authority": False}
         return jsonify(state)
 
     @app.get("/api/dynamic-state/calibration")
