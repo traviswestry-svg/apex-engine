@@ -641,7 +641,7 @@
     .ds-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
     .ds-title{font-size:12px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
     .ds-sum{font-size:11px;color:var(--faint);margin-left:auto}
-    .ds-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px}
+    .ds-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
     @media(max-width:820px){.ds-grid{grid-template-columns:1fr}}
     .ds-card{background:var(--bg);border:1px solid var(--bdr);border-radius:var(--radius-sm);padding:10px 12px}
     .ds-clabel{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;margin-bottom:6px}
@@ -682,6 +682,11 @@
         <div class="ds-state" id="dsPolicyState">—</div>
         <div class="ds-meta" id="dsPolicyMeta"></div>
       </div>
+      <div class="ds-card">
+        <div class="ds-clabel">Evidence Eligibility</div>
+        <div class="ds-state" id="dsEligState">—</div>
+        <div class="ds-meta" id="dsEligMeta"></div>
+      </div>
     </div>
   </div>
   <script>
@@ -716,8 +721,11 @@
       gs.textContent=gp.available?(gp.current_regime||'—').replace(/_/g,' '):'Unavailable';
       gs.className='ds-state '+(gp.available?'good':'mut');
       var up=gp.upside_destination||{},dn=gp.downside_destination||{};
-      document.getElementById('dsGammaMeta').innerHTML=gp.available?
-        ('↑ '+n2(up.price)+(up.label?(' '+esc(up.label)):'')+'<br>↓ '+n2(dn.price)+(dn.label?(' '+esc(dn.label)):'')):'No gamma path this cycle';
+      var gc=d.gamma_context||{};
+      var gmeta=gp.available?('↑ '+n2(up.price)+(up.label?(' '+esc(up.label)):'')+'<br>↓ '+n2(dn.price)+(dn.label?(' '+esc(dn.label)):'')):'No gamma path this cycle';
+      if(gc.available){gmeta+='<br>capacity '+esc(gc.capacity_state||'UNAVAILABLE')+' · durability '+esc(gc.structure_durability||'UNKNOWN');
+        if(gc.zero_one_dte_gamma_share!=null)gmeta+=' · 0–1DTE '+Math.round(gc.zero_one_dte_gamma_share*100)+'%';}
+      document.getElementById('dsGammaMeta').innerHTML=gmeta;
       // Event phase + dynamic alert policy
       var ep=d.event_phase||{},pol=d.alert_policy||{};var ps=document.getElementById('dsPolicyState');
       var phase=(ep.phase||'NORMAL').replace(/_/g,' '),pstate=(pol.state||'NORMAL').replace(/_/g,' ');
@@ -727,6 +735,13 @@
       if(ep.seconds_to_event!=null){pmeta+=' · event '+(ep.seconds_to_event>=0?'in ':'since ')+Math.round(Math.abs(ep.seconds_to_event)/60)+'m';}
       if(pol.warnings&&pol.warnings.length){pmeta+='<br>'+esc(pol.warnings.slice(0,2).join(' · ').replace(/_/g,' '));}
       document.getElementById('dsPolicyMeta').innerHTML=pmeta;
+      // Pre-consensus evidence eligibility
+      var ee=d.evidence_eligibility||{},ec=ee.counts||{},es=document.getElementById('dsEligState');
+      es.textContent=ee.available?(n2(ee.effective_independent_evidence)+' effective'):'Unavailable';
+      es.className='ds-state '+(ee.available?'good':'mut');
+      document.getElementById('dsEligMeta').innerHTML=ee.available?
+        ('full '+n2(ec.FULL||0)+' · discounted '+n2(ec.DISCOUNTED||0)+'<br>context '+n2(ec.CONTEXT_ONLY||0)+' · watch '+n2(ec.WATCH_ONLY||0)+' · ineligible '+n2(ec.INELIGIBLE||0)):
+        'No eligibility readout this cycle';
     }
     function renderCalibration(c){
       var el=document.getElementById('dsCalibration');if(!el)return;

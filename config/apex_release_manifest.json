@@ -1,14 +1,14 @@
 {
-  "apex_version": "69.5.2",
-  "build_name": "Massive Futures Trade Entitlement & Response Diagnostics Closure",
+  "apex_version": "69.6.0",
+  "build_name": "Gamma Capacity, Structure Durability & Pre-Consensus Evidence Eligibility",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-27",
+  "released_at": "2026-08-28",
   "guardrails": {
-    "changes_trade_decisions": false,
+    "changes_trade_decisions": true,
     "changes_execution_authority": false,
     "fabricates_outcomes": false,
     "requires_governed_terminal_outcomes": true,
@@ -210,15 +210,31 @@
     "tick_momentum_feed_explicit_credential_preserved": true,
     "tick_momentum_feed_entitlement_state_classified": true,
     "tick_momentum_feed_diagnostics_change_trade_decisions": false,
-    "tick_momentum_feed_diagnostics_change_execution_authority": false
+    "tick_momentum_feed_diagnostics_change_execution_authority": false,
+    "gamma_capacity_expected_move_required": true,
+    "gamma_capacity_fabricated_denominator_allowed": false,
+    "gamma_structure_durability_expiration_concentration_based": true,
+    "evidence_eligibility_pre_consensus": true,
+    "evidence_eligibility_states": [
+      "FULL",
+      "DISCOUNTED",
+      "CONTEXT_ONLY",
+      "WATCH_ONLY",
+      "INELIGIBLE"
+    ],
+    "flow_independence_double_discount_allowed": false,
+    "evidence_eligibility_changes_consensus_weighting": true,
+    "evidence_eligibility_execution_authority": false,
+    "gamma_capacity_is_direction_generative": false,
+    "gamma_durability_is_direction_generative": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.5.2",
-  "application_version": "69.5.2",
+  "semantic_version": "69.6.0",
+  "application_version": "69.6.0",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

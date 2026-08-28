@@ -1,6 +1,22 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.5.2
+apex_version: 69.6.0
 capabilities:
+  dynamic_gamma_evidence_eligibility:
+    canonical_module: engine.evidence_eligibility
+    deployed_modules: [engine.gamma, engine.dynamic_state, engine.evidence_eligibility, engine.decision_reasoning_contracts, engine.dynamic_state_routes, app]
+    status: production_decision_quality
+    version: "69.6.0"
+    inputs: [gamma_exposure_by_expiration, expected_move_when_available, engine_opinions, flow_independence, event_phase]
+    outputs: [gamma_capacity, gamma_structure_durability, evidence_eligibility, effective_independent_evidence]
+    api_routes: [/api/dynamic-state]
+    decision_authority: bounded_consensus_weighting
+    execution_authority: none
+    production_effect: DECISION_QUALITY_ONLY
+    expected_move_required_for_capacity: true
+    fabricated_expected_move_allowed: false
+    flow_double_discount_allowed: false
+    eligibility_states: [FULL, DISCOUNTED, CONTEXT_ONLY, WATCH_ONLY, INELIGIBLE]
+
   multi_horizon_tick_momentum_intelligence:
     canonical_module: engine.tick_momentum
     deployed_modules: [engine.tick_momentum, engine.tick_momentum_store, engine.tick_momentum_routes, engine.tick_momentum_feed, engine.market_microstructure_ingest, scanner_worker, app]

@@ -63,6 +63,10 @@ _RESIDUAL_PATHS = (
 _EVENT_PATHS = (
     "event_intelligence.event_phase", "event_risk.event_phase", "event_phase",
 )
+_EXPECTED_MOVE_PATHS = (
+    "structured.expected_move.one_sigma", "morning_brief.structured.expected_move.one_sigma",
+    "range_intelligence.expected_move.points", "expected_move.points", "expected_move",
+)
 
 
 def _flow_excitation(lr: Mapping[str, Any]) -> Dict[str, Any]:
@@ -150,6 +154,7 @@ def _gamma_path(lr: Mapping[str, Any]) -> Dict[str, Any]:
              "regime": l.get("regime")}
             for l in levels if isinstance(l, Mapping)
         ][:12],
+        "spot": _f(gp.get("spot")),
         "generated_at": gp.get("generated_at"), "source_snapshot_at": gp.get("source_snapshot_at"),
         "path_version": gp.get("path_version"), "level_version": gp.get("level_version"),
         "regime_age_seconds": _f(gp.get("regime_age_seconds")),
@@ -172,9 +177,39 @@ def _gamma_term_structure(lr: Mapping[str, Any]) -> Dict[str, Any]:
         "term_alignment": gt.get("term_alignment"), "term_divergence": bool(gt.get("term_divergence")),
         "near_term_fragility": bool(gt.get("near_term_fragility")),
         "zero_dte_dominance": bool(gt.get("zero_dte_dominance")),
+        "immediate": dict(gt.get("immediate")) if isinstance(gt.get("immediate"), Mapping) else None,
+        "maturity_concentration": dict(gt.get("maturity_concentration")) if isinstance(gt.get("maturity_concentration"), Mapping) else {},
         "expirations": [dict(x) for x in rows if isinstance(x, Mapping)][:8],
     }
 
+
+
+def _gamma_context(lr: Mapping[str, Any], gamma_path: Mapping[str, Any], gamma_term: Mapping[str, Any]) -> Dict[str, Any]:
+    maturity = gamma_term.get("maturity_concentration") if isinstance(gamma_term.get("maturity_concentration"), Mapping) else {}
+    expected_move = _f(_first(lr, _EXPECTED_MOVE_PATHS))
+    spot = _f(gamma_path.get("spot"))
+    immediate = gamma_term.get("immediate") if isinstance(gamma_term.get("immediate"), Mapping) else {}
+    net_ratio = _f(immediate.get("net_gamma_ratio"))
+    capacity_ratio = None
+    capacity_state = "UNAVAILABLE"
+    if expected_move is not None and expected_move > 0 and spot is not None and spot > 0 and net_ratio is not None:
+        em_pct = expected_move / spot
+        if em_pct > 0:
+            capacity_ratio = abs(net_ratio) / em_pct
+            capacity_state = "WEAK" if capacity_ratio < 15 else "MODERATE" if capacity_ratio < 35 else "STRONG"
+    durability = str(maturity.get("structure_durability") or "UNKNOWN")
+    return {
+        "available": bool(gamma_term.get("available")),
+        "expected_move_points": expected_move,
+        "capacity_ratio": None if capacity_ratio is None else round(capacity_ratio, 2),
+        "capacity_state": capacity_state,
+        "capacity_method": "abs(immediate_net_gamma_ratio)/(expected_move/spot)",
+        "zero_dte_gamma_share": _f(maturity.get("zero_dte_gamma_share")),
+        "zero_one_dte_gamma_share": _f(maturity.get("zero_one_dte_gamma_share")),
+        "seven_dte_gamma_share": _f(maturity.get("seven_dte_gamma_share")),
+        "structure_durability": durability,
+        "durability_method": maturity.get("method"),
+    }
 
 
 def _event_phase(lr: Mapping[str, Any]) -> Dict[str, Any]:
@@ -207,8 +242,9 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
     residual = _residual_pressure(lr, scanner_state)
     gamma = _gamma_path(lr)
     gamma_term = _gamma_term_structure(lr)
+    gamma_context = _gamma_context(lr, gamma, gamma_term)
     event_phase = _event_phase(lr)
-    available = any(x.get("available") for x in (flow, residual, gamma, gamma_term, event_phase))
+    available = any(x.get("available") for x in (flow, residual, gamma, gamma_term, gamma_context, event_phase))
 
     # One-line read of what the three signals collectively imply (neutral).
     notes = []
@@ -221,6 +257,8 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
         notes.append(f"unresolved {str(residual.get('direction') or '').lower()} pressure at {residual.get('origin_level')}")
     if gamma.get("available") and gamma.get("current_regime") not in ("UNKNOWN", None):
         notes.append(f"gamma {str(gamma['current_regime']).replace('_', ' ').lower()}")
+    if gamma_context.get("available") and gamma_context.get("structure_durability") == "LOW":
+        notes.append("gamma structure durability low")
     if event_phase.get("available") and event_phase.get("phase") not in ("NORMAL", None):
         notes.append(f"event {str(event_phase['phase']).replace('_', ' ').lower()}")
 
@@ -230,6 +268,7 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
         "residual_pressure": residual,
         "gamma_path": gamma,
         "gamma_term_structure": gamma_term,
+        "gamma_context": gamma_context,
         "event_phase": event_phase,
         "summary": " · ".join(notes) if notes else None,
     }
