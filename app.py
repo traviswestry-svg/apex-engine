@@ -13777,8 +13777,21 @@ try:
         print("APEX 66.7.0 Dynamic State routes registered.", flush=True)
 
     if TICK_MOMENTUM_69_5_AVAILABLE and register_tick_momentum_routes is not None:
+        def _tick_momentum_diagnostic_probe():
+            from engine.tick_momentum_feed import probe_futures_trade_access
+            ticker = _resolve_polygon_futures_ticker("ES")
+            massive_key = MASSIVE_API_KEY
+            polygon_key = POLYGON_API_KEY
+            return probe_futures_trade_access(
+                safe_get_json_diagnostic,
+                base_url=MASSIVE_BASE_URL,
+                api_key=massive_key or polygon_key,
+                ticker=ticker,
+                credential_source="MASSIVE_API_KEY" if massive_key else ("POLYGON_API_KEY" if polygon_key else "NONE"),
+            )
+        app.config["APEX_TICK_MOMENTUM_DIAGNOSTIC_PROBE"] = _tick_momentum_diagnostic_probe
         register_tick_momentum_routes(app)
-        print("APEX 69.5.0 Multi-Horizon Tick Momentum routes registered.", flush=True)
+        print("APEX 69.6.1 Tick Momentum diagnostic-freshness routes registered.", flush=True)
 
     if MARKET_MICROSTRUCTURE_68_9_AVAILABLE and register_market_microstructure_routes is not None:
         register_market_microstructure_routes(app)

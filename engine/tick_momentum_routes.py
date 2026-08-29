@@ -1,11 +1,12 @@
-"""APEX 69.5.2 routes for observational ES multi-horizon tick momentum."""
+"""APEX 69.6.1 routes for observational ES multi-horizon tick momentum."""
 from __future__ import annotations
+from typing import Any, Callable
 from flask import jsonify, request
 from .tick_momentum import VERSION, capability, process_transactions, validate_transactions
 from .tick_momentum_store import TickMomentumStore
 
 
-def register_tick_momentum_routes(app) -> None:
+def register_tick_momentum_routes(app, *, diagnostic_probe: Callable[[], dict[str, Any]] | None = None) -> None:
     def store(): return TickMomentumStore()
 
     @app.get('/api/tick-momentum/capability')
@@ -14,6 +15,18 @@ def register_tick_momentum_routes(app) -> None:
     @app.get('/api/tick-momentum/health')
     def tick_momentum_health():
         h=store().health('ES'); h.update({"production_effect":"NONE","execution_authority":False}); return jsonify(h)
+
+    @app.get('/api/tick-momentum/probe')
+    def tick_momentum_probe():
+        probe = diagnostic_probe or app.config.get("APEX_TICK_MOMENTUM_DIAGNOSTIC_PROBE")
+        if not callable(probe):
+            return jsonify({"ok":False,"version":VERSION,"status":"DIAGNOSTIC_PROBE_UNAVAILABLE","diagnostic_probe_only":True,"evidence_ingestion_permitted":False,"execution_authority":False,"production_effect":"NONE"}),503
+        try:
+            result=dict(probe() or {})
+        except Exception as exc:
+            result={"ok":False,"version":VERSION,"status":"DIAGNOSTIC_PROBE_ERROR","error":f"{type(exc).__name__}: {exc}"}
+        result.update({"diagnostic_probe_only":True,"evidence_ingestion_permitted":False,"execution_authority":False,"production_effect":"NONE"})
+        return jsonify(result)
 
     @app.get('/api/tick-momentum/state')
     def tick_momentum_state():
