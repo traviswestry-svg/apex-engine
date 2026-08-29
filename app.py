@@ -12,6 +12,7 @@ import hmac
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
 
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
@@ -13791,7 +13792,7 @@ try:
             )
         app.config["APEX_TICK_MOMENTUM_DIAGNOSTIC_PROBE"] = _tick_momentum_diagnostic_probe
         register_tick_momentum_routes(app)
-        print("APEX 69.6.1 Tick Momentum diagnostic-freshness routes registered.", flush=True)
+        print("APEX 69.6.2 Tick Momentum diagnostic-probe import fix routes registered.", flush=True)
 
     if MARKET_MICROSTRUCTURE_68_9_AVAILABLE and register_market_microstructure_routes is not None:
         register_market_microstructure_routes(app)
