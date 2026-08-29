@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.6.2",
-  "build_name": "Tick Momentum Diagnostic Probe Import Fix",
+  "apex_version": "69.6.3",
+  "build_name": "Gamma Maturity Temporal Integrity Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-08-28",
+  "released_at": "2026-08-29",
   "guardrails": {
     "changes_trade_decisions": true,
     "changes_execution_authority": false,
@@ -232,15 +232,18 @@
     "tick_momentum_diagnostic_probe_persists_state": false,
     "tick_momentum_diagnostic_probe_changes_trade_decisions": false,
     "tick_momentum_diagnostic_probe_changes_execution_authority": false,
-    "tick_momentum_diagnostic_probe_urlparse_import_present": true
+    "tick_momentum_diagnostic_probe_urlparse_import_present": true,
+    "expired_gamma_promoted_to_zero_dte": false,
+    "gamma_maturity_as_of_explicitly_supported": true,
+    "expired_gamma_excluded_from_current_maturity_concentration": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.6.2",
-  "application_version": "69.6.2",
+  "semantic_version": "69.6.3",
+  "application_version": "69.6.3",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

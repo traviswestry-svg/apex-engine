@@ -1,5 +1,4 @@
 from datetime import date, timedelta
-
 from engine.gamma import build_gamma_from_quantdata_response
 from engine.dynamic_state import build_dynamic_state
 from engine.evidence_eligibility import evaluate_evidence_eligibility, summarize_evidence_eligibility
@@ -7,11 +6,11 @@ from engine.decision_reasoning_contracts import make_engine_opinion, build_corre
 
 
 def _gamma_payload():
-    today = date.today()
-    tomorrow = (today + timedelta(days=1)).isoformat()
-    next_week = (today + timedelta(days=7)).isoformat()
-    today_str = today.isoformat()
-    return {"data": {"SPX": {"stockPrice": 6500, "exposureMap": {
+    as_of = date.today()
+    tomorrow = (as_of + timedelta(days=1)).isoformat()
+    next_week = (as_of + timedelta(days=7)).isoformat()
+    today_str = as_of.isoformat()
+    return as_of, {"data": {"SPX": {"stockPrice": 6500, "exposureMap": {
         today_str: {"6450": {"callExposure": 10, "putExposure": -2}, "6500": {"callExposure": 12, "putExposure": -2}, "6550": {"callExposure": 9, "putExposure": -1}},
         tomorrow: {"6450": {"callExposure": 5, "putExposure": -1}, "6500": {"callExposure": 6, "putExposure": -1}},
         next_week: {"6450": {"callExposure": 2, "putExposure": -1}, "6500": {"callExposure": 2, "putExposure": -1}},
@@ -19,7 +18,8 @@ def _gamma_payload():
 
 
 def test_gamma_maturity_concentration_and_durability_are_exposed():
-    g = build_gamma_from_quantdata_response(_gamma_payload(), "SPX")
+    as_of, payload = _gamma_payload()
+    g = build_gamma_from_quantdata_response(payload, "SPX", as_of=as_of)
     m = g["gamma_term_structure"]["maturity_concentration"]
     assert 0 < m["zero_dte_gamma_share"] < 1
     assert m["zero_one_dte_gamma_share"] > m["zero_dte_gamma_share"]
@@ -28,7 +28,8 @@ def test_gamma_maturity_concentration_and_durability_are_exposed():
 
 
 def test_gamma_capacity_requires_real_expected_move_and_never_fabricates_it():
-    g = build_gamma_from_quantdata_response(_gamma_payload(), "SPX")
+    as_of, payload = _gamma_payload()
+    g = build_gamma_from_quantdata_response(payload, "SPX", as_of=as_of)
     no_em = build_dynamic_state({"gamma": g})
     assert no_em["gamma_context"]["capacity_state"] == "UNAVAILABLE"
     assert no_em["gamma_context"]["capacity_ratio"] is None
