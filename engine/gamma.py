@@ -157,9 +157,15 @@ def _parse_expiration_curves(exposure_map: Any, ticker: str, stock_price: Option
 
 
 def _expiration_dte(expiration: str, today: date) -> Optional[int]:
+    """Return the signed calendar DTE for an expiration.
+
+    Expired maturities intentionally remain negative.  Clamping them to zero
+    would silently promote stale contracts into the live 0DTE bucket and
+    contaminate maturity concentration.
+    """
     raw = str(expiration).strip()[:10]
     try:
-        return max(0, (date.fromisoformat(raw) - today).days)
+        return (date.fromisoformat(raw) - today).days
     except ValueError:
         return None
 
@@ -175,11 +181,15 @@ def _build_gamma_term_structure(curves: Dict[str, Dict[float, Dict[str, float]]]
         ratio = total_net / total_abs
         regime = "POSITIVE_GAMMA" if ratio > 0.05 else "NEGATIVE_GAMMA" if ratio < -0.05 else "MIXED_GAMMA"
         abs_exposure = sum(abs(float(v.get("call", 0.0) or 0.0)) + abs(float(v.get("put", 0.0) or 0.0)) for v in curve.values())
-        rows.append({"expiration": expiration, "dte": dte, "regime": regime, "net_gamma_ratio": round(ratio, 4),
+        rows.append({"expiration": expiration, "dte": dte, "expired": bool(dte is not None and dte < 0),
+                     "regime": regime, "net_gamma_ratio": round(ratio, 4),
                      "absolute_exposure": round(abs_exposure, 4),
                      "local_regime_at_spot": _gamma_regime_at_price(curve, spot)})
     rows.sort(key=lambda x: (9999 if x["dte"] is None else x["dte"], x["expiration"]))
-    finite = [r for r in rows if r["dte"] is not None]
+    # Only non-expired, parseable expirations are eligible for current maturity
+    # concentration. Expired rows remain observable in `expirations` but cannot
+    # masquerade as 0DTE evidence.
+    finite = [r for r in rows if r["dte"] is not None and r["dte"] >= 0]
     immediate = finite[0] if finite else (rows[0] if rows else None)
     forward = [r for r in finite if r["dte"] is not None and r["dte"] >= 2][:3]
     regimes = [r["regime"] for r in ([immediate] if immediate else []) + forward]
@@ -200,7 +210,9 @@ def _build_gamma_term_structure(curves: Dict[str, Dict[float, Dict[str, float]]]
         durability = "MEDIUM"
     else:
         durability = "HIGH"
-    return {"available": bool(rows), "as_of": today.isoformat(), "expirations": rows[:12],
+    expired_count = sum(1 for r in rows if r.get("expired"))
+    return {"available": bool(finite), "as_of": today.isoformat(), "expirations": rows[:12],
+            "expired_expirations_excluded": expired_count,
             "immediate": immediate, "forward": forward, "term_alignment": alignment,
             "term_divergence": bool(alignment is False),
             "near_term_fragility": bool(immediate and forward and any(r["regime"] != immediate["regime"] for r in forward)),
@@ -269,7 +281,7 @@ def _build_gamma_path(by_strike: Dict[float, Dict[str, float]], spot: float, *,
         "path_version": path_version, "level_version": level_version, "regime_age_seconds": 0.0,
     }
 
-def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX") -> Dict[str, Any]:
+def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX", *, as_of: Optional[date] = None) -> Dict[str, Any]:
     """Production gamma parser/normalizer for APEX 6.0.1.
 
     6.0.1a improvement:
@@ -385,7 +397,7 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
                                    active_flip=active_gamma_flip, call_wall=call_wall,
                                    put_wall=put_wall, high_gamma=high_gamma_strike,
                                    low_gamma=low_gamma_strike)
-    gamma_term_structure = _build_gamma_term_structure(expiration_curves, normalized_stock_price)
+    gamma_term_structure = _build_gamma_term_structure(expiration_curves, normalized_stock_price, as_of=as_of)
 
     quality_flags: List[str] = []
     if call_wall < normalized_stock_price:

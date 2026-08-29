@@ -1,3 +1,4 @@
+from datetime import date
 from engine.gamma import build_gamma_from_quantdata_response
 from engine.dynamic_state import build_dynamic_state
 from engine.evidence_eligibility import evaluate_evidence_eligibility, summarize_evidence_eligibility
@@ -13,7 +14,7 @@ def _gamma_payload():
 
 
 def test_gamma_maturity_concentration_and_durability_are_exposed():
-    g = build_gamma_from_quantdata_response(_gamma_payload(), "SPX")
+    g = build_gamma_from_quantdata_response(_gamma_payload(), "SPX", as_of=date(2026, 8, 28))
     m = g["gamma_term_structure"]["maturity_concentration"]
     assert 0 < m["zero_dte_gamma_share"] < 1
     assert m["zero_one_dte_gamma_share"] > m["zero_dte_gamma_share"]
@@ -22,7 +23,7 @@ def test_gamma_maturity_concentration_and_durability_are_exposed():
 
 
 def test_gamma_capacity_requires_real_expected_move_and_never_fabricates_it():
-    g = build_gamma_from_quantdata_response(_gamma_payload(), "SPX")
+    g = build_gamma_from_quantdata_response(_gamma_payload(), "SPX", as_of=date(2026, 8, 28))
     no_em = build_dynamic_state({"gamma": g})
     assert no_em["gamma_context"]["capacity_state"] == "UNAVAILABLE"
     assert no_em["gamma_context"]["capacity_ratio"] is None
