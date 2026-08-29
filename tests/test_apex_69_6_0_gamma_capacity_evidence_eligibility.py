@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from engine.gamma import build_gamma_from_quantdata_response
 from engine.dynamic_state import build_dynamic_state
 from engine.evidence_eligibility import evaluate_evidence_eligibility, summarize_evidence_eligibility
@@ -5,10 +7,14 @@ from engine.decision_reasoning_contracts import make_engine_opinion, build_corre
 
 
 def _gamma_payload():
+    today = date.today()
+    tomorrow = (today + timedelta(days=1)).isoformat()
+    next_week = (today + timedelta(days=7)).isoformat()
+    today_str = today.isoformat()
     return {"data": {"SPX": {"stockPrice": 6500, "exposureMap": {
-        "2026-08-28": {"6450": {"callExposure": 10, "putExposure": -2}, "6500": {"callExposure": 12, "putExposure": -2}, "6550": {"callExposure": 9, "putExposure": -1}},
-        "2026-08-29": {"6450": {"callExposure": 5, "putExposure": -1}, "6500": {"callExposure": 6, "putExposure": -1}},
-        "2026-09-04": {"6450": {"callExposure": 2, "putExposure": -1}, "6500": {"callExposure": 2, "putExposure": -1}},
+        today_str: {"6450": {"callExposure": 10, "putExposure": -2}, "6500": {"callExposure": 12, "putExposure": -2}, "6550": {"callExposure": 9, "putExposure": -1}},
+        tomorrow: {"6450": {"callExposure": 5, "putExposure": -1}, "6500": {"callExposure": 6, "putExposure": -1}},
+        next_week: {"6450": {"callExposure": 2, "putExposure": -1}, "6500": {"callExposure": 2, "putExposure": -1}},
     }}}}
 
 

@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.6.1
+apex_version: 69.6.2
 capabilities:
   dynamic_gamma_evidence_eligibility:
     canonical_module: engine.evidence_eligibility
@@ -21,7 +21,7 @@ capabilities:
     canonical_module: engine.tick_momentum
     deployed_modules: [engine.tick_momentum, engine.tick_momentum_store, engine.tick_momentum_routes, engine.tick_momentum_feed, engine.market_microstructure_ingest, scanner_worker, app]
     status: observational
-    version: "69.6.1"
+    version: "69.6.2"
     inputs: [licensed_individual_es_mes_transactions, production_massive_polygon_futures_trades, optional_real_trade_batch_from_microstructure_bridge]
     outputs: [tick_horizon_states, signed_alignment_score, horizon_disagreement, bounded_bucket_history]
     api_routes: [/api/tick-momentum/capability, /api/tick-momentum/health, /api/tick-momentum/probe, /api/tick-momentum/state, /api/tick-momentum/history, /api/tick-momentum/ingest]

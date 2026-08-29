@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from .tick_momentum import process_transactions, validate_transactions
 from .tick_momentum_store import TickMomentumStore
 
-VERSION = "69.6.1"
+VERSION = "69.6.2"
 SCHEMA_VERSION = "apex.tick_momentum.feed.v1"
 SOURCE = "MASSIVE_POLYGON_FUTURES_TRADES"
 DEFAULT_LIMIT = 5000
