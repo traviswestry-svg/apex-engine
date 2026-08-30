@@ -1,4 +1,4 @@
-"""APEX 69.7.1 — Universal Trade Trigger Observatory.
+"""APEX 69.8.0 — Universal Trade Trigger Observatory & Outcome Linkage.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -21,8 +21,8 @@ from typing import Any, Dict, Mapping, Optional
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.7.1"
-SCHEMA_VERSION = "apex.trade_trigger_observatory.v1"
+VERSION = "69.8.0"
+SCHEMA_VERSION = "apex.trade_trigger_observatory.v2"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
 MAX_CONTRACTS = int(os.getenv("APEX_MAX_CONTRACTS", "3"))
@@ -79,7 +79,9 @@ CREATE TABLE IF NOT EXISTS observed_trade_triggers (
     mfe_points REAL, mae_points REAL, last_price REAL, observation_count INTEGER NOT NULL DEFAULT 0,
     observation_window_seconds INTEGER NOT NULL, terminal_at TEXT, outcome_label TEXT,
     execution_authority INTEGER NOT NULL DEFAULT 0, broker_mutation INTEGER NOT NULL DEFAULT 0,
-    production_effect TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    production_effect TEXT NOT NULL, decision_id TEXT, canonical_grade_status TEXT,
+    canonical_grade_label TEXT, canonical_grade_json TEXT, canonical_graded_at TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_trigger_observatory_time
     ON observed_trade_triggers(triggered_at, source);
@@ -99,8 +101,22 @@ CREATE INDEX IF NOT EXISTS ix_trigger_prices ON trade_trigger_price_observations
 def initialize_store(path: Optional[str] = None) -> Dict[str, Any]:
     resolved = path or _path()
     with canonical_connect(resolved, timeout=10) as conn:
-        conn.executescript(_SCHEMA); conn.commit()
+        conn.executescript(_SCHEMA)
+        # Additive migration for 69.7.1 observatory databases already in production.
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(observed_trade_triggers)")}
+        for name, decl in (
+            ("decision_id", "TEXT"),
+            ("canonical_grade_status", "TEXT"),
+            ("canonical_grade_label", "TEXT"),
+            ("canonical_grade_json", "TEXT"),
+            ("canonical_graded_at", "TEXT"),
+        ):
+            if name not in existing:
+                conn.execute(f"ALTER TABLE observed_trade_triggers ADD COLUMN {name} {decl}")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_trigger_decision_id ON observed_trade_triggers(decision_id)")
+        conn.commit()
     return {"ok": True, "status": "READY", "path": resolved, "version": VERSION,
+            "schema_version": SCHEMA_VERSION, "canonical_outcome_linkage": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
 
@@ -150,7 +166,7 @@ def record_trigger(*, source: str, trigger_type: str, symbol: str = "SPX",
                    confidence: Any = None, entry: Any = None, stop: Any = None,
                    target1: Any = None, target2: Any = None, target3: Any = None,
                    blockers: Any = None, evidence: Optional[Mapping[str, Any]] = None,
-                   path: Optional[str] = None) -> Dict[str, Any]:
+                   decision_id: Optional[str] = None, path: Optional[str] = None) -> Dict[str, Any]:
     initialize_store(path)
     at = _iso(triggered_at)
     symbol = _u(symbol, "SPX"); source = _u(source); trigger_type = _u(trigger_type)
@@ -172,12 +188,13 @@ def record_trigger(*, source: str, trigger_type: str, symbol: str = "SPX",
                disposition,triggered_at,observed_at,underlying_price,confidence,entry_reference,
                stop_reference,target1_reference,target2_reference,target3_reference,
                blocker_codes_json,evidence_json,etrade_handoff_json,status,observation_window_seconds,
-               execution_authority,broker_mutation,production_effect,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?)""",
+               execution_authority,broker_mutation,production_effect,decision_id,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?,?)""",
             (trigger_id, event_key, source, trigger_type, _u(setup_family), symbol, direction,
              disposition, at, now, _f(price), _f(confidence), entry_f, _f(stop), _f(target1),
              _f(target2), _f(target3), _json(blocker_list), _json(dict(evidence or {})),
-             _json(handoff), status, MAX_HOLD_SECONDS, PRODUCTION_EFFECT, now, now),
+             _json(handoff), status, MAX_HOLD_SECONDS, PRODUCTION_EFFECT,
+             str(decision_id) if decision_id else None, now, now),
         )
         created = conn.execute("SELECT changes()").fetchone()[0] > 0
         conn.commit()
@@ -257,6 +274,7 @@ def record_canonical_snapshot(snapshot: Optional[Mapping[str, Any]], *,
             source="CANONICAL_DECISION", trigger_type=action, symbol=symbol, direction=direction,
             disposition="CONFIRMED" if decision.get("actionable", True) else "BLOCKED",
             triggered_at=s.get("timestamp") or _iso(), source_event_key=decision.get("decision_id"),
+            decision_id=decision.get("decision_id"),
             setup_family=decision.get("setup_family") or s.get("setup_family") or "CANONICAL",
             price=price, confidence=decision.get("confidence") or s.get("confidence"),
             entry=decision.get("entry_reference") or price, stop=decision.get("invalidation"),
@@ -281,6 +299,128 @@ def record_canonical_snapshot(snapshot: Optional[Mapping[str, Any]], *,
             "production_effect": PRODUCTION_EFFECT}
 
 
+
+def sync_canonical_outcomes(*, path: Optional[str] = None, evidence_path: Optional[str] = None) -> Dict[str, Any]:
+    """Persist canonical grading linkage for triggers that originated from decisions.
+
+    This is observational synchronization only. It never changes the canonical grade,
+    decision, eligibility, confidence, or execution state.
+    """
+    resolved = path or _path()
+    if not Path(resolved).exists():
+        return {"ok": True, "status": "WAITING_FOR_TRIGGERS", "linked": 0,
+                "execution_authority": False, "production_effect": PRODUCTION_EFFECT}
+    initialize_store(resolved)
+    if evidence_path is None:
+        from .evidence_pipeline import DEFAULT_DB
+        evidence_path = str(DEFAULT_DB)
+    if not Path(str(evidence_path)).exists():
+        return {"ok": True, "status": "WAITING_FOR_CANONICAL_OUTCOMES", "linked": 0,
+                "execution_authority": False, "production_effect": PRODUCTION_EFFECT}
+    linked = 0
+    with canonical_connect(str(evidence_path), read_only=True, timeout=4) as evidence_conn:
+        evidence_conn.row_factory = sqlite3.Row
+        grades = evidence_conn.execute(
+            "SELECT decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json FROM grading_results"
+        ).fetchall()
+    by_decision = {str(row["decision_id"]): dict(row) for row in grades}
+    if not by_decision:
+        return {"ok": True, "status": "WAITING_FOR_CANONICAL_OUTCOMES", "linked": 0,
+                "execution_authority": False, "production_effect": PRODUCTION_EFFECT}
+    with canonical_connect(resolved, timeout=10) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT trigger_id,decision_id,source_event_key FROM observed_trade_triggers "
+            "WHERE decision_id IS NOT NULL OR source='CANONICAL_DECISION'"
+        ).fetchall()
+        for row in rows:
+            did = str(row["decision_id"] or row["source_event_key"] or "")
+            grade = by_decision.get(did)
+            if not grade:
+                continue
+            try:
+                outcome = json.loads(grade.get("outcome_json") or "{}")
+            except Exception:
+                outcome = {}
+            label = (
+                "WIN" if outcome.get("won") is True else
+                "LOSS" if outcome.get("won") is False and grade.get("status") == "GRADED" else
+                str(grade.get("exclusion_reason") or grade.get("status") or "UNKNOWN").upper()
+            )
+            conn.execute(
+                """UPDATE observed_trade_triggers SET decision_id=?,canonical_grade_status=?,
+                   canonical_grade_label=?,canonical_grade_json=?,canonical_graded_at=?,updated_at=?
+                   WHERE trigger_id=?""",
+                (did, grade.get("status"), label, _json({
+                    "status": grade.get("status"), "exclusion_reason": grade.get("exclusion_reason"),
+                    "horizon_seconds": grade.get("horizon_seconds"), "outcome": outcome,
+                }), grade.get("graded_at"), _iso(), row["trigger_id"]),
+            )
+            linked += 1
+        conn.commit()
+    return {"ok": True, "status": "LINKED" if linked else "NO_MATCHING_TRIGGER_GRADES",
+            "linked": linked, "version": VERSION, "execution_authority": False,
+            "broker_mutation": False, "production_effect": PRODUCTION_EFFECT}
+
+
+def effectiveness(*, symbol: str = "SPX", path: Optional[str] = None) -> Dict[str, Any]:
+    """Aggregate trigger effectiveness without granting behavioral authority."""
+    resolved = path or _path()
+    if not Path(resolved).exists():
+        return {"ok": True, "status": "WAITING_FOR_TRIGGERS", "sample_size": 0,
+                "groups": [], "version": VERSION, "execution_authority": False,
+                "production_effect": PRODUCTION_EFFECT}
+    initialize_store(resolved)
+    with canonical_connect(resolved, read_only=True, timeout=4) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in conn.execute(
+            """SELECT source,trigger_type,setup_family,direction,disposition,outcome_label,
+                      mfe_points,mae_points,canonical_grade_status,canonical_grade_label,canonical_grade_json
+               FROM observed_trade_triggers WHERE symbol=? ORDER BY triggered_at""",
+            (_u(symbol, "SPX"),),
+        ).fetchall()]
+    groups: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
+    linked = 0
+    for row in rows:
+        key = (row["source"], row["trigger_type"], row["setup_family"], row["direction"])
+        g = groups.setdefault(key, {"source": key[0], "trigger_type": key[1],
+                                    "setup_family": key[2], "direction": key[3],
+                                    "sample_size": 0, "five_minute_observed": 0,
+                                    "five_minute_favorable": 0, "canonical_graded": 0,
+                                    "canonical_wins": 0, "canonical_losses": 0,
+                                    "mfe_sum": 0.0, "mae_abs_sum": 0.0})
+        g["sample_size"] += 1
+        if row.get("outcome_label"):
+            g["five_minute_observed"] += 1
+            g["five_minute_favorable"] += int(row.get("outcome_label") == "FAVORABLE")
+        if row.get("mfe_points") is not None:
+            g["mfe_sum"] += float(row["mfe_points"])
+        if row.get("mae_points") is not None:
+            g["mae_abs_sum"] += abs(float(row["mae_points"]))
+        if row.get("canonical_grade_status") == "GRADED":
+            linked += 1; g["canonical_graded"] += 1
+            g["canonical_wins"] += int(row.get("canonical_grade_label") == "WIN")
+            g["canonical_losses"] += int(row.get("canonical_grade_label") == "LOSS")
+    output = []
+    for g in groups.values():
+        n5 = g["five_minute_observed"]; ng = g["canonical_graded"]; n = g["sample_size"]
+        g["five_minute_favorable_rate_pct"] = round(100.0 * g["five_minute_favorable"] / n5, 2) if n5 else None
+        g["canonical_win_rate_pct"] = round(100.0 * g["canonical_wins"] / ng, 2) if ng else None
+        g["avg_mfe_points"] = round(g.pop("mfe_sum") / n, 4) if n else None
+        g["avg_mae_abs_points"] = round(g.pop("mae_abs_sum") / n, 4) if n else None
+        g["behavioral_authority"] = False
+        output.append(g)
+    output.sort(key=lambda x: (-x["canonical_graded"], -x["five_minute_observed"], -x["sample_size"]))
+    return {"ok": True, "status": "READY" if rows else "WAITING_FOR_TRIGGERS",
+            "sample_size": len(rows), "canonical_graded_links": linked, "groups": output,
+            "limitations": ["Five-minute excursion is observational and is not a canonical trade grade.",
+                            "Canonical trigger effectiveness is reported only where a persisted graded decision is linked.",
+                            "No trigger statistic automatically changes production behavior."],
+            "version": VERSION, "schema_version": SCHEMA_VERSION,
+            "execution_authority": False, "broker_mutation": False,
+            "production_effect": PRODUCTION_EFFECT}
+
+
 def history(*, symbol: str = "SPX", limit: int = 100, status: Optional[str] = None,
             path: Optional[str] = None) -> Dict[str, Any]:
     resolved = path or _path()
@@ -297,6 +437,11 @@ def history(*, symbol: str = "SPX", limit: int = 100, status: Optional[str] = No
         row = dict(raw)
         for key in ("blocker_codes_json", "evidence_json", "etrade_handoff_json"):
             row[key[:-5]] = json.loads(row.pop(key) or "{}")
+        if row.get("canonical_grade_json"):
+            try:
+                row["canonical_grade"] = json.loads(row["canonical_grade_json"])
+            except Exception:
+                row["canonical_grade"] = None
         out.append(row)
     return {"ok": True, "status": "READY", "triggers": out, "count": len(out),
             "version": VERSION, "execution_authority": False, "broker_mutation": False,
@@ -309,5 +454,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
+            "canonical_outcome_linkage": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}

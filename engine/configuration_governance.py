@@ -206,7 +206,6 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_EVIDENCE_PRICE_RETENTION_DAYS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'14','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Retention window in days for mature forward price samples; pending-decision evidence is preserved regardless of this setting.','safety_critical':False,'used_in_code':True},
 ])
 
-
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
 def _utcnow() -> str: return datetime.now(timezone.utc).isoformat()

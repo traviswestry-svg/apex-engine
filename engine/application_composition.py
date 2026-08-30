@@ -11,7 +11,7 @@ from . import storage_retention
 from . import trigger_observatory
 from . import trigger_observatory_routes
 
-VERSION = "69.7.1"
+VERSION = "69.8.0"
 
 
 def create_app():
@@ -26,7 +26,7 @@ def create_app():
     # during application startup or changing trading behavior.
     app.config.setdefault("APEX_STORAGE_RETENTION_VERSION", storage_retention.VERSION)
     app.extensions.setdefault("apex_storage_retention_audit", storage_retention.audit)
-    # APEX 69.7.1 production reachability boundary. app.py owns the actual
+    # APEX 69.8.0 production reachability and outcome-linkage boundary. app.py owns the actual
     # registration to preserve its duplicate-route guards; composition keeps
     # both observatory modules explicitly reachable from the canonical runtime
     # root and exposes their governed capabilities for runtime inspection.
