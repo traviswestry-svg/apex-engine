@@ -1277,7 +1277,7 @@ except Exception as _fbd697_err:
     FAILED_BREAKDOWN_69_7_AVAILABLE = False
     print(f"APEX 69.7.0 Failed Breakdown Lifecycle unavailable (non-fatal): {_fbd697_err}", flush=True)
 
-# APEX 69.8.1 — every genuine entry/exit trigger is persisted and observed,
+# APEX 69.8.2 — every genuine entry/exit trigger is persisted and observed,
 # including blocked triggers. Manual Power E*TRADE handoff only.
 try:
     from engine.trigger_observatory import (
@@ -1293,7 +1293,7 @@ except Exception as _to6971_err:
     observe_pine_trigger = None  # type: ignore[assignment]
     register_trigger_observatory_routes = None  # type: ignore[assignment]
     TRIGGER_OBSERVATORY_69_8_0_AVAILABLE = False
-    print(f"APEX 69.8.1 Trigger Observatory unavailable (non-fatal): {_to6971_err}", flush=True)
+    print(f"APEX 69.8.2 Trigger Observatory unavailable (non-fatal): {_to6971_err}", flush=True)
 
 # APEX 65.8 — Evidence Accumulation Observatory (read-only).
 try:
@@ -8440,19 +8440,20 @@ def api_institutional_os():
                         "execution_authority": False, "production_effect": "NONE",
                     }
 
-            # APEX 69.8.1 — after both the canonical decision and failed-
+            # APEX 69.8.2 — after both the canonical decision and failed-
             # breakdown lifecycle are final, retain every new trigger and update
             # the five-minute observation path of all still-open triggers.
             if TRIGGER_OBSERVATORY_69_8_0_AVAILABLE and observe_all_canonical_triggers is not None:
                 try:
                     _all_trigger_capture = observe_all_canonical_triggers(
-                        result, fbd_capture=_fbd_capture
+                        result, fbd_capture=_fbd_capture,
+                        canonical_decision_id=(result.get("historical_evidence_capture") or {}).get("decision_id"),
                     )
                     result["trade_trigger_observatory"] = {
                         "ok": bool(_all_trigger_capture.get("ok")),
                         "created_count": len(_all_trigger_capture.get("created") or []),
                         "price_observation": _all_trigger_capture.get("price_observation") or {},
-                        "version": "69.8.1", "manual_etrade_handoff": True,
+                        "version": "69.8.2", "manual_etrade_handoff": True,
                         "execution_authority": False, "broker_mutation": False,
                         "production_effect": "OBSERVATIONAL_ONLY",
                     }
@@ -8460,7 +8461,7 @@ def api_institutional_os():
                     result["trade_trigger_observatory"] = {
                         "ok": False, "status": "DEGRADED",
                         "error": f"{type(_all_trigger_err).__name__}: {_all_trigger_err}",
-                        "version": "69.8.1", "execution_authority": False,
+                        "version": "69.8.2", "execution_authority": False,
                         "broker_mutation": False, "production_effect": "NONE",
                     }
 
@@ -13949,13 +13950,13 @@ try:
         try:
             _to_init = initialize_trigger_observatory_store()
             print(
-                "APEX 69.8.1 Universal Trigger Observatory initialized "
+                "APEX 69.8.2 Universal Trigger Observatory initialized "
                 f"(status={_to_init.get('status')}, broker_mutation=False).",
                 flush=True,
             )
         except Exception as _to_init_exc:
             print(
-                "APEX 69.8.1 Universal Trigger Observatory initialization DEGRADED "
+                "APEX 69.8.2 Universal Trigger Observatory initialization DEGRADED "
                 f"({type(_to_init_exc).__name__}: {_to_init_exc}).",
                 flush=True,
             )

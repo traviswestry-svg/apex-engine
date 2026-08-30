@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.8.1",
-  "build_name": "Premium Discipline Trade Visualization & Learning Readiness Command Center",
+  "apex_version": "69.8.2",
+  "build_name": "Trigger Linkage & Calibration Readiness Verification",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -276,15 +276,23 @@
     "trigger_effectiveness_dashboard_surface": true,
     "learning_readiness_dashboard_surface": true,
     "trade_visualization_changes_trade_decisions": false,
-    "trade_visualization_changes_execution_authority": false
+    "trade_visualization_changes_execution_authority": false,
+    "canonical_trigger_decision_id_propagation": true,
+    "canonical_trigger_decision_id_source": "PERSISTED_HISTORICAL_EVIDENCE_CAPTURE",
+    "blocked_reason_visibility": true,
+    "calibration_readiness_verification": true,
+    "calibration_activation_human_governed": true,
+    "trigger_observation_maturation_diagnostic": true,
+    "trigger_linkage_changes_trade_decisions": false,
+    "calibration_readiness_verification_changes_trade_decisions": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.8.1",
-  "application_version": "69.8.1",
+  "semantic_version": "69.8.2",
+  "application_version": "69.8.2",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
