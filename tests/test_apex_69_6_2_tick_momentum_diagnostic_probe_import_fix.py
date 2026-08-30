@@ -15,11 +15,11 @@ def test_app_imports_urlparse_for_diagnostic_transport():
 
 def test_69_6_2_release_truth():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.6.3"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.7.1"
     assert manifest["guardrails"]["tick_momentum_diagnostic_probe_urlparse_import_present"] is True
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.6.3" in registry
-    assert 'version: "69.6.3"' in registry
+    assert "apex_version: 69.7.1" in registry
+    assert 'version: "69.7.1"' in registry
 
 def test_probe_guardrails_remain_fail_closed():
     source = (ROOT / "engine/tick_momentum_feed.py").read_text()
