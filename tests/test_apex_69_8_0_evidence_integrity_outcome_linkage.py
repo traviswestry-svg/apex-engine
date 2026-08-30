@@ -95,7 +95,7 @@ def test_69_8_0_guardrails_persist_in_current_release():
     assert guardrails["microstructure_promotion_in_69_8_0"] is False
 
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.8.1" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "/api/triggers/effectiveness" in registry
     assert "eligibility_evaluator_failure_state: INELIGIBLE" in registry
     assert "canonical_module: engine.canonical_decision\n    status: compatibility" in registry

@@ -98,8 +98,8 @@ def test_premium_command_center_contains_trade_and_learning_surfaces():
 
 def test_release_truth_is_69_8_1_and_authority_is_unchanged():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.8.1"
-    assert manifest["build_name"] == "Premium Discipline Trade Visualization & Learning Readiness Command Center"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 8, 1)
     g = manifest["guardrails"]
     assert g["premium_discipline_trade_visualization"] is True
     assert g["trade_visualization_observational_only"] is True
@@ -108,6 +108,6 @@ def test_release_truth_is_69_8_1_and_authority_is_unchanged():
     assert g["trade_visualization_changes_trade_decisions"] is False
     assert g["trade_visualization_changes_execution_authority"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.8.1" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "/api/triggers/trade-view" in registry
     assert "/api/triggers/learning-readiness" in registry

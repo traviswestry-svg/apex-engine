@@ -1,4 +1,4 @@
-"""APEX 69.8.1 — Universal Trade Trigger Observatory, Outcome Linkage & Trade Visualization.
+"""APEX 69.8.2 — Universal Trade Trigger Observatory, Linkage & Calibration Readiness Verification.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -21,7 +21,7 @@ from typing import Any, Dict, Mapping, Optional
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.8.1"
+VERSION = "69.8.2"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v2"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -259,28 +259,57 @@ def observe_price(*, symbol: str, price: Any, observed_at: Any = None,
             "execution_authority": False, "broker_mutation": False}
 
 
+def _canonical_blockers(decision: Mapping[str, Any]) -> list[str]:
+    """Expose only reasons derivable from the finalized canonical decision."""
+    out: list[str] = []
+    explicit = decision.get("blocking_conditions")
+    if not explicit:
+        explicit = (decision.get("conviction") or {}).get("blocking_conditions") if isinstance(decision.get("conviction"), Mapping) else None
+    if isinstance(explicit, (list, tuple, set)):
+        out.extend(str(x) for x in explicit if x not in (None, ""))
+    elif explicit:
+        out.append(str(explicit))
+
+    if not bool(decision.get("actionable")):
+        conviction = decision.get("conviction") if isinstance(decision.get("conviction"), Mapping) else {}
+        score = _f(conviction.get("score") if conviction else decision.get("confidence"))
+        if score is not None and score < 55.0:
+            out.append("CONVICTION_BELOW_ACTIONABLE_THRESHOLD")
+        direction = _u(decision.get("direction"))
+        if direction not in {"BULLISH", "BEARISH"}:
+            out.append("DIRECTION_NOT_ACTIONABLE")
+        status = _u(decision.get("status"), "")
+        if status and status not in {"ACTIONABLE", "UNKNOWN"}:
+            out.append(status)
+    return list(dict.fromkeys(out))
+
+
 def record_canonical_snapshot(snapshot: Optional[Mapping[str, Any]], *,
                               fbd_capture: Optional[Mapping[str, Any]] = None,
+                              canonical_decision_id: Optional[str] = None,
                               path: Optional[str] = None) -> Dict[str, Any]:
     s = dict(snapshot or {}); market = s.get("market_state") or {}
     symbol = str(s.get("ticker") or "SPX"); price = _f(market.get("price") or s.get("spot"))
     observed = observe_price(symbol=symbol, price=price, observed_at=s.get("timestamp") or _iso(), path=path)
     created = []
     decision = s.get("institutional_decision_object") or s.get("canonical_decision") or {}
+    historical_capture = s.get("historical_evidence_capture") if isinstance(s.get("historical_evidence_capture"), Mapping) else {}
+    decision_id = str(canonical_decision_id or historical_capture.get("decision_id") or decision.get("decision_id") or "").strip() or None
     action = _u(decision.get("action") or s.get("decision_state"))
     direction = decision.get("direction") or s.get("direction")
+    blockers = _canonical_blockers(decision)
     if any(x in action for x in ("ENTER", "TRADE", "EXECUTE")):
         created.append(record_trigger(
             source="CANONICAL_DECISION", trigger_type=action, symbol=symbol, direction=direction,
             disposition="CONFIRMED" if decision.get("actionable", True) else "BLOCKED",
-            triggered_at=s.get("timestamp") or _iso(), source_event_key=decision.get("decision_id"),
-            decision_id=decision.get("decision_id"),
+            triggered_at=s.get("timestamp") or _iso(), source_event_key=decision_id,
+            decision_id=decision_id,
             setup_family=decision.get("setup_family") or s.get("setup_family") or "CANONICAL",
-            price=price, confidence=decision.get("confidence") or s.get("confidence"),
+            price=price, confidence=decision.get("confidence") or decision.get("raw_conviction") or s.get("confidence"),
             entry=decision.get("entry_reference") or price, stop=decision.get("invalidation"),
             target1=decision.get("target") or (s.get("risk") or {}).get("target1"),
-            target2=(s.get("risk") or {}).get("target2"), blockers=decision.get("blocking_conditions"),
-            evidence={"decision": decision}, path=path))
+            target2=(s.get("risk") or {}).get("target2"), blockers=blockers,
+            evidence={"decision": decision, "canonical_decision_id": decision_id}, path=path))
     for transition in (fbd_capture or {}).get("transitions") or []:
         if transition.get("state") != "ENTRY_ELIGIBLE": continue
         lifecycle_id = transition.get("lifecycle_id")
@@ -449,7 +478,7 @@ def history(*, symbol: str = "SPX", limit: int = 100, status: Optional[str] = No
 
 
 
-def learning_readiness(*, evidence_path: Optional[str] = None) -> Dict[str, Any]:
+def learning_readiness(*, evidence_path: Optional[str] = None, trigger_path: Optional[str] = None) -> Dict[str, Any]:
     """Return operator-facing evidence accumulation state without changing policy.
 
     This is deliberately read-only and does not create an evidence database merely
@@ -492,12 +521,75 @@ def learning_readiness(*, evidence_path: Optional[str] = None) -> Dict[str, Any]
     eligible = graded >= required
     progress = min(100.0, round(100.0 * graded / required, 1)) if required > 0 else 100.0
     stage = "CALIBRATION_ELIGIBLE" if eligible else ("SAMPLE_BUILDING" if graded > 0 else "COLLECTING")
+
+    calibration = {"status": "UNAVAILABLE", "eligibility_mode": "HEURISTIC",
+                   "graded_contexts": 0, "decision_contexts": 0,
+                   "candidate_counts": {}, "active_calibrations": 0,
+                   "automatic_activation": False, "human_activation_required": True}
+    activation = {"active_count": 0, "policy": {"automatic_activation": False, "human_activation_required": True}}
+    try:
+        from .calibration_activation import activation_status, eligibility_readout
+        calibration = eligibility_readout(resolved)
+        activation = activation_status(resolved)
+    except Exception as exc:
+        calibration = dict(calibration, status="UNAVAILABLE", error=f"{type(exc).__name__}: {exc}")
+
+    eligibility_mode = str(calibration.get("eligibility_mode") or calibration.get("status") or "HEURISTIC").upper()
+    activation_eligible = eligibility_mode in {"ELIGIBLE", "APPROVED", "ACTIVE"}
+    active_count = int(activation.get("active_count") or calibration.get("active_calibrations") or 0)
+    if active_count > 0:
+        activation_state = "ACTIVE"
+        readiness_reason = "At least one human-approved bounded calibration is active."
+    elif eligibility_mode == "APPROVED":
+        activation_state = "APPROVED_AWAITING_ACTIVATION"
+        readiness_reason = "A calibration candidate is approved but still requires explicit human activation."
+    elif eligibility_mode == "ELIGIBLE":
+        activation_state = "ELIGIBLE_FOR_HUMAN_REVIEW"
+        readiness_reason = "Per-bucket calibration evidence is eligible for governed human review; automatic activation remains disabled."
+    elif eligible:
+        activation_state = "AGGREGATE_READY_BUCKETS_NOT_YET_ELIGIBLE"
+        readiness_reason = "Aggregate graded history exceeds the global minimum, but governed per-context calibration readiness has not reached ELIGIBLE."
+    else:
+        activation_state = "ACCUMULATING"
+        readiness_reason = "Aggregate graded history has not reached the governed minimum."
+
+    maturation = {"observing": 0, "matured": 0, "overdue_observing": 0, "with_price_observations": 0}
+    trigger_path = trigger_path or _path()
+    if Path(trigger_path).exists():
+        try:
+            now_epoch = datetime.now(timezone.utc).timestamp()
+            with canonical_connect(trigger_path, read_only=True, timeout=4) as tconn:
+                tconn.row_factory = sqlite3.Row
+                rows = tconn.execute("SELECT status,triggered_at,observation_count,observation_window_seconds FROM observed_trade_triggers").fetchall()
+            for row in rows:
+                status_value = str(row["status"] or "").upper()
+                if status_value == "OBSERVING":
+                    maturation["observing"] += 1
+                    try:
+                        if now_epoch - _epoch(row["triggered_at"]) >= int(row["observation_window_seconds"] or MAX_HOLD_SECONDS):
+                            maturation["overdue_observing"] += 1
+                    except Exception:
+                        pass
+                elif status_value == "OBSERVED":
+                    maturation["matured"] += 1
+                if int(row["observation_count"] or 0) > 0:
+                    maturation["with_price_observations"] += 1
+        except Exception:
+            pass
+
     return {
         "ok": True, "status": "READY", "stage": stage,
         "decisions_recorded": total, "graded_outcomes": graded,
         "pending_decisions": pending, "excluded_outcomes": excluded,
         "price_samples": samples, "minimum_graded": required,
         "progress_pct": progress, "calibration_eligible": eligible,
+        "calibration_activation_state": activation_state,
+        "activation_eligible": activation_eligible,
+        "readiness_reason": readiness_reason,
+        "calibration_governance": calibration,
+        "calibration_activation": activation,
+        "observation_maturation": maturation,
+        "automatic_activation": False, "human_activation_required": True,
         "behavioral_authority": False, "execution_authority": False,
         "production_effect": PRODUCTION_EFFECT, "version": VERSION,
     }
@@ -609,6 +701,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "trade_visualization": True, "learning_readiness_surface": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}

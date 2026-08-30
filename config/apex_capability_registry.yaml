@@ -1,13 +1,13 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.8.1
+apex_version: 69.8.2
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
     deployed_modules: [engine.trigger_observatory, engine.trigger_observatory_routes, engine.outcome_grader, app]
     status: observational
-    version: "69.8.1"
+    version: "69.8.2"
     inputs: [tradingview_pine_signals, canonical_trade_decisions, failed_breakdown_entry_eligibility, canonical_spx_price, canonical_grading_results]
-    outputs: [durable_trigger_chronology, five_minute_price_excursions, canonical_outcome_links, trigger_effectiveness_summary, trade_visualization, learning_readiness_surface, manual_power_etrade_handoff]
+    outputs: [durable_trigger_chronology, five_minute_price_excursions, canonical_outcome_links, canonical_decision_id_linkage, blocked_reason_visibility, trigger_effectiveness_summary, trade_visualization, learning_readiness_surface, calibration_readiness_verification, observation_maturation_diagnostic, manual_power_etrade_handoff]
     api_routes: [/api/triggers/capability, /api/triggers/history, /api/triggers/effectiveness, /api/triggers/trade-view, /api/triggers/learning-readiness]
     decision_authority: none
     execution_authority: none
