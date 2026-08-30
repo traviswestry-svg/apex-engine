@@ -1,4 +1,4 @@
-"""APEX 66.3.1 decision-reasoning normalization contracts.
+"""APEX 69.8.0 decision-reasoning normalization contracts.
 
 This module does not create a second decision engine. It normalizes existing APEX
 primitive-engine outputs into shared contracts consumed by the authoritative
@@ -10,7 +10,7 @@ import datetime as dt
 import math
 from typing import Any, Dict, List, Mapping, Optional
 
-VERSION = "66.3.1"
+VERSION = "69.8.0"
 ENGINE_OPINION_SCHEMA = "apex.engine_opinion.v1"
 ACCEPTANCE_SCHEMA = "apex.acceptance_result.v1"
 CONSENSUS_SCHEMA = "apex.correlation_aware_consensus.v1"
@@ -268,9 +268,38 @@ def build_engine_opinions(last_result: Mapping[str, Any]) -> List[Dict[str, Any]
         try:
             from .evidence_eligibility import evaluate_evidence_eligibility
             eligibility = evaluate_evidence_eligibility(name, opinion, dynamic_state)
-        except Exception:
-            eligibility = {"state": "FULL", "weight_factor": 1.0, "reasons": [],
-                           "consensus_eligible": True, "execution_authority": False}
+        except Exception as exc:
+            # APEX 69.8.0 — evidence governance must never fail open. If the
+            # eligibility evaluator itself degrades, suppress this opinion from
+            # consensus while keeping the failure visible for diagnostics.
+            eligibility = {
+                "schema_version": "apex.evidence_eligibility.v1",
+                "version": "69.8.0",
+                "state": "INELIGIBLE",
+                "weight_factor": 0.0,
+                "reasons": ["ELIGIBILITY_EVALUATION_FAILED"],
+                "consensus_eligible": False,
+                "context_visible": False,
+                "execution_authority": False,
+                "degraded": True,
+                "failure_type": type(exc).__name__,
+            }
+            try:
+                from .silent_degradation_observability import record_degradation
+                record_degradation(
+                    component="decision_reasoning_contracts",
+                    operation="evaluate_evidence_eligibility",
+                    exc=exc,
+                    severity="DECISION_DANGEROUS_PREVENTED",
+                    fallback="INELIGIBLE_WEIGHT_0",
+                    decision_authority_suppressed=True,
+                    source="engine.decision_reasoning_contracts.build_engine_opinions",
+                    context={"engine_name": name, "normalizer_version": VERSION},
+                )
+            except Exception:
+                # The degradation recorder is itself best-effort; never replace
+                # the fail-closed eligibility result with a less safe fallback.
+                pass
         opinion["evidence_eligibility"] = eligibility
         opinion["eligibility_state"] = eligibility.get("state")
         opinion["eligibility_weight_factor"] = eligibility.get("weight_factor", 1.0)

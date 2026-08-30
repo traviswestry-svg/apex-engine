@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from engine.evidence_pipeline import _connect, DEFAULT_DB, readiness
-VERSION='68.6.0'; SCHEMA_VERSION='apex.outcome_grader.v1'; DEFAULT_HORIZON=int(os.getenv('APEX_GRADING_HORIZON_SECONDS','300'))
+VERSION='69.8.0'; SCHEMA_VERSION='apex.outcome_grader.v1'; DEFAULT_HORIZON=int(os.getenv('APEX_GRADING_HORIZON_SECONDS','300'))
 def _dt(v): return datetime.fromisoformat(str(v).replace('Z','+00:00'))
 def run_grader(path: str|Path=DEFAULT_DB,horizon_seconds:int=DEFAULT_HORIZON,limit:int=500)->dict[str,Any]:
  now=datetime.now(timezone.utc); counts={'graded':0,'excluded':0,'not_matured':0,'errors':0}
@@ -43,5 +43,10 @@ def run_grader(path: str|Path=DEFAULT_DB,horizon_seconds:int=DEFAULT_HORIZON,lim
   attribution=grade_pending(path,horizon_seconds=horizon_seconds,limit=limit,now=now)
  except Exception as exc:
   attribution={'graded':0,'errors':1,'status':'DEGRADED','error':type(exc).__name__}
- return {'ok':True,**counts,'processed':sum(counts.values()),'horizon_seconds':horizon_seconds,'readiness':readiness(path),'attribution':attribution,'schema_version':SCHEMA_VERSION,'engine_version':VERSION,'execution_authority':False}
+ try:
+  from engine.trigger_observatory import sync_canonical_outcomes
+  trigger_linkage=sync_canonical_outcomes(evidence_path=str(path))
+ except Exception as exc:
+  trigger_linkage={'ok':False,'status':'DEGRADED','linked':0,'error':type(exc).__name__,'execution_authority':False}
+ return {'ok':True,**counts,'processed':sum(counts.values()),'horizon_seconds':horizon_seconds,'readiness':readiness(path),'attribution':attribution,'trigger_outcome_linkage':trigger_linkage,'schema_version':SCHEMA_VERSION,'engine_version':VERSION,'execution_authority':False}
 def summary(path: str|Path=DEFAULT_DB): return {'ok':True,'readiness':readiness(path),'default_horizon_seconds':DEFAULT_HORIZON,'schema_version':SCHEMA_VERSION,'engine_version':VERSION}

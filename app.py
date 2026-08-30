@@ -1277,7 +1277,7 @@ except Exception as _fbd697_err:
     FAILED_BREAKDOWN_69_7_AVAILABLE = False
     print(f"APEX 69.7.0 Failed Breakdown Lifecycle unavailable (non-fatal): {_fbd697_err}", flush=True)
 
-# APEX 69.7.1 — every genuine entry/exit trigger is persisted and observed,
+# APEX 69.8.0 — every genuine entry/exit trigger is persisted and observed,
 # including blocked triggers. Manual Power E*TRADE handoff only.
 try:
     from engine.trigger_observatory import (
@@ -1286,14 +1286,14 @@ try:
         record_pine_signal as observe_pine_trigger,
     )
     from engine.trigger_observatory_routes import register_trigger_observatory_routes
-    TRIGGER_OBSERVATORY_69_7_1_AVAILABLE = True
+    TRIGGER_OBSERVATORY_69_8_0_AVAILABLE = True
 except Exception as _to6971_err:
     initialize_trigger_observatory_store = None  # type: ignore[assignment]
     observe_all_canonical_triggers = None  # type: ignore[assignment]
     observe_pine_trigger = None  # type: ignore[assignment]
     register_trigger_observatory_routes = None  # type: ignore[assignment]
-    TRIGGER_OBSERVATORY_69_7_1_AVAILABLE = False
-    print(f"APEX 69.7.1 Trigger Observatory unavailable (non-fatal): {_to6971_err}", flush=True)
+    TRIGGER_OBSERVATORY_69_8_0_AVAILABLE = False
+    print(f"APEX 69.8.0 Trigger Observatory unavailable (non-fatal): {_to6971_err}", flush=True)
 
 # APEX 65.8 — Evidence Accumulation Observatory (read-only).
 try:
@@ -6554,9 +6554,9 @@ def tv_signal():
         TRADE_ASSISTANT_STATE["last_signal"]   = signal
         TRADE_ASSISTANT_STATE["last_decision"] = assistant
 
-    # APEX 69.7.1 — capture every Pine trigger regardless of the assistant's
+    # APEX 69.8.0 — capture every Pine trigger regardless of the assistant's
     # disposition. A rejected/blocked trigger is evidence, not discarded data.
-    if TRIGGER_OBSERVATORY_69_7_1_AVAILABLE and observe_pine_trigger is not None:
+    if TRIGGER_OBSERVATORY_69_8_0_AVAILABLE and observe_pine_trigger is not None:
         try:
             _trigger_capture = observe_pine_trigger(signal, assistant)
             signal["trigger_observation"] = {
@@ -8440,10 +8440,10 @@ def api_institutional_os():
                         "execution_authority": False, "production_effect": "NONE",
                     }
 
-            # APEX 69.7.1 — after both the canonical decision and failed-
+            # APEX 69.8.0 — after both the canonical decision and failed-
             # breakdown lifecycle are final, retain every new trigger and update
             # the five-minute observation path of all still-open triggers.
-            if TRIGGER_OBSERVATORY_69_7_1_AVAILABLE and observe_all_canonical_triggers is not None:
+            if TRIGGER_OBSERVATORY_69_8_0_AVAILABLE and observe_all_canonical_triggers is not None:
                 try:
                     _all_trigger_capture = observe_all_canonical_triggers(
                         result, fbd_capture=_fbd_capture
@@ -8452,7 +8452,7 @@ def api_institutional_os():
                         "ok": bool(_all_trigger_capture.get("ok")),
                         "created_count": len(_all_trigger_capture.get("created") or []),
                         "price_observation": _all_trigger_capture.get("price_observation") or {},
-                        "version": "69.7.1", "manual_etrade_handoff": True,
+                        "version": "69.8.0", "manual_etrade_handoff": True,
                         "execution_authority": False, "broker_mutation": False,
                         "production_effect": "OBSERVATIONAL_ONLY",
                     }
@@ -8460,7 +8460,7 @@ def api_institutional_os():
                     result["trade_trigger_observatory"] = {
                         "ok": False, "status": "DEGRADED",
                         "error": f"{type(_all_trigger_err).__name__}: {_all_trigger_err}",
-                        "version": "69.7.1", "execution_authority": False,
+                        "version": "69.8.0", "execution_authority": False,
                         "broker_mutation": False, "production_effect": "NONE",
                     }
 
@@ -13944,18 +13944,18 @@ try:
                 flush=True,
             )
 
-    if TRIGGER_OBSERVATORY_69_7_1_AVAILABLE and register_trigger_observatory_routes is not None:
+    if TRIGGER_OBSERVATORY_69_8_0_AVAILABLE and register_trigger_observatory_routes is not None:
         register_trigger_observatory_routes(app)
         try:
             _to_init = initialize_trigger_observatory_store()
             print(
-                "APEX 69.7.1 Universal Trigger Observatory initialized "
+                "APEX 69.8.0 Universal Trigger Observatory initialized "
                 f"(status={_to_init.get('status')}, broker_mutation=False).",
                 flush=True,
             )
         except Exception as _to_init_exc:
             print(
-                "APEX 69.7.1 Universal Trigger Observatory initialization DEGRADED "
+                "APEX 69.8.0 Universal Trigger Observatory initialization DEGRADED "
                 f"({type(_to_init_exc).__name__}: {_to_init_exc}).",
                 flush=True,
             )

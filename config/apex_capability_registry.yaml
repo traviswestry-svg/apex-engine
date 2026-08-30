@@ -1,14 +1,14 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.7.1
+apex_version: 69.8.0
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
-    deployed_modules: [engine.trigger_observatory, engine.trigger_observatory_routes, app]
+    deployed_modules: [engine.trigger_observatory, engine.trigger_observatory_routes, engine.outcome_grader, app]
     status: observational
-    version: "69.7.1"
-    inputs: [tradingview_pine_signals, canonical_trade_decisions, failed_breakdown_entry_eligibility, canonical_spx_price]
-    outputs: [durable_trigger_chronology, five_minute_price_excursions, manual_power_etrade_handoff]
-    api_routes: [/api/triggers/capability, /api/triggers/history]
+    version: "69.8.0"
+    inputs: [tradingview_pine_signals, canonical_trade_decisions, failed_breakdown_entry_eligibility, canonical_spx_price, canonical_grading_results]
+    outputs: [durable_trigger_chronology, five_minute_price_excursions, canonical_outcome_links, trigger_effectiveness_summary, manual_power_etrade_handoff]
+    api_routes: [/api/triggers/capability, /api/triggers/history, /api/triggers/effectiveness]
     decision_authority: none
     execution_authority: none
     production_effect: OBSERVATIONAL_ONLY
@@ -17,7 +17,7 @@ capabilities:
     manual_etrade_handoff: true
     automatic_order_submission: false
     broker_mutation: false
-    guardrails: [all_genuine_triggers_observed, immutable_source_event_identity, duplicate_safe, blocked_triggers_retained, human_confirmation_required, live_option_chain_selection_required, no_decision_authority, no_execution_authority, no_broker_mutation]
+    guardrails: [all_genuine_triggers_observed, immutable_source_event_identity, duplicate_safe, blocked_triggers_retained, canonical_outcome_linkage_observational_only, trigger_statistics_do_not_auto_promote_policy, human_confirmation_required, live_option_chain_selection_required, no_decision_authority, no_execution_authority, no_broker_mutation]
 
   failed_breakdown_lifecycle_intelligence:
     canonical_module: engine.failed_breakdown_lifecycle
@@ -39,7 +39,7 @@ capabilities:
     canonical_module: engine.evidence_eligibility
     deployed_modules: [engine.gamma, engine.dynamic_state, engine.evidence_eligibility, engine.decision_reasoning_contracts, engine.dynamic_state_routes, app]
     status: production_decision_quality
-    version: "69.7.1"
+    version: "69.8.0"
     inputs: [gamma_exposure_by_expiration, expected_move_when_available, engine_opinions, flow_independence, event_phase]
     outputs: [gamma_capacity, gamma_structure_durability, evidence_eligibility, effective_independent_evidence]
     api_routes: [/api/dynamic-state]
@@ -50,6 +50,9 @@ capabilities:
     fabricated_expected_move_allowed: false
     flow_double_discount_allowed: false
     eligibility_states: [FULL, DISCOUNTED, CONTEXT_ONLY, WATCH_ONLY, INELIGIBLE]
+    eligibility_evaluator_failure_state: INELIGIBLE
+    eligibility_evaluator_failure_weight_factor: 0.0
+    eligibility_evaluator_failure_observable: true
 
   multi_horizon_tick_momentum_intelligence:
     canonical_module: engine.tick_momentum
@@ -219,12 +222,13 @@ capabilities:
     decision_authority: none
   canonical_decision_snapshot:
     canonical_module: engine.canonical_decision
-    status: active
+    status: compatibility
     version: 47.0.2
     inputs: [institutional_os_composition]
-    outputs: [canonical_decision_snapshot, feature_vector]
+    outputs: [legacy_canonical_decision_snapshot, feature_vector]
     api_routes: [/api/decision-snapshot/latest]
-    decision_authority: advisory
+    decision_authority: none
+    note: Superseded as decision authority by engine.institutional_decision_object; retained only for historical/test compatibility.
   canonical_institutional_decision:
     canonical_module: engine.institutional_decision_object
     status: active
@@ -246,11 +250,11 @@ capabilities:
   decision_reasoning_normalization:
     canonical_module: engine.decision_reasoning_contracts
     status: active
-    version: 66.3.1
+    version: 69.8.0
     inputs: [primitive_engine_outputs]
     outputs: [engine_opinions, acceptance_result, correlation_aware_consensus]
     decision_authority: none
-    guardrails: [missing_data_abstains, neutral_not_abstain, unknown_not_neutral, configured_decorrelation_not_historical_claim]
+    guardrails: [missing_data_abstains, neutral_not_abstain, unknown_not_neutral, configured_decorrelation_not_historical_claim, eligibility_evaluator_failure_fails_closed, eligibility_failure_never_increases_consensus_authority]
   legacy_institutional_decision_adapter:
     canonical_module: engine.institutional_decision_engine
     status: compatibility
