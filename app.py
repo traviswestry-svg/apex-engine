@@ -1261,6 +1261,40 @@ except Exception as _hlce_err:
     HLCE_AVAILABLE = False
     print(f"APEX Historical Level Calibration unavailable (non-fatal): {_hlce_err}", flush=True)
 
+# APEX 69.7.0 — persistent failed-breakdown lifecycle evidence. Observational
+# only: scanner capture occurs after the canonical decision has been frozen.
+try:
+    from engine.failed_breakdown_lifecycle import (
+        initialize_store as initialize_failed_breakdown_store,
+        observe_snapshot as observe_failed_breakdown_snapshot,
+    )
+    from engine.failed_breakdown_lifecycle_routes import register_failed_breakdown_lifecycle_routes
+    FAILED_BREAKDOWN_69_7_AVAILABLE = True
+except Exception as _fbd697_err:
+    initialize_failed_breakdown_store = None  # type: ignore[assignment]
+    observe_failed_breakdown_snapshot = None  # type: ignore[assignment]
+    register_failed_breakdown_lifecycle_routes = None  # type: ignore[assignment]
+    FAILED_BREAKDOWN_69_7_AVAILABLE = False
+    print(f"APEX 69.7.0 Failed Breakdown Lifecycle unavailable (non-fatal): {_fbd697_err}", flush=True)
+
+# APEX 69.7.1 — every genuine entry/exit trigger is persisted and observed,
+# including blocked triggers. Manual Power E*TRADE handoff only.
+try:
+    from engine.trigger_observatory import (
+        initialize_store as initialize_trigger_observatory_store,
+        record_canonical_snapshot as observe_all_canonical_triggers,
+        record_pine_signal as observe_pine_trigger,
+    )
+    from engine.trigger_observatory_routes import register_trigger_observatory_routes
+    TRIGGER_OBSERVATORY_69_7_1_AVAILABLE = True
+except Exception as _to6971_err:
+    initialize_trigger_observatory_store = None  # type: ignore[assignment]
+    observe_all_canonical_triggers = None  # type: ignore[assignment]
+    observe_pine_trigger = None  # type: ignore[assignment]
+    register_trigger_observatory_routes = None  # type: ignore[assignment]
+    TRIGGER_OBSERVATORY_69_7_1_AVAILABLE = False
+    print(f"APEX 69.7.1 Trigger Observatory unavailable (non-fatal): {_to6971_err}", flush=True)
+
 # APEX 65.8 — Evidence Accumulation Observatory (read-only).
 try:
     from engine.evidence_accumulation_routes import register_evidence_accumulation_routes
@@ -6483,6 +6517,15 @@ def tv_signal():
         "intern_score":   payload.get("intern_score"),
         "signal_num":     payload.get("signal_num"),
         "bar_time":       payload.get("bar_time"),
+        # Underlying risk/management references for manual Power E*TRADE handoff.
+        "stop":            payload.get("stop") or payload.get("sl"),
+        "target1":         payload.get("target1") or payload.get("tp1"),
+        "target2":         payload.get("target2") or payload.get("tp2"),
+        "target3":         payload.get("target3") or payload.get("tp3"),
+        "risk_max":        payload.get("riskMax") or payload.get("risk_max"),
+        "daily_loss_max":  payload.get("dailyLossMax") or payload.get("daily_loss_max"),
+        "max_hold_minutes":payload.get("maxHoldMinutes") or payload.get("max_hold_minutes"),
+        "trade_count":     payload.get("tradeCount") or payload.get("trade_count"),
         # Outcome tracking — filled in later via /api/signal_outcome
         "outcome":        None,
         "outcome_pnl":    None,
@@ -6510,6 +6553,25 @@ def tv_signal():
         TRADE_ASSISTANT_STATE.update(assistant)
         TRADE_ASSISTANT_STATE["last_signal"]   = signal
         TRADE_ASSISTANT_STATE["last_decision"] = assistant
+
+    # APEX 69.7.1 — capture every Pine trigger regardless of the assistant's
+    # disposition. A rejected/blocked trigger is evidence, not discarded data.
+    if TRIGGER_OBSERVATORY_69_7_1_AVAILABLE and observe_pine_trigger is not None:
+        try:
+            _trigger_capture = observe_pine_trigger(signal, assistant)
+            signal["trigger_observation"] = {
+                "trigger_id": _trigger_capture.get("trigger_id"),
+                "created": bool(_trigger_capture.get("created")),
+                "disposition": _trigger_capture.get("disposition"),
+                "manual_etrade_handoff": _trigger_capture.get("etrade_handoff") or {},
+                "execution_authority": False, "broker_mutation": False,
+            }
+        except Exception as _trigger_capture_err:
+            signal["trigger_observation"] = {
+                "created": False, "status": "DEGRADED",
+                "error": f"{type(_trigger_capture_err).__name__}: {_trigger_capture_err}",
+                "execution_authority": False, "broker_mutation": False,
+            }
 
     if assistant.get("alert"):
         send_telegram(
@@ -8353,6 +8415,54 @@ def api_institutional_os():
                     "error": f"{type(_apex69_capture_err).__name__}: {_apex69_capture_err}",
                     "version": "69.0.1", "execution_authority": False,
                 }
+
+            # APEX 69.7.0 — observe the already-finalized snapshot. The returned
+            # state is evidence only and cannot influence the completed decision.
+            _fbd_capture = {}
+            if FAILED_BREAKDOWN_69_7_AVAILABLE and observe_failed_breakdown_snapshot is not None:
+                try:
+                    _fbd_capture = observe_failed_breakdown_snapshot(result)
+                    result["failed_breakdown_lifecycle"] = {
+                        "ok": bool(_fbd_capture.get("ok")),
+                        "status": _fbd_capture.get("status"),
+                        "transition_count": len(_fbd_capture.get("transitions") or []),
+                        "current": _fbd_capture.get("current") or {},
+                        "version": "69.7.0",
+                        "changes_trade_decisions": False,
+                        "execution_authority": False,
+                        "production_effect": "OBSERVATIONAL_ONLY",
+                    }
+                except Exception as _fbd_capture_err:
+                    result["failed_breakdown_lifecycle"] = {
+                        "ok": False, "status": "DEGRADED",
+                        "error": f"{type(_fbd_capture_err).__name__}: {_fbd_capture_err}",
+                        "version": "69.7.0", "changes_trade_decisions": False,
+                        "execution_authority": False, "production_effect": "NONE",
+                    }
+
+            # APEX 69.7.1 — after both the canonical decision and failed-
+            # breakdown lifecycle are final, retain every new trigger and update
+            # the five-minute observation path of all still-open triggers.
+            if TRIGGER_OBSERVATORY_69_7_1_AVAILABLE and observe_all_canonical_triggers is not None:
+                try:
+                    _all_trigger_capture = observe_all_canonical_triggers(
+                        result, fbd_capture=_fbd_capture
+                    )
+                    result["trade_trigger_observatory"] = {
+                        "ok": bool(_all_trigger_capture.get("ok")),
+                        "created_count": len(_all_trigger_capture.get("created") or []),
+                        "price_observation": _all_trigger_capture.get("price_observation") or {},
+                        "version": "69.7.1", "manual_etrade_handoff": True,
+                        "execution_authority": False, "broker_mutation": False,
+                        "production_effect": "OBSERVATIONAL_ONLY",
+                    }
+                except Exception as _all_trigger_err:
+                    result["trade_trigger_observatory"] = {
+                        "ok": False, "status": "DEGRADED",
+                        "error": f"{type(_all_trigger_err).__name__}: {_all_trigger_err}",
+                        "version": "69.7.1", "execution_authority": False,
+                        "broker_mutation": False, "production_effect": "NONE",
+                    }
 
             _record_confidence_timeline_point(ticker, result)
             # APEX 7.6.0 Premium Strategy — dispatch on the composition cycle
@@ -13815,6 +13925,38 @@ try:
             print(
                 "APEX 68.5.3 Calibration Governance Store initialization DEGRADED "
                 f"({type(_cal_init_exc).__name__}: {_cal_init_exc}).",
+                flush=True,
+            )
+
+    if FAILED_BREAKDOWN_69_7_AVAILABLE and register_failed_breakdown_lifecycle_routes is not None:
+        register_failed_breakdown_lifecycle_routes(app)
+        try:
+            _fbd_init = initialize_failed_breakdown_store()
+            print(
+                "APEX 69.7.0 Failed Breakdown Lifecycle initialized "
+                f"(status={_fbd_init.get('status')}, execution_authority=False).",
+                flush=True,
+            )
+        except Exception as _fbd_init_exc:
+            print(
+                "APEX 69.7.0 Failed Breakdown Lifecycle initialization DEGRADED "
+                f"({type(_fbd_init_exc).__name__}: {_fbd_init_exc}).",
+                flush=True,
+            )
+
+    if TRIGGER_OBSERVATORY_69_7_1_AVAILABLE and register_trigger_observatory_routes is not None:
+        register_trigger_observatory_routes(app)
+        try:
+            _to_init = initialize_trigger_observatory_store()
+            print(
+                "APEX 69.7.1 Universal Trigger Observatory initialized "
+                f"(status={_to_init.get('status')}, broker_mutation=False).",
+                flush=True,
+            )
+        except Exception as _to_init_exc:
+            print(
+                "APEX 69.7.1 Universal Trigger Observatory initialization DEGRADED "
+                f"({type(_to_init_exc).__name__}: {_to_init_exc}).",
                 flush=True,
             )
 
