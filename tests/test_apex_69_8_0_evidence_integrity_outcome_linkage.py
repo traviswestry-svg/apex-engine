@@ -80,10 +80,10 @@ def test_trigger_links_to_canonical_grade_and_effectiveness_is_observational(tmp
     assert report["production_effect"] == "OBSERVATIONAL_ONLY"
 
 
-def test_release_truth_and_guardrails_are_69_8_0():
+def test_69_8_0_guardrails_persist_in_current_release():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.8.0"
-    assert manifest["build_name"] == "Evidence Integrity, Outcome Linkage & Learning Readiness Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 8, 0)
     guardrails = manifest["guardrails"]
     assert guardrails["evidence_eligibility_failure_fails_closed"] is True
     assert guardrails["evidence_eligibility_failure_state"] == "INELIGIBLE"
@@ -95,7 +95,7 @@ def test_release_truth_and_guardrails_are_69_8_0():
     assert guardrails["microstructure_promotion_in_69_8_0"] is False
 
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.8.0" in registry
+    assert "apex_version: 69.8.1" in registry
     assert "/api/triggers/effectiveness" in registry
     assert "eligibility_evaluator_failure_state: INELIGIBLE" in registry
     assert "canonical_module: engine.canonical_decision\n    status: compatibility" in registry

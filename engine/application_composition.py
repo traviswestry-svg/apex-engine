@@ -11,7 +11,7 @@ from . import storage_retention
 from . import trigger_observatory
 from . import trigger_observatory_routes
 
-VERSION = "69.8.0"
+VERSION = "69.8.1"
 
 
 def create_app():

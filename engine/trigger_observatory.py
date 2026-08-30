@@ -1,4 +1,4 @@
-"""APEX 69.8.0 — Universal Trade Trigger Observatory & Outcome Linkage.
+"""APEX 69.8.1 — Universal Trade Trigger Observatory, Outcome Linkage & Trade Visualization.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -21,7 +21,7 @@ from typing import Any, Dict, Mapping, Optional
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.8.0"
+VERSION = "69.8.1"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v2"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -448,12 +448,167 @@ def history(*, symbol: str = "SPX", limit: int = 100, status: Optional[str] = No
             "production_effect": PRODUCTION_EFFECT}
 
 
+
+def learning_readiness(*, evidence_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return operator-facing evidence accumulation state without changing policy.
+
+    This is deliberately read-only and does not create an evidence database merely
+    because the Premium Discipline dashboard was opened.
+    """
+    if evidence_path is None:
+        from .evidence_pipeline import DEFAULT_DB
+        evidence_path = str(DEFAULT_DB)
+    resolved = str(evidence_path)
+    try:
+        from .institutional_governance import MIN_GRADED
+        required = int(MIN_GRADED)
+    except Exception:
+        required = 50
+    if not Path(resolved).exists():
+        return {
+            "ok": True, "status": "WAITING_FOR_LIVE_DATA", "stage": "COLLECTING",
+            "decisions_recorded": 0, "graded_outcomes": 0, "pending_decisions": 0,
+            "excluded_outcomes": 0, "price_samples": 0, "minimum_graded": required,
+            "progress_pct": 0.0, "calibration_eligible": False,
+            "behavioral_authority": False, "execution_authority": False,
+            "production_effect": PRODUCTION_EFFECT, "version": VERSION,
+        }
+    try:
+        with canonical_connect(resolved, read_only=True, timeout=4) as conn:
+            conn.row_factory = sqlite3.Row
+            total = int(conn.execute("SELECT COUNT(*) n FROM decisions").fetchone()["n"])
+            graded = int(conn.execute("SELECT COUNT(*) n FROM grading_results WHERE status='GRADED'").fetchone()["n"])
+            excluded = int(conn.execute("SELECT COUNT(*) n FROM grading_results WHERE status='EXCLUDED'").fetchone()["n"])
+            pending = int(conn.execute("SELECT COUNT(*) n FROM decisions WHERE status='PENDING'").fetchone()["n"])
+            samples = int(conn.execute("SELECT COUNT(*) n FROM price_samples").fetchone()["n"])
+    except Exception as exc:
+        return {
+            "ok": False, "status": "UNAVAILABLE", "stage": "UNKNOWN",
+            "error": f"{type(exc).__name__}: {exc}", "minimum_graded": required,
+            "calibration_eligible": False, "behavioral_authority": False,
+            "execution_authority": False, "production_effect": PRODUCTION_EFFECT,
+            "version": VERSION,
+        }
+    eligible = graded >= required
+    progress = min(100.0, round(100.0 * graded / required, 1)) if required > 0 else 100.0
+    stage = "CALIBRATION_ELIGIBLE" if eligible else ("SAMPLE_BUILDING" if graded > 0 else "COLLECTING")
+    return {
+        "ok": True, "status": "READY", "stage": stage,
+        "decisions_recorded": total, "graded_outcomes": graded,
+        "pending_decisions": pending, "excluded_outcomes": excluded,
+        "price_samples": samples, "minimum_graded": required,
+        "progress_pct": progress, "calibration_eligible": eligible,
+        "behavioral_authority": False, "execution_authority": False,
+        "production_effect": PRODUCTION_EFFECT, "version": VERSION,
+    }
+
+
+def _premium_projection(evidence: Mapping[str, Any]) -> Dict[str, Any]:
+    """Extract only explicitly observed option-premium fields from trigger evidence."""
+    pine = evidence.get("pine") if isinstance(evidence, Mapping) else None
+    sources = [evidence, pine if isinstance(pine, Mapping) else {}]
+    aliases = {
+        "contract": ("contract", "option_contract", "contract_symbol"),
+        "entry_premium": ("entry_premium", "premium", "option_premium"),
+        "current_premium": ("current_premium",),
+        "peak_premium": ("peak_premium", "max_premium"),
+        "target1_premium": ("target1_premium", "tp1_premium"),
+        "target2_premium": ("target2_premium", "tp2_premium"),
+        "target3_premium": ("target3_premium", "tp3_premium"),
+        "stop_premium": ("stop_premium",),
+    }
+    out: Dict[str, Any] = {}
+    for dest, keys in aliases.items():
+        value = None
+        for source in sources:
+            for key in keys:
+                if source.get(key) not in (None, ""):
+                    value = source.get(key); break
+            if value not in (None, ""):
+                break
+        out[dest] = value
+    out["available"] = any(v not in (None, "") for k, v in out.items() if k != "available")
+    out["source"] = "RECORDED_TRIGGER_EVIDENCE" if out["available"] else "UNAVAILABLE"
+    return out
+
+
+def trade_visualization(*, trigger_id: Optional[str] = None, symbol: str = "SPX",
+                        path: Optional[str] = None) -> Dict[str, Any]:
+    """Build a read-only visualization contract from persisted trigger observations."""
+    resolved = path or _path()
+    if not Path(resolved).exists():
+        return {"ok": True, "status": "WAITING_FOR_TRIGGERS", "trade": None,
+                "execution_authority": False, "broker_mutation": False,
+                "production_effect": PRODUCTION_EFFECT, "version": VERSION}
+    initialize_store(resolved)
+    with canonical_connect(resolved, read_only=True, timeout=4) as conn:
+        conn.row_factory = sqlite3.Row
+        if trigger_id:
+            row = conn.execute("SELECT * FROM observed_trade_triggers WHERE trigger_id=?", (str(trigger_id),)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM observed_trade_triggers WHERE symbol=? ORDER BY triggered_at DESC LIMIT 1", (_u(symbol, "SPX"),)).fetchone()
+        if row is None:
+            return {"ok": True, "status": "NOT_FOUND", "trade": None,
+                    "execution_authority": False, "broker_mutation": False,
+                    "production_effect": PRODUCTION_EFFECT, "version": VERSION}
+        raw = dict(row)
+        observations = [dict(x) for x in conn.execute(
+            "SELECT observed_at,price,favorable_points,adverse_points FROM trade_trigger_price_observations WHERE trigger_id=? ORDER BY observed_at",
+            (raw["trigger_id"],),
+        ).fetchall()]
+    evidence = {}
+    blockers = []
+    try: evidence = json.loads(raw.get("evidence_json") or "{}")
+    except Exception: evidence = {}
+    try: blockers = json.loads(raw.get("blocker_codes_json") or "[]")
+    except Exception: blockers = []
+    direction = raw.get("direction")
+    prices = [float(x["price"]) for x in observations if x.get("price") is not None]
+    entry = _f(raw.get("entry_reference"))
+    if entry is not None and not prices:
+        prices = [entry]
+    target_hits: Dict[str, bool] = {}
+    for name, field in (("tp1", "target1_reference"), ("tp2", "target2_reference"), ("tp3", "target3_reference")):
+        target = _f(raw.get(field))
+        if target is None or not prices:
+            target_hits[name] = False
+        elif direction == "BULLISH":
+            target_hits[name] = max(prices) >= target
+        elif direction == "BEARISH":
+            target_hits[name] = min(prices) <= target
+        else:
+            target_hits[name] = False
+    stop = _f(raw.get("stop_reference"))
+    stop_hit = False
+    if stop is not None and prices:
+        stop_hit = min(prices) <= stop if direction == "BULLISH" else max(prices) >= stop if direction == "BEARISH" else False
+    trade = {
+        "trigger_id": raw.get("trigger_id"), "decision_id": raw.get("decision_id"),
+        "source": raw.get("source"), "trigger_type": raw.get("trigger_type"),
+        "setup_family": raw.get("setup_family"), "symbol": raw.get("symbol"),
+        "direction": direction, "disposition": raw.get("disposition"),
+        "triggered_at": raw.get("triggered_at"), "status": raw.get("status"),
+        "confidence": raw.get("confidence"), "entry": entry, "stop": stop,
+        "tp1": _f(raw.get("target1_reference")), "tp2": _f(raw.get("target2_reference")),
+        "tp3": _f(raw.get("target3_reference")), "last_price": _f(raw.get("last_price")),
+        "mfe_points": _f(raw.get("mfe_points")), "mae_points": _f(raw.get("mae_points")),
+        "outcome_label": raw.get("outcome_label"), "canonical_grade_status": raw.get("canonical_grade_status"),
+        "canonical_grade_label": raw.get("canonical_grade_label"), "canonical_graded_at": raw.get("canonical_graded_at"),
+        "blockers": blockers, "target_hits": target_hits, "stop_hit": stop_hit,
+        "observations": observations, "premium": _premium_projection(evidence),
+        "is_actionable_trade": raw.get("source") == "CANONICAL_DECISION" and raw.get("disposition") == "CONFIRMED" and raw.get("trigger_type") != "NO_TRADE",
+        "observational_only": True,
+    }
+    return {"ok": True, "status": "READY", "trade": trade,
+            "execution_authority": False, "broker_mutation": False,
+            "production_effect": PRODUCTION_EFFECT, "version": VERSION}
+
 def capability() -> Dict[str, Any]:
     return {"ok": True, "version": VERSION, "schema_version": SCHEMA_VERSION,
             "status": "OBSERVATIONAL", "captures": ["PINE_CALL", "PINE_PUT", "PINE_EXIT",
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "trade_visualization": True, "learning_readiness_surface": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
