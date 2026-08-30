@@ -33,7 +33,7 @@ def test_route_and_release_truth_registered():
     assert 'app.config["APEX_TICK_MOMENTUM_DIAGNOSTIC_PROBE"] = _tick_momentum_diagnostic_probe' in app
     assert 'register_tick_momentum_routes(app)' in app
     manifest=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.8.0'
+    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.8.1'
     g=manifest['guardrails']
     assert g['tick_momentum_diagnostic_probe_outside_rth'] is True
     assert g['tick_momentum_diagnostic_probe_ingests_evidence'] is False
