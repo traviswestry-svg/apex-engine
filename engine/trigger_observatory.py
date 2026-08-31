@@ -1,4 +1,4 @@
-"""APEX 69.9.1 — Trigger Observatory, Context Diversity & Confidence Reliability.
+"""APEX 69.9.2 — Session-Conditioned Reliability & Calibration Context Capture Integrity.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -21,7 +21,7 @@ from typing import Any, Dict, Mapping, Optional
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.1"
+VERSION = "69.9.2"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v2"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -465,7 +465,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     evidence_resolved = evidence_path or str(evidence_default_db)
     base = {
         "ok": True, "status": "READY", "version": VERSION,
-        "schema_version": "apex.predictive_validation.v2",
+        "schema_version": "apex.predictive_validation.v3",
         "behavioral_authority": False, "execution_authority": False,
         "broker_mutation": False, "production_effect": PRODUCTION_EFFECT,
         "automatic_calibration_activation": False,
@@ -488,9 +488,10 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             (_u(symbol, "SPX"),),
         ).fetchall()]
 
-    # Canonical session and grade horizon are joined from the evidence ledger where
-    # available so historical triggers do not need a trigger-schema migration.
-    session_by_decision: Dict[str, str] = {}
+    # Canonical session, decision class, release cohort, and grade horizon are
+    # joined from the evidence ledger by decision_id. No trigger schema migration
+    # or historical value fabrication is required.
+    decision_meta: Dict[str, Dict[str, Any]] = {}
     horizon_by_decision: Dict[str, str] = {}
     if Path(evidence_resolved).exists():
         try:
@@ -500,10 +501,33 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='decisions'"
                 ).fetchone()
                 if has_decisions:
-                    session_by_decision = {
-                        str(r["decision_id"]): _u(r["session"])
-                        for r in conn.execute("SELECT decision_id,session FROM decisions").fetchall()
-                    }
+                    for meta_row in conn.execute(
+                        "SELECT decision_id,session,action,snapshot_json FROM decisions"
+                    ).fetchall():
+                        snap = {}
+                        try:
+                            snap = json.loads(meta_row["snapshot_json"] or "{}")
+                        except Exception:
+                            snap = {}
+                        action = _u(meta_row["action"] or snap.get("action"))
+                        execution_actionable = bool(snap.get("execution_actionable", snap.get("actionable")))
+                        observational = bool(snap.get("observational_learning_eligible"))
+                        if execution_actionable:
+                            decision_class = "ACTIONABLE_TRADE"
+                        elif observational and action in {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}:
+                            decision_class = "OBSERVATIONAL_NO_TRADE"
+                        else:
+                            decision_class = "NON_ACTIONABLE_OTHER"
+                        release_version = str(
+                            snap.get("apex_release_version")
+                            or _m(snap.get("deployment")).get("apex_version")
+                            or "UNKNOWN"
+                        )
+                        decision_meta[str(meta_row["decision_id"])] = {
+                            "session": _u(meta_row["session"]),
+                            "decision_class": decision_class,
+                            "release_version": release_version,
+                        }
                 has_grades = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='grading_results'"
                 ).fetchone()
@@ -513,7 +537,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                         for r in conn.execute("SELECT decision_id,horizon_seconds FROM grading_results").fetchall()
                     }
         except Exception:
-            session_by_decision = {}
+            decision_meta = {}
             horizon_by_decision = {}
 
     def confidence_band(value: Any) -> str:
@@ -529,7 +553,10 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     for r in rows:
         r["_confidence_band"] = confidence_band(r.get("confidence"))
         decision_id = str(r.get("decision_id") or "")
-        r["_session"] = session_by_decision.get(decision_id, "UNKNOWN")
+        meta = decision_meta.get(decision_id, {})
+        r["_session"] = meta.get("session", "UNKNOWN")
+        r["_decision_class"] = meta.get("decision_class", "UNLINKED_OBSERVATION")
+        r["_release_version"] = meta.get("release_version", "UNKNOWN")
         r["_grade_horizon_seconds"] = horizon_by_decision.get(decision_id, "UNKNOWN")
         try:
             blockers = json.loads(r.get("blocker_codes_json") or "[]")
@@ -568,42 +595,66 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "avg_mae_abs_points": round(sum(maes) / len(maes), 4) if maes else None,
         }
 
-    confidence_groups: Dict[str, list[Dict[str, Any]]] = {}
-    for r in rows:
-        confidence_groups.setdefault(r["_confidence_band"], []).append(r)
     band_order = ["<40", "40-49.9", "50-59.9", "60-69.9", "70-79.9", "80+", "UNKNOWN"]
-    confidence_bands = [{"band": k, **summarize(confidence_groups[k])} for k in band_order if k in confidence_groups]
-
     reliability_min_sample = 20
-    comparable = [x for x in confidence_bands
-                  if x["band"] != "UNKNOWN" and x["canonical_graded"] >= reliability_min_sample
-                  and x["canonical_win_rate_pct"] is not None]
-    monotonicity_violations = []
-    for left, right in zip(comparable, comparable[1:]):
-        if right["canonical_win_rate_pct"] < left["canonical_win_rate_pct"]:
-            monotonicity_violations.append({
-                "lower_confidence_band": left["band"],
-                "higher_confidence_band": right["band"],
-                "lower_band_win_rate_pct": left["canonical_win_rate_pct"],
-                "higher_band_win_rate_pct": right["canonical_win_rate_pct"],
-                "delta_pp": round(right["canonical_win_rate_pct"] - left["canonical_win_rate_pct"], 2),
-            })
-    if len(comparable) < 2:
-        reliability_state = "INSUFFICIENT_COMPARABLE_BANDS"
-    elif monotonicity_violations:
-        reliability_state = "NON_MONOTONIC_OBSERVED_OUTCOMES"
-    else:
-        reliability_state = "MONOTONIC_IN_COMPARABLE_BANDS"
+
+    def band_summary(group_rows: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+        groups: Dict[str, list[Dict[str, Any]]] = {}
+        for row in group_rows:
+            groups.setdefault(row["_confidence_band"], []).append(row)
+        return [{"band": k, **summarize(groups[k])} for k in band_order if k in groups]
+
+    def reliability_from_bands(bands: list[Dict[str, Any]]) -> Dict[str, Any]:
+        comparable = [
+            x for x in bands
+            if x["band"] != "UNKNOWN"
+            and x["canonical_graded"] >= reliability_min_sample
+            and x["canonical_win_rate_pct"] is not None
+        ]
+        violations = []
+        for left, right in zip(comparable, comparable[1:]):
+            if right["canonical_win_rate_pct"] < left["canonical_win_rate_pct"]:
+                violations.append({
+                    "lower_confidence_band": left["band"],
+                    "higher_confidence_band": right["band"],
+                    "lower_band_win_rate_pct": left["canonical_win_rate_pct"],
+                    "higher_band_win_rate_pct": right["canonical_win_rate_pct"],
+                    "delta_pp": round(right["canonical_win_rate_pct"] - left["canonical_win_rate_pct"], 2),
+                })
+        if len(comparable) < 2:
+            state = "INSUFFICIENT_COMPARABLE_BANDS"
+        elif violations:
+            state = "NON_MONOTONIC_OBSERVED_OUTCOMES"
+        else:
+            state = "MONOTONIC_IN_COMPARABLE_BANDS"
+        return {
+            "minimum_graded_per_comparable_band": reliability_min_sample,
+            "comparable_band_count": len(comparable),
+            "state": state,
+            "monotonicity_violations": violations,
+        }
+
+    confidence_bands = band_summary(rows)
     confidence_reliability = {
         "score_contract": "ORDINAL_DECISION_SCORE_NOT_EMPIRICAL_PROBABILITY",
         "probability_calibration_metrics_supported": False,
         "probability_metric_reason": "Raw conviction is not contractually defined as a calibrated event probability.",
-        "minimum_graded_per_comparable_band": reliability_min_sample,
-        "comparable_band_count": len(comparable),
-        "state": reliability_state,
-        "monotonicity_violations": monotonicity_violations,
+        **reliability_from_bands(confidence_bands),
         "interpretation": "Higher ordinal confidence should not be assumed better until cohort composition and repeated out-of-sample evidence support monotonic ordering.",
     }
+
+    session_reliability = []
+    for session in sorted({str(r["_session"]) for r in rows}):
+        session_rows = [r for r in rows if str(r["_session"]) == session]
+        bands = band_summary(session_rows)
+        session_reliability.append({
+            "session": session,
+            "sample_size": len(session_rows),
+            "bands": bands,
+            **reliability_from_bands(bands),
+        })
+    confidence_reliability["by_session"] = session_reliability
+    confidence_reliability["session_conditioning_enabled"] = True
 
     blocker_groups: Dict[str, list[Dict[str, Any]]] = {}
     for r in rows:
@@ -622,30 +673,51 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     ]
     directional_cohorts.sort(key=lambda x: (-x["canonical_graded"], -x["five_minute_observed"], -x["sample_size"]))
 
-    def cross_groups(dimensions: tuple[str, str], *, expand_blocker: bool = False) -> list[Dict[str, Any]]:
-        groups: Dict[tuple[str, str], list[Dict[str, Any]]] = {}
-        for r in rows:
-            if expand_blocker:
-                blockers = r["_blockers"] or ["NONE"]
-                for blocker in blockers:
-                    first = blocker if dimensions[0] == "blocker" else str(r.get(dimensions[0], r.get("_" + dimensions[0], "UNKNOWN")))
-                    second = blocker if dimensions[1] == "blocker" else str(r.get(dimensions[1], r.get("_" + dimensions[1], "UNKNOWN")))
-                    groups.setdefault((first, second), []).append(r)
-            else:
-                first = str(r.get(dimensions[0], r.get("_" + dimensions[0], "UNKNOWN")))
-                second = str(r.get(dimensions[1], r.get("_" + dimensions[1], "UNKNOWN")))
-                groups.setdefault((first, second), []).append(r)
-        out = [{dimensions[0]: k[0], dimensions[1]: k[1], **summarize(v)} for k, v in groups.items()]
-        out.sort(key=lambda x: (-x["canonical_graded"], -x["sample_size"], str(x.get(dimensions[0]))))
+    def dim_value(row: Mapping[str, Any], dimension: str) -> str:
+        if dimension == "blocker":
+            raise ValueError("blocker requires expansion")
+        value = row.get(dimension)
+        if value is None:
+            value = row.get("_" + dimension, "UNKNOWN")
+        return str(value if value not in (None, "") else "UNKNOWN")
+
+    def multi_groups(dimensions: tuple[str, ...], *, expand_blocker: bool = False) -> list[Dict[str, Any]]:
+        groups: Dict[tuple[str, ...], list[Dict[str, Any]]] = {}
+        for row in rows:
+            blocker_values = (row["_blockers"] or ["NONE"]) if expand_blocker else [None]
+            for blocker in blocker_values:
+                key = tuple(blocker if d == "blocker" else dim_value(row, d) for d in dimensions)
+                groups.setdefault(key, []).append(row)
+        out = []
+        for key, vals in groups.items():
+            record = {dimension: key[i] for i, dimension in enumerate(dimensions)}
+            record.update(summarize(vals))
+            out.append(record)
+        out.sort(key=lambda x: (-x["canonical_graded"], -x["sample_size"], tuple(str(x.get(d)) for d in dimensions)))
         return out
 
     cross_cohorts = {
-        "direction_x_confidence": cross_groups(("direction", "confidence_band")),
-        "direction_x_blocker": cross_groups(("direction", "blocker"), expand_blocker=True),
-        "confidence_x_blocker": cross_groups(("confidence_band", "blocker"), expand_blocker=True),
-        "session_x_direction": cross_groups(("session", "direction")),
-        "grade_horizon_x_direction": cross_groups(("grade_horizon_seconds", "direction")),
+        "direction_x_confidence": multi_groups(("direction", "confidence_band")),
+        "confidence_x_session": multi_groups(("confidence_band", "session")),
+        "direction_x_confidence_x_session": multi_groups(("direction", "confidence_band", "session")),
+        "direction_x_blocker": multi_groups(("direction", "blocker"), expand_blocker=True),
+        "confidence_x_blocker": multi_groups(("confidence_band", "blocker"), expand_blocker=True),
+        "blocker_x_session": multi_groups(("blocker", "session"), expand_blocker=True),
+        "session_x_direction": multi_groups(("session", "direction")),
+        "grade_horizon_x_direction": multi_groups(("grade_horizon_seconds", "direction")),
+        "decision_class_x_direction": multi_groups(("decision_class", "direction")),
+        "decision_class_x_confidence": multi_groups(("decision_class", "confidence_band")),
+        "release_x_direction": multi_groups(("release_version", "direction")),
     }
+
+    decision_class_effectiveness = [
+        {"decision_class": k, **summarize([r for r in rows if r["_decision_class"] == k])}
+        for k in sorted({str(r["_decision_class"]) for r in rows})
+    ]
+    release_cohorts = [
+        {"release_version": k, **summarize([r for r in rows if r["_release_version"] == k])}
+        for k in sorted({str(r["_release_version"]) for r in rows})
+    ]
 
     fragmentation: Dict[str, Any] = {"status": "UNAVAILABLE", "minimum_sample_per_bucket": 20,
                                      "graded_contexts": 0, "dimensions": {}}
@@ -689,12 +761,16 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         "confidence_reliability": confidence_reliability,
         "blocker_effectiveness": blocker_effectiveness,
         "directional_cohorts": directional_cohorts,
+        "decision_class_effectiveness": decision_class_effectiveness,
+        "release_cohorts": release_cohorts,
         "cross_cohorts": cross_cohorts,
         "calibration_fragmentation": fragmentation,
         "calibration_context_quality": context_quality,
         "interpretation_guardrails": [
             "Cohort statistics are observational associations, not causal effects.",
             "Confidence is an ordinal decision score, not a calibrated event probability.",
+            "Session-conditioned and decision-class cohorts must be inspected before interpreting confidence ordering.",
+            "Actionable trades and observational NO_TRADE counterfactuals are reported separately where canonical decision metadata exists.",
             "Five-minute excursion is not a canonical trade grade.",
             "No confidence band, blocker, context, or cohort statistic mutates production behavior.",
             "Calibration remains human-governed and requires existing integrity gates.",
@@ -954,6 +1030,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "context_capture_integrity_closure": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}

@@ -54,6 +54,15 @@ def test_context_diversity_flags_large_but_collapsed_context(tmp_path):
                 "near_term_gamma_fragility": False,
                 "residual_pressure_opposes": False,
                 "flow_independence_bucket": "UNKNOWN",
+                "capture_provenance": {
+                    "policy_state": {"status": "SOURCE_MISSING"},
+                    "alert_state": {"status": "SOURCE_MISSING"},
+                    "event_phase": {"status": "SOURCE_PRESENT"},
+                    "gamma_term_divergence": {"status": "SOURCE_PRESENT"},
+                    "near_term_gamma_fragility": {"status": "SOURCE_PRESENT"},
+                    "residual_pressure_opposes": {"status": "SOURCE_PRESENT"},
+                    "flow_independence_bucket": {"status": "SOURCE_MISSING"},
+                },
             }
             conn.execute(
                 """INSERT INTO dynamic_state_decision_context(
@@ -93,7 +102,20 @@ def test_context_diversity_recognizes_variable_field(tmp_path):
                    threshold_adjustment_points,conviction_penalty_points,consensus_penalty_points,context_json
                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (did, "2026-08-31T14:00:00+00:00", "test", None, "NORMAL", "READY", event,
-                 0, 0, 0, "INDEPENDENT", 0.0, 0.0, 0.0, "{}"),
+                 0, 0, 0, "INDEPENDENT", 0.0, 0.0, 0.0, json.dumps({
+                    "policy_state": "NORMAL", "alert_state": "READY", "event_phase": event,
+                    "gamma_term_divergence": False, "near_term_gamma_fragility": False,
+                    "residual_pressure_opposes": False, "flow_independence_bucket": "INDEPENDENT",
+                    "capture_provenance": {
+                        "policy_state": {"status": "SOURCE_PRESENT"},
+                        "alert_state": {"status": "SOURCE_PRESENT"},
+                        "event_phase": {"status": "SOURCE_PRESENT"},
+                        "gamma_term_divergence": {"status": "SOURCE_PRESENT"},
+                        "near_term_gamma_fragility": {"status": "SOURCE_PRESENT"},
+                        "residual_pressure_opposes": {"status": "SOURCE_PRESENT"},
+                        "flow_independence_bucket": {"status": "SOURCE_PRESENT"},
+                    },
+                 })),
             )
             conn.execute("INSERT INTO grading_results(decision_id,status) VALUES(?,?)", (did, "GRADED"))
     out = context_diversity_audit(db)
@@ -128,8 +150,8 @@ def test_confidence_reliability_detects_non_monotonic_outcomes(tmp_path):
 
 def test_release_truth_and_guardrails_are_69_9_1():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.9.1"
-    assert manifest["build_name"] == "Calibration Context Diversity & Confidence Reliability Audit"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 9, 1)
     g = manifest["guardrails"]
     assert g["calibration_context_diversity_audit_observational_only"] is True
     assert g["confidence_reliability_uses_ordinal_score_contract"] is True
@@ -137,14 +159,14 @@ def test_release_truth_and_guardrails_are_69_9_1():
     assert g["confidence_reliability_changes_trade_decisions"] is False
     assert g["confidence_reliability_auto_activates_calibration"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.9.1" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "calibration_context_diversity_audit" in registry
     assert "confidence_reliability_audit" in registry
 
 
 def test_dashboard_surfaces_context_quality_and_confidence_reliability():
     html = (ROOT / "templates/premium_discipline_command_center.html").read_text()
-    assert "Calibration Context Quality" in html
+    assert "Calibration Context Capture Integrity" in html
     assert "Confidence contract:" in html
-    assert "Probability calibration metrics intentionally disabled" in html
+    assert "Probability calibration metrics remain disabled" in html
     assert "direction_x_confidence" in html

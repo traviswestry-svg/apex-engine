@@ -139,20 +139,43 @@ def _integrity_hash(payload: Mapping[str, Any]) -> str:
 def _bucket_stats(conn, dimension: str, bucket: str) -> Dict[str, Any]:
     if dimension not in ALLOWED_DIMENSIONS:
         raise ValueError("unsupported calibration dimension")
-    rows = conn.execute(
-        f'''SELECT c.context_json,g.outcome_json
-            FROM dynamic_state_decision_context c
-            JOIN grading_results g ON g.decision_id=c.decision_id
-            WHERE g.status='GRADED' AND CAST(c.{dimension} AS TEXT)=?''',
-        (str(bucket),),
-    ).fetchall()
-    raw_n = len(rows)
+    from .dynamic_state_outcome_calibration import _effective_context, _normalize_bucket_value
+    has_decisions = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='decisions'"
+    ).fetchone()
+    if has_decisions:
+        rows = conn.execute(
+            """SELECT c.context_json,d.snapshot_json,g.outcome_json
+               FROM dynamic_state_decision_context c
+               JOIN grading_results g ON g.decision_id=c.decision_id
+               LEFT JOIN decisions d ON d.decision_id=c.decision_id
+               WHERE g.status='GRADED'"""
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT c.context_json,NULL snapshot_json,g.outcome_json
+               FROM dynamic_state_decision_context c
+               JOIN grading_results g ON g.decision_id=c.decision_id
+               WHERE g.status='GRADED'"""
+        ).fetchall()
+    selected = []
+    excluded_unverified = 0
+    for row in rows:
+        ctx = _load(row["context_json"])
+        snapshot = _load(row["snapshot_json"]) if row["snapshot_json"] else None
+        effective = _effective_context(ctx, snapshot)
+        provenance = _load(_load(effective.get("capture_provenance")).get(dimension))
+        if provenance.get("status") != "SOURCE_PRESENT":
+            excluded_unverified += 1
+            continue
+        if _normalize_bucket_value(effective.get(dimension)) != _normalize_bucket_value(bucket):
+            continue
+        selected.append((effective, _load(row["outcome_json"])))
+    raw_n = len(selected)
     weighted_n = 0.0
     weighted_wins = 0.0
     raw_wins = 0
-    for row in rows:
-        ctx = _load(row["context_json"])
-        out = _load(row["outcome_json"])
+    for ctx, out in selected:
         won = _b(out.get("won") or out.get("direction_correct"))
         w = _independence_weight(ctx)
         weighted_n += w
@@ -169,7 +192,10 @@ def _bucket_stats(conn, dimension: str, bucket: str) -> Dict[str, Any]:
         "independence_discount_pct": round(100.0 * (1.0 - weighted_n / raw_n), 2) if raw_n else None,
         "weighted_win_rate_pct": round(rate * 100.0, 2) if rate is not None else None,
         "confidence_interval_95": ci,
+        "source_verified_only": True,
+        "excluded_unverified_context_rows": excluded_unverified,
     }
+
 
 
 def compare_buckets(path: str | Path, dimension: str, challenger_bucket: str, incumbent_bucket: str, *,

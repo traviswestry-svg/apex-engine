@@ -4,7 +4,7 @@ from flask import jsonify, request
 
 from .trigger_observatory import capability, effectiveness, history, learning_readiness, predictive_validation, sync_canonical_outcomes, trade_visualization
 
-REQUIRED_ROUTES = ("/api/triggers/capability", "/api/triggers/history", "/api/triggers/effectiveness", "/api/triggers/trade-view", "/api/triggers/learning-readiness", "/api/triggers/predictive-validation")
+REQUIRED_ROUTES = ("/api/triggers/capability", "/api/triggers/history", "/api/triggers/effectiveness", "/api/triggers/trade-view", "/api/triggers/learning-readiness", "/api/triggers/predictive-validation", "/api/triggers/context-backfill")
 
 
 def register_trigger_observatory_routes(app) -> None:
@@ -34,6 +34,17 @@ def register_trigger_observatory_routes(app) -> None:
     @app.get("/api/triggers/predictive-validation")
     def trigger_observatory_predictive_validation():
         return jsonify(predictive_validation(symbol=request.args.get("symbol", "SPX")))
+
+    @app.post("/api/triggers/context-backfill")
+    def trigger_observatory_context_backfill():
+        body = request.get_json(silent=True) or {}
+        apply = bool(body.get("apply") is True)
+        from .dynamic_state_outcome_calibration import context_backfill
+        from .evidence_pipeline import DEFAULT_DB
+        out = context_backfill(DEFAULT_DB, apply=apply)
+        out["broker_mutation"] = False
+        out["behavioral_authority"] = False
+        return jsonify(out)
 
 
 def verify_registered(app) -> bool:
