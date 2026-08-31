@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "68.5.3"
+VERSION = "69.9.1"
 SCHEMA_VERSION = "apex.dynamic_state_outcome_calibration.v2"
 MIN_SAMPLE = 20
 
@@ -210,6 +210,116 @@ def _aggregate(conn, field: str, min_sample: int) -> list[Dict[str, Any]]:
             "avg_mae": round(sum(maes) / len(maes), 4) if maes else None,
         })
     return out
+
+
+
+_CONTEXT_PROVENANCE = {
+    "event_phase": "dynamic_state.event_phase.phase | snapshot.event_phase.phase",
+    "gamma_term_divergence": "dynamic_state.gamma_term_structure.term_divergence | snapshot.gamma_term_structure.term_divergence",
+    "near_term_gamma_fragility": "dynamic_state.gamma_term_structure.near_term_fragility | snapshot.gamma_term_structure.near_term_fragility",
+    "residual_pressure_opposes": "dynamic_state_policy.modifiers[driver=residual_pressure].effect=OPPOSES",
+    "flow_independence_bucket": "dynamic_state.flow_excitation.independent_evidence_factor | snapshot.flow_excitation.independent_evidence_factor",
+    "alert_state": "decision_quality.alert_quality.state | snapshot.alert_state | dynamic_state_policy.state",
+    "policy_state": "dynamic_state_policy.state",
+}
+
+_UNKNOWN_SENTINELS = {"", "UNKNOWN", "NONE", "NULL", "N/A", "UNAVAILABLE"}
+
+
+def context_diversity_audit(path: str | Path) -> Dict[str, Any]:
+    """Audit whether governed calibration context is actually informative.
+
+    This is read-only. A high aggregate sample count does not imply useful
+    calibration diversity when decision-time fields are missing or constant.
+    """
+    from .calibration_activation import _read_availability
+    from .canonical_persistence import connection as canonical_connection
+    availability = _read_availability(path)
+    base = {
+        "ok": True, "version": VERSION,
+        "schema_version": "apex.calibration_context_diversity.v1",
+        "execution_authority": False, "production_effect": "NONE",
+        "automatic_policy_mutation": False,
+    }
+    if availability["status"] == "MISSING_DB":
+        return {**base, **availability, "graded_contexts": 0, "fields": {},
+                "context_quality_deficient": False}
+    try:
+        with canonical_connection(path, read_only=True, timeout=0.35, wal=False, heal=False, busy_timeout_ms=250) as conn:
+            has_ctx = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dynamic_state_decision_context'"
+            ).fetchone()
+            has_grades = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='grading_results'"
+            ).fetchone()
+            if not has_ctx or not has_grades:
+                return {**base, "status": "EMPTY_NOT_INITIALIZED", "read_available": True,
+                        "initialized": bool(has_ctx), "graded_contexts": 0, "fields": {},
+                        "context_quality_deficient": False}
+            rows = conn.execute(
+                """SELECT c.* FROM dynamic_state_decision_context c
+                   JOIN grading_results g ON g.decision_id=c.decision_id
+                   WHERE g.status='GRADED'"""
+            ).fetchall()
+    except Exception as exc:
+        return {**base, **_read_availability(path, exc), "graded_contexts": 0,
+                "fields": {}, "context_quality_deficient": False}
+
+    fields: Dict[str, Any] = {}
+    for field, provenance in _CONTEXT_PROVENANCE.items():
+        vals = []
+        for row in rows:
+            raw = row[field] if field in row.keys() else None
+            if isinstance(raw, bool):
+                normalized = "1" if raw else "0"
+            elif isinstance(raw, (int, float)):
+                normalized = str(int(raw)) if float(raw).is_integer() else str(raw)
+            else:
+                normalized = str(raw or "").strip().upper()
+            vals.append(normalized)
+        unknown = [v for v in vals if v in _UNKNOWN_SENTINELS]
+        known = [v for v in vals if v not in _UNKNOWN_SENTINELS]
+        distinct_known = sorted(set(known))
+        if not vals:
+            state = "AVAILABLE"
+        elif not known:
+            state = "UNKNOWN"
+        elif len(distinct_known) == 1:
+            state = "CONSTANT"
+        else:
+            state = "VARIABLE"
+        counts: Dict[str, int] = {}
+        for value in vals:
+            key = value or "UNKNOWN"
+            counts[key] = counts.get(key, 0) + 1
+        fields[field] = {
+            "state": state,
+            "provenance": provenance,
+            "sample_size": len(vals),
+            "unknown_count": len(unknown),
+            "unknown_pct": round(100.0 * len(unknown) / len(vals), 2) if vals else None,
+            "distinct_known_values": len(distinct_known),
+            "values": counts,
+        }
+
+    variable_count = sum(1 for x in fields.values() if x["state"] == "VARIABLE")
+    unknown_count = sum(1 for x in fields.values() if x["state"] == "UNKNOWN")
+    constant_count = sum(1 for x in fields.values() if x["state"] == "CONSTANT")
+    graded = len(rows)
+    deficient = bool(graded >= MIN_SAMPLE and variable_count == 0)
+    return {
+        **base, "status": "READY", "read_available": True, "initialized": True,
+        "graded_contexts": graded, "fields": fields,
+        "variable_field_count": variable_count, "constant_field_count": constant_count,
+        "unknown_field_count": unknown_count,
+        "context_quality_deficient": deficient,
+        "quality_state": "CONTEXT_QUALITY_DEFICIENT" if deficient else "CONTEXT_DIVERSITY_PRESENT",
+        "reason": (
+            "Aggregate graded history is sufficient, but no governed calibration field varies across graded contexts."
+            if deficient else
+            "At least one governed calibration field varies across graded contexts."
+        ),
+    }
 
 
 def calibration_summary(path: str | Path, min_sample: int = MIN_SAMPLE) -> Dict[str, Any]:

@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.9.0",
-  "build_name": "Predictive Effectiveness & Calibration Validation",
+  "apex_version": "69.9.1",
+  "build_name": "Calibration Context Diversity & Confidence Reliability Audit",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -291,15 +291,23 @@
     "predictive_validation_auto_activates_calibration": false,
     "calibration_fragmentation_diagnostics_enabled": true,
     "confidence_effectiveness_diagnostics_enabled": true,
-    "blocker_effectiveness_diagnostics_enabled": true
+    "blocker_effectiveness_diagnostics_enabled": true,
+    "calibration_context_diversity_audit_observational_only": true,
+    "confidence_reliability_uses_ordinal_score_contract": true,
+    "confidence_probability_metrics_disabled_without_probability_contract": true,
+    "confidence_reliability_changes_trade_decisions": false,
+    "confidence_reliability_changes_thresholds": false,
+    "confidence_reliability_changes_consensus_weights": false,
+    "confidence_reliability_auto_activates_calibration": false,
+    "cross_cohort_decomposition_observational_only": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.9.0",
-  "application_version": "69.9.0",
+  "semantic_version": "69.9.1",
+  "application_version": "69.9.1",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

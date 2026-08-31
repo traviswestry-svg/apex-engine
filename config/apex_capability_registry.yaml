@@ -1,13 +1,13 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.9.0
+apex_version: 69.9.1
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
     deployed_modules: [engine.trigger_observatory, engine.trigger_observatory_routes, engine.outcome_grader, app]
     status: observational
-    version: "69.9.0"
+    version: "69.9.1"
     inputs: [tradingview_pine_signals, canonical_trade_decisions, failed_breakdown_entry_eligibility, canonical_spx_price, canonical_grading_results]
-    outputs: [durable_trigger_chronology, five_minute_price_excursions, canonical_outcome_links, canonical_decision_id_linkage, blocked_reason_visibility, trigger_effectiveness_summary, trade_visualization, learning_readiness_surface, calibration_readiness_verification, observation_maturation_diagnostic, manual_power_etrade_handoff, predictive_effectiveness_validation, calibration_fragmentation_diagnostics]
+    outputs: [durable_trigger_chronology, five_minute_price_excursions, canonical_outcome_links, canonical_decision_id_linkage, blocked_reason_visibility, trigger_effectiveness_summary, trade_visualization, learning_readiness_surface, calibration_readiness_verification, observation_maturation_diagnostic, manual_power_etrade_handoff, predictive_effectiveness_validation, calibration_fragmentation_diagnostics, calibration_context_diversity_audit, confidence_reliability_audit, cross_cohort_decomposition]
     api_routes: [/api/triggers/capability, /api/triggers/history, /api/triggers/effectiveness, /api/triggers/trade-view, /api/triggers/learning-readiness, /api/triggers/predictive-validation]
     decision_authority: none
     execution_authority: none
@@ -17,7 +17,7 @@ capabilities:
     manual_etrade_handoff: true
     automatic_order_submission: false
     broker_mutation: false
-    guardrails: [all_genuine_triggers_observed, immutable_source_event_identity, duplicate_safe, blocked_triggers_retained, canonical_outcome_linkage_observational_only, trigger_statistics_do_not_auto_promote_policy, trade_visualization_observational_only, persisted_prices_only, premium_values_never_fabricated, human_confirmation_required, live_option_chain_selection_required, no_decision_authority, no_execution_authority, no_broker_mutation, predictive_validation_observational_only, predictive_validation_no_auto_calibration]
+    guardrails: [all_genuine_triggers_observed, immutable_source_event_identity, duplicate_safe, blocked_triggers_retained, canonical_outcome_linkage_observational_only, trigger_statistics_do_not_auto_promote_policy, trade_visualization_observational_only, persisted_prices_only, premium_values_never_fabricated, human_confirmation_required, live_option_chain_selection_required, no_decision_authority, no_execution_authority, no_broker_mutation, predictive_validation_observational_only, predictive_validation_no_auto_calibration, ordinal_confidence_not_probability, probability_metrics_disabled_without_probability_contract, context_quality_deficiency_observational_only]
 
   failed_breakdown_lifecycle_intelligence:
     canonical_module: engine.failed_breakdown_lifecycle
