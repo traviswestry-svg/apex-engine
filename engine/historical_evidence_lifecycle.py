@@ -58,6 +58,17 @@ def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def _release_version() -> Optional[str]:
+    """Read canonical release identity for observational cohort attribution."""
+    try:
+        manifest = Path(__file__).resolve().parents[1] / "config" / "apex_release_manifest.json"
+        payload = json.loads(manifest.read_text())
+        value = str(payload.get("apex_version") or "").strip()
+        return value or None
+    except Exception:
+        return None
+
+
 def _path(source: Mapping[str, Any], *paths: str) -> Any:
     for path in paths:
         cur: Any = source
@@ -145,6 +156,26 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
     else:
         eligibility_reason = "NOT_GRADE_ELIGIBLE"
 
+    # APEX 69.9.2 — reconstruct the observational dynamic-state context from the
+    # exact finalized composition snapshot. This occurs after the canonical decision
+    # is complete and cannot feed back into that decision.
+    try:
+        from .dynamic_state import build_dynamic_state
+        observed_dynamic_state = build_dynamic_state(root)
+    except Exception:
+        observed_dynamic_state = {}
+
+    # The finalized IDO already carries the policy used by conviction/consensus.
+    # Prefer that exact policy over recomputation so historical context reflects
+    # the decision-time governance state.
+    ido_conviction = _m(ido.get("conviction"))
+    ido_consensus = _m(ido.get("institutional_consensus") or ido.get("consensus"))
+    observed_dynamic_policy = (
+        _m(ido_conviction.get("dynamic_state_policy"))
+        or _m(ido_consensus.get("dynamic_state_policy"))
+        or _m(root.get("dynamic_state_policy"))
+    )
+
     # Preserve exactly the decision-time fields consumed by effectiveness,
     # dynamic-state calibration and attribution. Avoid persisting raw providers.
     snapshot: Dict[str, Any] = {
@@ -188,14 +219,15 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         "gamma_regime": _path(root, "gamma_regime.regime", "gamma_regime.state", "dealer_positioning.gamma_regime", "gamma.regime"),
         "volatility_regime": _path(root, "volatility_regime.regime", "volatility_regime.state", "volatility.regime"),
         "auction_regime": _path(root, "auction_regime.regime", "auction_regime.state", "auction.regime", "auction_intelligence.regime"),
-        "dynamic_state": _m(root.get("dynamic_state")),
-        "dynamic_state_policy": _m(root.get("dynamic_state_policy")),
+        "apex_release_version": _release_version(),
+        "dynamic_state": observed_dynamic_state,
+        "dynamic_state_policy": observed_dynamic_policy,
         "decision_quality": _m(root.get("decision_quality")),
-        "flow_excitation": _m(root.get("flow_excitation")),
-        "gamma_path": _m(root.get("gamma_path")),
-        "gamma_term_structure": _m(root.get("gamma_term_structure")),
-        "residual_pressure": _m(root.get("residual_pressure")),
-        "event_phase": _m(root.get("event_phase")),
+        "flow_excitation": _m(observed_dynamic_state.get("flow_excitation")),
+        "gamma_path": _m(observed_dynamic_state.get("gamma_path")),
+        "gamma_term_structure": _m(observed_dynamic_state.get("gamma_term_structure")),
+        "residual_pressure": _m(observed_dynamic_state.get("residual_pressure")),
+        "event_phase": _m(observed_dynamic_state.get("event_phase")),
         "execution_authority": False,
         "production_effect": "OBSERVATIONAL_ONLY",
     }
