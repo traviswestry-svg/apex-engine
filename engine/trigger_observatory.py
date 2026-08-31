@@ -1,4 +1,4 @@
-"""APEX 69.9.2 — Session-Conditioned Reliability & Calibration Context Capture Integrity.
+"""APEX 69.9.3 — Predictive Metadata Join & Context Coverage Truth Closure.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -21,7 +21,7 @@ from typing import Any, Dict, Mapping, Optional
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.2"
+VERSION = "69.9.3"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v2"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -465,7 +465,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     evidence_resolved = evidence_path or str(evidence_default_db)
     base = {
         "ok": True, "status": "READY", "version": VERSION,
-        "schema_version": "apex.predictive_validation.v3",
+        "schema_version": "apex.predictive_validation.v4",
         "behavioral_authority": False, "execution_authority": False,
         "broker_mutation": False, "production_effect": PRODUCTION_EFFECT,
         "automatic_calibration_activation": False,
@@ -489,11 +489,14 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         ).fetchall()]
 
     # Canonical session, decision class, release cohort, and grade horizon are
-    # joined from the evidence ledger by decision_id. No trigger schema migration
-    # or historical value fabrication is required.
+    # joined from the evidence ledger by decision_id. Metadata parsing is isolated
+    # per row so one malformed or legacy snapshot cannot erase all valid joins.
     decision_meta: Dict[str, Dict[str, Any]] = {}
     horizon_by_decision: Dict[str, str] = {}
+    metadata_join_errors: list[Dict[str, str]] = []
+    evidence_metadata_status = "MISSING_EVIDENCE_DB"
     if Path(evidence_resolved).exists():
+        evidence_metadata_status = "READY"
         try:
             with canonical_connect(evidence_resolved, read_only=True, timeout=4) as conn:
                 conn.row_factory = sqlite3.Row
@@ -504,41 +507,66 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                     for meta_row in conn.execute(
                         "SELECT decision_id,session,action,snapshot_json FROM decisions"
                     ).fetchall():
-                        snap = {}
+                        decision_id = str(meta_row["decision_id"] or "").strip()
+                        if not decision_id:
+                            continue
                         try:
-                            snap = json.loads(meta_row["snapshot_json"] or "{}")
-                        except Exception:
-                            snap = {}
-                        action = _u(meta_row["action"] or snap.get("action"))
-                        execution_actionable = bool(snap.get("execution_actionable", snap.get("actionable")))
-                        observational = bool(snap.get("observational_learning_eligible"))
-                        if execution_actionable:
-                            decision_class = "ACTIONABLE_TRADE"
-                        elif observational and action in {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}:
-                            decision_class = "OBSERVATIONAL_NO_TRADE"
-                        else:
-                            decision_class = "NON_ACTIONABLE_OTHER"
-                        release_version = str(
-                            snap.get("apex_release_version")
-                            or _m(snap.get("deployment")).get("apex_version")
-                            or "UNKNOWN"
-                        )
-                        decision_meta[str(meta_row["decision_id"])] = {
-                            "session": _u(meta_row["session"]),
-                            "decision_class": decision_class,
-                            "release_version": release_version,
-                        }
+                            snap_raw = json.loads(meta_row["snapshot_json"] or "{}")
+                            snap = dict(snap_raw) if isinstance(snap_raw, Mapping) else {}
+                            action = _u(meta_row["action"] or snap.get("action"))
+                            execution_actionable = bool(snap.get("execution_actionable", snap.get("actionable")))
+                            observational = bool(snap.get("observational_learning_eligible"))
+                            if execution_actionable:
+                                decision_class = "ACTIONABLE_TRADE"
+                            elif observational and action in {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}:
+                                decision_class = "OBSERVATIONAL_NO_TRADE"
+                            else:
+                                decision_class = "NON_ACTIONABLE_OTHER"
+                            deployment = snap.get("deployment")
+                            deployment = dict(deployment) if isinstance(deployment, Mapping) else {}
+                            release_version = str(
+                                snap.get("apex_release_version")
+                                or deployment.get("apex_version")
+                                or "UNKNOWN"
+                            ).strip() or "UNKNOWN"
+                            decision_meta[decision_id] = {
+                                "session": _u(meta_row["session"]),
+                                "decision_class": decision_class,
+                                "release_version": release_version,
+                            }
+                        except Exception as exc:
+                            if len(metadata_join_errors) < 25:
+                                metadata_join_errors.append({
+                                    "decision_id": decision_id,
+                                    "stage": "DECISION_METADATA_PARSE",
+                                    "error": f"{type(exc).__name__}: {exc}",
+                                })
+                else:
+                    evidence_metadata_status = "DECISIONS_TABLE_MISSING"
+
                 has_grades = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='grading_results'"
                 ).fetchone()
                 if has_grades:
-                    horizon_by_decision = {
-                        str(r["decision_id"]): str(r["horizon_seconds"] if r["horizon_seconds"] is not None else "UNKNOWN")
-                        for r in conn.execute("SELECT decision_id,horizon_seconds FROM grading_results").fetchall()
-                    }
-        except Exception:
-            decision_meta = {}
-            horizon_by_decision = {}
+                    for grade_row in conn.execute(
+                        "SELECT decision_id,horizon_seconds FROM grading_results"
+                    ).fetchall():
+                        decision_id = str(grade_row["decision_id"] or "").strip()
+                        if not decision_id:
+                            continue
+                        horizon_by_decision[decision_id] = str(
+                            grade_row["horizon_seconds"]
+                            if grade_row["horizon_seconds"] is not None else "UNKNOWN"
+                        )
+                elif evidence_metadata_status == "READY":
+                    evidence_metadata_status = "GRADING_RESULTS_TABLE_MISSING"
+        except Exception as exc:
+            evidence_metadata_status = "DEGRADED"
+            metadata_join_errors.append({
+                "decision_id": "",
+                "stage": "EVIDENCE_METADATA_READ",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
 
     def confidence_band(value: Any) -> str:
         c = _f(value)
@@ -563,6 +591,44 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         except Exception:
             blockers = []
         r["_blockers"] = sorted({str(x).upper() for x in blockers if str(x).strip()}) if isinstance(blockers, list) else []
+
+    graded_rows_for_join = [r for r in rows if str(r.get("canonical_grade_status") or "").upper() == "GRADED"]
+    graded_with_decision_id = [r for r in graded_rows_for_join if str(r.get("decision_id") or "").strip()]
+    metadata_joined = sum(1 for r in graded_with_decision_id if str(r.get("decision_id")) in decision_meta)
+    horizon_joined = sum(1 for r in graded_with_decision_id if str(r.get("decision_id")) in horizon_by_decision)
+    session_known = sum(1 for r in graded_with_decision_id if r.get("_session") not in {None, "", "UNKNOWN"})
+    decision_class_joined = sum(1 for r in graded_with_decision_id if r.get("_decision_class") != "UNLINKED_OBSERVATION")
+    release_known = sum(1 for r in graded_with_decision_id if r.get("_release_version") not in {None, "", "UNKNOWN"})
+    join_denominator = len(graded_with_decision_id)
+    metadata_join_rate = round(100.0 * metadata_joined / join_denominator, 2) if join_denominator else None
+    if not join_denominator:
+        metadata_join_status = "NO_GRADED_LINKS"
+    elif metadata_joined == join_denominator:
+        metadata_join_status = "COMPLETE"
+    elif metadata_joined > 0:
+        metadata_join_status = "PARTIAL"
+    else:
+        metadata_join_status = "DEGRADED"
+    metadata_join = {
+        "status": metadata_join_status,
+        "evidence_metadata_status": evidence_metadata_status,
+        "canonical_graded_links": len(graded_rows_for_join),
+        "graded_links_with_decision_id": join_denominator,
+        "metadata_joined": metadata_joined,
+        "metadata_missing": max(0, join_denominator - metadata_joined),
+        "metadata_join_rate_pct": metadata_join_rate,
+        "session_known": session_known,
+        "session_unknown": max(0, join_denominator - session_known),
+        "decision_class_joined": decision_class_joined,
+        "grade_horizon_joined": horizon_joined,
+        "release_version_known": release_known,
+        "release_version_unknown": max(0, join_denominator - release_known),
+        "decision_metadata_rows_loaded": len(decision_meta),
+        "grade_horizon_rows_loaded": len(horizon_by_decision),
+        "parse_error_count": len(metadata_join_errors),
+        "parse_errors": metadata_join_errors,
+        "single_row_parse_failure_cannot_clear_valid_joins": True,
+    }
 
     def grade_win(row: Mapping[str, Any]) -> Optional[bool]:
         if row.get("canonical_grade_status") != "GRADED":
@@ -763,6 +829,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         "directional_cohorts": directional_cohorts,
         "decision_class_effectiveness": decision_class_effectiveness,
         "release_cohorts": release_cohorts,
+        "metadata_join": metadata_join,
         "cross_cohorts": cross_cohorts,
         "calibration_fragmentation": fragmentation,
         "calibration_context_quality": context_quality,
@@ -770,6 +837,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "Cohort statistics are observational associations, not causal effects.",
             "Confidence is an ordinal decision score, not a calibrated event probability.",
             "Session-conditioned and decision-class cohorts must be inspected before interpreting confidence ordering.",
+            "Metadata-conditioned cohorts are reliable only to the extent reported by metadata_join coverage diagnostics.",
             "Actionable trades and observational NO_TRADE counterfactuals are reported separately where canonical decision metadata exists.",
             "Five-minute excursion is not a canonical trade grade.",
             "No confidence band, blocker, context, or cohort statistic mutates production behavior.",
@@ -1030,6 +1098,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "context_capture_integrity_closure": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}

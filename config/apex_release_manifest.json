@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.9.2",
-  "build_name": "Session-Conditioned Reliability & Calibration Context Capture Integrity Closure",
+  "apex_version": "69.9.3",
+  "build_name": "Predictive Metadata Join & Context Coverage Truth Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -310,15 +310,22 @@
     "calibration_context_backfill_missing_sources_inferred": false,
     "calibration_context_backfill_explicit_apply_required": true,
     "session_conditioned_reliability_changes_trade_decisions": false,
-    "session_conditioned_reliability_auto_activates_calibration": false
+    "session_conditioned_reliability_auto_activates_calibration": false,
+    "predictive_metadata_join_diagnostics_enabled": true,
+    "predictive_metadata_single_row_parse_isolation": true,
+    "predictive_metadata_join_failure_cannot_clear_valid_rows": true,
+    "context_quality_partial_recovery_explicit": true,
+    "context_quality_does_not_equate_partial_coverage_with_complete": true,
+    "metadata_join_changes_trade_decisions": false,
+    "metadata_join_auto_activates_calibration": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.9.2",
-  "application_version": "69.9.2",
+  "semantic_version": "69.9.3",
+  "application_version": "69.9.3",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
