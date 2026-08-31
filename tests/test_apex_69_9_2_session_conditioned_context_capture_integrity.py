@@ -86,7 +86,9 @@ def test_historical_snapshot_reconstructs_dynamic_context_after_decision():
     assert snap["dynamic_state_policy"]["state"] == "NORMAL"
     assert snap["flow_excitation"]["independent_evidence_factor"] == 0.75
     assert snap["gamma_term_structure"]["term_divergence"] is True
-    assert snap["apex_release_version"] == "69.9.2"
+    manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
+    assert snap["apex_release_version"] == manifest["apex_version"]
+    assert tuple(map(int, snap["apex_release_version"].split("."))) >= (69, 9, 2)
 
 
 def test_context_backfill_only_applies_source_present_snapshot_values(tmp_path):
@@ -253,8 +255,8 @@ def test_missing_legacy_context_cannot_become_calibration_ready_false_bucket(tmp
 
 def test_release_truth_and_guardrails_are_69_9_2():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.9.2"
-    assert manifest["build_name"] == "Session-Conditioned Reliability & Calibration Context Capture Integrity Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 9, 2)
     g = manifest["guardrails"]
     assert g["session_conditioned_confidence_reliability_observational_only"] is True
     assert g["decision_class_effectiveness_separated"] is True
@@ -263,7 +265,7 @@ def test_release_truth_and_guardrails_are_69_9_2():
     assert g["calibration_context_backfill_missing_sources_inferred"] is False
     assert g["session_conditioned_reliability_changes_trade_decisions"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.9.2" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "/api/triggers/context-backfill" in registry
     assert "session_conditioned_reliability" in registry
     routes = (ROOT / "engine/trigger_observatory_routes.py").read_text()

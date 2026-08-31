@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "69.9.2"
+VERSION = "69.9.3"
 SCHEMA_VERSION = "apex.dynamic_state_outcome_calibration.v3"
 MIN_SAMPLE = 20
 
@@ -502,7 +502,7 @@ def context_diversity_audit(path: str | Path) -> Dict[str, Any]:
     availability = _read_availability(path)
     base = {
         "ok": True, "version": VERSION,
-        "schema_version": "apex.calibration_context_diversity.v2",
+        "schema_version": "apex.calibration_context_diversity.v3",
         "execution_authority": False, "production_effect": "NONE",
         "automatic_policy_mutation": False,
     }
@@ -563,6 +563,7 @@ def context_diversity_audit(path: str | Path) -> Dict[str, Any]:
             "values": counts,
             "capture_status_counts": status_counts,
             "source_present_count": status_counts.get("SOURCE_PRESENT", 0),
+            "source_present_pct": round(100.0 * status_counts.get("SOURCE_PRESENT", 0) / len(vals), 2) if vals else None,
             "source_missing_count": status_counts.get("SOURCE_MISSING", 0),
             "normalized_unknown_count": status_counts.get("NORMALIZED_UNKNOWN", 0),
         }
@@ -571,7 +572,21 @@ def context_diversity_audit(path: str | Path) -> Dict[str, Any]:
     unknown_count = sum(1 for x in fields.values() if x["state"] == "UNKNOWN")
     constant_count = sum(1 for x in fields.values() if x["state"] == "CONSTANT")
     graded = len(rows)
+    complete_coverage_fields = sum(1 for x in fields.values() if graded > 0 and x["source_present_count"] == graded)
+    partial_coverage_fields = sum(1 for x in fields.values() if 0 < x["source_present_count"] < graded)
+    missing_coverage_fields = sum(1 for x in fields.values() if graded > 0 and x["source_present_count"] == 0)
+    coverage_complete = bool(graded > 0 and complete_coverage_fields == len(fields))
     deficient = bool(graded >= MIN_SAMPLE and variable_count == 0)
+    partial_recovery = bool(graded >= MIN_SAMPLE and variable_count > 0 and not coverage_complete)
+    if deficient:
+        quality_state = "CONTEXT_QUALITY_DEFICIENT"
+        quality_reason = "Aggregate graded history is sufficient, but no governed calibration field varies across source-verified graded contexts."
+    elif partial_recovery:
+        quality_state = "PARTIAL_CONTEXT_RECOVERY"
+        quality_reason = "Source-verified context variation exists, but historical coverage remains incomplete across governed calibration fields."
+    else:
+        quality_state = "CONTEXT_DIVERSITY_PRESENT"
+        quality_reason = "Source-verified governed calibration context varies and coverage is complete for the audited fields."
     recoverable = None
     try:
         recoverable = context_backfill(path, apply=False)
@@ -582,14 +597,16 @@ def context_diversity_audit(path: str | Path) -> Dict[str, Any]:
         "graded_contexts": graded, "fields": fields,
         "variable_field_count": variable_count, "constant_field_count": constant_count,
         "unknown_field_count": unknown_count,
+        "complete_coverage_field_count": complete_coverage_fields,
+        "partial_coverage_field_count": partial_coverage_fields,
+        "missing_coverage_field_count": missing_coverage_fields,
+        "audited_field_count": len(fields),
+        "context_coverage_complete": coverage_complete,
+        "context_coverage_partial": partial_recovery,
         "context_quality_deficient": deficient,
-        "quality_state": "CONTEXT_QUALITY_DEFICIENT" if deficient else "CONTEXT_DIVERSITY_PRESENT",
+        "quality_state": quality_state,
         "historical_backfill_preview": recoverable,
-        "reason": (
-            "Aggregate graded history is sufficient, but no governed calibration field varies across source-verified graded contexts."
-            if deficient else
-            "At least one source-verified governed calibration field varies across graded contexts."
-        ),
+        "reason": quality_reason,
     }
 
 
