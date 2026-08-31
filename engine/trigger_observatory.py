@@ -1,4 +1,4 @@
-"""APEX 69.9.3 — Predictive Metadata Join & Context Coverage Truth Closure.
+"""APEX 69.9.4 — Session-Conditioned Abstention Regret & Blocker Effectiveness Validation.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -17,11 +17,12 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
+from zoneinfo import ZoneInfo
 
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.3"
+VERSION = "69.9.4"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v2"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -465,7 +466,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     evidence_resolved = evidence_path or str(evidence_default_db)
     base = {
         "ok": True, "status": "READY", "version": VERSION,
-        "schema_version": "apex.predictive_validation.v4",
+        "schema_version": "apex.predictive_validation.v5",
         "behavioral_authority": False, "execution_authority": False,
         "broker_mutation": False, "production_effect": PRODUCTION_EFFECT,
         "automatic_calibration_activation": False,
@@ -481,9 +482,9 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     with canonical_connect(resolved, read_only=True, timeout=4) as conn:
         conn.row_factory = sqlite3.Row
         rows = [dict(r) for r in conn.execute(
-            """SELECT decision_id,source,trigger_type,setup_family,direction,disposition,
-                      triggered_at,confidence,blocker_codes_json,outcome_label,mfe_points,mae_points,
-                      canonical_grade_status,canonical_grade_label
+            """SELECT trigger_id,decision_id,source,trigger_type,setup_family,direction,disposition,
+                      triggered_at,confidence,entry_reference,target1_reference,blocker_codes_json,
+                      outcome_label,mfe_points,mae_points,canonical_grade_status,canonical_grade_label
                FROM observed_trade_triggers WHERE symbol=? ORDER BY triggered_at""",
             (_u(symbol, "SPX"),),
         ).fetchall()]
@@ -529,10 +530,30 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                                 or deployment.get("apex_version")
                                 or "UNKNOWN"
                             ).strip() or "UNKNOWN"
+                            ido = snap.get("institutional_decision_object")
+                            ido = dict(ido) if isinstance(ido, Mapping) else {}
+                            direct_policy = snap.get("dynamic_state_policy")
+                            direct_policy = dict(direct_policy) if isinstance(direct_policy, Mapping) else {}
+                            ido_conviction = ido.get("conviction")
+                            ido_conviction = dict(ido_conviction) if isinstance(ido_conviction, Mapping) else {}
+                            ido_consensus = ido.get("institutional_consensus") or ido.get("consensus")
+                            ido_consensus = dict(ido_consensus) if isinstance(ido_consensus, Mapping) else {}
+                            conviction_policy = ido_conviction.get("dynamic_state_policy")
+                            conviction_policy = dict(conviction_policy) if isinstance(conviction_policy, Mapping) else {}
+                            consensus_policy = ido_consensus.get("dynamic_state_policy")
+                            consensus_policy = dict(consensus_policy) if isinstance(consensus_policy, Mapping) else {}
+                            dynamic_policy = direct_policy or conviction_policy or consensus_policy
+                            governed_move_threshold = _f(dynamic_policy.get("required_boundary_margin_points"))
                             decision_meta[decision_id] = {
                                 "session": _u(meta_row["session"]),
                                 "decision_class": decision_class,
                                 "release_version": release_version,
+                                "governed_move_threshold_points": governed_move_threshold,
+                                "governed_move_threshold_source": (
+                                    "DYNAMIC_STATE_POLICY_REQUIRED_BOUNDARY_MARGIN"
+                                    if governed_move_threshold is not None and governed_move_threshold > 0
+                                    else "UNAVAILABLE"
+                                ),
                             }
                         except Exception as exc:
                             if len(metadata_join_errors) < 25:
@@ -586,11 +607,68 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         r["_decision_class"] = meta.get("decision_class", "UNLINKED_OBSERVATION")
         r["_release_version"] = meta.get("release_version", "UNKNOWN")
         r["_grade_horizon_seconds"] = horizon_by_decision.get(decision_id, "UNKNOWN")
+        entry_ref = _f(r.get("entry_reference"))
+        target1_ref = _f(r.get("target1_reference"))
+        target_move = None
+        if entry_ref is not None and target1_ref is not None:
+            signed_target_move = ((target1_ref - entry_ref) if _u(r.get("direction")) == "BULLISH"
+                                  else (entry_ref - target1_ref) if _u(r.get("direction")) == "BEARISH"
+                                  else None)
+            if signed_target_move is not None and signed_target_move > 0:
+                target_move = float(signed_target_move)
+        if target_move is not None:
+            r["_move_threshold_points"] = target_move
+            r["_move_threshold_source"] = "PERSISTED_TARGET1_REFERENCE"
+        else:
+            governed_move_threshold = _f(meta.get("governed_move_threshold_points"))
+            r["_move_threshold_points"] = governed_move_threshold if governed_move_threshold and governed_move_threshold > 0 else None
+            r["_move_threshold_source"] = (
+                meta.get("governed_move_threshold_source")
+                if r["_move_threshold_points"] is not None else "UNAVAILABLE"
+            )
         try:
             blockers = json.loads(r.get("blocker_codes_json") or "[]")
         except Exception:
             blockers = []
         r["_blockers"] = sorted({str(x).upper() for x in blockers if str(x).strip()}) if isinstance(blockers, list) else []
+        blocker_count = len(r["_blockers"])
+        r["_blocker_multiplicity"] = (
+            "NO_EXPLICIT_BLOCKER" if blocker_count == 0 else
+            "ISOLATED_BLOCKER" if blocker_count == 1 else
+            "SIMULTANEOUS_BLOCKERS"
+        )
+        r["_first_favorable_seconds"] = None
+        r["_first_adverse_seconds"] = None
+        r["_first_threshold_favorable_seconds"] = None
+
+    # Observation timing is derived only from persisted Trigger Observatory samples.
+    # No missing tick path is interpolated or inferred.
+    observations_by_trigger: Dict[str, list[Dict[str, Any]]] = {}
+    try:
+        with canonical_connect(resolved, read_only=True, timeout=4) as obs_conn:
+            obs_conn.row_factory = sqlite3.Row
+            obs_rows = obs_conn.execute(
+                """SELECT trigger_id,observed_at,favorable_points,adverse_points
+                   FROM trade_trigger_price_observations ORDER BY observed_at"""
+            ).fetchall()
+        for obs_row in obs_rows:
+            observations_by_trigger.setdefault(str(obs_row["trigger_id"]), []).append(dict(obs_row))
+    except Exception:
+        observations_by_trigger = {}
+
+    for r in rows:
+        trigger_epoch = _epoch(r.get("triggered_at"))
+        threshold = _f(r.get("_move_threshold_points"))
+        for obs in observations_by_trigger.get(str(r.get("trigger_id") or ""), []):
+            elapsed = max(0.0, _epoch(obs.get("observed_at")) - trigger_epoch)
+            favorable = _f(obs.get("favorable_points")) or 0.0
+            adverse = _f(obs.get("adverse_points")) or 0.0
+            if favorable > 0 and r["_first_favorable_seconds"] is None:
+                r["_first_favorable_seconds"] = round(elapsed, 3)
+            if adverse < 0 and r["_first_adverse_seconds"] is None:
+                r["_first_adverse_seconds"] = round(elapsed, 3)
+            if threshold is not None and favorable >= threshold and r["_first_threshold_favorable_seconds"] is None:
+                r["_first_threshold_favorable_seconds"] = round(elapsed, 3)
 
     graded_rows_for_join = [r for r in rows if str(r.get("canonical_grade_status") or "").upper() == "GRADED"]
     graded_with_decision_id = [r for r in graded_rows_for_join if str(r.get("decision_id") or "").strip()]
@@ -660,6 +738,203 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "avg_mfe_points": round(sum(mfes) / len(mfes), 4) if mfes else None,
             "avg_mae_abs_points": round(sum(maes) / len(maes), 4) if maes else None,
         }
+
+    def market_open_elapsed_bucket(row: Mapping[str, Any]) -> str:
+        if str(row.get("_session") or "").upper() != "MARKET_OPEN":
+            return "NOT_MARKET_OPEN"
+        try:
+            raw = str(row.get("triggered_at") or "")
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            local = parsed.astimezone(ZoneInfo("America/New_York"))
+            minutes = (local.hour * 60 + local.minute + local.second / 60.0) - (9 * 60 + 30)
+            if minutes < 0:
+                return "PRE_OPEN_CLOCK_MISMATCH"
+            if minutes < 15:
+                return "OPENING_0_15"
+            if minutes < 30:
+                return "OPENING_15_30"
+            if minutes < 60:
+                return "OPENING_30_60"
+            return "LATER_MARKET_OPEN_60_PLUS"
+        except Exception:
+            return "UNKNOWN"
+
+    for r in rows:
+        r["_market_open_elapsed_bucket"] = market_open_elapsed_bucket(r)
+
+    def abstention_classification(row: Mapping[str, Any]) -> tuple[str, str]:
+        outcome = grade_win(row)
+        if outcome is None:
+            return "NOT_CANONICALLY_GRADED", "Canonical grade is unavailable."
+        if outcome is False:
+            return "ABSTENTION_SUCCESS", "Blocked directional thesis was canonically graded incorrect."
+        threshold = _f(row.get("_move_threshold_points"))
+        mfe = _f(row.get("mfe_points"))
+        if threshold is None:
+            return (
+                "DIRECTIONALLY_CORRECT_BUT_NOT_PROVEN_TRADEABLE",
+                "Directional thesis graded correct, but no persisted governed movement threshold is available."
+            )
+        if mfe is None:
+            return (
+                "DIRECTIONALLY_CORRECT_BUT_NOT_PROVEN_TRADEABLE",
+                "Directional thesis graded correct, but five-minute favorable excursion is unavailable."
+            )
+        if mfe >= threshold:
+            return (
+                "POTENTIAL_BLOCKER_REGRET",
+                "Directional thesis graded correct and observed favorable excursion met a persisted movement threshold; execution quality remains unproven."
+            )
+        return (
+            "DIRECTIONALLY_CORRECT_BUT_NOT_PROVEN_TRADEABLE",
+            "Directional thesis graded correct, but observed favorable excursion did not meet the persisted movement threshold."
+        )
+
+    abstention_rows = [
+        r for r in rows
+        if _u(r.get("source")) == "CANONICAL_DECISION"
+        and r.get("_decision_class") == "OBSERVATIONAL_NO_TRADE"
+    ]
+    for r in abstention_rows:
+        classification, classification_reason = abstention_classification(r)
+        r["_abstention_classification"] = classification
+        r["_abstention_classification_reason"] = classification_reason
+
+    def summarize_abstention(group_rows: list[Dict[str, Any]]) -> Dict[str, Any]:
+        graded = [r for r in group_rows if grade_win(r) is not None]
+        directional_correct = sum(1 for r in graded if grade_win(r) is True)
+        directional_incorrect = sum(1 for r in graded if grade_win(r) is False)
+        regret = sum(1 for r in graded if r.get("_abstention_classification") == "POTENTIAL_BLOCKER_REGRET")
+        correct_not_tradeable = sum(
+            1 for r in graded if r.get("_abstention_classification") == "DIRECTIONALLY_CORRECT_BUT_NOT_PROVEN_TRADEABLE"
+        )
+        threshold_evaluable = [
+            r for r in graded
+            if _f(r.get("_move_threshold_points")) is not None and _f(r.get("mfe_points")) is not None
+        ]
+        threshold_met = [
+            r for r in threshold_evaluable
+            if (_f(r.get("mfe_points")) or 0.0) >= (_f(r.get("_move_threshold_points")) or math.inf)
+        ]
+        threshold_sources: Dict[str, int] = {}
+        for r in group_rows:
+            source = str(r.get("_move_threshold_source") or "UNAVAILABLE")
+            threshold_sources[source] = threshold_sources.get(source, 0) + 1
+        first_fav = [float(r["_first_favorable_seconds"]) for r in group_rows if r.get("_first_favorable_seconds") is not None]
+        first_adv = [float(r["_first_adverse_seconds"]) for r in group_rows if r.get("_first_adverse_seconds") is not None]
+        first_threshold = [
+            float(r["_first_threshold_favorable_seconds"])
+            for r in group_rows if r.get("_first_threshold_favorable_seconds") is not None
+        ]
+        mfes = [float(r["mfe_points"]) for r in group_rows if r.get("mfe_points") is not None]
+        maes = [abs(float(r["mae_points"])) for r in group_rows if r.get("mae_points") is not None]
+        try:
+            from .dynamic_state_calibration_governance import wilson_interval
+            abstention_ci = wilson_interval(float(directional_incorrect), float(len(graded))) if graded else {"lower_pct": None, "upper_pct": None}
+        except Exception:
+            abstention_ci = {"lower_pct": None, "upper_pct": None}
+        return {
+            "sample_size": len(group_rows),
+            "canonical_graded": len(graded),
+            "blocked_thesis_directionally_correct": directional_correct,
+            "blocked_thesis_directionally_incorrect": directional_incorrect,
+            "abstention_success_rate_pct": (
+                round(100.0 * directional_incorrect / len(graded), 2) if graded else None
+            ),
+            "abstention_success_confidence_interval_95": abstention_ci,
+            "potential_blocker_regret": regret,
+            "potential_blocker_regret_rate_pct_of_graded": (
+                round(100.0 * regret / len(graded), 2) if graded else None
+            ),
+            "movement_threshold_evaluable": len(threshold_evaluable),
+            "movement_threshold_met": len(threshold_met),
+            "movement_threshold_sources": threshold_sources,
+            "potential_blocker_regret_rate_pct_when_threshold_evaluable": (
+                round(100.0 * regret / len(threshold_evaluable), 2) if threshold_evaluable else None
+            ),
+            "directionally_correct_but_not_proven_tradeable": correct_not_tradeable,
+            "avg_mfe_points": round(sum(mfes) / len(mfes), 4) if mfes else None,
+            "avg_mae_abs_points": round(sum(maes) / len(maes), 4) if maes else None,
+            "time_to_favorable_observed": len(first_fav),
+            "avg_time_to_first_favorable_seconds": round(sum(first_fav) / len(first_fav), 2) if first_fav else None,
+            "time_to_adverse_observed": len(first_adv),
+            "avg_time_to_first_adverse_seconds": round(sum(first_adv) / len(first_adv), 2) if first_adv else None,
+            "time_to_threshold_favorable_observed": len(first_threshold),
+            "avg_time_to_threshold_favorable_seconds": (
+                round(sum(first_threshold) / len(first_threshold), 2) if first_threshold else None
+            ),
+        }
+
+    def abstention_groups(dimensions: tuple[str, ...], *, expand_blocker: bool = False) -> list[Dict[str, Any]]:
+        groups: Dict[tuple[str, ...], list[Dict[str, Any]]] = {}
+        for row in abstention_rows:
+            blockers = (row.get("_blockers") or ["NO_EXPLICIT_BLOCKER"]) if expand_blocker else [None]
+            for blocker in blockers:
+                key_parts = []
+                for dimension in dimensions:
+                    if dimension == "blocker":
+                        key_parts.append(str(blocker))
+                    else:
+                        value = row.get(dimension)
+                        if value is None:
+                            value = row.get("_" + dimension, "UNKNOWN")
+                        key_parts.append(str(value if value not in (None, "") else "UNKNOWN"))
+                groups.setdefault(tuple(key_parts), []).append(row)
+        out = []
+        for key, vals in groups.items():
+            item = {dimension: key[i] for i, dimension in enumerate(dimensions)}
+            item.update(summarize_abstention(vals))
+            out.append(item)
+        out.sort(key=lambda x: (-x["canonical_graded"], -x["sample_size"], tuple(str(x.get(d)) for d in dimensions)))
+        return out
+
+    abstention_classification_counts: Dict[str, int] = {}
+    for row in abstention_rows:
+        key = str(row.get("_abstention_classification") or "NOT_CANONICALLY_GRADED")
+        abstention_classification_counts[key] = abstention_classification_counts.get(key, 0) + 1
+
+    abstention_regret = {
+        "schema_version": "apex.abstention_regret.v1",
+        "status": "READY" if abstention_rows else "WAITING_FOR_OBSERVATIONAL_NO_TRADE",
+        "production_effect": PRODUCTION_EFFECT,
+        "behavioral_authority": False,
+        "execution_authority": False,
+        "broker_mutation": False,
+        "population_contract": "CANONICAL_OBSERVATIONAL_NO_TRADE_ONLY",
+        "sample_size": len(abstention_rows),
+        "overall": summarize_abstention(abstention_rows),
+        "classification_counts": abstention_classification_counts,
+        "by_blocker_session": abstention_groups(("blocker", "session"), expand_blocker=True),
+        "by_blocker_direction_session": abstention_groups(("blocker", "direction", "session"), expand_blocker=True),
+        "by_blocker_confidence_session": abstention_groups(("blocker", "confidence_band", "session"), expand_blocker=True),
+        "by_blocker_multiplicity_session": abstention_groups(("blocker_multiplicity", "session")),
+        "market_open_elapsed": abstention_groups(("market_open_elapsed_bucket", "blocker"), expand_blocker=True),
+        "movement_threshold_contract": {
+            "priority": [
+                "PERSISTED_TARGET1_REFERENCE",
+                "DYNAMIC_STATE_POLICY_REQUIRED_BOUNDARY_MARGIN",
+                "UNAVAILABLE",
+            ],
+            "missing_threshold_behavior": "NOT_EVALUABLE_NO_INFERENCE",
+            "threshold_is_execution_proof": False,
+            "interpretation": (
+                "Meeting a persisted movement threshold is necessary-not-sufficient evidence for potential blocker regret; "
+                "it does not prove option premium, fill quality, stop viability, or executable tradeability."
+            ),
+        },
+        "classification_contract": {
+            "ABSTENTION_SUCCESS": "Blocked directional thesis was canonically graded incorrect.",
+            "DIRECTIONALLY_CORRECT_BUT_NOT_PROVEN_TRADEABLE": (
+                "Blocked thesis was directionally correct but lacked sufficient persisted movement evidence to support a regret hypothesis."
+            ),
+            "POTENTIAL_BLOCKER_REGRET": (
+                "Blocked thesis was directionally correct and met a persisted movement threshold; execution viability remains unproven."
+            ),
+        },
+        "observation_timing_contract": "PERSISTED_TRIGGER_PRICE_OBSERVATIONS_ONLY_NO_INTERPOLATION",
+    }
 
     band_order = ["<40", "40-49.9", "50-59.9", "60-69.9", "70-79.9", "80+", "UNKNOWN"]
     reliability_min_sample = 20
@@ -829,6 +1104,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         "directional_cohorts": directional_cohorts,
         "decision_class_effectiveness": decision_class_effectiveness,
         "release_cohorts": release_cohorts,
+        "abstention_regret": abstention_regret,
         "metadata_join": metadata_join,
         "cross_cohorts": cross_cohorts,
         "calibration_fragmentation": fragmentation,
@@ -839,12 +1115,35 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "Session-conditioned and decision-class cohorts must be inspected before interpreting confidence ordering.",
             "Metadata-conditioned cohorts are reliable only to the extent reported by metadata_join coverage diagnostics.",
             "Actionable trades and observational NO_TRADE counterfactuals are reported separately where canonical decision metadata exists.",
+            "Potential blocker regret is a counterfactual diagnostic and does not prove an executable options trade existed.",
+            "Movement-threshold sufficiency uses only persisted target or governed margin evidence and never fabricates missing thresholds.",
             "Five-minute excursion is not a canonical trade grade.",
             "No confidence band, blocker, context, or cohort statistic mutates production behavior.",
             "Calibration remains human-governed and requires existing integrity gates.",
         ],
     }
 
+
+
+
+def abstention_regret_validation(*, symbol: str = "SPX", path: Optional[str] = None,
+                                 evidence_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return the 69.9.4 abstention-regret diagnostic without behavioral authority."""
+    full = predictive_validation(symbol=symbol, path=path, evidence_path=evidence_path)
+    regret = dict(full.get("abstention_regret") or {})
+    return {
+        "ok": bool(full.get("ok")),
+        "status": regret.get("status") or full.get("status"),
+        "version": VERSION,
+        "schema_version": regret.get("schema_version") or "apex.abstention_regret.v1",
+        "symbol": _u(symbol, "SPX"),
+        "metadata_join": full.get("metadata_join") or {},
+        "abstention_regret": regret,
+        "production_effect": PRODUCTION_EFFECT,
+        "behavioral_authority": False,
+        "execution_authority": False,
+        "broker_mutation": False,
+    }
 
 
 def history(*, symbol: str = "SPX", limit: int = 100, status: Optional[str] = None,
@@ -1098,6 +1397,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
