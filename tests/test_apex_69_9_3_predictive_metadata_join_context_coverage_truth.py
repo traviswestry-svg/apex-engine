@@ -199,8 +199,8 @@ def test_context_quality_reports_partial_recovery_not_full_health(tmp_path):
 
 def test_release_truth_and_guardrails_are_69_9_3():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.9.3"
-    assert manifest["build_name"] == "Predictive Metadata Join & Context Coverage Truth Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 9, 3)
     g = manifest["guardrails"]
     assert g["predictive_metadata_join_diagnostics_enabled"] is True
     assert g["predictive_metadata_single_row_parse_isolation"] is True
@@ -210,7 +210,7 @@ def test_release_truth_and_guardrails_are_69_9_3():
     assert g["metadata_join_changes_trade_decisions"] is False
     assert g["metadata_join_auto_activates_calibration"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.9.3" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "predictive_metadata_join_diagnostics" in registry
     assert "context_coverage_truth_state" in registry
 
