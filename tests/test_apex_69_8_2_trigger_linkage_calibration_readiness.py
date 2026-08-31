@@ -124,8 +124,8 @@ def test_observation_maturation_surfaces_overdue_open_trigger(tmp_path):
 
 def test_release_truth_and_6982_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.8.2"
-    assert manifest["build_name"] == "Trigger Linkage & Calibration Readiness Verification"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 8, 2)
     g = manifest["guardrails"]
     assert g["canonical_trigger_decision_id_propagation"] is True
     assert g["blocked_reason_visibility"] is True
@@ -134,7 +134,7 @@ def test_release_truth_and_6982_guardrails():
     assert g["calibration_activation_human_governed"] is True
     assert g["trigger_observation_maturation_diagnostic"] is True
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.8.2" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "calibration_readiness_verification" in registry
 
 

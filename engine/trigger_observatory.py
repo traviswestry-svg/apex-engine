@@ -1,4 +1,4 @@
-"""APEX 69.8.2 — Universal Trade Trigger Observatory, Linkage & Calibration Readiness Verification.
+"""APEX 69.9.0 — Universal Trade Trigger Observatory & Predictive Validation.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -21,7 +21,7 @@ from typing import Any, Dict, Mapping, Optional
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.8.2"
+VERSION = "69.9.0"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v2"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -450,6 +450,147 @@ def effectiveness(*, symbol: str = "SPX", path: Optional[str] = None) -> Dict[st
             "production_effect": PRODUCTION_EFFECT}
 
 
+
+def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
+                          evidence_path: Optional[str] = None) -> Dict[str, Any]:
+    """Read-only decision-quality validation from persisted trigger and grade evidence.
+
+    This surface deliberately diagnoses predictive effectiveness without changing
+    thresholds, confidence, consensus weights, calibration state, or execution.
+    """
+    resolved = path or _path()
+    from .evidence_pipeline import DEFAULT_DB as evidence_default_db
+    evidence_resolved = evidence_path or str(evidence_default_db)
+    base = {
+        "ok": True, "status": "READY", "version": VERSION,
+        "schema_version": "apex.predictive_validation.v1",
+        "behavioral_authority": False, "execution_authority": False,
+        "broker_mutation": False, "production_effect": PRODUCTION_EFFECT,
+        "automatic_calibration_activation": False,
+    }
+    if not Path(resolved).exists():
+        return {**base, "status": "WAITING_FOR_TRIGGERS", "sample_size": 0,
+                "confidence_bands": [], "blocker_effectiveness": [],
+                "directional_cohorts": [], "calibration_fragmentation": {}}
+
+    initialize_store(resolved)
+    with canonical_connect(resolved, read_only=True, timeout=4) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in conn.execute(
+            """SELECT source,trigger_type,setup_family,direction,disposition,confidence,
+                      blocker_codes_json,outcome_label,mfe_points,mae_points,
+                      canonical_grade_status,canonical_grade_label
+               FROM observed_trade_triggers WHERE symbol=? ORDER BY triggered_at""",
+            (_u(symbol, "SPX"),),
+        ).fetchall()]
+
+    def grade_win(row: Mapping[str, Any]) -> Optional[bool]:
+        if row.get("canonical_grade_status") != "GRADED":
+            return None
+        label = _u(row.get("canonical_grade_label"))
+        if label == "WIN": return True
+        if label == "LOSS": return False
+        return None
+
+    def summarize(group_rows: list[Dict[str, Any]]) -> Dict[str, Any]:
+        graded = [r for r in group_rows if grade_win(r) is not None]
+        wins = sum(1 for r in graded if grade_win(r))
+        observed = [r for r in group_rows if r.get("outcome_label")]
+        favorable = sum(1 for r in observed if r.get("outcome_label") == "FAVORABLE")
+        mfes = [float(r["mfe_points"]) for r in group_rows if r.get("mfe_points") is not None]
+        maes = [abs(float(r["mae_points"])) for r in group_rows if r.get("mae_points") is not None]
+        return {
+            "sample_size": len(group_rows), "canonical_graded": len(graded),
+            "canonical_wins": wins, "canonical_losses": len(graded) - wins,
+            "canonical_win_rate_pct": round(100.0 * wins / len(graded), 2) if graded else None,
+            "five_minute_observed": len(observed),
+            "five_minute_favorable_rate_pct": round(100.0 * favorable / len(observed), 2) if observed else None,
+            "avg_mfe_points": round(sum(mfes) / len(mfes), 4) if mfes else None,
+            "avg_mae_abs_points": round(sum(maes) / len(maes), 4) if maes else None,
+        }
+
+    confidence_groups: Dict[str, list[Dict[str, Any]]] = {}
+    for r in rows:
+        c = _f(r.get("confidence"))
+        if c is None: band = "UNKNOWN"
+        elif c < 40: band = "<40"
+        elif c < 50: band = "40-49.9"
+        elif c < 60: band = "50-59.9"
+        elif c < 70: band = "60-69.9"
+        elif c < 80: band = "70-79.9"
+        else: band = "80+"
+        confidence_groups.setdefault(band, []).append(r)
+    confidence_bands = [{"band": k, **summarize(v)} for k, v in confidence_groups.items()]
+
+    blocker_groups: Dict[str, list[Dict[str, Any]]] = {}
+    for r in rows:
+        try:
+            blockers = json.loads(r.get("blocker_codes_json") or "[]")
+        except Exception:
+            blockers = []
+        if not isinstance(blockers, list): blockers = []
+        for blocker in sorted({str(x).upper() for x in blockers if str(x).strip()}):
+            blocker_groups.setdefault(blocker, []).append(r)
+    blocker_effectiveness = [{"blocker": k, **summarize(v)} for k, v in blocker_groups.items()]
+    blocker_effectiveness.sort(key=lambda x: (-x["canonical_graded"], -x["sample_size"], x["blocker"]))
+
+    cohort_groups: Dict[tuple[str, str, str], list[Dict[str, Any]]] = {}
+    for r in rows:
+        key = (_u(r.get("source")), _u(r.get("trigger_type")), _u(r.get("direction")))
+        cohort_groups.setdefault(key, []).append(r)
+    directional_cohorts = [
+        {"source": k[0], "trigger_type": k[1], "direction": k[2], **summarize(v)}
+        for k, v in cohort_groups.items()
+    ]
+    directional_cohorts.sort(key=lambda x: (-x["canonical_graded"], -x["five_minute_observed"], -x["sample_size"]))
+
+    fragmentation: Dict[str, Any] = {"status": "UNAVAILABLE", "minimum_sample_per_bucket": 20,
+                                     "graded_contexts": 0, "dimensions": {}}
+    if Path(evidence_resolved).exists():
+        try:
+            from .dynamic_state_outcome_calibration import calibration_summary
+            cs = calibration_summary(evidence_resolved)
+            dimensions = {}
+            ready_total = 0
+            bucket_total = 0
+            for dimension, buckets in (cs.get("dimensions") or {}).items():
+                bucket_total += len(buckets)
+                ready = [b for b in buckets if b.get("calibration_ready")]
+                ready_total += len(ready)
+                dimensions[dimension] = {
+                    "bucket_count": len(buckets),
+                    "ready_bucket_count": len(ready),
+                    "largest_bucket_sample": max([int(b.get("sample_size") or 0) for b in buckets] or [0]),
+                    "buckets": buckets,
+                }
+            fragmentation = {
+                "status": cs.get("status"), "graded_contexts": cs.get("graded_contexts", 0),
+                "minimum_sample_per_bucket": cs.get("minimum_sample_per_bucket", 20),
+                "bucket_count": bucket_total, "ready_bucket_count": ready_total,
+                "fragmentation_detected": bool(cs.get("graded_contexts", 0) >= cs.get("minimum_sample_per_bucket", 20)
+                                               and ready_total == 0),
+                "dimensions": dimensions,
+            }
+        except Exception as exc:
+            fragmentation = {**fragmentation, "status": "DEGRADED",
+                             "error": f"{type(exc).__name__}: {exc}"}
+
+    return {
+        **base, "sample_size": len(rows),
+        "canonical_graded_links": sum(1 for r in rows if r.get("canonical_grade_status") == "GRADED"),
+        "confidence_bands": confidence_bands,
+        "blocker_effectiveness": blocker_effectiveness,
+        "directional_cohorts": directional_cohorts,
+        "calibration_fragmentation": fragmentation,
+        "interpretation_guardrails": [
+            "Cohort statistics are observational associations, not causal effects.",
+            "Five-minute excursion is not a canonical trade grade.",
+            "No confidence band, blocker, or cohort statistic mutates production behavior.",
+            "Calibration remains human-governed and requires existing integrity gates.",
+        ],
+    }
+
+
 def history(*, symbol: str = "SPX", limit: int = 100, status: Optional[str] = None,
             path: Optional[str] = None) -> Dict[str, Any]:
     resolved = path or _path()
@@ -701,6 +842,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
