@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from .trigger_observatory import abstention_regret_validation, capability, effectiveness, history, learning_readiness, observation_integrity_validation, predictive_validation, sync_canonical_outcomes, trade_visualization
+from .trigger_observatory import abstention_regret_validation, capability, counterfactual_regret_validation, effectiveness, history, learning_readiness, observation_integrity_validation, predictive_validation, sync_canonical_outcomes, trade_visualization
 
-REQUIRED_ROUTES = ("/api/triggers/capability", "/api/triggers/history", "/api/triggers/effectiveness", "/api/triggers/trade-view", "/api/triggers/learning-readiness", "/api/triggers/predictive-validation", "/api/triggers/abstention-regret", "/api/triggers/observation-integrity", "/api/triggers/context-backfill")
+REQUIRED_ROUTES = ("/api/triggers/capability", "/api/triggers/history", "/api/triggers/effectiveness", "/api/triggers/trade-view", "/api/triggers/learning-readiness", "/api/triggers/predictive-validation", "/api/triggers/abstention-regret", "/api/triggers/counterfactual-regret", "/api/triggers/observation-integrity", "/api/triggers/context-backfill")
 
 
 def register_trigger_observatory_routes(app) -> None:
@@ -38,6 +38,10 @@ def register_trigger_observatory_routes(app) -> None:
     @app.get("/api/triggers/abstention-regret")
     def trigger_observatory_abstention_regret():
         return jsonify(abstention_regret_validation(symbol=request.args.get("symbol", "SPX")))
+
+    @app.get("/api/triggers/counterfactual-regret")
+    def trigger_observatory_counterfactual_regret():
+        return jsonify(counterfactual_regret_validation(symbol=request.args.get("symbol", "SPX")))
 
     @app.get("/api/triggers/observation-integrity")
     def trigger_observatory_observation_integrity():
