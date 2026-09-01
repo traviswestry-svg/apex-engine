@@ -184,14 +184,17 @@ def test_governed_margin_can_make_regret_evaluable_without_fabricated_default(tm
         _decision(conn, did="governed", session="MARKET_OPEN", won=True, threshold=5.0)
         _decision(conn, did="missing", session="MARKET_OPEN", won=True, threshold=None)
 
-    _trigger(
+    governed_id = _trigger(
         trigger_db, did="governed", session_time="2026-08-31T14:05:00+00:00",
         won=True, blockers=["THESIS_INVALIDATED"], confidence=65.0, mfe=5.5, mae=1.0,
     )
-    _trigger(
+    missing_id = _trigger(
         trigger_db, did="missing", session_time="2026-08-31T14:10:00+00:00",
         won=True, blockers=["THESIS_INVALIDATED"], confidence=65.0, mfe=20.0, mae=1.0,
     )
+    with sqlite3.connect(trigger_db) as conn:
+        _obs(conn, governed_id, "2026-08-31T14:06:00+00:00", 5.5, -1.0)
+        _obs(conn, missing_id, "2026-08-31T14:11:00+00:00", 20.0, -1.0)
 
     out = predictive_validation(path=str(trigger_db), evidence_path=str(evidence_db))
     overall = out["abstention_regret"]["overall"]
@@ -215,8 +218,8 @@ def test_abstention_regret_endpoint_wrapper_preserves_authority_boundaries(tmp_p
 
 def test_release_truth_and_guardrails_are_69_9_4():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.9.4"
-    assert manifest["build_name"] == "Session-Conditioned Abstention Regret & Blocker Effectiveness Validation"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 9, 4)
     g = manifest["guardrails"]
     assert g["abstention_regret_observational_only"] is True
     assert g["abstention_regret_changes_trade_decisions"] is False
@@ -226,7 +229,7 @@ def test_release_truth_and_guardrails_are_69_9_4():
     assert g["movement_threshold_missing_values_inferred"] is False
     assert g["observation_timing_uses_persisted_samples_only"] is True
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.9.4" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "/api/triggers/abstention-regret" in registry
     assert "session_conditioned_abstention_regret" in registry
     routes = (ROOT / "engine/trigger_observatory_routes.py").read_text()

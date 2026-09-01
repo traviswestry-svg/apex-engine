@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.9.4",
-  "build_name": "Session-Conditioned Abstention Regret & Blocker Effectiveness Validation",
+  "apex_version": "69.9.5",
+  "build_name": "Five-Minute Observation Integrity & Regret Eligibility Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -327,15 +327,28 @@
     "movement_threshold_requires_persisted_source": true,
     "movement_threshold_missing_values_inferred": false,
     "observation_timing_uses_persisted_samples_only": true,
-    "actionable_and_no_trade_counterfactuals_remain_separate": true
+    "actionable_and_no_trade_counterfactuals_remain_separate": true,
+    "five_minute_observation_integrity_enforced": true,
+    "late_observations_excluded_from_five_minute_metrics": true,
+    "late_first_observation_can_terminalize_as_five_minute_observed": false,
+    "window_missed_marked_observation_window_incomplete": true,
+    "historical_excursions_recomputed_from_persisted_in_window_samples": true,
+    "regret_requires_valid_in_window_excursion": true,
+    "canonical_grader_horizon_independently_verified": true,
+    "canonical_grader_expected_horizon_seconds": 300,
+    "explicit_persisted_target_recovery_enabled": true,
+    "generic_level_threshold_inference_enabled": false,
+    "observation_integrity_changes_trade_decisions": false,
+    "observation_integrity_changes_blockers": false,
+    "observation_integrity_auto_activates_calibration": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.9.4",
-  "application_version": "69.9.4",
+  "semantic_version": "69.9.5",
+  "application_version": "69.9.5",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
