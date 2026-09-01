@@ -1,4 +1,4 @@
-"""APEX 69.9.4 — Session-Conditioned Abstention Regret & Blocker Effectiveness Validation.
+"""APEX 69.9.5 — Five-Minute Observation Integrity & Regret Eligibility Closure.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -22,8 +22,8 @@ from zoneinfo import ZoneInfo
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.4"
-SCHEMA_VERSION = "apex.trade_trigger_observatory.v2"
+VERSION = "69.9.5"
+SCHEMA_VERSION = "apex.trade_trigger_observatory.v3"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
 MAX_CONTRACTS = int(os.getenv("APEX_MAX_CONTRACTS", "3"))
@@ -67,6 +67,252 @@ def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
+def _window_metrics(trigger: Mapping[str, Any], observations: list[Mapping[str, Any]], *, now: Any = None) -> Dict[str, Any]:
+    """Recompute the five-minute observation contract from persisted samples only.
+
+    The legacy trigger row may contain MFE/MAE produced by a late first sample.
+    69.9.5 never trusts those aggregates; it recomputes from raw observations whose
+    elapsed time is within [0, observation_window_seconds].
+    """
+    window_seconds = int(trigger.get("observation_window_seconds") or MAX_HOLD_SECONDS)
+    if _u(trigger.get("direction")) not in {"BULLISH", "BEARISH"} or _f(trigger.get("entry_reference")) is None:
+        return {
+            "window_integrity_status": "NOT_APPLICABLE", "window_matured": False,
+            "observation_window_seconds": window_seconds, "in_window_observation_count": 0,
+            "late_observation_count": 0, "pre_trigger_observation_count": 0,
+            "window_mfe_points": None, "window_mae_points": None, "window_outcome_label": None,
+            "first_in_window_observed_at": None, "last_in_window_observed_at": None,
+            "first_late_observed_at": None, "first_in_window_elapsed_seconds": None,
+            "last_in_window_elapsed_seconds": None, "first_late_elapsed_seconds": None,
+            "in_window_observations": [], "late_observations": [], "pre_trigger_observations": [],
+        }
+    triggered_epoch = _epoch(trigger.get("triggered_at"))
+    now_epoch = _epoch(now) if now is not None else datetime.now(timezone.utc).timestamp()
+    in_window: list[Dict[str, Any]] = []
+    late: list[Dict[str, Any]] = []
+    pre_trigger: list[Dict[str, Any]] = []
+    for raw in observations or []:
+        row = dict(raw)
+        try:
+            elapsed = _epoch(row.get("observed_at")) - triggered_epoch
+        except Exception:
+            continue
+        row["elapsed_seconds"] = round(float(elapsed), 3)
+        if 0.0 <= elapsed <= float(window_seconds):
+            row["window_class"] = "IN_WINDOW"
+            in_window.append(row)
+        elif elapsed > float(window_seconds):
+            row["window_class"] = "LATE"
+            late.append(row)
+        else:
+            row["window_class"] = "PRE_TRIGGER"
+            pre_trigger.append(row)
+
+    matured = (now_epoch - triggered_epoch) >= float(window_seconds)
+    if in_window:
+        window_status = "IN_WINDOW"
+    elif late:
+        window_status = "LATE"
+    elif matured:
+        window_status = "WINDOW_MISSED"
+    else:
+        window_status = "OBSERVING"
+
+    mfes = [_f(x.get("favorable_points")) for x in in_window]
+    maes = [_f(x.get("adverse_points")) for x in in_window]
+    mfes = [x for x in mfes if x is not None]
+    maes = [x for x in maes if x is not None]
+    mfe = max(mfes) if mfes else None
+    mae = min(maes) if maes else None
+    if in_window and mfe is not None and mae is not None:
+        outcome = "FAVORABLE" if mfe > abs(mae) and mfe > 0 else "ADVERSE" if abs(mae) > mfe else "MIXED"
+    elif in_window:
+        outcome = "MIXED"
+    elif matured or late:
+        outcome = "OBSERVATION_WINDOW_INCOMPLETE"
+    else:
+        outcome = None
+
+    return {
+        "window_integrity_status": window_status,
+        "window_matured": bool(matured),
+        "observation_window_seconds": window_seconds,
+        "in_window_observation_count": len(in_window),
+        "late_observation_count": len(late),
+        "pre_trigger_observation_count": len(pre_trigger),
+        "window_mfe_points": mfe,
+        "window_mae_points": mae,
+        "window_outcome_label": outcome,
+        "first_in_window_observed_at": in_window[0].get("observed_at") if in_window else None,
+        "last_in_window_observed_at": in_window[-1].get("observed_at") if in_window else None,
+        "first_late_observed_at": late[0].get("observed_at") if late else None,
+        "first_in_window_elapsed_seconds": in_window[0].get("elapsed_seconds") if in_window else None,
+        "last_in_window_elapsed_seconds": in_window[-1].get("elapsed_seconds") if in_window else None,
+        "first_late_elapsed_seconds": late[0].get("elapsed_seconds") if late else None,
+        "in_window_observations": in_window,
+        "late_observations": late,
+        "pre_trigger_observations": pre_trigger,
+    }
+
+
+def _reconcile_window_integrity_conn(conn, *, now: Any = None) -> Dict[str, int]:
+    """Repair derived observatory fields from persisted raw observations only."""
+    conn.row_factory = sqlite3.Row
+    triggers = conn.execute("SELECT * FROM observed_trade_triggers").fetchall()
+    counts = {"in_window": 0, "late": 0, "window_missed": 0, "observing": 0, "not_applicable": 0, "reconciled": 0}
+    checked_at = _iso(now)
+    for raw in triggers:
+        row = dict(raw)
+        obs = [dict(x) for x in conn.execute(
+            "SELECT * FROM trade_trigger_price_observations WHERE trigger_id=? ORDER BY observed_at",
+            (row["trigger_id"],),
+        ).fetchall()]
+        metrics = _window_metrics(row, obs, now=now)
+        status = metrics["window_integrity_status"]
+        if status == "IN_WINDOW": counts["in_window"] += 1
+        elif status == "LATE": counts["late"] += 1
+        elif status == "WINDOW_MISSED": counts["window_missed"] += 1
+        elif status == "NOT_APPLICABLE": counts["not_applicable"] += 1
+        else: counts["observing"] += 1
+        if status == "NOT_APPLICABLE":
+            conn.execute("UPDATE observed_trade_triggers SET window_integrity_status=?,window_integrity_checked_at=?,updated_at=? WHERE trigger_id=?",
+                         (status, checked_at, checked_at, row["trigger_id"]))
+            counts["reconciled"] += 1
+            continue
+        effective_status = (
+            "OBSERVED" if status == "IN_WINDOW" and metrics["window_matured"] else
+            "OBSERVATION_WINDOW_INCOMPLETE" if status in {"LATE", "WINDOW_MISSED"} else
+            "OBSERVING" if status == "OBSERVING" else
+            str(row.get("status") or "OBSERVING")
+        )
+        terminal_at = None
+        if metrics["window_matured"]:
+            terminal_at = datetime.fromtimestamp(
+                _epoch(row.get("triggered_at")) + metrics["observation_window_seconds"], timezone.utc
+            ).isoformat()
+        conn.execute(
+            """UPDATE observed_trade_triggers SET
+               status=?,mfe_points=?,mae_points=?,outcome_label=?,terminal_at=?,
+               window_integrity_status=?,in_window_observation_count=?,late_observation_count=?,
+               pre_trigger_observation_count=?,window_mfe_points=?,window_mae_points=?,window_outcome_label=?,
+               first_in_window_observed_at=?,last_in_window_observed_at=?,first_late_observed_at=?,
+               window_integrity_checked_at=?,updated_at=? WHERE trigger_id=?""",
+            (
+                effective_status, metrics["window_mfe_points"], metrics["window_mae_points"],
+                metrics["window_outcome_label"], terminal_at,
+                status, metrics["in_window_observation_count"], metrics["late_observation_count"],
+                metrics["pre_trigger_observation_count"], metrics["window_mfe_points"],
+                metrics["window_mae_points"], metrics["window_outcome_label"],
+                metrics["first_in_window_observed_at"], metrics["last_in_window_observed_at"],
+                metrics["first_late_observed_at"], checked_at, checked_at, row["trigger_id"],
+            ),
+        )
+        for sample in metrics["in_window_observations"] + metrics["late_observations"] + metrics["pre_trigger_observations"]:
+            conn.execute(
+                """UPDATE trade_trigger_price_observations SET elapsed_seconds=?,window_class=?
+                   WHERE trigger_id=? AND observed_at=?""",
+                (sample.get("elapsed_seconds"), sample.get("window_class"), row["trigger_id"], sample.get("observed_at")),
+            )
+        counts["reconciled"] += 1
+    return counts
+
+
+def _attach_window_metrics(rows: list[Dict[str, Any]], resolved: str, *, now: Any = None) -> Dict[str, int]:
+    """Attach horizon-safe observation metrics to trigger rows in memory."""
+    by_trigger: Dict[str, list[Dict[str, Any]]] = {}
+    try:
+        with canonical_connect(resolved, read_only=True, timeout=4) as conn:
+            conn.row_factory = sqlite3.Row
+            for obs in conn.execute(
+                "SELECT * FROM trade_trigger_price_observations ORDER BY trigger_id,observed_at"
+            ).fetchall():
+                by_trigger.setdefault(str(obs["trigger_id"]), []).append(dict(obs))
+    except Exception:
+        by_trigger = {}
+    counts = {"IN_WINDOW": 0, "LATE": 0, "WINDOW_MISSED": 0, "OBSERVING": 0, "NOT_APPLICABLE": 0}
+    for row in rows:
+        metrics = _window_metrics(row, by_trigger.get(str(row.get("trigger_id") or ""), []), now=now)
+        row["_window_metrics"] = metrics
+        row["_window_integrity_status"] = metrics["window_integrity_status"]
+        row["_in_window_observation_count"] = metrics["in_window_observation_count"]
+        row["_late_observation_count"] = metrics["late_observation_count"]
+        row["_pre_trigger_observation_count"] = metrics["pre_trigger_observation_count"]
+        row["_window_mfe_points"] = metrics["window_mfe_points"]
+        row["_window_mae_points"] = metrics["window_mae_points"]
+        row["_window_outcome_label"] = metrics["window_outcome_label"]
+        # All five-minute analytics below use only the reconstructed in-window values.
+        row["mfe_points"] = metrics["window_mfe_points"]
+        row["mae_points"] = metrics["window_mae_points"]
+        row["outcome_label"] = (
+            metrics["window_outcome_label"] if metrics["window_integrity_status"] == "IN_WINDOW" else None
+        )
+        counts[metrics["window_integrity_status"]] = counts.get(metrics["window_integrity_status"], 0) + 1
+    return counts
+
+
+def _explicit_target_candidates(snapshot: Mapping[str, Any]) -> list[Dict[str, Any]]:
+    """Return explicit persisted target values with provenance; never infer from generic levels."""
+    snap = dict(snapshot or {})
+    ido = snap.get("institutional_decision_object")
+    ido = dict(ido) if isinstance(ido, Mapping) else {}
+    candidates: list[Dict[str, Any]] = []
+
+    def add(value: Any, source: str) -> None:
+        if isinstance(value, Mapping):
+            value = value.get("price") if value.get("price") is not None else value.get("level") if value.get("level") is not None else value.get("value")
+        number = _f(value)
+        if number is not None and number > 0:
+            candidates.append({"price": number, "source": source})
+
+    def walk_explicit(container: Any, prefix: str) -> None:
+        if not isinstance(container, Mapping):
+            return
+        mapping = dict(container)
+        for key in ("target1", "target_1", "tp1", "first_target", "primary_target"):
+            if key in mapping:
+                add(mapping.get(key), f"{prefix}.{key}")
+        targets = mapping.get("targets")
+        if isinstance(targets, Mapping):
+            for key in ("tp1", "target1", "target_1", "first_target", "primary_target"):
+                if key in targets:
+                    add(targets.get(key), f"{prefix}.targets.{key}")
+
+    walk_explicit(ido.get("targets_and_decision_levels"), "institutional_decision_object.targets_and_decision_levels")
+    walk_explicit(ido.get("execution_snapshot"), "institutional_decision_object.execution_snapshot")
+    execution = ido.get("execution_snapshot")
+    if isinstance(execution, Mapping):
+        walk_explicit(execution.get("reference_plan"), "institutional_decision_object.execution_snapshot.reference_plan")
+    # Preserve only explicit target-named values. Supports/resistances or generic decision
+    # levels are deliberately excluded because choosing one would be an inferred threshold.
+    dedup: list[Dict[str, Any]] = []
+    seen = set()
+    for row in candidates:
+        key = (round(float(row["price"]), 8), row["source"])
+        if key not in seen:
+            seen.add(key); dedup.append(row)
+    return dedup
+
+
+def _directional_target_threshold(candidates: list[Mapping[str, Any]], *, entry: Optional[float], direction: str) -> tuple[Optional[float], str]:
+    if entry is None or direction not in {"BULLISH", "BEARISH"}:
+        return None, "UNAVAILABLE"
+    eligible = []
+    for row in candidates or []:
+        price = _f(row.get("price"))
+        if price is None:
+            continue
+        move = (price - entry) if direction == "BULLISH" else (entry - price)
+        if move > 0:
+            eligible.append((float(move), str(row.get("source") or "UNKNOWN")))
+    if not eligible:
+        return None, "UNAVAILABLE"
+    # Multiple explicit target-named values may exist. The smallest favorable explicit
+    # target is selected because it is the least demanding persisted regret threshold,
+    # not because a generic level was inferred.
+    move, source = sorted(eligible, key=lambda x: x[0])[0]
+    return move, f"PERSISTED_CANONICAL_EXPLICIT_TARGET:{source}"
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS observed_trade_triggers (
     trigger_id TEXT PRIMARY KEY, source_event_key TEXT NOT NULL UNIQUE,
@@ -82,6 +328,11 @@ CREATE TABLE IF NOT EXISTS observed_trade_triggers (
     execution_authority INTEGER NOT NULL DEFAULT 0, broker_mutation INTEGER NOT NULL DEFAULT 0,
     production_effect TEXT NOT NULL, decision_id TEXT, canonical_grade_status TEXT,
     canonical_grade_label TEXT, canonical_grade_json TEXT, canonical_graded_at TEXT,
+    window_integrity_status TEXT, in_window_observation_count INTEGER NOT NULL DEFAULT 0,
+    late_observation_count INTEGER NOT NULL DEFAULT 0, pre_trigger_observation_count INTEGER NOT NULL DEFAULT 0,
+    window_mfe_points REAL, window_mae_points REAL, window_outcome_label TEXT,
+    first_in_window_observed_at TEXT, last_in_window_observed_at TEXT, first_late_observed_at TEXT,
+    window_integrity_checked_at TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_trigger_observatory_time
@@ -92,14 +343,15 @@ CREATE INDEX IF NOT EXISTS ix_trigger_observatory_open
 CREATE TABLE IF NOT EXISTS trade_trigger_price_observations (
     observation_id TEXT PRIMARY KEY, trigger_id TEXT NOT NULL,
     observed_at TEXT NOT NULL, price REAL NOT NULL, favorable_points REAL NOT NULL,
-    adverse_points REAL NOT NULL, created_at TEXT NOT NULL,
+    adverse_points REAL NOT NULL, elapsed_seconds REAL, window_class TEXT,
+    created_at TEXT NOT NULL,
     UNIQUE(trigger_id, observed_at)
 );
 CREATE INDEX IF NOT EXISTS ix_trigger_prices ON trade_trigger_price_observations(trigger_id, observed_at);
 """
 
 
-def initialize_store(path: Optional[str] = None) -> Dict[str, Any]:
+def initialize_store(path: Optional[str] = None, *, reconcile: bool = True) -> Dict[str, Any]:
     resolved = path or _path()
     with canonical_connect(resolved, timeout=10) as conn:
         conn.executescript(_SCHEMA)
@@ -111,13 +363,30 @@ def initialize_store(path: Optional[str] = None) -> Dict[str, Any]:
             ("canonical_grade_label", "TEXT"),
             ("canonical_grade_json", "TEXT"),
             ("canonical_graded_at", "TEXT"),
+            ("window_integrity_status", "TEXT"),
+            ("in_window_observation_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("late_observation_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("pre_trigger_observation_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("window_mfe_points", "REAL"),
+            ("window_mae_points", "REAL"),
+            ("window_outcome_label", "TEXT"),
+            ("first_in_window_observed_at", "TEXT"),
+            ("last_in_window_observed_at", "TEXT"),
+            ("first_late_observed_at", "TEXT"),
+            ("window_integrity_checked_at", "TEXT"),
         ):
             if name not in existing:
                 conn.execute(f"ALTER TABLE observed_trade_triggers ADD COLUMN {name} {decl}")
+        obs_existing = {row[1] for row in conn.execute("PRAGMA table_info(trade_trigger_price_observations)")}
+        for name, decl in (("elapsed_seconds", "REAL"), ("window_class", "TEXT")):
+            if name not in obs_existing:
+                conn.execute(f"ALTER TABLE trade_trigger_price_observations ADD COLUMN {name} {decl}")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_trigger_decision_id ON observed_trade_triggers(decision_id)")
+        reconciliation = _reconcile_window_integrity_conn(conn) if reconcile else {"reconciled": 0, "skipped": True}
         conn.commit()
     return {"ok": True, "status": "READY", "path": resolved, "version": VERSION,
             "schema_version": SCHEMA_VERSION, "canonical_outcome_linkage": True,
+            "observation_window_integrity": reconciliation,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
 
@@ -168,7 +437,7 @@ def record_trigger(*, source: str, trigger_type: str, symbol: str = "SPX",
                    target1: Any = None, target2: Any = None, target3: Any = None,
                    blockers: Any = None, evidence: Optional[Mapping[str, Any]] = None,
                    decision_id: Optional[str] = None, path: Optional[str] = None) -> Dict[str, Any]:
-    initialize_store(path)
+    initialize_store(path, reconcile=False)
     at = _iso(triggered_at)
     symbol = _u(symbol, "SPX"); source = _u(source); trigger_type = _u(trigger_type)
     direction = _direction(direction or trigger_type)
@@ -225,40 +494,85 @@ def record_pine_signal(signal: Mapping[str, Any], assistant: Optional[Mapping[st
 
 def observe_price(*, symbol: str, price: Any, observed_at: Any = None,
                   path: Optional[str] = None) -> Dict[str, Any]:
+    """Persist price evidence without allowing late samples into the five-minute window."""
     resolved = path or _path(); px = _f(price)
     if px is None or not Path(resolved).exists():
         return {"ok": False, "status": "PRICE_OR_STORE_UNAVAILABLE", "updated": 0}
+    # Ensure 69.9.5 integrity columns and reconcile any legacy contamination first.
+    initialize_store(resolved, reconcile=False)
     at = _iso(observed_at); at_epoch = _epoch(at); updated = terminal = 0
+    in_window_samples = late_samples = pre_trigger_samples = incomplete = 0
     with canonical_connect(resolved, timeout=10) as conn:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute("SELECT * FROM observed_trade_triggers WHERE symbol=? AND status='OBSERVING'",
-                            (_u(symbol, "SPX"),)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM observed_trade_triggers WHERE symbol=? AND status='OBSERVING'",
+            (_u(symbol, "SPX"),),
+        ).fetchall()
         for raw in rows:
             row = dict(raw); entry = _f(row.get("entry_reference"))
-            if entry is None: continue
+            if entry is None:
+                continue
             sign = 1.0 if row["direction"] == "BULLISH" else -1.0
             move = (px-entry)*sign; favorable = max(0.0, move); adverse = min(0.0, move)
-            elapsed = max(0.0, at_epoch - _epoch(row["triggered_at"]))
-            conn.execute("INSERT OR IGNORE INTO trade_trigger_price_observations VALUES(?,?,?,?,?,?,?)",
-                         (str(uuid.uuid4()), row["trigger_id"], at, px, favorable, adverse, _iso()))
-            mfe = max(_f(row.get("mfe_points")) or 0.0, favorable)
-            mae = min(_f(row.get("mae_points")) or 0.0, adverse)
-            status = "OBSERVED" if elapsed >= row["observation_window_seconds"] else "OBSERVING"
-            outcome = None
-            terminal_at = None
-            if status == "OBSERVED":
-                terminal += 1; terminal_at = at
-                outcome = "FAVORABLE" if mfe > abs(mae) and mfe > 0 else "ADVERSE" if abs(mae) > mfe else "MIXED"
+            elapsed = at_epoch - _epoch(row["triggered_at"])
+            window_seconds = int(row.get("observation_window_seconds") or MAX_HOLD_SECONDS)
+            if elapsed < 0:
+                window_class = "PRE_TRIGGER"; pre_trigger_samples += 1
+            elif elapsed <= window_seconds:
+                window_class = "IN_WINDOW"; in_window_samples += 1
+            else:
+                window_class = "LATE"; late_samples += 1
             conn.execute(
-                """UPDATE observed_trade_triggers SET mfe_points=?,mae_points=?,last_price=?,
-                   observation_count=observation_count+1,status=?,terminal_at=COALESCE(?,terminal_at),
-                   outcome_label=COALESCE(?,outcome_label),updated_at=? WHERE trigger_id=?""",
-                (mfe, mae, px, status, terminal_at, outcome, at, row["trigger_id"]),
-            ); updated += 1
+                """INSERT OR IGNORE INTO trade_trigger_price_observations(
+                   observation_id,trigger_id,observed_at,price,favorable_points,adverse_points,
+                   elapsed_seconds,window_class,created_at) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (str(uuid.uuid4()), row["trigger_id"], at, px, favorable, adverse,
+                 round(float(elapsed), 3), window_class, _iso()),
+            )
+            obs = [dict(x) for x in conn.execute(
+                "SELECT * FROM trade_trigger_price_observations WHERE trigger_id=? ORDER BY observed_at",
+                (row["trigger_id"],),
+            ).fetchall()]
+            metrics = _window_metrics(row, obs, now=at)
+            window_status = metrics["window_integrity_status"]
+            matured = metrics["window_matured"]
+            if matured and window_status == "IN_WINDOW":
+                status = "OBSERVED"; terminal += 1
+            elif matured and window_status in {"LATE", "WINDOW_MISSED"}:
+                status = "OBSERVATION_WINDOW_INCOMPLETE"; terminal += 1; incomplete += 1
+            else:
+                status = "OBSERVING"
+            terminal_at = (
+                datetime.fromtimestamp(_epoch(row["triggered_at"]) + window_seconds, timezone.utc).isoformat()
+                if matured else None
+            )
+            conn.execute(
+                """UPDATE observed_trade_triggers SET
+                   mfe_points=?,mae_points=?,last_price=?,observation_count=observation_count+1,
+                   status=?,terminal_at=?,outcome_label=?,window_integrity_status=?,
+                   in_window_observation_count=?,late_observation_count=?,pre_trigger_observation_count=?,
+                   window_mfe_points=?,window_mae_points=?,window_outcome_label=?,
+                   first_in_window_observed_at=?,last_in_window_observed_at=?,first_late_observed_at=?,
+                   window_integrity_checked_at=?,updated_at=? WHERE trigger_id=?""",
+                (
+                    metrics["window_mfe_points"], metrics["window_mae_points"], px, status, terminal_at,
+                    metrics["window_outcome_label"], window_status,
+                    metrics["in_window_observation_count"], metrics["late_observation_count"],
+                    metrics["pre_trigger_observation_count"], metrics["window_mfe_points"],
+                    metrics["window_mae_points"], metrics["window_outcome_label"],
+                    metrics["first_in_window_observed_at"], metrics["last_in_window_observed_at"],
+                    metrics["first_late_observed_at"], at, at, row["trigger_id"],
+                ),
+            )
+            updated += 1
         conn.commit()
-    return {"ok": True, "status": "UPDATED", "updated": updated, "terminal": terminal,
-            "execution_authority": False, "broker_mutation": False}
-
+    return {
+        "ok": True, "status": "UPDATED", "updated": updated, "terminal": terminal,
+        "in_window_samples": in_window_samples, "late_samples": late_samples,
+        "pre_trigger_samples": pre_trigger_samples, "observation_window_incomplete": incomplete,
+        "observation_window_seconds": MAX_HOLD_SECONDS,
+        "execution_authority": False, "broker_mutation": False,
+    }
 
 def _canonical_blockers(decision: Mapping[str, Any]) -> list[str]:
     """Expose only reasons derivable from the finalized canonical decision."""
@@ -394,7 +708,7 @@ def sync_canonical_outcomes(*, path: Optional[str] = None, evidence_path: Option
 
 
 def effectiveness(*, symbol: str = "SPX", path: Optional[str] = None) -> Dict[str, Any]:
-    """Aggregate trigger effectiveness without granting behavioral authority."""
+    """Aggregate trigger effectiveness from horizon-safe observations only."""
     resolved = path or _path()
     if not Path(resolved).exists():
         return {"ok": True, "status": "WAITING_FOR_TRIGGERS", "sample_size": 0,
@@ -404,11 +718,13 @@ def effectiveness(*, symbol: str = "SPX", path: Optional[str] = None) -> Dict[st
     with canonical_connect(resolved, read_only=True, timeout=4) as conn:
         conn.row_factory = sqlite3.Row
         rows = [dict(r) for r in conn.execute(
-            """SELECT source,trigger_type,setup_family,direction,disposition,outcome_label,
+            """SELECT trigger_id,triggered_at,observation_window_seconds,entry_reference,
+                      source,trigger_type,setup_family,direction,disposition,outcome_label,
                       mfe_points,mae_points,canonical_grade_status,canonical_grade_label,canonical_grade_json
                FROM observed_trade_triggers WHERE symbol=? ORDER BY triggered_at""",
             (_u(symbol, "SPX"),),
         ).fetchall()]
+    window_counts = _attach_window_metrics(rows, resolved)
     groups: Dict[tuple[str, str, str, str], Dict[str, Any]] = {}
     linked = 0
     for row in rows:
@@ -418,39 +734,57 @@ def effectiveness(*, symbol: str = "SPX", path: Optional[str] = None) -> Dict[st
                                     "sample_size": 0, "five_minute_observed": 0,
                                     "five_minute_favorable": 0, "canonical_graded": 0,
                                     "canonical_wins": 0, "canonical_losses": 0,
-                                    "mfe_sum": 0.0, "mae_abs_sum": 0.0})
+                                    "in_window": 0, "late": 0, "window_missed": 0,
+                                    "window_incomplete": 0,
+                                    "mfe_sum": 0.0, "mae_abs_sum": 0.0, "excursion_n": 0})
         g["sample_size"] += 1
-        if row.get("outcome_label"):
-            g["five_minute_observed"] += 1
-            g["five_minute_favorable"] += int(row.get("outcome_label") == "FAVORABLE")
-        if row.get("mfe_points") is not None:
-            g["mfe_sum"] += float(row["mfe_points"])
-        if row.get("mae_points") is not None:
-            g["mae_abs_sum"] += abs(float(row["mae_points"]))
+        window_status = row.get("_window_integrity_status")
+        if window_status == "IN_WINDOW":
+            g["in_window"] += 1
+            if row.get("outcome_label"):
+                g["five_minute_observed"] += 1
+                g["five_minute_favorable"] += int(row.get("outcome_label") == "FAVORABLE")
+            if row.get("mfe_points") is not None and row.get("mae_points") is not None:
+                g["mfe_sum"] += float(row["mfe_points"])
+                g["mae_abs_sum"] += abs(float(row["mae_points"]))
+                g["excursion_n"] += 1
+        elif window_status == "LATE":
+            g["late"] += 1; g["window_incomplete"] += 1
+        elif window_status == "WINDOW_MISSED":
+            g["window_missed"] += 1; g["window_incomplete"] += 1
         if row.get("canonical_grade_status") == "GRADED":
             linked += 1; g["canonical_graded"] += 1
             g["canonical_wins"] += int(row.get("canonical_grade_label") == "WIN")
             g["canonical_losses"] += int(row.get("canonical_grade_label") == "LOSS")
     output = []
     for g in groups.values():
-        n5 = g["five_minute_observed"]; ng = g["canonical_graded"]; n = g["sample_size"]
+        n5 = g["five_minute_observed"]; ng = g["canonical_graded"]; nx = g.pop("excursion_n")
         g["five_minute_favorable_rate_pct"] = round(100.0 * g["five_minute_favorable"] / n5, 2) if n5 else None
         g["canonical_win_rate_pct"] = round(100.0 * g["canonical_wins"] / ng, 2) if ng else None
-        g["avg_mfe_points"] = round(g.pop("mfe_sum") / n, 4) if n else None
-        g["avg_mae_abs_points"] = round(g.pop("mae_abs_sum") / n, 4) if n else None
+        g["avg_mfe_points"] = round(g.pop("mfe_sum") / nx, 4) if nx else None
+        g["avg_mae_abs_points"] = round(g.pop("mae_abs_sum") / nx, 4) if nx else None
         g["behavioral_authority"] = False
         output.append(g)
     output.sort(key=lambda x: (-x["canonical_graded"], -x["five_minute_observed"], -x["sample_size"]))
     return {"ok": True, "status": "READY" if rows else "WAITING_FOR_TRIGGERS",
             "sample_size": len(rows), "canonical_graded_links": linked, "groups": output,
+            "observation_window_integrity": {
+                "window_seconds": MAX_HOLD_SECONDS,
+                "in_window": window_counts.get("IN_WINDOW", 0),
+                "late": window_counts.get("LATE", 0),
+                "window_missed": window_counts.get("WINDOW_MISSED", 0),
+                "observing": window_counts.get("OBSERVING", 0),
+                "not_applicable": window_counts.get("NOT_APPLICABLE", 0),
+                "late_samples_excluded_from_five_minute_metrics": True,
+            },
             "limitations": ["Five-minute excursion is observational and is not a canonical trade grade.",
+                            "Only observations with elapsed_seconds between 0 and the configured window are included in MFE/MAE and favorable-rate statistics.",
+                            "Late-only or missed-window triggers are excluded from five-minute excursion denominators.",
                             "Canonical trigger effectiveness is reported only where a persisted graded decision is linked.",
                             "No trigger statistic automatically changes production behavior."],
             "version": VERSION, "schema_version": SCHEMA_VERSION,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
-
-
 
 def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                           evidence_path: Optional[str] = None) -> Dict[str, Any]:
@@ -466,7 +800,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     evidence_resolved = evidence_path or str(evidence_default_db)
     base = {
         "ok": True, "status": "READY", "version": VERSION,
-        "schema_version": "apex.predictive_validation.v5",
+        "schema_version": "apex.predictive_validation.v6",
         "behavioral_authority": False, "execution_authority": False,
         "broker_mutation": False, "production_effect": PRODUCTION_EFFECT,
         "automatic_calibration_activation": False,
@@ -483,11 +817,12 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         conn.row_factory = sqlite3.Row
         rows = [dict(r) for r in conn.execute(
             """SELECT trigger_id,decision_id,source,trigger_type,setup_family,direction,disposition,
-                      triggered_at,confidence,entry_reference,target1_reference,blocker_codes_json,
+                      triggered_at,observation_window_seconds,confidence,entry_reference,target1_reference,blocker_codes_json,
                       outcome_label,mfe_points,mae_points,canonical_grade_status,canonical_grade_label
                FROM observed_trade_triggers WHERE symbol=? ORDER BY triggered_at""",
             (_u(symbol, "SPX"),),
         ).fetchall()]
+    observation_window_counts = _attach_window_metrics(rows, resolved)
 
     # Canonical session, decision class, release cohort, and grade horizon are
     # joined from the evidence ledger by decision_id. Metadata parsing is isolated
@@ -554,6 +889,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                                     if governed_move_threshold is not None and governed_move_threshold > 0
                                     else "UNAVAILABLE"
                                 ),
+                                "explicit_target_candidates": _explicit_target_candidates(snap),
                             }
                         except Exception as exc:
                             if len(metadata_join_errors) < 25:
@@ -620,12 +956,19 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             r["_move_threshold_points"] = target_move
             r["_move_threshold_source"] = "PERSISTED_TARGET1_REFERENCE"
         else:
-            governed_move_threshold = _f(meta.get("governed_move_threshold_points"))
-            r["_move_threshold_points"] = governed_move_threshold if governed_move_threshold and governed_move_threshold > 0 else None
-            r["_move_threshold_source"] = (
-                meta.get("governed_move_threshold_source")
-                if r["_move_threshold_points"] is not None else "UNAVAILABLE"
+            explicit_move, explicit_source = _directional_target_threshold(
+                meta.get("explicit_target_candidates") or [], entry=entry_ref, direction=_u(r.get("direction"))
             )
+            if explicit_move is not None:
+                r["_move_threshold_points"] = explicit_move
+                r["_move_threshold_source"] = explicit_source
+            else:
+                governed_move_threshold = _f(meta.get("governed_move_threshold_points"))
+                r["_move_threshold_points"] = governed_move_threshold if governed_move_threshold and governed_move_threshold > 0 else None
+                r["_move_threshold_source"] = (
+                    meta.get("governed_move_threshold_source")
+                    if r["_move_threshold_points"] is not None else "UNAVAILABLE"
+                )
         try:
             blockers = json.loads(r.get("blocker_codes_json") or "[]")
         except Exception:
@@ -640,29 +983,14 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         r["_first_favorable_seconds"] = None
         r["_first_adverse_seconds"] = None
         r["_first_threshold_favorable_seconds"] = None
-
-    # Observation timing is derived only from persisted Trigger Observatory samples.
-    # No missing tick path is interpolated or inferred.
-    observations_by_trigger: Dict[str, list[Dict[str, Any]]] = {}
-    try:
-        with canonical_connect(resolved, read_only=True, timeout=4) as obs_conn:
-            obs_conn.row_factory = sqlite3.Row
-            obs_rows = obs_conn.execute(
-                """SELECT trigger_id,observed_at,favorable_points,adverse_points
-                   FROM trade_trigger_price_observations ORDER BY observed_at"""
-            ).fetchall()
-        for obs_row in obs_rows:
-            observations_by_trigger.setdefault(str(obs_row["trigger_id"]), []).append(dict(obs_row))
-    except Exception:
-        observations_by_trigger = {}
-
-    for r in rows:
-        trigger_epoch = _epoch(r.get("triggered_at"))
         threshold = _f(r.get("_move_threshold_points"))
-        for obs in observations_by_trigger.get(str(r.get("trigger_id") or ""), []):
-            elapsed = max(0.0, _epoch(obs.get("observed_at")) - trigger_epoch)
+        metrics = r.get("_window_metrics") or {}
+        for obs in metrics.get("in_window_observations") or []:
+            elapsed = _f(obs.get("elapsed_seconds"))
             favorable = _f(obs.get("favorable_points")) or 0.0
             adverse = _f(obs.get("adverse_points")) or 0.0
+            if elapsed is None:
+                continue
             if favorable > 0 and r["_first_favorable_seconds"] is None:
                 r["_first_favorable_seconds"] = round(elapsed, 3)
             if adverse < 0 and r["_first_adverse_seconds"] is None:
@@ -723,6 +1051,10 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         favorable = sum(1 for r in observed if r.get("outcome_label") == "FAVORABLE")
         mfes = [float(r["mfe_points"]) for r in group_rows if r.get("mfe_points") is not None]
         maes = [abs(float(r["mae_points"])) for r in group_rows if r.get("mae_points") is not None]
+        window_counts: Dict[str, int] = {}
+        for r in group_rows:
+            state = str(r.get("_window_integrity_status") or "UNKNOWN")
+            window_counts[state] = window_counts.get(state, 0) + 1
         try:
             from .dynamic_state_calibration_governance import wilson_interval
             ci = wilson_interval(float(wins), float(len(graded))) if graded else {"lower_pct": None, "upper_pct": None}
@@ -737,6 +1069,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "five_minute_favorable_rate_pct": round(100.0 * favorable / len(observed), 2) if observed else None,
             "avg_mfe_points": round(sum(mfes) / len(mfes), 4) if mfes else None,
             "avg_mae_abs_points": round(sum(maes) / len(maes), 4) if maes else None,
+            "observation_window_integrity": window_counts,
         }
 
     def market_open_elapsed_bucket(row: Mapping[str, Any]) -> str:
@@ -757,7 +1090,13 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                 return "OPENING_15_30"
             if minutes < 60:
                 return "OPENING_30_60"
-            return "LATER_MARKET_OPEN_60_PLUS"
+            if minutes < 90:
+                return "MARKET_OPEN_60_90"
+            if minutes < 120:
+                return "MARKET_OPEN_90_120"
+            if minutes < 180:
+                return "MARKET_OPEN_120_180"
+            return "MARKET_OPEN_180_PLUS"
         except Exception:
             return "UNKNOWN"
 
@@ -772,6 +1111,12 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             return "ABSTENTION_SUCCESS", "Blocked directional thesis was canonically graded incorrect."
         threshold = _f(row.get("_move_threshold_points"))
         mfe = _f(row.get("mfe_points"))
+        window_status = str(row.get("_window_integrity_status") or "UNKNOWN")
+        if window_status != "IN_WINDOW":
+            return (
+                "DIRECTIONALLY_CORRECT_BUT_NOT_PROVEN_TRADEABLE",
+                f"Directional thesis graded correct, but five-minute observation integrity is {window_status}; late or missed-window samples are not regret-eligible."
+            )
         if threshold is None:
             return (
                 "DIRECTIONALLY_CORRECT_BUT_NOT_PROVEN_TRADEABLE",
@@ -780,7 +1125,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         if mfe is None:
             return (
                 "DIRECTIONALLY_CORRECT_BUT_NOT_PROVEN_TRADEABLE",
-                "Directional thesis graded correct, but five-minute favorable excursion is unavailable."
+                "Directional thesis graded correct, but valid in-window favorable excursion is unavailable."
             )
         if mfe >= threshold:
             return (
@@ -812,16 +1157,21 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         )
         threshold_evaluable = [
             r for r in graded
-            if _f(r.get("_move_threshold_points")) is not None and _f(r.get("mfe_points")) is not None
+            if r.get("_window_integrity_status") == "IN_WINDOW"
+            and _f(r.get("_move_threshold_points")) is not None
+            and _f(r.get("mfe_points")) is not None
         ]
         threshold_met = [
             r for r in threshold_evaluable
             if (_f(r.get("mfe_points")) or 0.0) >= (_f(r.get("_move_threshold_points")) or math.inf)
         ]
         threshold_sources: Dict[str, int] = {}
+        window_integrity_counts: Dict[str, int] = {}
         for r in group_rows:
             source = str(r.get("_move_threshold_source") or "UNAVAILABLE")
             threshold_sources[source] = threshold_sources.get(source, 0) + 1
+            window_state = str(r.get("_window_integrity_status") or "UNKNOWN")
+            window_integrity_counts[window_state] = window_integrity_counts.get(window_state, 0) + 1
         first_fav = [float(r["_first_favorable_seconds"]) for r in group_rows if r.get("_first_favorable_seconds") is not None]
         first_adv = [float(r["_first_adverse_seconds"]) for r in group_rows if r.get("_first_adverse_seconds") is not None]
         first_threshold = [
@@ -851,6 +1201,8 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "movement_threshold_evaluable": len(threshold_evaluable),
             "movement_threshold_met": len(threshold_met),
             "movement_threshold_sources": threshold_sources,
+            "observation_window_integrity": window_integrity_counts,
+            "regret_requires_in_window_excursion": True,
             "potential_blocker_regret_rate_pct_when_threshold_evaluable": (
                 round(100.0 * regret / len(threshold_evaluable), 2) if threshold_evaluable else None
             ),
@@ -896,7 +1248,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         abstention_classification_counts[key] = abstention_classification_counts.get(key, 0) + 1
 
     abstention_regret = {
-        "schema_version": "apex.abstention_regret.v1",
+        "schema_version": "apex.abstention_regret.v2",
         "status": "READY" if abstention_rows else "WAITING_FOR_OBSERVATIONAL_NO_TRADE",
         "production_effect": PRODUCTION_EFFECT,
         "behavioral_authority": False,
@@ -914,11 +1266,14 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         "movement_threshold_contract": {
             "priority": [
                 "PERSISTED_TARGET1_REFERENCE",
+                "PERSISTED_CANONICAL_EXPLICIT_TARGET:*",
                 "DYNAMIC_STATE_POLICY_REQUIRED_BOUNDARY_MARGIN",
                 "UNAVAILABLE",
             ],
             "missing_threshold_behavior": "NOT_EVALUABLE_NO_INFERENCE",
             "threshold_is_execution_proof": False,
+            "valid_in_window_excursion_required": True,
+            "generic_support_resistance_levels_inferred": False,
             "interpretation": (
                 "Meeting a persisted movement threshold is necessary-not-sufficient evidence for potential blocker regret; "
                 "it does not prove option premium, fill quality, stop viability, or executable tradeability."
@@ -933,7 +1288,17 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                 "Blocked thesis was directionally correct and met a persisted movement threshold; execution viability remains unproven."
             ),
         },
-        "observation_timing_contract": "PERSISTED_TRIGGER_PRICE_OBSERVATIONS_ONLY_NO_INTERPOLATION",
+        "observation_timing_contract": "PERSISTED_IN_WINDOW_TRIGGER_PRICE_OBSERVATIONS_ONLY_NO_INTERPOLATION",
+        "observation_window_integrity": {
+            "window_seconds": MAX_HOLD_SECONDS,
+            "in_window": observation_window_counts.get("IN_WINDOW", 0),
+            "late": observation_window_counts.get("LATE", 0),
+            "window_missed": observation_window_counts.get("WINDOW_MISSED", 0),
+            "observing": observation_window_counts.get("OBSERVING", 0),
+            "not_applicable": observation_window_counts.get("NOT_APPLICABLE", 0),
+            "late_samples_regret_eligible": False,
+            "window_missed_regret_eligible": False,
+        },
     }
 
     band_order = ["<40", "40-49.9", "50-59.9", "60-69.9", "70-79.9", "80+", "UNKNOWN"]
@@ -1095,6 +1460,37 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             context_quality = {"status": "DEGRADED", "fields": {},
                                "error": f"{type(exc).__name__}: {exc}"}
 
+    observation_window_integrity = {
+        "schema_version": "apex.trigger_observation_window_integrity.v1",
+        "window_seconds": MAX_HOLD_SECONDS,
+        "trigger_count": len(rows),
+        "trigger_status_counts": {
+            "IN_WINDOW": observation_window_counts.get("IN_WINDOW", 0),
+            "LATE": observation_window_counts.get("LATE", 0),
+            "WINDOW_MISSED": observation_window_counts.get("WINDOW_MISSED", 0),
+            "OBSERVING": observation_window_counts.get("OBSERVING", 0),
+            "NOT_APPLICABLE": observation_window_counts.get("NOT_APPLICABLE", 0),
+        },
+        "in_window_observation_count": sum(int(r.get("_in_window_observation_count") or 0) for r in rows),
+        "late_observation_count": sum(int(r.get("_late_observation_count") or 0) for r in rows),
+        "pre_trigger_observation_count": sum(int(r.get("_pre_trigger_observation_count") or 0) for r in rows),
+        "historical_mfe_mae_recomputed_from_in_window_samples": True,
+        "late_samples_excluded_from_five_minute_metrics": True,
+        "late_first_sample_can_terminalize_as_five_minute_observed": False,
+        "window_missed_outcome_label": "OBSERVATION_WINDOW_INCOMPLETE",
+        "regret_requires_valid_in_window_excursion": True,
+        "production_effect": PRODUCTION_EFFECT,
+        "execution_authority": False,
+    }
+    try:
+        from .outcome_grader import horizon_integrity
+        canonical_grader_integrity = horizon_integrity(evidence_resolved)
+    except Exception as exc:
+        canonical_grader_integrity = {
+            "ok": False, "status": "DEGRADED", "expected_canonical_horizon_seconds": 300,
+            "error": f"{type(exc).__name__}: {exc}", "execution_authority": False,
+        }
+
     return {
         **base, "sample_size": len(rows),
         "canonical_graded_links": sum(1 for r in rows if r.get("canonical_grade_status") == "GRADED"),
@@ -1105,6 +1501,8 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         "decision_class_effectiveness": decision_class_effectiveness,
         "release_cohorts": release_cohorts,
         "abstention_regret": abstention_regret,
+        "observation_window_integrity": observation_window_integrity,
+        "canonical_grader_horizon_integrity": canonical_grader_integrity,
         "metadata_join": metadata_join,
         "cross_cohorts": cross_cohorts,
         "calibration_fragmentation": fragmentation,
@@ -1116,7 +1514,9 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "Metadata-conditioned cohorts are reliable only to the extent reported by metadata_join coverage diagnostics.",
             "Actionable trades and observational NO_TRADE counterfactuals are reported separately where canonical decision metadata exists.",
             "Potential blocker regret is a counterfactual diagnostic and does not prove an executable options trade existed.",
-            "Movement-threshold sufficiency uses only persisted target or governed margin evidence and never fabricates missing thresholds.",
+            "Movement-threshold sufficiency uses only explicit persisted target evidence or a governed boundary margin and never fabricates missing thresholds.",
+            "Five-minute excursion uses only persisted observations with elapsed time inside the configured window; late samples are excluded.",
+            "A late-only or missed observation window is marked OBSERVATION_WINDOW_INCOMPLETE and is not regret-eligible.",
             "Five-minute excursion is not a canonical trade grade.",
             "No confidence band, blocker, context, or cohort statistic mutates production behavior.",
             "Calibration remains human-governed and requires existing integrity gates.",
@@ -1128,14 +1528,14 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
 
 def abstention_regret_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                                  evidence_path: Optional[str] = None) -> Dict[str, Any]:
-    """Return the 69.9.4 abstention-regret diagnostic without behavioral authority."""
+    """Return the 69.9.5 abstention-regret diagnostic without behavioral authority."""
     full = predictive_validation(symbol=symbol, path=path, evidence_path=evidence_path)
     regret = dict(full.get("abstention_regret") or {})
     return {
         "ok": bool(full.get("ok")),
         "status": regret.get("status") or full.get("status"),
         "version": VERSION,
-        "schema_version": regret.get("schema_version") or "apex.abstention_regret.v1",
+        "schema_version": regret.get("schema_version") or "apex.abstention_regret.v2",
         "symbol": _u(symbol, "SPX"),
         "metadata_join": full.get("metadata_join") or {},
         "abstention_regret": regret,
@@ -1146,11 +1546,27 @@ def abstention_regret_validation(*, symbol: str = "SPX", path: Optional[str] = N
     }
 
 
+def observation_integrity_validation(*, symbol: str = "SPX", path: Optional[str] = None,
+                                     evidence_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return horizon-safe Trigger Observatory and canonical-grader integrity diagnostics."""
+    full = predictive_validation(symbol=symbol, path=path, evidence_path=evidence_path)
+    return {
+        "ok": bool(full.get("ok")), "status": full.get("status"), "version": VERSION,
+        "schema_version": "apex.five_minute_observation_integrity.v1",
+        "symbol": _u(symbol, "SPX"),
+        "trigger_observation_window": full.get("observation_window_integrity") or {},
+        "canonical_grader_horizon": full.get("canonical_grader_horizon_integrity") or {},
+        "production_effect": PRODUCTION_EFFECT, "behavioral_authority": False,
+        "execution_authority": False, "broker_mutation": False,
+    }
+
+
 def history(*, symbol: str = "SPX", limit: int = 100, status: Optional[str] = None,
             path: Optional[str] = None) -> Dict[str, Any]:
     resolved = path or _path()
     if not Path(resolved).exists():
         return {"ok": True, "status": "WAITING_FOR_TRIGGERS", "triggers": [], "version": VERSION}
+    initialize_store(resolved)
     limit = max(1, min(int(limit), 1000)); args: list[Any] = [_u(symbol, "SPX")]
     query = "SELECT * FROM observed_trade_triggers WHERE symbol=?"
     if status: query += " AND status=?"; args.append(_u(status))
@@ -1249,16 +1665,21 @@ def learning_readiness(*, evidence_path: Optional[str] = None, trigger_path: Opt
         activation_state = "ACCUMULATING"
         readiness_reason = "Aggregate graded history has not reached the governed minimum."
 
-    maturation = {"observing": 0, "matured": 0, "overdue_observing": 0, "with_price_observations": 0}
+    maturation = {"observing": 0, "matured": 0, "overdue_observing": 0, "with_price_observations": 0,
+                  "observation_window_incomplete": 0, "in_window": 0, "late": 0, "window_missed": 0}
     trigger_path = trigger_path or _path()
     if Path(trigger_path).exists():
         try:
             now_epoch = datetime.now(timezone.utc).timestamp()
             with canonical_connect(trigger_path, read_only=True, timeout=4) as tconn:
                 tconn.row_factory = sqlite3.Row
-                rows = tconn.execute("SELECT status,triggered_at,observation_count,observation_window_seconds FROM observed_trade_triggers").fetchall()
+                rows = tconn.execute("SELECT status,triggered_at,observation_count,observation_window_seconds,window_integrity_status FROM observed_trade_triggers").fetchall()
             for row in rows:
                 status_value = str(row["status"] or "").upper()
+                window_value = str(row["window_integrity_status"] or "").upper()
+                if window_value == "IN_WINDOW": maturation["in_window"] += 1
+                elif window_value == "LATE": maturation["late"] += 1
+                elif window_value == "WINDOW_MISSED": maturation["window_missed"] += 1
                 if status_value == "OBSERVING":
                     maturation["observing"] += 1
                     try:
@@ -1268,6 +1689,8 @@ def learning_readiness(*, evidence_path: Optional[str] = None, trigger_path: Opt
                         pass
                 elif status_value == "OBSERVED":
                     maturation["matured"] += 1
+                elif status_value == "OBSERVATION_WINDOW_INCOMPLETE":
+                    maturation["observation_window_incomplete"] += 1
                 if int(row["observation_count"] or 0) > 0:
                     maturation["with_price_observations"] += 1
         except Exception:
@@ -1341,7 +1764,7 @@ def trade_visualization(*, trigger_id: Optional[str] = None, symbol: str = "SPX"
                     "production_effect": PRODUCTION_EFFECT, "version": VERSION}
         raw = dict(row)
         observations = [dict(x) for x in conn.execute(
-            "SELECT observed_at,price,favorable_points,adverse_points FROM trade_trigger_price_observations WHERE trigger_id=? ORDER BY observed_at",
+            "SELECT * FROM trade_trigger_price_observations WHERE trigger_id=? ORDER BY observed_at",
             (raw["trigger_id"],),
         ).fetchall()]
     evidence = {}
@@ -1351,8 +1774,15 @@ def trade_visualization(*, trigger_id: Optional[str] = None, symbol: str = "SPX"
     try: blockers = json.loads(raw.get("blocker_codes_json") or "[]")
     except Exception: blockers = []
     direction = raw.get("direction")
-    prices = [float(x["price"]) for x in observations if x.get("price") is not None]
+    metrics = _window_metrics(raw, observations)
+    observations = (
+        metrics.get("in_window_observations", [])
+        + metrics.get("late_observations", [])
+        + metrics.get("pre_trigger_observations", [])
+    )
+    in_window_prices = [float(x["price"]) for x in metrics.get("in_window_observations", []) if x.get("price") is not None]
     entry = _f(raw.get("entry_reference"))
+    prices = list(in_window_prices)
     if entry is not None and not prices:
         prices = [entry]
     target_hits: Dict[str, bool] = {}
@@ -1379,8 +1809,18 @@ def trade_visualization(*, trigger_id: Optional[str] = None, symbol: str = "SPX"
         "confidence": raw.get("confidence"), "entry": entry, "stop": stop,
         "tp1": _f(raw.get("target1_reference")), "tp2": _f(raw.get("target2_reference")),
         "tp3": _f(raw.get("target3_reference")), "last_price": _f(raw.get("last_price")),
-        "mfe_points": _f(raw.get("mfe_points")), "mae_points": _f(raw.get("mae_points")),
-        "outcome_label": raw.get("outcome_label"), "canonical_grade_status": raw.get("canonical_grade_status"),
+        "mfe_points": metrics.get("window_mfe_points"), "mae_points": metrics.get("window_mae_points"),
+        "outcome_label": metrics.get("window_outcome_label"),
+        "observation_window_integrity": {
+            "status": metrics.get("window_integrity_status"),
+            "window_seconds": metrics.get("observation_window_seconds"),
+            "in_window_observation_count": metrics.get("in_window_observation_count"),
+            "late_observation_count": metrics.get("late_observation_count"),
+            "pre_trigger_observation_count": metrics.get("pre_trigger_observation_count"),
+            "first_in_window_observed_at": metrics.get("first_in_window_observed_at"),
+            "last_in_window_observed_at": metrics.get("last_in_window_observed_at"),
+            "first_late_observed_at": metrics.get("first_late_observed_at"),
+        }, "canonical_grade_status": raw.get("canonical_grade_status"),
         "canonical_grade_label": raw.get("canonical_grade_label"), "canonical_graded_at": raw.get("canonical_graded_at"),
         "blockers": blockers, "target_hits": target_hits, "stop_hit": stop_hit,
         "observations": observations, "premium": _premium_projection(evidence),
@@ -1397,6 +1837,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}

@@ -36,7 +36,7 @@ def test_trade_visualization_uses_only_persisted_path_and_marks_levels(tmp_path)
         path=db,
     )
     observe_price(symbol="SPX", price=6503.0, observed_at="2026-08-30T14:36:00+00:00", path=db)
-    observe_price(symbol="SPX", price=6506.0, observed_at="2026-08-30T14:40:01+00:00", path=db)
+    observe_price(symbol="SPX", price=6506.0, observed_at="2026-08-30T14:40:00+00:00", path=db)
 
     view = trade_visualization(trigger_id=out["trigger_id"], path=db)
     trade = view["trade"]
