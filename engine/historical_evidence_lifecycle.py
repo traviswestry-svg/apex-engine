@@ -176,6 +176,46 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         or _m(root.get("dynamic_state_policy"))
     )
 
+    # APEX 69.9.6 — freeze the exact decision-time actionability inputs that can
+    # later prove whether a blocked NO_TRADE was even eligible to become a new
+    # trade.  Missing historical inputs remain missing; no clock/session policy is
+    # reconstructed from today's configuration.
+    session_intelligence = _m(root.get("session_intelligence"))
+    session_authority = _m(session_intelligence.get("session"))
+    market_narrative = _m(ido.get("market_narrative") or ido.get("narrative"))
+    recommendation_snapshot = _m(root.get("recommendation") or root.get("premium_strategy"))
+    actionability_capture = {
+        "schema_version": "apex.counterfactual_actionability_capture.v1",
+        "capture_version": "69.9.6",
+        "session_intelligence_present": bool(session_intelligence),
+        "session_mode": session_authority.get("mode"),
+        "entry_cutoff_et": session_authority.get("cutoff"),
+        "cutoff_passed": (
+            bool(session_authority.get("cutoff_passed"))
+            if "cutoff_passed" in session_authority else None
+        ),
+        "market_session": str(session_state or root.get("session") or "UNKNOWN").upper(),
+        "trade_guidance_enabled": (
+            bool(market_narrative.get("trade_guidance_enabled"))
+            if "trade_guidance_enabled" in market_narrative else None
+        ),
+        "thesis_state": thesis.get("state"),
+        "direction": thesis_direction if thesis_direction in {"BULLISH", "BEARISH"} else direction,
+        "conviction_score": conviction.get("score"),
+        "blocking_conditions": list(conviction.get("blocking_conditions") or []),
+        "ido_actionable": explicit_actionable,
+        "ido_status": ido.get("status"),
+        "recommendation_action": recommendation_snapshot.get("action"),
+        "recommendation_state": recommendation_snapshot.get("state"),
+        "final_action": action,
+        "entry_reference_available": price is not None,
+        "targets_and_decision_levels": _m(ido.get("targets_and_decision_levels")),
+        "dynamic_policy_state": observed_dynamic_policy.get("state"),
+        "dynamic_policy_blocking_conditions": list(observed_dynamic_policy.get("blocking_conditions") or []),
+        "source_truth": "FINALIZED_DECISION_TIME_SNAPSHOT",
+        "historical_policy_inference": False,
+    }
+
     # Preserve exactly the decision-time fields consumed by effectiveness,
     # dynamic-state calibration and attribution. Avoid persisting raw providers.
     snapshot: Dict[str, Any] = {
@@ -220,6 +260,7 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         "volatility_regime": _path(root, "volatility_regime.regime", "volatility_regime.state", "volatility.regime"),
         "auction_regime": _path(root, "auction_regime.regime", "auction_regime.state", "auction.regime", "auction_intelligence.regime"),
         "apex_release_version": _release_version(),
+        "counterfactual_actionability": actionability_capture,
         "dynamic_state": observed_dynamic_state,
         "dynamic_state_policy": observed_dynamic_policy,
         "decision_quality": _m(root.get("decision_quality")),

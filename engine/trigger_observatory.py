@@ -1,4 +1,4 @@
-"""APEX 69.9.5 — Five-Minute Observation Integrity & Regret Eligibility Closure.
+"""APEX 69.9.6 — Actionability Window & Counterfactual Regret Qualification Closure.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.5"
+VERSION = "69.9.6"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v3"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -800,7 +800,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     evidence_resolved = evidence_path or str(evidence_default_db)
     base = {
         "ok": True, "status": "READY", "version": VERSION,
-        "schema_version": "apex.predictive_validation.v6",
+        "schema_version": "apex.predictive_validation.v7",
         "behavioral_authority": False, "execution_authority": False,
         "broker_mutation": False, "production_effect": PRODUCTION_EFFECT,
         "automatic_calibration_activation": False,
@@ -817,7 +817,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         conn.row_factory = sqlite3.Row
         rows = [dict(r) for r in conn.execute(
             """SELECT trigger_id,decision_id,source,trigger_type,setup_family,direction,disposition,
-                      triggered_at,observation_window_seconds,confidence,entry_reference,target1_reference,blocker_codes_json,
+                      triggered_at,observation_window_seconds,confidence,entry_reference,stop_reference,target1_reference,blocker_codes_json,
                       outcome_label,mfe_points,mae_points,canonical_grade_status,canonical_grade_label
                FROM observed_trade_triggers WHERE symbol=? ORDER BY triggered_at""",
             (_u(symbol, "SPX"),),
@@ -879,6 +879,44 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                             consensus_policy = dict(consensus_policy) if isinstance(consensus_policy, Mapping) else {}
                             dynamic_policy = direct_policy or conviction_policy or consensus_policy
                             governed_move_threshold = _f(dynamic_policy.get("required_boundary_margin_points"))
+                            actionability = snap.get("counterfactual_actionability")
+                            actionability = dict(actionability) if isinstance(actionability, Mapping) else {}
+                            if not actionability:
+                                narrative = ido.get("market_narrative") or ido.get("narrative")
+                                narrative = dict(narrative) if isinstance(narrative, Mapping) else {}
+                                thesis = ido.get("institutional_thesis") or ido.get("thesis")
+                                thesis = dict(thesis) if isinstance(thesis, Mapping) else {}
+                                actionability = {
+                                    "schema_version": "apex.counterfactual_actionability_capture.legacy_partial",
+                                    "capture_version": release_version,
+                                    "session_intelligence_present": False,
+                                    "session_mode": None,
+                                    "entry_cutoff_et": None,
+                                    "cutoff_passed": None,
+                                    "market_session": _u(meta_row["session"]),
+                                    "trade_guidance_enabled": (
+                                        bool(narrative.get("trade_guidance_enabled"))
+                                        if "trade_guidance_enabled" in narrative else None
+                                    ),
+                                    "thesis_state": thesis.get("state"),
+                                    "direction": _u(snap.get("direction") or ido.get("direction")),
+                                    "conviction_score": ido_conviction.get("score"),
+                                    "blocking_conditions": list(ido_conviction.get("blocking_conditions") or []),
+                                    "ido_actionable": (bool(ido.get("actionable")) if "actionable" in ido else None),
+                                    "ido_status": ido.get("status"),
+                                    "recommendation_action": None,
+                                    "recommendation_state": None,
+                                    "final_action": _u(meta_row["action"] or snap.get("action")),
+                                    "entry_reference_available": snap.get("entry_reference") is not None,
+                                    "targets_and_decision_levels": (
+                                        dict(ido.get("targets_and_decision_levels"))
+                                        if isinstance(ido.get("targets_and_decision_levels"), Mapping) else {}
+                                    ),
+                                    "dynamic_policy_state": dynamic_policy.get("state"),
+                                    "dynamic_policy_blocking_conditions": list(dynamic_policy.get("blocking_conditions") or []),
+                                    "source_truth": "LEGACY_PARTIAL_CANONICAL_SNAPSHOT",
+                                    "historical_policy_inference": False,
+                                }
                             decision_meta[decision_id] = {
                                 "session": _u(meta_row["session"]),
                                 "decision_class": decision_class,
@@ -890,6 +928,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                                     else "UNAVAILABLE"
                                 ),
                                 "explicit_target_candidates": _explicit_target_candidates(snap),
+                                "counterfactual_actionability": actionability,
                             }
                         except Exception as exc:
                             if len(metadata_join_errors) < 25:
@@ -943,6 +982,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         r["_decision_class"] = meta.get("decision_class", "UNLINKED_OBSERVATION")
         r["_release_version"] = meta.get("release_version", "UNKNOWN")
         r["_grade_horizon_seconds"] = horizon_by_decision.get(decision_id, "UNKNOWN")
+        r["_counterfactual_actionability"] = dict(meta.get("counterfactual_actionability") or {})
         entry_ref = _f(r.get("entry_reference"))
         target1_ref = _f(r.get("target1_reference"))
         target_move = None
@@ -969,6 +1009,14 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                     meta.get("governed_move_threshold_source")
                     if r["_move_threshold_points"] is not None else "UNAVAILABLE"
                 )
+        if r.get("_move_threshold_points") is not None:
+            r["_move_threshold_absence_reason"] = None
+        elif entry_ref is None:
+            r["_move_threshold_absence_reason"] = "ENTRY_REFERENCE_MISSING"
+        elif meta.get("explicit_target_candidates"):
+            r["_move_threshold_absence_reason"] = "EXPLICIT_TARGET_PRESENT_BUT_NOT_DIRECTIONALLY_FAVORABLE"
+        else:
+            r["_move_threshold_absence_reason"] = "NO_EXPLICIT_PERSISTED_TARGET_OR_GOVERNED_MARGIN"
         try:
             blockers = json.loads(r.get("blocker_codes_json") or "[]")
         except Exception:
@@ -1301,6 +1349,309 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         },
     }
 
+    # APEX 69.9.6 — actionability qualification.  Historical policy gates are
+    # considered authoritative only when they were persisted in the canonical
+    # decision snapshot. The current configured cutoff is exposed as a comparison
+    # reference only and never backfilled into historical eligibility.
+    current_cutoff_et = str(os.getenv("APEX_SESSION_CUTOFF", "11:30") or "11:30")
+
+    def current_policy_cutoff_passed(row: Mapping[str, Any]) -> Optional[bool]:
+        try:
+            hh, mm = [int(x) for x in current_cutoff_et.split(":", 1)]
+            dt = datetime.fromisoformat(str(row.get("triggered_at") or "").replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            local = dt.astimezone(ZoneInfo("America/New_York"))
+            return (local.hour, local.minute) >= (hh, mm)
+        except Exception:
+            return None
+
+    def _condition_code(value: Any) -> str:
+        text = str(value or "").upper().replace(" ", "_").replace("-", "_")
+        return "_".join(part for part in text.split("_") if part)
+
+    def _target_matches_condition(target_blocker: str, condition: Any) -> bool:
+        target = _condition_code(target_blocker)
+        condition_code = _condition_code(condition)
+        if not target or not condition_code:
+            return False
+        aliases = {
+            "THESIS_INVALIDATED": ("THESIS_INVALIDATED", "INVALIDATED"),
+            "THESIS_CONFLICTED": ("THESIS_CONFLICTED", "CONFLICTED"),
+            "CONVICTION_BELOW_ACTIONABLE_THRESHOLD": (
+                "CONVICTION_BELOW_ACTIONABLE_THRESHOLD", "CONVICTION_BELOW_THRESHOLD", "LOW_CONVICTION"
+            ),
+            "MARKET_CLOSED": ("MARKET_CLOSED", "SESSION_CLOSED", "CLOSED"),
+        }
+        return any(alias in condition_code or condition_code in alias for alias in aliases.get(target, (target,)))
+
+    def qualify_counterfactual(row: Mapping[str, Any], target_blocker: str) -> Dict[str, Any]:
+        win = grade_win(row)
+        actionability = dict(row.get("_counterfactual_actionability") or {})
+        session = str(row.get("_session") or "UNKNOWN").upper()
+        session_mode = str(actionability.get("session_mode") or "UNKNOWN").upper()
+        cutoff_known = actionability.get("cutoff_passed") is not None
+        cutoff_passed = bool(actionability.get("cutoff_passed")) if cutoff_known else None
+        cutoff_value = actionability.get("entry_cutoff_et")
+        trade_guidance = actionability.get("trade_guidance_enabled")
+        thesis_state = str(actionability.get("thesis_state") or "UNKNOWN").upper()
+        direction = str(actionability.get("direction") or row.get("direction") or "UNKNOWN").upper()
+        conviction_score = _f(actionability.get("conviction_score"))
+        captured_conditions = list(actionability.get("blocking_conditions") or []) + list(
+            actionability.get("dynamic_policy_blocking_conditions") or []
+        )
+        trigger_blockers = list(row.get("_blockers") or [])
+        independent_trigger_blockers = [x for x in trigger_blockers if not _target_matches_condition(target_blocker, x)]
+        independent_captured_conditions = [x for x in captured_conditions if not _target_matches_condition(target_blocker, x)]
+        target_is_thesis_state = (
+            (target_blocker == "THESIS_INVALIDATED" and thesis_state == "INVALIDATED")
+            or (target_blocker == "THESIS_CONFLICTED" and thesis_state == "CONFLICTED")
+        )
+        target_is_conviction_gate = target_blocker == "CONVICTION_BELOW_ACTIONABLE_THRESHOLD"
+
+        exact_session_evidence = bool(actionability.get("session_intelligence_present"))
+        market_session_authorized = session in {"MARKET_OPEN", "RTH", "REGULAR"}
+        entry_geometry_available = _f(row.get("entry_reference")) is not None
+        stop_geometry_available = _f(row.get("stop_reference")) is not None
+        threshold_available = _f(row.get("_move_threshold_points")) is not None
+        in_window = row.get("_window_integrity_status") == "IN_WINDOW"
+        threshold_hit = bool(
+            in_window and threshold_available and _f(row.get("mfe_points")) is not None
+            and (_f(row.get("mfe_points")) or 0.0) >= (_f(row.get("_move_threshold_points")) or math.inf)
+        )
+        recommendation_action = str(actionability.get("recommendation_action") or "UNKNOWN").upper()
+        recommendation_state = str(actionability.get("recommendation_state") or "UNKNOWN").upper()
+        blocked_recommendation_states = {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
+        recommendation_layer_no_trade = bool(
+            target_blocker == "NO_EXPLICIT_BLOCKER"
+            and (recommendation_action in blocked_recommendation_states or recommendation_state in blocked_recommendation_states)
+        )
+
+        reason = "UNCLASSIFIED"
+        eligible = False
+        if win is False:
+            state = "ABSTENTION_SUCCESS"
+            reason = "CANONICAL_DIRECTIONAL_GRADE_INCORRECT"
+        elif win is None:
+            state = "NOT_CANONICALLY_GRADED"
+            reason = "CANONICAL_GRADE_UNAVAILABLE"
+        elif not market_session_authorized:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "SESSION_NOT_ENTRY_AUTHORIZED"
+        elif not exact_session_evidence or not cutoff_known or not cutoff_value:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "ACTIONABILITY_WINDOW_EVIDENCE_UNAVAILABLE"
+        elif cutoff_passed:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "OUTSIDE_ACTIONABILITY_WINDOW"
+        elif session_mode == "STOP_TRADING":
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "SESSION_NOT_ENTRY_AUTHORIZED"
+        elif trade_guidance is False:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "TRADE_GUIDANCE_DISABLED"
+        elif direction not in {"BULLISH", "BEARISH"}:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "DIRECTION_NOT_ACTIONABLE"
+        elif thesis_state != "ACTIVE" and not target_is_thesis_state:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "INDEPENDENT_THESIS_STATE_DISQUALIFIER"
+        elif conviction_score is not None and conviction_score < 55 and not target_is_conviction_gate:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "INDEPENDENT_CONVICTION_DISQUALIFIER"
+        elif independent_trigger_blockers or independent_captured_conditions:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "INDEPENDENT_DISQUALIFIER_PRESENT"
+        elif recommendation_layer_no_trade:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "RECOMMENDATION_LAYER_NO_TRADE"
+        elif target_blocker == "NO_EXPLICIT_BLOCKER" and actionability.get("ido_actionable") is False:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "IDO_ACTIONABLE_FALSE_WITHOUT_EXPLICIT_BLOCKER"
+        elif not entry_geometry_available:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "MISSING_TRADE_GEOMETRY"
+        elif not threshold_available:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "MISSING_REGRET_THRESHOLD"
+        elif not in_window:
+            state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
+            reason = "OBSERVATION_WINDOW_INCOMPLETE"
+        else:
+            eligible = True
+            if threshold_hit:
+                state = "POTENTIAL_BLOCKER_REGRET"
+                reason = "COUNTERFACTUAL_TRADE_ELIGIBLE_AND_THRESHOLD_MET"
+            else:
+                state = "COUNTERFACTUAL_TRADE_ELIGIBLE"
+                reason = "COUNTERFACTUAL_TRADE_ELIGIBLE_THRESHOLD_NOT_MET"
+
+        unexplained_no_trade = bool(
+            target_blocker == "NO_EXPLICIT_BLOCKER"
+            and win is True
+            and eligible
+            and not trigger_blockers
+            and recommendation_action in {"UNKNOWN", "", "NONE"}
+            and recommendation_state in {"UNKNOWN", "", "NONE"}
+            and str(actionability.get("final_action") or "NO_TRADE").upper() in {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
+        )
+        return {
+            "trigger_id": row.get("trigger_id"),
+            "decision_id": row.get("decision_id"),
+            "triggered_at": row.get("triggered_at"),
+            "session": session,
+            "direction": direction,
+            "confidence": _f(row.get("confidence")),
+            "confidence_band": row.get("_confidence_band"),
+            "market_open_elapsed_bucket": row.get("_market_open_elapsed_bucket"),
+            "state": state,
+            "reason": reason,
+            "counterfactual_trade_eligible": eligible,
+            "target_blocker": target_blocker,
+            "canonical_directionally_correct": win,
+            "market_session_authorized": market_session_authorized,
+            "session_mode": session_mode,
+            "entry_cutoff_et": cutoff_value,
+            "cutoff_passed": cutoff_passed,
+            "actionability_window_source_present": exact_session_evidence and cutoff_known and bool(cutoff_value),
+            "trade_guidance_enabled": trade_guidance,
+            "thesis_state": thesis_state,
+            "conviction_score": conviction_score,
+            "independent_trigger_blockers": independent_trigger_blockers,
+            "independent_captured_conditions": independent_captured_conditions,
+            "entry_geometry_available": entry_geometry_available,
+            "stop_geometry_available": stop_geometry_available,
+            "movement_threshold_available": threshold_available,
+            "movement_threshold_source": row.get("_move_threshold_source") or "UNAVAILABLE",
+            "movement_threshold_absence_reason": row.get("_move_threshold_absence_reason"),
+            "valid_in_window_excursion": in_window,
+            "movement_threshold_met": threshold_hit,
+            "current_policy_cutoff_et_reference": current_cutoff_et,
+            "current_policy_cutoff_passed_reference": current_policy_cutoff_passed(row),
+            "current_policy_reference_used_for_historical_qualification": False,
+            "recommendation_action": recommendation_action,
+            "recommendation_state": recommendation_state,
+            "recommendation_layer_no_trade": recommendation_layer_no_trade,
+            "unexplained_no_trade_with_passing_captured_gates": unexplained_no_trade,
+        }
+
+    def counterfactual_groups(dimensions: tuple[str, ...], *, expand_blocker: bool = False) -> list[Dict[str, Any]]:
+        groups: Dict[tuple[str, ...], list[tuple[Dict[str, Any], Dict[str, Any]]]] = {}
+        for row in abstention_rows:
+            blockers = (row.get("_blockers") or ["NO_EXPLICIT_BLOCKER"]) if expand_blocker else ["NO_EXPLICIT_BLOCKER"]
+            for blocker in blockers:
+                q = qualify_counterfactual(row, str(blocker))
+                key_parts = []
+                for dimension in dimensions:
+                    if dimension == "blocker":
+                        key_parts.append(str(blocker))
+                    else:
+                        value = row.get(dimension)
+                        if value is None:
+                            value = row.get("_" + dimension, "UNKNOWN")
+                        key_parts.append(str(value if value not in (None, "") else "UNKNOWN"))
+                groups.setdefault(tuple(key_parts), []).append((row, q))
+        out = []
+        for key, pairs in groups.items():
+            qs = [q for _, q in pairs]
+            state_counts: Dict[str, int] = {}
+            reason_counts: Dict[str, int] = {}
+            for q in qs:
+                state_counts[q["state"]] = state_counts.get(q["state"], 0) + 1
+                reason_counts[q["reason"]] = reason_counts.get(q["reason"], 0) + 1
+            item = {dimension: key[i] for i, dimension in enumerate(dimensions)}
+            item.update({
+                "sample_size": len(pairs),
+                "state_counts": state_counts,
+                "reason_counts": reason_counts,
+                "counterfactual_trade_eligible": sum(1 for q in qs if q["counterfactual_trade_eligible"]),
+                "potential_blocker_regret": state_counts.get("POTENTIAL_BLOCKER_REGRET", 0),
+                "directionally_correct_not_trade_eligible": state_counts.get("DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE", 0),
+                "actionability_window_evidence_available": sum(1 for q in qs if q["actionability_window_source_present"]),
+                "current_policy_reference_past_cutoff": sum(1 for q in qs if q["current_policy_cutoff_passed_reference"] is True),
+                "unexplained_no_trade_with_passing_captured_gates": sum(
+                    1 for q in qs if q["unexplained_no_trade_with_passing_captured_gates"]
+                ),
+            })
+            out.append(item)
+        out.sort(key=lambda x: (-x["potential_blocker_regret"], -x["counterfactual_trade_eligible"], -x["sample_size"]))
+        return out
+
+    all_counterfactual_pairs: list[tuple[Dict[str, Any], Dict[str, Any]]] = []
+    for row in abstention_rows:
+        for blocker in (row.get("_blockers") or ["NO_EXPLICIT_BLOCKER"]):
+            all_counterfactual_pairs.append((row, qualify_counterfactual(row, str(blocker))))
+    cf_state_counts: Dict[str, int] = {}
+    cf_reason_counts: Dict[str, int] = {}
+    target_absence_counts: Dict[str, int] = {}
+    for row, q in all_counterfactual_pairs:
+        cf_state_counts[q["state"]] = cf_state_counts.get(q["state"], 0) + 1
+        cf_reason_counts[q["reason"]] = cf_reason_counts.get(q["reason"], 0) + 1
+        if q.get("movement_threshold_absence_reason"):
+            key = str(q["movement_threshold_absence_reason"])
+            target_absence_counts[key] = target_absence_counts.get(key, 0) + 1
+
+    no_explicit_rows = [row for row in abstention_rows if not row.get("_blockers")]
+    no_explicit_details = [qualify_counterfactual(row, "NO_EXPLICIT_BLOCKER") for row in no_explicit_rows]
+    no_explicit_reason_counts: Dict[str, int] = {}
+    no_explicit_recommendation_counts: Dict[str, int] = {}
+    for q in no_explicit_details:
+        no_explicit_reason_counts[q["reason"]] = no_explicit_reason_counts.get(q["reason"], 0) + 1
+        key = q.get("recommendation_action") or q.get("recommendation_state") or "UNKNOWN"
+        no_explicit_recommendation_counts[str(key)] = no_explicit_recommendation_counts.get(str(key), 0) + 1
+
+    counterfactual_regret = {
+        "schema_version": "apex.counterfactual_regret_qualification.v1",
+        "status": "READY" if abstention_rows else "WAITING_FOR_OBSERVATIONAL_NO_TRADE",
+        "population_contract": "CANONICAL_OBSERVATIONAL_NO_TRADE_BLOCKER_TARGETED_QUALIFICATION",
+        "sample_size": len(abstention_rows),
+        "blocker_evaluations": len(all_counterfactual_pairs),
+        "state_counts": cf_state_counts,
+        "reason_counts": cf_reason_counts,
+        "target_absence_provenance": target_absence_counts,
+        "by_blocker_session": counterfactual_groups(("blocker", "session"), expand_blocker=True),
+        "by_blocker_direction_session": counterfactual_groups(("blocker", "direction", "session"), expand_blocker=True),
+        "by_market_open_elapsed_blocker": counterfactual_groups(("market_open_elapsed_bucket", "blocker"), expand_blocker=True),
+        "no_explicit_blocker_diagnostics": {
+            "sample_size": len(no_explicit_rows),
+            "reason_counts": no_explicit_reason_counts,
+            "recommendation_action_or_state_counts": no_explicit_recommendation_counts,
+            "counterfactual_trade_eligible": sum(1 for q in no_explicit_details if q["counterfactual_trade_eligible"]),
+            "potential_blocker_regret": sum(1 for q in no_explicit_details if q["state"] == "POTENTIAL_BLOCKER_REGRET"),
+            "recommendation_layer_no_trade": sum(1 for q in no_explicit_details if q["recommendation_layer_no_trade"]),
+            "unexplained_no_trade_with_passing_captured_gates": sum(
+                1 for q in no_explicit_details if q["unexplained_no_trade_with_passing_captured_gates"]
+            ),
+            "details": no_explicit_details[:50],
+        },
+        "qualification_contract": {
+            "requires_persisted_actionability_window": True,
+            "requires_entry_session_authorized": True,
+            "requires_no_independent_disqualifier": True,
+            "requires_entry_geometry": True,
+            "requires_persisted_regret_threshold": True,
+            "requires_valid_in_window_excursion": True,
+            "requires_canonical_directional_grade_correct": True,
+            "current_policy_reference_can_backfill_historical_actionability": False,
+            "stop_geometry_required_for_counterfactual_eligibility": False,
+            "execution_viability_proven": False,
+        },
+        "current_policy_clock_reference": {
+            "cutoff_et": current_cutoff_et,
+            "source": "CURRENT_RUNTIME_APEX_SESSION_CUTOFF_OR_CODE_DEFAULT",
+            "historical_qualification_uses_reference": False,
+            "interpretation": "Reference-only comparison. Historical actionability requires the decision-time cutoff persisted in the canonical snapshot.",
+        },
+        "legacy_abstention_regret_semantics": {
+            "abstention_regret_potential_blocker_regret_is_movement_qualified_only": True,
+            "actionability_qualified_regret_authority": "counterfactual_regret.POTENTIAL_BLOCKER_REGRET",
+        },
+        "production_effect": PRODUCTION_EFFECT,
+        "behavioral_authority": False,
+        "execution_authority": False,
+        "broker_mutation": False,
+    }
+
     band_order = ["<40", "40-49.9", "50-59.9", "60-69.9", "70-79.9", "80+", "UNKNOWN"]
     reliability_min_sample = 20
 
@@ -1501,6 +1852,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         "decision_class_effectiveness": decision_class_effectiveness,
         "release_cohorts": release_cohorts,
         "abstention_regret": abstention_regret,
+        "counterfactual_regret": counterfactual_regret,
         "observation_window_integrity": observation_window_integrity,
         "canonical_grader_horizon_integrity": canonical_grader_integrity,
         "metadata_join": metadata_join,
@@ -1513,6 +1865,8 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "Session-conditioned and decision-class cohorts must be inspected before interpreting confidence ordering.",
             "Metadata-conditioned cohorts are reliable only to the extent reported by metadata_join coverage diagnostics.",
             "Actionable trades and observational NO_TRADE counterfactuals are reported separately where canonical decision metadata exists.",
+            "Legacy abstention_regret potential blocker regret is movement-qualified only; counterfactual_regret is authoritative for actionability-qualified regret.",
+            "Actionability qualification uses only decision-time session/cutoff evidence persisted in the canonical snapshot; the current cutoff is reference-only and never backfills history.",
             "Potential blocker regret is a counterfactual diagnostic and does not prove an executable options trade existed.",
             "Movement-threshold sufficiency uses only explicit persisted target evidence or a governed boundary margin and never fabricates missing thresholds.",
             "Five-minute excursion uses only persisted observations with elapsed time inside the configured window; late samples are excluded.",
@@ -1526,9 +1880,29 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
 
 
 
+def counterfactual_regret_validation(*, symbol: str = "SPX", path: Optional[str] = None,
+                                      evidence_path: Optional[str] = None) -> Dict[str, Any]:
+    """Return strict actionability-qualified regret diagnostics without authority."""
+    full = predictive_validation(symbol=symbol, path=path, evidence_path=evidence_path)
+    block = dict(full.get("counterfactual_regret") or {})
+    return {
+        "ok": bool(full.get("ok")),
+        "status": block.get("status") or full.get("status"),
+        "version": VERSION,
+        "schema_version": block.get("schema_version") or "apex.counterfactual_regret_qualification.v1",
+        "symbol": _u(symbol, "SPX"),
+        "metadata_join": full.get("metadata_join") or {},
+        "counterfactual_regret": block,
+        "production_effect": PRODUCTION_EFFECT,
+        "behavioral_authority": False,
+        "execution_authority": False,
+        "broker_mutation": False,
+    }
+
+
 def abstention_regret_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                                  evidence_path: Optional[str] = None) -> Dict[str, Any]:
-    """Return the 69.9.5 abstention-regret diagnostic without behavioral authority."""
+    """Return movement-qualified abstention-regret diagnostics without behavioral authority."""
     full = predictive_validation(symbol=symbol, path=path, evidence_path=evidence_path)
     regret = dict(full.get("abstention_regret") or {})
     return {
@@ -1837,6 +2211,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "actionability_window_capture": True, "counterfactual_regret_qualification": True, "no_explicit_blocker_diagnostics": True, "historical_current_cutoff_inference_disabled": True, "target_absence_provenance": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
