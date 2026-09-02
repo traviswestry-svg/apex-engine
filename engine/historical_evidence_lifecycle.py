@@ -1,4 +1,4 @@
-"""APEX 69.0 — Unified Historical Evidence Lifecycle Closure.
+"""APEX 69.9.7 — Decision-Time Actionability Capture Wiring & Qualification Readiness Closure.
 
 Runtime-only bridge connecting the canonical Institutional OS decision to the
 existing durable evidence ledger.  This module is observational: it never
@@ -17,8 +17,8 @@ from typing import Any, Dict, Mapping, Optional
 from .evidence_pipeline import DEFAULT_DB, readiness, record_price, record_snapshot
 from .outcome_grader import run_grader
 
-VERSION = "69.3.0"
-SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.4"
+VERSION = "69.9.7"
+SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.5"
 
 _LOCK = threading.RLock()
 _RUNTIME: Dict[str, Any] = {
@@ -81,6 +81,55 @@ def _path(source: Mapping[str, Any], *paths: str) -> Any:
         if ok and cur not in (None, ""):
             return cur
     return None
+
+
+def _decision_time(timestamp: Any) -> dt.datetime:
+    """Parse the finalized canonical decision timestamp for deterministic capture."""
+    try:
+        value = dt.datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=dt.timezone.utc)
+        return value
+    except Exception:
+        return dt.datetime.now(dt.timezone.utc)
+
+
+def _capture_status(*, present: bool, value: Any, source: str,
+                    derived: bool = False, error: Optional[str] = None) -> Dict[str, Any]:
+    if error:
+        status = "SOURCE_ERROR"
+    elif not present:
+        status = "SOURCE_PATH_NOT_FOUND"
+    elif value is None or value == "":
+        status = "SOURCE_PRESENT_NULL"
+    elif derived:
+        status = "DERIVED_FROM_DECISION_TIME_POLICY"
+    else:
+        status = "SOURCE_PRESENT"
+    out = {"status": status, "source": source}
+    if error:
+        out["error"] = error
+    return out
+
+
+def _recommendation_capture(root: Mapping[str, Any]) -> tuple[Any, Any, str, bool]:
+    """Normalize the scanner recommendation without inventing a recommendation.
+
+    Production scanner composition may expose ``recommendation`` as a string, while
+    Trade Director surfaces often expose a mapping.  69.9.6 treated strings as an
+    empty mapping, which is why live captures showed UNKNOWN despite a real source.
+    """
+    raw = root.get("recommendation")
+    if isinstance(raw, Mapping):
+        m = dict(raw)
+        return m.get("action"), m.get("state"), "result.recommendation(mapping)", True
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip(), None, "result.recommendation(string)", True
+    premium = root.get("premium_strategy")
+    if isinstance(premium, Mapping):
+        m = dict(premium)
+        return m.get("action"), m.get("state"), "result.premium_strategy(mapping)", True
+    return None, None, "result.recommendation|result.premium_strategy", False
 
 
 def _decision_id(ticker: str, timestamp: str, action: str, direction: str) -> str:
@@ -176,28 +225,85 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         or _m(root.get("dynamic_state_policy"))
     )
 
-    # APEX 69.9.6 — freeze the exact decision-time actionability inputs that can
-    # later prove whether a blocked NO_TRADE was even eligible to become a new
-    # trade.  Missing historical inputs remain missing; no clock/session policy is
-    # reconstructed from today's configuration.
+    # APEX 69.9.7 — freeze decision-time actionability from sources that are
+    # actually present on the scanner composition path. Trade Director Phase 11 is
+    # not guaranteed to exist on this result at canonical evidence capture time, so
+    # the exact entry-window policy is additionally read from the same RiskLimits
+    # contract enforced by engine.execution.trade_risk_guard. This is observational
+    # provenance only and cannot approve or reject an order.
     session_intelligence = _m(root.get("session_intelligence"))
     session_authority = _m(session_intelligence.get("session"))
     market_narrative = _m(ido.get("market_narrative") or ido.get("narrative"))
-    recommendation_snapshot = _m(root.get("recommendation") or root.get("premium_strategy"))
+    recommendation_action, recommendation_state, recommendation_source, recommendation_present = _recommendation_capture(root)
+
+    risk_policy: Dict[str, Any] = {}
+    risk_policy_error: Optional[str] = None
+    try:
+        from .execution.trade_risk_guard import entry_window_policy_snapshot
+        risk_policy = entry_window_policy_snapshot(
+            now=_decision_time(timestamp),
+            session_state=str(session_state or root.get("session") or "UNKNOWN").upper(),
+        )
+    except Exception as exc:
+        risk_policy_error = f"{type(exc).__name__}: {exc}"
+        risk_policy = {}
+
+    session_cutoff_present = "cutoff" in session_authority and session_authority.get("cutoff") not in (None, "")
+    session_cutoff_passed_present = "cutoff_passed" in session_authority
+    risk_cutoff_present = bool(risk_policy.get("entry_cutoff_et")) and bool(risk_policy.get("cutoff_parse_ok"))
+    risk_cutoff_passed_present = risk_policy.get("cutoff_passed") is not None
+
+    if session_cutoff_present and session_cutoff_passed_present:
+        entry_cutoff_et = session_authority.get("cutoff")
+        cutoff_passed = bool(session_authority.get("cutoff_passed"))
+        entry_window_source = "SESSION_INTELLIGENCE"
+        entry_window_source_present = True
+        cutoff_source = "result.session_intelligence.session.cutoff"
+        cutoff_passed_source = "result.session_intelligence.session.cutoff_passed"
+        cutoff_derived = False
+    elif risk_cutoff_present and risk_cutoff_passed_present:
+        entry_cutoff_et = risk_policy.get("entry_cutoff_et")
+        cutoff_passed = bool(risk_policy.get("cutoff_passed"))
+        entry_window_source = "TRADE_RISK_GUARD_POLICY"
+        entry_window_source_present = True
+        cutoff_source = "engine.execution.trade_risk_guard.RiskLimits.no_new_trades_after_et"
+        cutoff_passed_source = "engine.execution.trade_risk_guard.entry_window_policy_snapshot"
+        cutoff_derived = True
+    else:
+        entry_cutoff_et = None
+        cutoff_passed = None
+        entry_window_source = "UNAVAILABLE"
+        entry_window_source_present = False
+        cutoff_source = "result.session_intelligence.session.cutoff|trade_risk_guard.RiskLimits.no_new_trades_after_et"
+        cutoff_passed_source = "result.session_intelligence.session.cutoff_passed|trade_risk_guard.entry_window_policy_snapshot"
+        cutoff_derived = False
+
+    trade_guidance_present = "trade_guidance_enabled" in market_narrative
+    thesis_state_present = "state" in thesis
+    conviction_score_present = "score" in conviction
+    session_mode_present = "mode" in session_authority
+
     actionability_capture = {
-        "schema_version": "apex.counterfactual_actionability_capture.v1",
-        "capture_version": "69.9.6",
+        "schema_version": "apex.counterfactual_actionability_capture.v2",
+        "capture_version": "69.9.7",
         "session_intelligence_present": bool(session_intelligence),
         "session_mode": session_authority.get("mode"),
-        "entry_cutoff_et": session_authority.get("cutoff"),
-        "cutoff_passed": (
-            bool(session_authority.get("cutoff_passed"))
-            if "cutoff_passed" in session_authority else None
+        "entry_window_source": entry_window_source,
+        "entry_window_source_present": entry_window_source_present,
+        "entry_cutoff_et": entry_cutoff_et,
+        "cutoff_passed": cutoff_passed,
+        "entry_window_authorized": (
+            bool(risk_policy.get("entry_window_authorized"))
+            if entry_window_source == "TRADE_RISK_GUARD_POLICY" else
+            (not cutoff_passed if entry_window_source_present else None)
         ),
         "market_session": str(session_state or root.get("session") or "UNKNOWN").upper(),
+        "market_session_authorized_by_entry_policy": (
+            risk_policy.get("market_session_authorized") if risk_policy else None
+        ),
         "trade_guidance_enabled": (
             bool(market_narrative.get("trade_guidance_enabled"))
-            if "trade_guidance_enabled" in market_narrative else None
+            if trade_guidance_present else None
         ),
         "thesis_state": thesis.get("state"),
         "direction": thesis_direction if thesis_direction in {"BULLISH", "BEARISH"} else direction,
@@ -205,15 +311,54 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         "blocking_conditions": list(conviction.get("blocking_conditions") or []),
         "ido_actionable": explicit_actionable,
         "ido_status": ido.get("status"),
-        "recommendation_action": recommendation_snapshot.get("action"),
-        "recommendation_state": recommendation_snapshot.get("state"),
+        "recommendation_action": recommendation_action,
+        "recommendation_state": recommendation_state,
+        "recommendation_source": recommendation_source,
         "final_action": action,
         "entry_reference_available": price is not None,
         "targets_and_decision_levels": _m(ido.get("targets_and_decision_levels")),
         "dynamic_policy_state": observed_dynamic_policy.get("state"),
         "dynamic_policy_blocking_conditions": list(observed_dynamic_policy.get("blocking_conditions") or []),
-        "source_truth": "FINALIZED_DECISION_TIME_SNAPSHOT",
+        "capture_provenance": {
+            "session_mode": _capture_status(
+                present=session_mode_present, value=session_authority.get("mode"),
+                source="result.session_intelligence.session.mode",
+            ),
+            "entry_cutoff_et": _capture_status(
+                present=entry_window_source_present, value=entry_cutoff_et,
+                source=cutoff_source, derived=cutoff_derived, error=risk_policy_error,
+            ),
+            "cutoff_passed": _capture_status(
+                present=entry_window_source_present, value=cutoff_passed,
+                source=cutoff_passed_source, derived=cutoff_derived, error=risk_policy_error,
+            ),
+            "trade_guidance_enabled": _capture_status(
+                present=trade_guidance_present, value=market_narrative.get("trade_guidance_enabled"),
+                source="institutional_decision_object.market_narrative.trade_guidance_enabled",
+            ),
+            "thesis_state": _capture_status(
+                present=thesis_state_present, value=thesis.get("state"),
+                source="institutional_decision_object.institutional_thesis.state",
+            ),
+            "conviction_score": _capture_status(
+                present=conviction_score_present, value=conviction.get("score"),
+                source="institutional_decision_object.conviction.score",
+            ),
+            "recommendation_action": _capture_status(
+                present=recommendation_present, value=recommendation_action,
+                source=recommendation_source,
+            ),
+            "recommendation_state": _capture_status(
+                present=recommendation_present, value=recommendation_state,
+                source=recommendation_source,
+            ),
+        },
+        "entry_risk_policy_snapshot": risk_policy,
+        "source_truth": "FINALIZED_DECISION_TIME_SNAPSHOT_PLUS_ENTRY_RISK_POLICY",
         "historical_policy_inference": False,
+        "behavioral_authority": False,
+        "execution_authority": False,
+        "production_effect": "OBSERVATIONAL_ONLY",
     }
 
     # Preserve exactly the decision-time fields consumed by effectiveness,

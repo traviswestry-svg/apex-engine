@@ -1,4 +1,4 @@
-"""APEX 69.9.6 — Actionability Window & Counterfactual Regret Qualification Closure.
+"""APEX 69.9.7 — Decision-Time Actionability Capture Wiring & Qualification Readiness Closure.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.6"
+VERSION = "69.9.7"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v3"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -800,7 +800,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     evidence_resolved = evidence_path or str(evidence_default_db)
     base = {
         "ok": True, "status": "READY", "version": VERSION,
-        "schema_version": "apex.predictive_validation.v7",
+        "schema_version": "apex.predictive_validation.v8",
         "behavioral_authority": False, "execution_authority": False,
         "broker_mutation": False, "production_effect": PRODUCTION_EFFECT,
         "automatic_calibration_activation": False,
@@ -891,8 +891,11 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                                     "capture_version": release_version,
                                     "session_intelligence_present": False,
                                     "session_mode": None,
+                                    "entry_window_source": "UNAVAILABLE",
+                                    "entry_window_source_present": False,
                                     "entry_cutoff_et": None,
                                     "cutoff_passed": None,
+                                    "entry_window_authorized": None,
                                     "market_session": _u(meta_row["session"]),
                                     "trade_guidance_enabled": (
                                         bool(narrative.get("trade_guidance_enabled"))
@@ -914,6 +917,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                                     ),
                                     "dynamic_policy_state": dynamic_policy.get("state"),
                                     "dynamic_policy_blocking_conditions": list(dynamic_policy.get("blocking_conditions") or []),
+                                    "capture_provenance": {},
                                     "source_truth": "LEGACY_PARTIAL_CANONICAL_SNAPSHOT",
                                     "historical_policy_inference": False,
                                 }
@@ -1353,7 +1357,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     # considered authoritative only when they were persisted in the canonical
     # decision snapshot. The current configured cutoff is exposed as a comparison
     # reference only and never backfilled into historical eligibility.
-    current_cutoff_et = str(os.getenv("APEX_SESSION_CUTOFF", "11:30") or "11:30")
+    current_cutoff_et = str(os.getenv("TRADE_NO_NEW_AFTER_ET", "11:30") or "11:30")
 
     def current_policy_cutoff_passed(row: Mapping[str, Any]) -> Optional[bool]:
         try:
@@ -1409,7 +1413,17 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         )
         target_is_conviction_gate = target_blocker == "CONVICTION_BELOW_ACTIONABLE_THRESHOLD"
 
-        exact_session_evidence = bool(actionability.get("session_intelligence_present"))
+        entry_window_source_present = bool(
+            actionability.get("entry_window_source_present")
+            or (
+                actionability.get("session_intelligence_present")
+                and actionability.get("entry_cutoff_et") not in (None, "")
+                and actionability.get("cutoff_passed") is not None
+            )
+        )
+        entry_window_source = str(actionability.get("entry_window_source") or (
+            "SESSION_INTELLIGENCE" if actionability.get("session_intelligence_present") else "UNAVAILABLE"
+        )).upper()
         market_session_authorized = session in {"MARKET_OPEN", "RTH", "REGULAR"}
         entry_geometry_available = _f(row.get("entry_reference")) is not None
         stop_geometry_available = _f(row.get("stop_reference")) is not None
@@ -1438,7 +1452,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         elif not market_session_authorized:
             state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
             reason = "SESSION_NOT_ENTRY_AUTHORIZED"
-        elif not exact_session_evidence or not cutoff_known or not cutoff_value:
+        elif not entry_window_source_present or not cutoff_known or not cutoff_value:
             state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
             reason = "ACTIONABILITY_WINDOW_EVIDENCE_UNAVAILABLE"
         elif cutoff_passed:
@@ -1513,7 +1527,10 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "session_mode": session_mode,
             "entry_cutoff_et": cutoff_value,
             "cutoff_passed": cutoff_passed,
-            "actionability_window_source_present": exact_session_evidence and cutoff_known and bool(cutoff_value),
+            "actionability_window_source_present": entry_window_source_present and cutoff_known and bool(cutoff_value),
+            "entry_window_source": entry_window_source,
+            "capture_version": actionability.get("capture_version"),
+            "capture_provenance": dict(actionability.get("capture_provenance") or {}),
             "trade_guidance_enabled": trade_guidance,
             "thesis_state": thesis_state,
             "conviction_score": conviction_score,
@@ -1600,8 +1617,90 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         key = q.get("recommendation_action") or q.get("recommendation_state") or "UNKNOWN"
         no_explicit_recommendation_counts[str(key)] = no_explicit_recommendation_counts.get(str(key), 0) + 1
 
+    def actionability_capture_readiness(group_rows: list[Dict[str, Any]]) -> Dict[str, Any]:
+        fields = (
+            "entry_cutoff_et", "cutoff_passed", "session_mode",
+            "trade_guidance_enabled", "thesis_state", "conviction_score",
+            "recommendation_action", "recommendation_state",
+        )
+        capture_versions: Dict[str, int] = {}
+        entry_sources: Dict[str, int] = {}
+        field_status_counts: Dict[str, Dict[str, int]] = {field: {} for field in fields}
+        ready = 0
+        current_release_rows = 0
+        current_release_ready = 0
+        for row in group_rows:
+            actionability = dict(row.get("_counterfactual_actionability") or {})
+            capture_version = str(actionability.get("capture_version") or "LEGACY_OR_UNKNOWN")
+            capture_versions[capture_version] = capture_versions.get(capture_version, 0) + 1
+            source = str(actionability.get("entry_window_source") or (
+                "SESSION_INTELLIGENCE" if actionability.get("session_intelligence_present") else "UNAVAILABLE"
+            )).upper()
+            entry_sources[source] = entry_sources.get(source, 0) + 1
+            source_present = bool(
+                actionability.get("entry_window_source_present")
+                or (
+                    actionability.get("session_intelligence_present")
+                    and actionability.get("entry_cutoff_et") not in (None, "")
+                    and actionability.get("cutoff_passed") is not None
+                )
+            )
+            window_ready = bool(
+                source_present
+                and actionability.get("entry_cutoff_et") not in (None, "")
+                and actionability.get("cutoff_passed") is not None
+            )
+            if window_ready:
+                ready += 1
+            if str(row.get("_release_version") or "UNKNOWN") == VERSION:
+                current_release_rows += 1
+                if window_ready:
+                    current_release_ready += 1
+            provenance = dict(actionability.get("capture_provenance") or {})
+            for field in fields:
+                item = provenance.get(field)
+                if isinstance(item, Mapping):
+                    status = str(item.get("status") or "UNSPECIFIED").upper()
+                elif field in actionability and actionability.get(field) not in (None, ""):
+                    status = "LEGACY_VALUE_PRESENT"
+                else:
+                    status = "SOURCE_PATH_NOT_FOUND"
+                field_status_counts[field][status] = field_status_counts[field].get(status, 0) + 1
+        total = len(group_rows)
+        return {
+            "schema_version": "apex.actionability_capture_readiness.v1",
+            "status": (
+                "CURRENT_RELEASE_READY"
+                if current_release_rows and current_release_ready == current_release_rows
+                else "CURRENT_RELEASE_PARTIAL"
+                if current_release_rows and current_release_ready > 0
+                else "WAITING_FOR_CURRENT_RELEASE_LIVE_CAPTURE"
+                if not current_release_rows
+                else "CURRENT_RELEASE_NOT_READY"
+            ),
+            "sample_size": total,
+            "entry_window_evidence_available": ready,
+            "entry_window_evidence_pct": round(100.0 * ready / total, 2) if total else None,
+            "capture_version_counts": capture_versions,
+            "entry_window_source_counts": entry_sources,
+            "field_status_counts": field_status_counts,
+            "current_release": VERSION,
+            "current_release_rows": current_release_rows,
+            "current_release_entry_window_evidence_available": current_release_ready,
+            "current_release_entry_window_evidence_pct": (
+                round(100.0 * current_release_ready / current_release_rows, 2)
+                if current_release_rows else None
+            ),
+            "current_release_qualification_ready": bool(current_release_ready),
+            "historical_missing_policy_never_inferred": True,
+            "production_effect": PRODUCTION_EFFECT,
+            "execution_authority": False,
+        }
+
+    capture_readiness = actionability_capture_readiness(abstention_rows)
+
     counterfactual_regret = {
-        "schema_version": "apex.counterfactual_regret_qualification.v1",
+        "schema_version": "apex.counterfactual_regret_qualification.v2",
         "status": "READY" if abstention_rows else "WAITING_FOR_OBSERVATIONAL_NO_TRADE",
         "population_contract": "CANONICAL_OBSERVATIONAL_NO_TRADE_BLOCKER_TARGETED_QUALIFICATION",
         "sample_size": len(abstention_rows),
@@ -1609,6 +1708,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         "state_counts": cf_state_counts,
         "reason_counts": cf_reason_counts,
         "target_absence_provenance": target_absence_counts,
+        "actionability_capture_readiness": capture_readiness,
         "by_blocker_session": counterfactual_groups(("blocker", "session"), expand_blocker=True),
         "by_blocker_direction_session": counterfactual_groups(("blocker", "direction", "session"), expand_blocker=True),
         "by_market_open_elapsed_blocker": counterfactual_groups(("market_open_elapsed_bucket", "blocker"), expand_blocker=True),
@@ -1626,6 +1726,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         },
         "qualification_contract": {
             "requires_persisted_actionability_window": True,
+            "accepted_decision_time_entry_window_sources": ["SESSION_INTELLIGENCE", "TRADE_RISK_GUARD_POLICY"],
             "requires_entry_session_authorized": True,
             "requires_no_independent_disqualifier": True,
             "requires_entry_geometry": True,
@@ -1638,7 +1739,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         },
         "current_policy_clock_reference": {
             "cutoff_et": current_cutoff_et,
-            "source": "CURRENT_RUNTIME_APEX_SESSION_CUTOFF_OR_CODE_DEFAULT",
+            "source": "CURRENT_RUNTIME_TRADE_NO_NEW_AFTER_ET_OR_RISK_GUARD_DEFAULT",
             "historical_qualification_uses_reference": False,
             "interpretation": "Reference-only comparison. Historical actionability requires the decision-time cutoff persisted in the canonical snapshot.",
         },
@@ -1866,7 +1967,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "Metadata-conditioned cohorts are reliable only to the extent reported by metadata_join coverage diagnostics.",
             "Actionable trades and observational NO_TRADE counterfactuals are reported separately where canonical decision metadata exists.",
             "Legacy abstention_regret potential blocker regret is movement-qualified only; counterfactual_regret is authoritative for actionability-qualified regret.",
-            "Actionability qualification uses only decision-time session/cutoff evidence persisted in the canonical snapshot; the current cutoff is reference-only and never backfills history.",
+            "Actionability qualification uses decision-time entry-window evidence persisted from Session Intelligence when present or from the same Trade Risk Guard policy that governs new entries; the current cutoff remains reference-only for legacy history.",
             "Potential blocker regret is a counterfactual diagnostic and does not prove an executable options trade existed.",
             "Movement-threshold sufficiency uses only explicit persisted target evidence or a governed boundary margin and never fabricates missing thresholds.",
             "Five-minute excursion uses only persisted observations with elapsed time inside the configured window; late samples are excluded.",
@@ -1889,7 +1990,7 @@ def counterfactual_regret_validation(*, symbol: str = "SPX", path: Optional[str]
         "ok": bool(full.get("ok")),
         "status": block.get("status") or full.get("status"),
         "version": VERSION,
-        "schema_version": block.get("schema_version") or "apex.counterfactual_regret_qualification.v1",
+        "schema_version": block.get("schema_version") or "apex.counterfactual_regret_qualification.v2",
         "symbol": _u(symbol, "SPX"),
         "metadata_join": full.get("metadata_join") or {},
         "counterfactual_regret": block,
@@ -2211,6 +2312,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "actionability_window_capture": True, "counterfactual_regret_qualification": True, "no_explicit_blocker_diagnostics": True, "historical_current_cutoff_inference_disabled": True, "target_absence_provenance": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "actionability_window_capture": True, "decision_time_entry_risk_policy_capture": True, "actionability_capture_provenance": True, "actionability_capture_readiness": True, "string_recommendation_capture": True, "counterfactual_regret_qualification": True, "no_explicit_blocker_diagnostics": True, "historical_current_cutoff_inference_disabled": True, "target_absence_provenance": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}

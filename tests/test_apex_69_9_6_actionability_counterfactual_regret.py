@@ -112,7 +112,7 @@ def test_historical_snapshot_persists_exact_actionability_window_inputs():
     }
     snap = build_snapshot(result, session_state="MARKET_OPEN")
     a = snap["counterfactual_actionability"]
-    assert a["capture_version"] == "69.9.6"
+    assert tuple(map(int, str(a["capture_version"]).split("."))) >= (69, 9, 6)
     assert a["session_intelligence_present"] is True
     assert a["session_mode"] == "ATTACK"
     assert a["entry_cutoff_et"] == "11:30"
@@ -214,8 +214,8 @@ def test_no_explicit_blocker_diagnostic_identifies_recommendation_layer_no_trade
 
 def test_release_truth_and_guardrails_are_69_9_6():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.9.6"
-    assert manifest["build_name"] == "Actionability Window & Counterfactual Regret Qualification Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 9, 6)
     g = manifest["guardrails"]
     assert g["counterfactual_regret_observational_only"] is True
     assert g["historical_actionability_requires_persisted_decision_time_window"] is True
@@ -223,7 +223,7 @@ def test_release_truth_and_guardrails_are_69_9_6():
     assert g["counterfactual_regret_requires_no_independent_disqualifier"] is True
     assert g["counterfactual_regret_changes_trade_decisions"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.9.6" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "/api/triggers/counterfactual-regret" in registry
     assert "counterfactual_regret_qualification" in registry
     routes = (ROOT / "engine/trigger_observatory_routes.py").read_text()
