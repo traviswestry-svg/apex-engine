@@ -92,7 +92,60 @@ def _hhmm_to_min(s: str) -> int:
 
 def _now_et_minutes(now: Optional[dt.datetime] = None) -> int:
     n = now or dt.datetime.now(EASTERN)
+    if n.tzinfo is None:
+        n = n.replace(tzinfo=EASTERN)
+    else:
+        n = n.astimezone(EASTERN)
     return n.hour * 60 + n.minute
+
+
+def entry_window_policy_snapshot(*, now: Optional[dt.datetime] = None,
+                                 session_state: Optional[str] = None,
+                                 limits: Optional[RiskLimits] = None) -> Dict[str, Any]:
+    """Return the exact decision-time entry-window policy used by the risk guard.
+
+    APEX 69.9.7 uses this as observational provenance only.  The helper reads the
+    same ``RiskLimits`` contract already consumed by ``validate_trade`` and complex
+    entry validation; it does not approve an order, mutate policy, or contact a
+    broker.  Supplying ``now`` makes the result deterministic and lets the evidence
+    lifecycle freeze the policy against the canonical decision timestamp.
+    """
+    limits = limits or RiskLimits.from_env()
+    raw_now = now or dt.datetime.now(EASTERN)
+    if raw_now.tzinfo is None:
+        local_now = raw_now.replace(tzinfo=EASTERN)
+    else:
+        local_now = raw_now.astimezone(EASTERN)
+
+    cutoff = str(limits.no_new_trades_after_et or "").strip()
+    cutoff_minutes = 0
+    cutoff_parse_ok = False
+    if cutoff:
+        try:
+            hh, mm = [int(x) for x in cutoff.split(":", 1)]
+            cutoff_parse_ok = 0 <= hh <= 23 and 0 <= mm <= 59
+            cutoff_minutes = hh * 60 + mm if cutoff_parse_ok else 0
+        except Exception:
+            cutoff_parse_ok = False
+    cutoff_passed = (_now_et_minutes(local_now) >= cutoff_minutes) if cutoff_parse_ok else None
+    market_session = str(session_state or "UNKNOWN").upper()
+    session_authorized = market_session in {"MARKET_OPEN", "RTH", "REGULAR"}
+    entry_window_authorized = bool(session_authorized and cutoff_passed is False)
+    return {
+        "schema_version": "apex.entry_window_policy_snapshot.v1",
+        "source_module": "engine.execution.trade_risk_guard",
+        "source_policy": "RiskLimits.no_new_trades_after_et",
+        "source_environment_key": "TRADE_NO_NEW_AFTER_ET",
+        "entry_cutoff_et": cutoff or None,
+        "cutoff_parse_ok": cutoff_parse_ok,
+        "cutoff_passed": cutoff_passed,
+        "market_session": market_session,
+        "market_session_authorized": session_authorized,
+        "entry_window_authorized": entry_window_authorized,
+        "observed_at_et": local_now.isoformat(),
+        "production_effect": "NONE",
+        "execution_authority": False,
+    }
 
 
 # ── Entry validation ──────────────────────────────────────────────────────────
