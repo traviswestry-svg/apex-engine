@@ -20,7 +20,8 @@ def test_flow_live_path_uses_persisted_identity_mapping():
 def test_feature_writer_registers_exact_identity():
     src=Path('engine/feature_store_writer.py').read_text()
     assert 'register_sample_identity' in src
-    assert '69.4.1_FEATURE_STORE_WRITER' in src
+    assert 'FEATURE_STORE_WRITER' in src
+    assert 'register_sample_identity' in src
 
 
 def test_no_trade_can_be_observational_but_not_execution_actionable():

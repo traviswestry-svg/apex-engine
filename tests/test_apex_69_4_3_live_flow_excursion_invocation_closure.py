@@ -93,5 +93,5 @@ def test_production_scanner_explicitly_initializes_and_invokes_capture():
     assert '_ensure_flow_learning_stores()' in src
     assert 'flow_excursion_capture' in src
     app=Path('app.py').read_text()
-    assert 'defer_excursion_capture=True' in app
-    assert '_flow_pl_capture_persisted' in app
+    assert 'defer_excursion_capture=False' in app
+    assert 'feature writer itself' in app

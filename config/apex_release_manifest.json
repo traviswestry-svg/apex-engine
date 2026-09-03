@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.9.8",
-  "build_name": "Live Actionability Capture Probe & Lifecycle Attribution Closure",
+  "apex_version": "69.9.9",
+  "build_name": "Live Flow Canonical Excursion Invocation Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -384,15 +384,23 @@
     "live_capture_audit_backfills_history": false,
     "live_capture_audit_infers_missing_policy": false,
     "capture_lifecycle_attribution_enabled": true,
-    "actionability_runtime_probe_enabled": true
+    "actionability_runtime_probe_enabled": true,
+    "live_flow_excursion_capture_owned_by_feature_writer": true,
+    "live_flow_excursion_capture_deferred_in_production": false,
+    "live_flow_excursion_capture_post_feature_persistence": true,
+    "live_flow_excursion_capture_uses_canonical_sample_id_only": true,
+    "live_flow_excursion_backfills_history": false,
+    "live_flow_excursion_synthetic_pl_allowed": false,
+    "live_flow_excursion_changes_trade_decisions": false,
+    "live_flow_excursion_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.9.8",
-  "application_version": "69.9.8",
+  "semantic_version": "69.9.9",
+  "application_version": "69.9.9",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
