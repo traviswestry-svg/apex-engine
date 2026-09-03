@@ -1,4 +1,4 @@
-"""APEX 69.9.9 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
+"""APEX 69.9.10 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.9"
+VERSION = "69.9.10"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v3"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -30,6 +30,24 @@ MAX_CONTRACTS = int(os.getenv("APEX_MAX_CONTRACTS", "3"))
 MAX_RISK_PER_TRADE = float(os.getenv("APEX_MAX_TRADE_RISK", "2000"))
 MAX_DAILY_LOSS = float(os.getenv("APEX_MAX_DAILY_LOSS", "1000"))
 MAX_DAILY_TRADES = int(os.getenv("APEX_MAX_DAILY_TRADES", "3"))
+_RECOMMENDATION_NO_TRADE_STATES = {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
+
+
+def _recommendation_layer_blocks(actionability: Dict[str, Any]) -> bool:
+    """Return True when captured recommendation intent itself abstains.
+
+    Historical blocker attribution originally collapsed rows with an explicit
+    recommendation-layer ``NO_TRADE`` into ``NO_EXPLICIT_BLOCKER`` whenever the
+    raw trigger blocker list was empty. That made the blocker taxonomy less
+    honest and inflated the diagnostic "no explicit blocker" cohort with
+    recommendation-driven abstentions.
+    """
+    recommendation_action = str(actionability.get("recommendation_action") or "UNKNOWN").upper()
+    recommendation_state = str(actionability.get("recommendation_state") or "UNKNOWN").upper()
+    return (
+        recommendation_action in _RECOMMENDATION_NO_TRADE_STATES
+        or recommendation_state in _RECOMMENDATION_NO_TRADE_STATES
+    )
 
 
 def _path() -> str:
@@ -1025,7 +1043,10 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             blockers = json.loads(r.get("blocker_codes_json") or "[]")
         except Exception:
             blockers = []
-        r["_blockers"] = sorted({str(x).upper() for x in blockers if str(x).strip()}) if isinstance(blockers, list) else []
+        normalized_blockers = {str(x).upper() for x in blockers if str(x).strip()} if isinstance(blockers, list) else set()
+        if not normalized_blockers and _recommendation_layer_blocks(r.get("_counterfactual_actionability") or {}):
+            normalized_blockers.add("RECOMMENDATION_LAYER_NO_TRADE")
+        r["_blockers"] = sorted(normalized_blockers)
         blocker_count = len(r["_blockers"])
         r["_blocker_multiplicity"] = (
             "NO_EXPLICIT_BLOCKER" if blocker_count == 0 else
@@ -1435,10 +1456,10 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         )
         recommendation_action = str(actionability.get("recommendation_action") or "UNKNOWN").upper()
         recommendation_state = str(actionability.get("recommendation_state") or "UNKNOWN").upper()
-        blocked_recommendation_states = {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
+        target_is_recommendation_gate = target_blocker == "RECOMMENDATION_LAYER_NO_TRADE"
         recommendation_layer_no_trade = bool(
-            target_blocker == "NO_EXPLICIT_BLOCKER"
-            and (recommendation_action in blocked_recommendation_states or recommendation_state in blocked_recommendation_states)
+            recommendation_action in _RECOMMENDATION_NO_TRADE_STATES
+            or recommendation_state in _RECOMMENDATION_NO_TRADE_STATES
         )
 
         reason = "UNCLASSIFIED"
@@ -1476,7 +1497,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         elif independent_trigger_blockers or independent_captured_conditions:
             state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
             reason = "INDEPENDENT_DISQUALIFIER_PRESENT"
-        elif recommendation_layer_no_trade:
+        elif recommendation_layer_no_trade and not target_is_recommendation_gate:
             state = "DIRECTIONALLY_CORRECT_NOT_TRADE_ELIGIBLE"
             reason = "RECOMMENDATION_LAYER_NO_TRADE"
         elif target_blocker == "NO_EXPLICIT_BLOCKER" and actionability.get("ido_actionable") is False:
@@ -2354,6 +2375,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "actionability_window_capture": True, "decision_time_entry_risk_policy_capture": True, "actionability_capture_provenance": True, "actionability_capture_readiness": True, "pregrade_live_actionability_capture_audit": True, "capture_lifecycle_attribution": True, "string_recommendation_capture": True, "counterfactual_regret_qualification": True, "no_explicit_blocker_diagnostics": True, "historical_current_cutoff_inference_disabled": True, "target_absence_provenance": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "actionability_window_capture": True, "decision_time_entry_risk_policy_capture": True, "actionability_capture_provenance": True, "actionability_capture_readiness": True, "pregrade_live_actionability_capture_audit": True, "capture_lifecycle_attribution": True, "string_recommendation_capture": True, "counterfactual_regret_qualification": True, "no_explicit_blocker_diagnostics": True, "recommendation_layer_blocker_attribution": True, "historical_current_cutoff_inference_disabled": True, "target_absence_provenance": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
