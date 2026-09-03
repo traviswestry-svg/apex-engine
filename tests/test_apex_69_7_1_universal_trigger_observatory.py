@@ -30,10 +30,10 @@ def test_duplicate_trigger_is_idempotent_and_observed_for_five_minutes(tmp_path)
     assert record_trigger(**args)["created"] is True
     assert record_trigger(**args)["created"] is False
     observe_price(symbol="SPX", price=7705, observed_at=t + timedelta(seconds=60), path=db)
-    observe_price(symbol="SPX", price=7698, observed_at=t + timedelta(seconds=301), path=db)
+    observe_price(symbol="SPX", price=7698, observed_at=t + timedelta(seconds=300), path=db)
     row = history(path=db)["triggers"][0]
     assert row["status"] == "OBSERVED"
-    assert row["mfe_points"] == 5.0 and row["mae_points"] == 0.0
+    assert row["mfe_points"] == 5.0 and row["mae_points"] == -2.0
     assert row["observation_count"] == 2
 
 
