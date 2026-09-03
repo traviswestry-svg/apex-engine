@@ -62,7 +62,7 @@ from .feature_store import (
 )
 from . import feature_store_db, flow_pl_store, decision_provenance
 
-WRITER_VERSION = "69.9.9_FEATURE_STORE_WRITER"
+WRITER_VERSION = "69.9.10_FEATURE_STORE_WRITER"
 
 _GAP_S = float(os.getenv("FLOW_CLUSTER_GAP_S", "120"))
 # A decision informed by a 20-minute-old frame is barely informed. Recorded per

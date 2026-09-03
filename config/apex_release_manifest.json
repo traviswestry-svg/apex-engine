@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.9.9",
-  "build_name": "Live Flow Canonical Excursion Invocation Closure",
+  "apex_version": "69.9.10",
+  "build_name": "Recommendation-Layer No-Trade Blocker Attribution Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -399,8 +399,8 @@
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.9.9",
-  "application_version": "69.9.9",
+  "semantic_version": "69.9.10",
+  "application_version": "69.9.10",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

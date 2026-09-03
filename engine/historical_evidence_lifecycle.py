@@ -1,4 +1,4 @@
-"""APEX 69.9.9 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
+"""APEX 69.9.10 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
 
 Runtime-only bridge connecting the canonical Institutional OS decision to the
 existing durable evidence ledger.  This module is observational: it never
@@ -18,7 +18,7 @@ from .evidence_pipeline import DEFAULT_DB, readiness, record_price, record_snaps
 from .outcome_grader import run_grader
 from .canonical_persistence import connect as canonical_connect
 
-VERSION = "69.9.9"
+VERSION = "69.9.10"
 SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.6"
 
 _LOCK = threading.RLock()

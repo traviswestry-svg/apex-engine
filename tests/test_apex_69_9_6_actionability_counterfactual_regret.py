@@ -191,7 +191,7 @@ def test_second_blocker_is_independent_disqualifier_for_targeted_blocker_regret(
     assert targeted["reason_counts"]["INDEPENDENT_DISQUALIFIER_PRESENT"] == 1
 
 
-def test_no_explicit_blocker_diagnostic_identifies_recommendation_layer_no_trade(tmp_path):
+def test_recommendation_layer_no_trade_is_promoted_to_first_class_blocker(tmp_path):
     trigger_db = tmp_path / "triggers.db"
     evidence_db = tmp_path / "evidence.db"
     ts = "2026-09-01T14:00:00+00:00"
@@ -204,12 +204,35 @@ def test_no_explicit_blocker_diagnostic_identifies_recommendation_layer_no_trade
     observe_price(symbol="SPX", price=6496.0, observed_at="2026-09-01T14:01:00+00:00", path=str(trigger_db))
 
     cf = counterfactual_regret_validation(path=str(trigger_db), evidence_path=str(evidence_db))["counterfactual_regret"]
+    by_blocker = next(x for x in cf["by_blocker_session"] if x["blocker"] == "RECOMMENDATION_LAYER_NO_TRADE")
+    assert by_blocker["sample_size"] == 1
+    assert by_blocker["counterfactual_trade_eligible"] == 1
+    assert by_blocker["potential_blocker_regret"] == 1
+    diag = cf["no_explicit_blocker_diagnostics"]
+    assert diag["sample_size"] == 0
+    assert diag["recommendation_layer_no_trade"] == 0
+    assert diag["potential_blocker_regret"] == 0
+    assert diag["unexplained_no_trade_with_passing_captured_gates"] == 0
+
+
+def test_no_explicit_blocker_diagnostic_remains_for_genuine_unexplained_no_trade(tmp_path):
+    trigger_db = tmp_path / "triggers.db"
+    evidence_db = tmp_path / "evidence.db"
+    ts = "2026-09-01T14:00:00+00:00"
+    a = _actionability(thesis_state="ACTIVE", recommendation_action=None)
+    a["ido_status"] = "ACTIONABLE"
+    a["ido_actionable"] = True
+    with _connect(evidence_db) as conn:
+        _decision(conn, did="genuine-no-blocker", observed_at=ts, actionability=a)
+    _trigger(trigger_db, did="genuine-no-blocker", ts=ts, blockers=[])
+    observe_price(symbol="SPX", price=6496.0, observed_at="2026-09-01T14:01:00+00:00", path=str(trigger_db))
+
+    cf = counterfactual_regret_validation(path=str(trigger_db), evidence_path=str(evidence_db))["counterfactual_regret"]
     diag = cf["no_explicit_blocker_diagnostics"]
     assert diag["sample_size"] == 1
-    assert diag["recommendation_layer_no_trade"] == 1
-    assert diag["potential_blocker_regret"] == 0
-    assert diag["reason_counts"]["RECOMMENDATION_LAYER_NO_TRADE"] == 1
-    assert diag["unexplained_no_trade_with_passing_captured_gates"] == 0
+    assert diag["recommendation_layer_no_trade"] == 0
+    assert diag["potential_blocker_regret"] == 1
+    assert diag["unexplained_no_trade_with_passing_captured_gates"] == 1
 
 
 def test_release_truth_and_guardrails_are_69_9_6():
@@ -226,6 +249,7 @@ def test_release_truth_and_guardrails_are_69_9_6():
     assert f"apex_version: {manifest['apex_version']}" in registry
     assert "/api/triggers/counterfactual-regret" in registry
     assert "counterfactual_regret_qualification" in registry
+    assert "recommendation_layer_blocker_attribution" in registry
     routes = (ROOT / "engine/trigger_observatory_routes.py").read_text()
     assert '@app.get("/api/triggers/counterfactual-regret")' in routes
 
