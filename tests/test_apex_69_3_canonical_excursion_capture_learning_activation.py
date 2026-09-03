@@ -68,8 +68,8 @@ def _sealed_seconds():
 def test_release_identity_69_3_and_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
     assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 3, 0)
-    assert VERSION == "69.3.0"
-    assert SCHEMA_VERSION == "apex.historical_evidence_lifecycle.v1.4"
+    assert VERSION == "69.9.8"
+    assert SCHEMA_VERSION == "apex.historical_evidence_lifecycle.v1.6"
     g = manifest["guardrails"]
     assert g["canonical_excursion_capture_requires_feature_sample"] is True
     assert g["canonical_excursion_identity_is_feature_sample_id"] is True
