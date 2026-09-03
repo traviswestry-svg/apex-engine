@@ -1,4 +1,4 @@
-"""APEX 69.9.7 — Decision-Time Actionability Capture Wiring & Qualification Readiness Closure.
+"""APEX 69.9.8 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.7"
+VERSION = "69.9.8"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v3"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300
@@ -800,7 +800,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     evidence_resolved = evidence_path or str(evidence_default_db)
     base = {
         "ok": True, "status": "READY", "version": VERSION,
-        "schema_version": "apex.predictive_validation.v8",
+        "schema_version": "apex.predictive_validation.v9",
         "behavioral_authority": False, "execution_authority": False,
         "broker_mutation": False, "production_effect": PRODUCTION_EFFECT,
         "automatic_calibration_activation": False,
@@ -1667,17 +1667,34 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                     status = "SOURCE_PATH_NOT_FOUND"
                 field_status_counts[field][status] = field_status_counts[field].get(status, 0) + 1
         total = len(group_rows)
+        try:
+            from .historical_evidence_lifecycle import actionability_capture_audit
+            live_audit = actionability_capture_audit(path=evidence_resolved, limit=100)
+        except Exception as exc:
+            live_audit = {
+                "ok": False,
+                "status": "AUDIT_ERROR",
+                "current_release_rows": 0,
+                "current_release_entry_window_ready": 0,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        pregrade_current_rows = int(live_audit.get("current_release_rows") or 0)
+        pregrade_current_ready = int(live_audit.get("current_release_entry_window_ready") or 0)
+        if current_release_rows and current_release_ready == current_release_rows:
+            readiness_status = "CURRENT_RELEASE_READY"
+        elif current_release_rows and current_release_ready > 0:
+            readiness_status = "CURRENT_RELEASE_PARTIAL"
+        elif current_release_rows:
+            readiness_status = "CURRENT_RELEASE_NOT_READY"
+        elif pregrade_current_rows and pregrade_current_ready > 0:
+            readiness_status = "CURRENT_RELEASE_CAPTURED_AWAITING_QUALIFICATION_LINKAGE"
+        elif pregrade_current_rows:
+            readiness_status = "CURRENT_RELEASE_CAPTURE_PRESENT_ENTRY_WINDOW_NOT_READY"
+        else:
+            readiness_status = "WAITING_FOR_CURRENT_RELEASE_LIVE_CAPTURE"
         return {
-            "schema_version": "apex.actionability_capture_readiness.v1",
-            "status": (
-                "CURRENT_RELEASE_READY"
-                if current_release_rows and current_release_ready == current_release_rows
-                else "CURRENT_RELEASE_PARTIAL"
-                if current_release_rows and current_release_ready > 0
-                else "WAITING_FOR_CURRENT_RELEASE_LIVE_CAPTURE"
-                if not current_release_rows
-                else "CURRENT_RELEASE_NOT_READY"
-            ),
+            "schema_version": "apex.actionability_capture_readiness.v2",
+            "status": readiness_status,
             "sample_size": total,
             "entry_window_evidence_available": ready,
             "entry_window_evidence_pct": round(100.0 * ready / total, 2) if total else None,
@@ -1692,6 +1709,13 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                 if current_release_rows else None
             ),
             "current_release_qualification_ready": bool(current_release_ready),
+            "current_release_pregrade_rows": pregrade_current_rows,
+            "current_release_pregrade_entry_window_ready": pregrade_current_ready,
+            "current_release_pregrade_entry_window_ready_pct": (
+                round(100.0 * pregrade_current_ready / pregrade_current_rows, 2)
+                if pregrade_current_rows else None
+            ),
+            "live_capture_audit": live_audit,
             "historical_missing_policy_never_inferred": True,
             "production_effect": PRODUCTION_EFFECT,
             "execution_authority": False,
@@ -1700,7 +1724,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     capture_readiness = actionability_capture_readiness(abstention_rows)
 
     counterfactual_regret = {
-        "schema_version": "apex.counterfactual_regret_qualification.v2",
+        "schema_version": "apex.counterfactual_regret_qualification.v3",
         "status": "READY" if abstention_rows else "WAITING_FOR_OBSERVATIONAL_NO_TRADE",
         "population_contract": "CANONICAL_OBSERVATIONAL_NO_TRADE_BLOCKER_TARGETED_QUALIFICATION",
         "sample_size": len(abstention_rows),
@@ -1734,6 +1758,8 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "requires_valid_in_window_excursion": True,
             "requires_canonical_directional_grade_correct": True,
             "current_policy_reference_can_backfill_historical_actionability": False,
+            "pregrade_live_capture_audit_separate_from_graded_qualification": True,
+            "zero_graded_current_release_rows_does_not_imply_capture_failure": True,
             "stop_geometry_required_for_counterfactual_eligibility": False,
             "execution_viability_proven": False,
         },
@@ -1981,6 +2007,22 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
 
 
 
+def actionability_capture_readiness_validation(*, evidence_path: Optional[str] = None,
+                                                limit: int = 100) -> Dict[str, Any]:
+    """Return pre-grade live capture truth directly from the canonical decision ledger."""
+    from .evidence_pipeline import DEFAULT_DB as evidence_default_db
+    from .historical_evidence_lifecycle import actionability_capture_audit
+    resolved = evidence_path or str(evidence_default_db)
+    out = actionability_capture_audit(path=resolved, limit=limit)
+    return {
+        **out,
+        "production_effect": PRODUCTION_EFFECT,
+        "behavioral_authority": False,
+        "execution_authority": False,
+        "broker_mutation": False,
+    }
+
+
 def counterfactual_regret_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                                       evidence_path: Optional[str] = None) -> Dict[str, Any]:
     """Return strict actionability-qualified regret diagnostics without authority."""
@@ -1990,7 +2032,7 @@ def counterfactual_regret_validation(*, symbol: str = "SPX", path: Optional[str]
         "ok": bool(full.get("ok")),
         "status": block.get("status") or full.get("status"),
         "version": VERSION,
-        "schema_version": block.get("schema_version") or "apex.counterfactual_regret_qualification.v2",
+        "schema_version": block.get("schema_version") or "apex.counterfactual_regret_qualification.v3",
         "symbol": _u(symbol, "SPX"),
         "metadata_join": full.get("metadata_join") or {},
         "counterfactual_regret": block,
@@ -2312,6 +2354,6 @@ def capability() -> Dict[str, Any]:
             "CANONICAL_ENTRY", "FAILED_BREAKDOWN_ENTRY_ELIGIBLE", "BLOCKED_TRIGGERS"],
             "observation_window_seconds": MAX_HOLD_SECONDS,
             "manual_etrade_handoff": True, "automatic_order_submission": False,
-            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "actionability_window_capture": True, "decision_time_entry_risk_policy_capture": True, "actionability_capture_provenance": True, "actionability_capture_readiness": True, "string_recommendation_capture": True, "counterfactual_regret_qualification": True, "no_explicit_blocker_diagnostics": True, "historical_current_cutoff_inference_disabled": True, "target_absence_provenance": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
+            "canonical_outcome_linkage": True, "canonical_decision_id_propagation": True, "blocked_reason_visibility": True, "trade_visualization": True, "learning_readiness_surface": True, "calibration_readiness_verification": True, "predictive_validation_surface": True, "calibration_fragmentation_diagnostics": True, "calibration_context_diversity_audit": True, "confidence_reliability_audit": True, "session_conditioned_reliability": True, "decision_class_separation": True, "release_cohort_attribution": True, "predictive_metadata_join_diagnostics": True, "metadata_parse_isolation": True, "context_capture_integrity_closure": True, "session_conditioned_abstention_regret": True, "blocker_effectiveness_validation": True, "counterfactual_tradeability_guardrails": True, "five_minute_observation_integrity": True, "late_observation_exclusion": True, "observation_window_incomplete_state": True, "canonical_grader_horizon_verification": True, "explicit_target_threshold_recovery": True, "actionability_window_capture": True, "decision_time_entry_risk_policy_capture": True, "actionability_capture_provenance": True, "actionability_capture_readiness": True, "pregrade_live_actionability_capture_audit": True, "capture_lifecycle_attribution": True, "string_recommendation_capture": True, "counterfactual_regret_qualification": True, "no_explicit_blocker_diagnostics": True, "historical_current_cutoff_inference_disabled": True, "target_absence_provenance": True, "cross_cohort_decomposition": True, "trigger_effectiveness_observational_only": True,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}

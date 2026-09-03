@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.9.7",
-  "build_name": "Decision-Time Actionability Capture Wiring & Qualification Readiness Closure",
+  "apex_version": "69.9.8",
+  "build_name": "Live Actionability Capture Probe & Lifecycle Attribution Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-09-02",
+  "released_at": "2026-09-03",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -375,15 +375,24 @@
     "counterfactual_regret_behavioral_authority": false,
     "counterfactual_regret_execution_authority": false,
     "automatic_blocker_adjustment": false,
-    "automatic_cutoff_adjustment": false
+    "automatic_cutoff_adjustment": false,
+    "pregrade_live_actionability_audit_observational_only": true,
+    "pregrade_live_actionability_audit_changes_trade_decisions": false,
+    "pregrade_live_actionability_audit_changes_execution_authority": false,
+    "zero_graded_current_release_rows_is_capture_failure": false,
+    "current_release_capture_truth_read_from_canonical_decision_ledger": true,
+    "live_capture_audit_backfills_history": false,
+    "live_capture_audit_infers_missing_policy": false,
+    "capture_lifecycle_attribution_enabled": true,
+    "actionability_runtime_probe_enabled": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.9.7",
-  "application_version": "69.9.7",
+  "semantic_version": "69.9.8",
+  "application_version": "69.9.8",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
