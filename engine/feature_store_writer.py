@@ -62,7 +62,7 @@ from .feature_store import (
 )
 from . import feature_store_db, flow_pl_store, decision_provenance
 
-WRITER_VERSION = "69.4.1_FEATURE_STORE_WRITER"
+WRITER_VERSION = "69.9.9_FEATURE_STORE_WRITER"
 
 _GAP_S = float(os.getenv("FLOW_CLUSTER_GAP_S", "120"))
 # A decision informed by a 20-minute-old frame is barely informed. Recorded per
@@ -134,6 +134,10 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                   ticker: str = "SPX",
                   defer_excursion_capture: bool = False) -> Dict[str, Any]:
     """Write pre-decision vectors for every SEALED cluster. Never raises.
+
+    Production callers must use the default ``defer_excursion_capture=False``.
+    The compatibility switch remains test/replay-only; live persistence owns
+    canonical excursion invocation at the same post-write identity boundary.
 
     Returns a report — counts plus why samples were skipped, so a store that
     stays empty explains itself instead of looking healthy.

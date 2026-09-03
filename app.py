@@ -4534,25 +4534,26 @@ def scanner_loop() -> None:
                         with REPLAY_STORE_LOCK:
                             _frames = [f for f in REPLAY_STORE.get(_sess, [])
                                        if str(f.get("ticker", "")).upper() == ASSISTANT_TICKER]
+                        # APEX 69.9.9: canonical excursion capture is owned by the
+                        # feature writer itself and occurs only after the immutable
+                        # feature row and canonical sample identity are persisted.
+                        # Do not defer to a second production handoff: that boundary
+                        # allowed live feature rows to exist with capture_attempts=0.
                         _rep = _fs_writer.write_samples(
                             priced_clusters=_res["source_clusters"], replay_rows=_frames,
                             session_date=_sess,
                             now_et_seconds=_n.hour * 3600 + _n.minute * 60 + _n.second,
                             ticker=ASSISTANT_TICKER,
-                            defer_excursion_capture=True)
-                        # APEX 69.4.3: invoke canonical excursion capture only after
-                        # feature persistence/identity publication. This is the scanner-
-                        # owned production invocation boundary; no sample_id is rebuilt.
-                        if _flow_pl_capture_persisted is not None:
-                            _cap = _flow_pl_capture_persisted(
-                                _rep.get("capture_targets") or [])
-                            if _cap.get("attempted"):
-                                print(
-                                    "flow_excursion: attempted "
-                                    f"{_cap['attempted']} canonical mark(s); "
-                                    f"inserted={_cap['inserted']} updated={_cap['updated']} "
-                                    f"missing_pl={_cap['missing_pl']} errors={_cap['errors']}",
-                                    flush=True)
+                            defer_excursion_capture=False)
+                        if _rep.get("excursion_capture_attempts"):
+                            print(
+                                "flow_excursion: attempted "
+                                f"{_rep['excursion_capture_attempts']} canonical mark(s); "
+                                f"inserted={_rep['excursions_inserted']} "
+                                f"updated={_rep['excursions_updated']} "
+                                f"missing_pl={_rep['excursion_missing_pl']} "
+                                f"errors={_rep['excursion_capture_errors']}",
+                                flush=True)
                         if _rep.get("written"):
                             print(f"feature_store: wrote {_rep['written']} sample(s).",
                                   flush=True)
