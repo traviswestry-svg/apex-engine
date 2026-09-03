@@ -1,4 +1,4 @@
-"""APEX 69.9.7 — Decision-Time Actionability Capture Wiring & Qualification Readiness Closure.
+"""APEX 69.9.8 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
 
 Runtime-only bridge connecting the canonical Institutional OS decision to the
 existing durable evidence ledger.  This module is observational: it never
@@ -16,9 +16,10 @@ from typing import Any, Dict, Mapping, Optional
 
 from .evidence_pipeline import DEFAULT_DB, readiness, record_price, record_snapshot
 from .outcome_grader import run_grader
+from .canonical_persistence import connect as canonical_connect
 
-VERSION = "69.9.7"
-SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.5"
+VERSION = "69.9.8"
+SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.6"
 
 _LOCK = threading.RLock()
 _RUNTIME: Dict[str, Any] = {
@@ -38,6 +39,15 @@ _RUNTIME: Dict[str, Any] = {
     "market_memory_captures": 0,
     "market_memory_duplicates": 0,
     "market_memory_errors": 0,
+    "actionability_capture_attempts": 0,
+    "actionability_capture_ready": 0,
+    "actionability_capture_missing": 0,
+    "last_actionability_capture_at": None,
+    "last_actionability_capture_version": None,
+    "last_entry_window_source": None,
+    "last_entry_cutoff_et": None,
+    "last_cutoff_passed": None,
+    "last_actionability_capture_provenance": {},
 }
 _MEMORY_KEYS: set[str] = set()
 
@@ -285,7 +295,7 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
 
     actionability_capture = {
         "schema_version": "apex.counterfactual_actionability_capture.v2",
-        "capture_version": "69.9.7",
+        "capture_version": VERSION,
         "session_intelligence_present": bool(session_intelligence),
         "session_mode": session_authority.get("mode"),
         "entry_window_source": entry_window_source,
@@ -424,8 +434,25 @@ def capture_decision(result: Mapping[str, Any], *, session_state: Optional[str] 
                      path: str | Path = DEFAULT_DB) -> Dict[str, Any]:
     """Persist one canonical composed decision. Idempotent by decision_id."""
     snap = build_snapshot(result, session_state=session_state)
+    actionability = _m(snap.get("counterfactual_actionability"))
+    actionability_ready = bool(
+        actionability.get("entry_window_source_present")
+        and actionability.get("entry_cutoff_et") not in (None, "")
+        and actionability.get("cutoff_passed") is not None
+    )
     with _LOCK:
         _RUNTIME["decision_attempts"] += 1
+        _RUNTIME["actionability_capture_attempts"] += 1
+        if actionability_ready:
+            _RUNTIME["actionability_capture_ready"] += 1
+        else:
+            _RUNTIME["actionability_capture_missing"] += 1
+        _RUNTIME["last_actionability_capture_at"] = snap.get("timestamp")
+        _RUNTIME["last_actionability_capture_version"] = actionability.get("capture_version")
+        _RUNTIME["last_entry_window_source"] = actionability.get("entry_window_source")
+        _RUNTIME["last_entry_cutoff_et"] = actionability.get("entry_cutoff_et")
+        _RUNTIME["last_cutoff_passed"] = actionability.get("cutoff_passed")
+        _RUNTIME["last_actionability_capture_provenance"] = dict(actionability.get("capture_provenance") or {})
     try:
         inserted = bool(record_snapshot(snap, path=path))
         with _LOCK:
@@ -516,6 +543,143 @@ def grade(*, path: str | Path = DEFAULT_DB) -> Dict[str, Any]:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def actionability_capture_audit(*, path: str | Path = DEFAULT_DB, limit: int = 100) -> Dict[str, Any]:
+    """Inspect persisted decision-time actionability before grading/trigger linkage.
+
+    This closes the observability gap where counterfactual qualification could report
+    zero current-release rows simply because new decisions had not yet graded. The
+    audit reads the canonical decision ledger directly and never mutates evidence.
+    """
+    resolved = Path(path)
+    base = {
+        "ok": True,
+        "version": VERSION,
+        "schema_version": "apex.live_actionability_capture_audit.v1",
+        "production_effect": "OBSERVATIONAL_ONLY",
+        "behavioral_authority": False,
+        "execution_authority": False,
+        "historical_policy_inference": False,
+        "current_release": VERSION,
+    }
+    if not resolved.exists():
+        return {**base, "status": "WAITING_FOR_EVIDENCE_DB", "sample_size": 0,
+                "current_release_rows": 0, "current_release_entry_window_ready": 0,
+                "current_release_entry_window_ready_pct": None, "recent_decisions": []}
+    bounded = max(1, min(int(limit or 100), 500))
+    rows: list[Dict[str, Any]] = []
+    parse_errors: list[Dict[str, str]] = []
+    try:
+        with canonical_connect(resolved, read_only=True, timeout=4) as conn:
+            has_table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='decisions'"
+            ).fetchone()
+            if not has_table:
+                return {**base, "status": "WAITING_FOR_DECISIONS_TABLE", "sample_size": 0,
+                        "current_release_rows": 0, "current_release_entry_window_ready": 0,
+                        "current_release_entry_window_ready_pct": None, "recent_decisions": []}
+            raw_rows = conn.execute(
+                """SELECT decision_id,observed_at,ticker,session,direction,action,status,snapshot_json
+                   FROM decisions ORDER BY observed_at DESC LIMIT ?""",
+                (bounded,),
+            ).fetchall()
+            grade_ids = {
+                str(r["decision_id"]) for r in conn.execute(
+                    "SELECT decision_id FROM grading_results WHERE decision_id IN (SELECT decision_id FROM decisions ORDER BY observed_at DESC LIMIT ?)",
+                    (bounded,),
+                ).fetchall()
+            }
+        for raw in raw_rows:
+            did = str(raw["decision_id"] or "")
+            try:
+                parsed = json.loads(raw["snapshot_json"] or "{}")
+                snap = dict(parsed) if isinstance(parsed, Mapping) else {}
+                actionability = _m(snap.get("counterfactual_actionability"))
+                release = str(snap.get("apex_release_version") or snap.get("version") or "UNKNOWN")
+                source_present = bool(actionability.get("entry_window_source_present"))
+                ready = bool(
+                    source_present
+                    and actionability.get("entry_cutoff_et") not in (None, "")
+                    and actionability.get("cutoff_passed") is not None
+                )
+                if not actionability:
+                    stage = "DECISION_PERSISTED_ACTIONABILITY_CAPTURE_MISSING"
+                elif ready:
+                    stage = "DECISION_PERSISTED_ENTRY_WINDOW_READY"
+                elif source_present:
+                    stage = "DECISION_PERSISTED_ENTRY_WINDOW_PARTIAL"
+                else:
+                    stage = "DECISION_PERSISTED_ENTRY_WINDOW_SOURCE_MISSING"
+                rows.append({
+                    "decision_id": did,
+                    "observed_at": raw["observed_at"],
+                    "ticker": raw["ticker"],
+                    "session": raw["session"],
+                    "direction": raw["direction"],
+                    "action": raw["action"],
+                    "decision_status": raw["status"],
+                    "release_version": release,
+                    "capture_version": actionability.get("capture_version"),
+                    "capture_schema_version": actionability.get("schema_version"),
+                    "entry_window_source": actionability.get("entry_window_source") or "UNAVAILABLE",
+                    "entry_window_source_present": source_present,
+                    "entry_cutoff_et": actionability.get("entry_cutoff_et"),
+                    "cutoff_passed": actionability.get("cutoff_passed"),
+                    "entry_window_authorized": actionability.get("entry_window_authorized"),
+                    "capture_provenance": dict(actionability.get("capture_provenance") or {}),
+                    "grade_present": did in grade_ids,
+                    "lifecycle_stage": stage,
+                })
+            except Exception as exc:
+                parse_errors.append({"decision_id": did, "error": f"{type(exc).__name__}: {exc}"})
+    except Exception as exc:
+        return {**base, "ok": False, "status": "EVIDENCE_READ_ERROR",
+                "error": f"{type(exc).__name__}: {exc}", "recent_decisions": []}
+
+    current = [r for r in rows if r.get("release_version") == VERSION]
+    current_ready = [r for r in current if r.get("lifecycle_stage") == "DECISION_PERSISTED_ENTRY_WINDOW_READY"]
+    source_counts: Dict[str, int] = {}
+    stage_counts: Dict[str, int] = {}
+    capture_versions: Dict[str, int] = {}
+    for row in rows:
+        source = str(row.get("entry_window_source") or "UNAVAILABLE")
+        source_counts[source] = source_counts.get(source, 0) + 1
+        stage = str(row.get("lifecycle_stage") or "UNKNOWN")
+        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+        cv = str(row.get("capture_version") or "LEGACY_OR_UNKNOWN")
+        capture_versions[cv] = capture_versions.get(cv, 0) + 1
+    if not current:
+        status = "WAITING_FOR_CURRENT_RELEASE_DECISION"
+    elif len(current_ready) == len(current):
+        status = "CURRENT_RELEASE_ENTRY_WINDOW_READY"
+    elif current_ready:
+        status = "CURRENT_RELEASE_ENTRY_WINDOW_PARTIAL"
+    else:
+        status = "CURRENT_RELEASE_ENTRY_WINDOW_NOT_READY"
+    return {
+        **base,
+        "status": status,
+        "sample_size": len(rows),
+        "parse_error_count": len(parse_errors),
+        "parse_errors": parse_errors[:20],
+        "capture_version_counts": capture_versions,
+        "entry_window_source_counts": source_counts,
+        "lifecycle_stage_counts": stage_counts,
+        "latest_decision_observed_at": rows[0].get("observed_at") if rows else None,
+        "latest_decision_release_version": rows[0].get("release_version") if rows else None,
+        "current_release_rows": len(current),
+        "current_release_entry_window_ready": len(current_ready),
+        "current_release_entry_window_ready_pct": (
+            round(100.0 * len(current_ready) / len(current), 2) if current else None
+        ),
+        "current_release_capture_hook_seen": bool(current),
+        "current_release_recent_decisions": current[:20],
+        "recent_decisions": rows[:50],
+        "interpretation": (
+            "This audit reads canonical decisions before grading and trigger linkage, so a zero counterfactual current-release row count can be separated from a missing live capture hook."
+        ),
+    }
+
+
 def runtime_status(*, path: str | Path = DEFAULT_DB) -> Dict[str, Any]:
     try:
         ready = readiness(path)
@@ -523,12 +687,17 @@ def runtime_status(*, path: str | Path = DEFAULT_DB) -> Dict[str, Any]:
         ready = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     with _LOCK:
         runtime = dict(_RUNTIME)
+    try:
+        live_capture = actionability_capture_audit(path=path, limit=50)
+    except Exception as exc:
+        live_capture = {"ok": False, "status": "AUDIT_ERROR", "error": f"{type(exc).__name__}: {exc}"}
     return {
         "ok": bool(ready.get("ok", False)),
         "version": VERSION,
         "schema_version": SCHEMA_VERSION,
         "readiness": ready,
         "runtime": runtime,
+        "live_actionability_capture_audit": live_capture,
         "guardrails": {
             "backfills_history": False,
             "creates_synthetic_evidence": False,

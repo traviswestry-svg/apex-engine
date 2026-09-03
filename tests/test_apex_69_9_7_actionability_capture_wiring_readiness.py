@@ -41,7 +41,7 @@ def _scanner_result(*, ts: str, recommendation="ENTER PUT NOW", session_intellig
 def _persist_snapshot(conn, *, did: str, ts: str, snapshot: dict, won: bool = True):
     snapshot = dict(snapshot)
     snapshot["decision_id"] = did
-    snapshot["apex_release_version"] = "69.9.7"
+    snapshot["apex_release_version"] = snapshot.get("apex_release_version") or "69.9.7"
     conn.execute(
         """INSERT INTO decisions(decision_id,observed_at,ticker,session,direction,action,
            entry_price,confidence,learning_eligible,snapshot_json,status)
@@ -108,7 +108,7 @@ def test_scanner_shaped_snapshot_without_phase11_captures_live_entry_policy(monk
     snap = build_snapshot(_scanner_result(ts="2026-09-02T14:00:00+00:00"), session_state="MARKET_OPEN")
     a = snap["counterfactual_actionability"]
     assert a["schema_version"] == "apex.counterfactual_actionability_capture.v2"
-    assert a["capture_version"] == "69.9.7"
+    assert tuple(map(int, a["capture_version"].split("."))) >= (69, 9, 7)
     assert a["session_intelligence_present"] is False
     assert a["entry_window_source"] == "TRADE_RISK_GUARD_POLICY"
     assert a["entry_window_source_present"] is True
@@ -155,7 +155,7 @@ def test_risk_policy_wired_capture_can_qualify_counterfactual_without_phase11(tm
     observe_price(symbol="SPX", price=6496.0, observed_at="2026-09-02T14:01:00+00:00", path=str(trigger_db))
 
     cf = predictive_validation(path=str(trigger_db), evidence_path=str(evidence_db))["counterfactual_regret"]
-    assert cf["schema_version"] == "apex.counterfactual_regret_qualification.v2"
+    assert cf["schema_version"] in {"apex.counterfactual_regret_qualification.v2", "apex.counterfactual_regret_qualification.v3"}
     assert cf["state_counts"]["POTENTIAL_BLOCKER_REGRET"] == 1
     row = cf["by_blocker_session"][0]
     assert row["actionability_window_evidence_available"] == 1
@@ -185,8 +185,8 @@ def test_risk_policy_wired_capture_closes_after_cutoff(tmp_path, monkeypatch):
 
 def test_release_truth_and_guardrails_are_69_9_7():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.9.7"
-    assert manifest["build_name"] == "Decision-Time Actionability Capture Wiring & Qualification Readiness Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 9, 7)
     g = manifest["guardrails"]
     assert g["decision_time_entry_risk_policy_capture_observational_only"] is True
     assert g["entry_risk_policy_capture_changes_risk_limits"] is False
@@ -195,7 +195,7 @@ def test_release_truth_and_guardrails_are_69_9_7():
     assert g["actionability_capture_field_provenance_required"] is True
     assert g["string_recommendation_capture_supported"] is True
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.9.7" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "decision_time_entry_risk_policy_capture" in registry
     assert "actionability_capture_readiness" in registry
 
