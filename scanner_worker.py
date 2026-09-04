@@ -438,6 +438,7 @@ def main() -> int:
             "historical_evidence_lifecycle": evidence_runtime_status(),
             "feature_label_settlement": _FLOW_SETTLEMENT_SCHEDULER.status(),
             "flow_learning_stores": dict(_FLOW_LEARNING_STORE_RUNTIME),
+            "flow_learning_runtime": apex_app.flow_learning_runtime_status(),
             "flow_excursion_capture": _flow_pl_store.sample_excursion_health(),
             "tick_momentum_feed": dict(_TICK_MOMENTUM_RUNTIME),
         })

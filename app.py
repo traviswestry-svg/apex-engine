@@ -18,6 +18,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from flask import Flask, jsonify, render_template, request, redirect, g, has_request_context
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
+from engine.scanner_runtime_truth import resolve_scanner_runtime
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
@@ -803,6 +804,34 @@ FLOW_PL_SAMPLE_SESSIONS = {
     s.strip().upper() for s in
     os.getenv("FLOW_PL_SAMPLE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
 }
+
+# APEX 69.10.1: scanner-owned observability for the live flow learning/capture path.
+# This is process-local telemetry only and never participates in decisions. The
+# dedicated scanner process publishes it through the canonical heartbeat.
+_FLOW_LEARNING_RUNTIME = {
+    "version": "69.10.1",
+    "cycles": 0,
+    "live_session_cycles": 0,
+    "pipeline_runs": 0,
+    "source_clusters": 0,
+    "samples_recorded": 0,
+    "writer_invocations": 0,
+    "feature_rows_written": 0,
+    "capture_attempts": 0,
+    "capture_inserted": 0,
+    "capture_updated": 0,
+    "capture_missing_pl": 0,
+    "capture_errors": 0,
+    "last_cycle_at": None,
+    "last_pipeline_at": None,
+    "last_writer_at": None,
+    "last_state": "NOT_RUN",
+    "last_skip_reason": None,
+    "last_pipeline_status": None,
+}
+
+def flow_learning_runtime_status():
+    return dict(_FLOW_LEARNING_RUNTIME)
 
 # APEX 9 Step 5a — point-in-time feature store + leakage guards. No similarity
 # engine yet: the store and its refusals are built and proven first, because a
@@ -4523,58 +4552,85 @@ def scanner_loop() -> None:
                     print(f"premium_strategy: graded {_pg} recommendation(s).", flush=True)
             except Exception as e:
                 print(f"premium grade error (recovered): {e}", flush=True)
-        # APEX 9 Step 4.1 / 5a.1: sample theoretical flow P/L so MFE/MAE describe the
-        # session rather than whenever a dashboard happened to be open, and write
-        # feature-store samples for any cluster that has SEALED. Both use ONE
-        # pipeline run — running it twice would double the chain calls.
-        if (SAMPLE_FLOW_PL_IN_SCANNER and FLOW_PL_SAMPLER_AVAILABLE
-                and _flow_pl_run is not None and globals().get("_FLOW_PL_SAMPLE_ARGS")):
+        # APEX 9 Step 4.1 / 5a.1 + 69.10.1 lifecycle closure: sample theoretical
+        # flow P/L and persist sealed-cluster features from one canonical pipeline run. The feature writer itself remains the canonical post-persistence excursion owner.
+        # Every cycle publishes an explicit state so zero capture attempts can be
+        # distinguished from NO_FLOW, SESSION_GATED, PIPELINE_UNAVAILABLE, or errors.
+        _FLOW_LEARNING_RUNTIME["cycles"] += 1
+        _FLOW_LEARNING_RUNTIME["last_cycle_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        _flow_session = session_status()
+        if not SAMPLE_FLOW_PL_IN_SCANNER:
+            _FLOW_LEARNING_RUNTIME.update({"last_state": "DISABLED", "last_skip_reason": "SAMPLE_FLOW_PL_IN_SCANNER_FALSE"})
+        elif not FLOW_PL_SAMPLER_AVAILABLE or _flow_pl_run is None:
+            _FLOW_LEARNING_RUNTIME.update({"last_state": "UNAVAILABLE", "last_skip_reason": "FLOW_PL_PIPELINE_UNAVAILABLE"})
+        elif not globals().get("_FLOW_PL_SAMPLE_ARGS"):
+            _FLOW_LEARNING_RUNTIME.update({"last_state": "UNAVAILABLE", "last_skip_reason": "FLOW_PL_SAMPLE_ARGS_UNWIRED"})
+        elif _flow_session not in FLOW_PL_SAMPLE_SESSIONS:
+            _FLOW_LEARNING_RUNTIME.update({"last_state": "SESSION_GATED", "last_skip_reason": _flow_session})
+        else:
+            _FLOW_LEARNING_RUNTIME["live_session_cycles"] += 1
             try:
-                if session_status() in FLOW_PL_SAMPLE_SESSIONS:
-                    _res = _flow_pl_run(**globals()["_FLOW_PL_SAMPLE_ARGS"],
-                                        attach_excursions=False) or {}
-                    _fs = int(_res.get("samples_recorded") or 0)
-                    if _fs:
-                        print(f"flow_pl: sampled {_fs} print(s).", flush=True)
+                _FLOW_LEARNING_RUNTIME["pipeline_runs"] += 1
+                _FLOW_LEARNING_RUNTIME["last_pipeline_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+                _res = _flow_pl_run(**globals()["_FLOW_PL_SAMPLE_ARGS"], attach_excursions=False) or {}
+                _FLOW_LEARNING_RUNTIME["last_pipeline_status"] = _res.get("upstream_status") or ("AVAILABLE" if _res.get("available") else "UNAVAILABLE")
+                _fs = int(_res.get("samples_recorded") or 0)
+                _clusters = list(_res.get("source_clusters") or [])
+                _FLOW_LEARNING_RUNTIME["samples_recorded"] += _fs
+                _FLOW_LEARNING_RUNTIME["source_clusters"] += len(_clusters)
+                if _fs:
+                    print(f"flow_pl: sampled {_fs} print(s).", flush=True)
 
-                    # Feature store: write sealed clusters, reusing these priced
-                    # clusters. decision_time is the cluster's end_time, so waiting
-                    # for the seal never leaks hindsight into the vector.
-                    if (WRITE_FEATURES_IN_SCANNER and FEATURE_WRITER_AVAILABLE
-                            and _fs_writer is not None
-                            and session_status() in FEATURE_WRITE_SESSIONS
-                            and _res.get("source_clusters")):
-                        _n = now_et()
-                        _sess = _n.strftime("%Y-%m-%d")
-                        with REPLAY_STORE_LOCK:
-                            _frames = [f for f in REPLAY_STORE.get(_sess, [])
-                                       if str(f.get("ticker", "")).upper() == ASSISTANT_TICKER]
-                        # APEX 69.9.9: canonical excursion capture is owned by the
-                        # feature writer itself and occurs only after the immutable
-                        # feature row and canonical sample identity are persisted.
-                        # Do not defer to a second production handoff: that boundary
-                        # allowed live feature rows to exist with capture_attempts=0.
-                        _rep = _fs_writer.write_samples(
-                            priced_clusters=_res["source_clusters"], replay_rows=_frames,
-                            session_date=_sess,
-                            now_et_seconds=_n.hour * 3600 + _n.minute * 60 + _n.second,
-                            ticker=ASSISTANT_TICKER,
-                            defer_excursion_capture=False)
-                        if _rep.get("excursion_capture_attempts"):
-                            print(
-                                "flow_excursion: attempted "
-                                f"{_rep['excursion_capture_attempts']} canonical mark(s); "
-                                f"inserted={_rep['excursions_inserted']} "
-                                f"updated={_rep['excursions_updated']} "
-                                f"missing_pl={_rep['excursion_missing_pl']} "
-                                f"errors={_rep['excursion_capture_errors']}",
-                                flush=True)
-                        if _rep.get("written"):
-                            print(f"feature_store: wrote {_rep['written']} sample(s).",
-                                  flush=True)
-                        for _r in (_rep.get("reasons") or [])[:2]:
-                            print(f"feature_store: {_r}", flush=True)
+                if not _clusters:
+                    _FLOW_LEARNING_RUNTIME.update({
+                        "last_state": "NO_SOURCE_CLUSTERS",
+                        "last_skip_reason": _res.get("note") or _res.get("upstream_status") or "NO_SOURCE_CLUSTERS",
+                    })
+                elif not WRITE_FEATURES_IN_SCANNER:
+                    _FLOW_LEARNING_RUNTIME.update({"last_state": "FEATURE_WRITER_DISABLED", "last_skip_reason": "WRITE_FEATURES_IN_SCANNER_FALSE"})
+                elif not FEATURE_WRITER_AVAILABLE or _fs_writer is None:
+                    _FLOW_LEARNING_RUNTIME.update({"last_state": "FEATURE_WRITER_UNAVAILABLE", "last_skip_reason": "FEATURE_WRITER_UNAVAILABLE"})
+                elif _flow_session not in FEATURE_WRITE_SESSIONS:
+                    _FLOW_LEARNING_RUNTIME.update({"last_state": "FEATURE_SESSION_GATED", "last_skip_reason": _flow_session})
+                else:
+                    _n = now_et()
+                    _sess = _n.strftime("%Y-%m-%d")
+                    with REPLAY_STORE_LOCK:
+                        _frames = [f for f in REPLAY_STORE.get(_sess, [])
+                                   if str(f.get("ticker", "")).upper() == ASSISTANT_TICKER]
+                    _FLOW_LEARNING_RUNTIME["writer_invocations"] += 1
+                    _FLOW_LEARNING_RUNTIME["last_writer_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+                    _rep = _fs_writer.write_samples(
+                        priced_clusters=_clusters, replay_rows=_frames,
+                        session_date=_sess,
+                        now_et_seconds=_n.hour * 3600 + _n.minute * 60 + _n.second,
+                        ticker=ASSISTANT_TICKER, defer_excursion_capture=False)
+                    _FLOW_LEARNING_RUNTIME["feature_rows_written"] += int(_rep.get("written") or 0)
+                    _FLOW_LEARNING_RUNTIME["capture_attempts"] += int(_rep.get("excursion_capture_attempts") or 0)
+                    _FLOW_LEARNING_RUNTIME["capture_inserted"] += int(_rep.get("excursions_inserted") or 0)
+                    _FLOW_LEARNING_RUNTIME["capture_updated"] += int(_rep.get("excursions_updated") or 0)
+                    _FLOW_LEARNING_RUNTIME["capture_missing_pl"] += int(_rep.get("excursion_missing_pl") or 0)
+                    _FLOW_LEARNING_RUNTIME["capture_errors"] += int(_rep.get("excursion_capture_errors") or 0)
+                    _FLOW_LEARNING_RUNTIME.update({
+                        "last_state": "CAPTURE_ATTEMPTED" if _rep.get("excursion_capture_attempts") else "WRITER_NO_CAPTURE_TARGET",
+                        "last_skip_reason": None if _rep.get("excursion_capture_attempts") else ((_rep.get("reasons") or ["NO_SEALED_CAPTURE_TARGET"])[0]),
+                    })
+                    if _rep.get("excursion_capture_attempts"):
+                        print("flow_excursion: attempted "
+                              f"{_rep['excursion_capture_attempts']} canonical mark(s); "
+                              f"inserted={_rep['excursions_inserted']} "
+                              f"updated={_rep['excursions_updated']} "
+                              f"missing_pl={_rep['excursion_missing_pl']} "
+                              f"errors={_rep['excursion_capture_errors']}", flush=True)
+                    if _rep.get("written"):
+                        print(f"feature_store: wrote {_rep['written']} sample(s).", flush=True)
+                    for _r in (_rep.get("reasons") or [])[:2]:
+                        print(f"feature_store: {_r}", flush=True)
             except Exception as e:
+                _FLOW_LEARNING_RUNTIME.update({
+                    "last_state": "ERROR",
+                    "last_skip_reason": f"{type(e).__name__}: {e}",
+                })
                 print(f"flow P/L sample error (recovered): {e}", flush=True)
 
         # APEX 9 Step 5a.1: settle labels once the cash session has closed. Labels
@@ -7133,25 +7189,36 @@ def _deployment_metadata():
     }
 
 
+def _effective_scanner_runtime(generated_dt=None):
+    """Resolve scanner truth across the web/scanner process boundary."""
+    hb = read_scanner_heartbeat() or {}
+    return resolve_scanner_runtime(
+        local_started=bool(SCANNER_STARTED),
+        local_thread_alive=bool(STATE.get("scanner_thread_alive", SCANNER_STARTED)),
+        heartbeat=hb,
+        stale_after_seconds=float(os.getenv("APEX_SCANNER_HEARTBEAT_STALE_SECONDS", "45")),
+    )
+
 @app.route("/health")
 def health():
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
+    _scanner_runtime = _effective_scanner_runtime(generated_dt)
     with STATE_LOCK:
-        scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
+        scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at") or _scanner_runtime.get("process_last_scan_at")
         s_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
         s_sources = SCANNER_STATE.get("data_sources") or STATE.get("data_sources") or {}
         s_session = session_status()
         s_inprog = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
         scan_started_at = SCANNER_STATE.get("scan_started_at") or STATE.get("scan_started_at")
-        scanner_heartbeat_at = SCANNER_STATE.get("scanner_heartbeat_at") or STATE.get("scanner_heartbeat_at")
-        scanner_thread_alive = bool(STATE.get("scanner_thread_alive", SCANNER_STARTED))
+        scanner_heartbeat_at = SCANNER_STATE.get("scanner_heartbeat_at") or STATE.get("scanner_heartbeat_at") or _scanner_runtime.get("process_heartbeat_at")
+        scanner_thread_alive = bool(_scanner_runtime.get("effective_thread_alive"))
         last_error = STATE.get("last_error")
         _mode = system_mode(s_session)
         _hstate = _resolve_health_state(
             session=s_session, scan_in_progress=s_inprog,
             updated_at=scan_updated_at, last_scan_duration=s_duration,
-            scanner_started=SCANNER_STARTED,
+            scanner_started=bool(_scanner_runtime.get("effective_started")),
         )
 
     scan_age = _iso_age_seconds(scan_updated_at, generated_dt)
@@ -7181,7 +7248,8 @@ def health():
         "health_age_seconds": scan_age if scan_age is not None else 0.0,
         "process_started_at": APP_PROCESS_STARTED_AT,
         "process_uptime_seconds": _iso_age_seconds(APP_PROCESS_STARTED_AT, generated_dt),
-        "scanner_started": SCANNER_STARTED,
+        "scanner_started": bool(_scanner_runtime.get("effective_started")),
+        "scanner_state_source": _scanner_runtime.get("source"),
         "scanner_thread_alive": scanner_thread_alive,
         "scanner_heartbeat_at": scanner_heartbeat_at,
         "scanner_heartbeat_age_seconds": heartbeat_age,
@@ -7201,7 +7269,7 @@ def health():
             {"available": False, "state": "NOT_EXPECTED", "error": None,
              "detail": "Heartbeat is not required while the scanner is scheduled idle."}
             if not _hstate.get("scanner_expected", s_session == "MARKET_OPEN")
-            else read_scanner_heartbeat()
+            else _scanner_runtime.get("heartbeat")
         ),
         "is_tradeable": s_session == "MARKET_OPEN",
     })
@@ -14533,8 +14601,9 @@ def _apex65_runtime_health_payload():
             "components": [], "error": "Runtime health aggregator unavailable",
         }
 
+    _scanner_runtime = _effective_scanner_runtime(generated_dt)
     with STATE_LOCK:
-        scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
+        scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at") or _scanner_runtime.get("process_last_scan_at")
         scan_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
         raw_sources = dict(SCANNER_STATE.get("data_sources") or STATE.get("data_sources") or {})
         scan_in_progress = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
@@ -14542,7 +14611,7 @@ def _apex65_runtime_health_payload():
     session = session_status()
     hstate = _resolve_health_state(
         session=session, scan_in_progress=scan_in_progress, updated_at=scan_updated_at,
-        last_scan_duration=scan_duration, scanner_started=SCANNER_STARTED, now=generated_dt,
+        last_scan_duration=scan_duration, scanner_started=bool(_scanner_runtime.get("effective_started")), now=generated_dt,
     )
     engine_rows, engine_counts = _compute_engine_health(last)
     engine_counts["expected"] = bool(session == "MARKET_OPEN" or last)

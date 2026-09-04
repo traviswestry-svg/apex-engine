@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.0",
-  "build_name": "Flow Surprise Intelligence & Gamma Transition Dynamics",
+  "apex_version": "69.10.1",
+  "build_name": "Scanner Lifecycle & Flow Excursion Capture Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-09-03",
+  "released_at": "2026-09-04",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -403,15 +403,22 @@
     "gamma_transition_execution_authority": false,
     "gamma_transition_uses_existing_gamma_engine": true,
     "gamma_transition_stale_derivatives_allowed": false,
-    "automatic_calibration_activation": false
+    "automatic_calibration_activation": false,
+    "scanner_health_prefers_fresh_cross_process_heartbeat": true,
+    "scanner_web_local_state_not_authoritative_in_dedicated_process_mode": true,
+    "flow_excursion_capture_forward_only": true,
+    "flow_excursion_historical_backfill_from_coarse_cluster_envelope": false,
+    "flow_learning_runtime_observability": true,
+    "execution_authority": false,
+    "behavioral_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.0",
-  "application_version": "69.10.0",
+  "semantic_version": "69.10.1",
+  "application_version": "69.10.1",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
