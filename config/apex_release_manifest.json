@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.9.10",
-  "build_name": "Recommendation-Layer No-Trade Blocker Attribution Closure",
+  "apex_version": "69.10.0",
+  "build_name": "Flow Surprise Intelligence & Gamma Transition Dynamics",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -392,15 +392,26 @@
     "live_flow_excursion_backfills_history": false,
     "live_flow_excursion_synthetic_pl_allowed": false,
     "live_flow_excursion_changes_trade_decisions": false,
-    "live_flow_excursion_changes_execution_authority": false
+    "live_flow_excursion_changes_execution_authority": false,
+    "flow_surprise_observational_only": true,
+    "flow_surprise_behavioral_authority": false,
+    "flow_surprise_execution_authority": false,
+    "flow_surprise_uses_canonical_flow_clusters": true,
+    "flow_surprise_double_discount_independence": false,
+    "gamma_transition_observational_only": true,
+    "gamma_transition_behavioral_authority": false,
+    "gamma_transition_execution_authority": false,
+    "gamma_transition_uses_existing_gamma_engine": true,
+    "gamma_transition_stale_derivatives_allowed": false,
+    "automatic_calibration_activation": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.9.10",
-  "application_version": "69.9.10",
+  "semantic_version": "69.10.0",
+  "application_version": "69.10.0",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

@@ -430,6 +430,7 @@ def build_gamma_from_quantdata_response(data: Dict[str, Any], ticker: str = "SPX
         "stock_price": _round_level(normalized_stock_price),
         "raw_stock_price": raw_stock_price,
         "net_gamma_ratio": round(net_ratio, 4),
+        "net_gex": round(total_net, 6),
         "strike_count": len(filtered),
         "raw_strike_count": len(by_strike),
         "zero_gamma_method": zero_details.get("active_method"),

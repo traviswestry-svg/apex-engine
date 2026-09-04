@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait
-from flask import Flask, jsonify, render_template, request, redirect, g
+from flask import Flask, jsonify, render_template, request, redirect, g, has_request_context
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
@@ -477,12 +477,14 @@ except Exception as _td39_err:
 # APEX Institutional OS 6.0.1 modular engines
 try:
     from engine.gamma import build_gamma_from_quantdata_response, normalize_index_level_v6
+    from engine.gamma_transition import observe_gamma_transition
     from engine.data_bus import build_market_state as build_market_state_v6
     from engine.volume_profile import build_volume_profile
     from engine.auction import build_auction_state
     APEX_OS_601_AVAILABLE = True
 except Exception as _apex601_import_error:
     build_gamma_from_quantdata_response = None
+    observe_gamma_transition = None
     normalize_index_level_v6 = None
     build_market_state_v6 = None
     build_volume_profile = None
@@ -2732,7 +2734,18 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
         return {**empty, "gex_status": "NEUTRAL - NO GEX RETURNED", "quality_flags": ["NO_GEX_RESPONSE"], "gex_notes": ["QuantData exposure-by-strike returned no usable response."]}
 
     if build_gamma_from_quantdata_response is not None:
-        return build_gamma_from_quantdata_response(data, qd_ticker)
+        gamma = build_gamma_from_quantdata_response(data, qd_ticker)
+        if observe_gamma_transition is not None and not has_request_context():
+            try:
+                gamma["gamma_transition"] = observe_gamma_transition(gamma, ticker=qd_ticker, source="QUANTDATA_EXPOSURE_BY_STRIKE")
+            except Exception as exc:
+                gamma["gamma_transition"] = {"status": "UNAVAILABLE", "transition_state": "UNAVAILABLE", "error": type(exc).__name__,
+                                               "behavioral_authority": False, "execution_authority": False, "production_effect": "NONE"}
+        elif observe_gamma_transition is not None:
+            # HTTP read paths remain presentation-only; persisted transition state is scanner/background owned.
+            gamma["gamma_transition"] = {"status": "COLLECTING", "transition_state": "COLLECTING",
+                                           "behavioral_authority": False, "execution_authority": False, "production_effect": "NONE"}
+        return gamma
 
     # Defensive fallback if the modular package did not import.
     return {**empty, "gex_status": "NEUTRAL - GAMMA ENGINE UNAVAILABLE", "quality_flags": ["APEX_601_ENGINE_IMPORT_FAILED"], "gex_notes": ["APEX 6.0.1 gamma module was not importable."]}
@@ -3123,6 +3136,8 @@ def quantdata_flow_snapshot(ticker: str) -> Dict[str, Any]:
         "quality_flags": gex.get("quality_flags", []),
         "gamma_path": gex.get("gamma_path"),
         "gamma_term_structure": gex.get("gamma_term_structure"),
+        "gamma_transition": gex.get("gamma_transition"),
+        "net_gex": gex.get("net_gex"),
         "gamma_diagnostics": gex.get("diagnostics"),
         "notes": (decision.get("decision_reasons") or []) + (flow.get("flow_notes") or []) + (order.get("order_flow_notes") or []) + (gex.get("gex_notes") or []),
     }
