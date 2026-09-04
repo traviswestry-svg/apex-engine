@@ -22,6 +22,8 @@ from flask import jsonify, request
 
 from .flow_classifier import classify_flow_events
 from .flow_confirmation import TRACKER, market_snapshot
+from .flow_surprise import evaluate_flow_surprise
+from . import feature_store_db
 from .flow_clusters import (
     CLUSTER_CONFIG_VERSION,
     CLUSTER_VERSION,
@@ -105,6 +107,18 @@ def register_flow_clusters_routes(
             snap = market_snapshot(lr or {})
             result["clusters"] = TRACKER.observe(result.get("clusters", []), events_by_id, snap)
             result["singletons"] = TRACKER.observe(result.get("singletons", []), events_by_id, snap)
+            # APEX 69.10.0: contextual surprise consumes canonical cluster identity.
+            # It is observational only and never changes cluster scores or independence.
+            try:
+                history = feature_store_db.historical_feature_rows(ticker=default_ticker, limit=5000)
+                now = _dt.datetime.now(_dt.timezone.utc)
+                session = now.astimezone(__import__('zoneinfo').ZoneInfo("America/New_York")).date().isoformat()
+                for key in ("clusters", "singletons"):
+                    for cl in result.get(key, []):
+                        decision_time = f"{session}T{cl.get('end_time')}"
+                        cl["flow_surprise"] = evaluate_flow_surprise(cl, session_date=session, decision_time=decision_time, historical_rows=history)
+            except Exception as exc:
+                result["flow_surprise_status"] = {"status": "UNAVAILABLE", "error": type(exc).__name__, "behavioral_authority": False}
             result["upstream_status"] = tape.get("status")
             result["classifier_version"] = classified.get("classifier_version")
             result["events_classified"] = classified.get("count")

@@ -56,6 +56,10 @@ _GAMMA_TERM_PATHS = (
     "dealer_positioning.gamma_term_structure", "gamma.gamma_term_structure",
     "gamma_term_structure", "dealer_positioning.gamma.gamma_term_structure",
 )
+_GAMMA_TRANSITION_PATHS = (
+    "dealer_positioning.gamma_transition", "gamma.gamma_transition",
+    "gamma_transition", "dealer_positioning.gamma.gamma_transition",
+)
 _RESIDUAL_PATHS = (
     "execution_intelligence.residual_pressure_memory", "residual_pressure_memory",
 )
@@ -184,6 +188,21 @@ def _gamma_term_structure(lr: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 
+def _gamma_transition(lr: Mapping[str, Any]) -> Dict[str, Any]:
+    gt = None
+    for p in _GAMMA_TRANSITION_PATHS:
+        cand = _get(lr, p)
+        if isinstance(cand, Mapping):
+            gt = cand; break
+    if not isinstance(gt, Mapping):
+        return {"status": "UNAVAILABLE", "transition_state": "UNAVAILABLE", "available": False,
+                "behavioral_authority": False, "execution_authority": False}
+    out = dict(gt)
+    out["available"] = str(out.get("status") or "").upper() == "AVAILABLE"
+    out["behavioral_authority"] = False
+    out["execution_authority"] = False
+    return out
+
 def _gamma_context(lr: Mapping[str, Any], gamma_path: Mapping[str, Any], gamma_term: Mapping[str, Any]) -> Dict[str, Any]:
     maturity = gamma_term.get("maturity_concentration") if isinstance(gamma_term.get("maturity_concentration"), Mapping) else {}
     expected_move = _f(_first(lr, _EXPECTED_MOVE_PATHS))
@@ -242,6 +261,7 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
     residual = _residual_pressure(lr, scanner_state)
     gamma = _gamma_path(lr)
     gamma_term = _gamma_term_structure(lr)
+    gamma_transition = _gamma_transition(lr)
     gamma_context = _gamma_context(lr, gamma, gamma_term)
     event_phase = _event_phase(lr)
     available = any(x.get("available") for x in (flow, residual, gamma, gamma_term, gamma_context, event_phase))
@@ -268,6 +288,7 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
         "residual_pressure": residual,
         "gamma_path": gamma,
         "gamma_term_structure": gamma_term,
+        "gamma_transition": gamma_transition,
         "gamma_context": gamma_context,
         "event_phase": event_phase,
         "summary": " · ".join(notes) if notes else None,

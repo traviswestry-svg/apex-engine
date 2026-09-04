@@ -197,6 +197,28 @@ def get_features(sample_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def historical_feature_rows(*, ticker: Optional[str] = None, limit: int = 5000) -> List[Dict[str, Any]]:
+    """Read immutable feature rows for observational contextual baselines.
+
+    This deliberately returns features only; labels/outcomes remain separated.
+    """
+    if not _DB_READY:
+        return []
+    try:
+        sql = "SELECT sample_id,session_date,ticker,decision_time,features_json FROM flow_features"
+        args: List[Any] = []
+        if ticker:
+            sql += " WHERE ticker=?"; args.append(ticker)
+        sql += " ORDER BY decision_time DESC LIMIT ?"; args.append(max(1, int(limit)))
+        with _conn() as c:
+            rows = c.execute(sql, tuple(args)).fetchall()
+        return [{"sample_id": r["sample_id"], "session_date": r["session_date"],
+                 "ticker": r["ticker"], "decision_time": r["decision_time"],
+                 "features": json.loads(r["features_json"])} for r in rows]
+    except Exception:
+        return []
+
+
 def sessions(kind: str = "features") -> List[str]:
     """Distinct session dates present, oldest first."""
     if not _DB_READY:

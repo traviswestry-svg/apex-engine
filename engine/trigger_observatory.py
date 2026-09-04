@@ -1,4 +1,4 @@
-"""APEX 69.9.10 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
+"""APEX 69.10.0 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
 
 Captures every genuine trigger presented to APEX, including triggers that are
 confirmed, blocked, abstained from, expired, or ignored by the operator. Each
@@ -22,7 +22,7 @@ from zoneinfo import ZoneInfo
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
 
-VERSION = "69.9.10"
+VERSION = "69.10.0"
 SCHEMA_VERSION = "apex.trade_trigger_observatory.v3"
 PRODUCTION_EFFECT = "OBSERVATIONAL_ONLY"
 MAX_HOLD_SECONDS = 300

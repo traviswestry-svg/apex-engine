@@ -61,8 +61,9 @@ from .feature_store import (
     resolve_frame_at_or_before,
 )
 from . import feature_store_db, flow_pl_store, decision_provenance
+from .flow_surprise import evaluate_flow_surprise
 
-WRITER_VERSION = "69.9.10_FEATURE_STORE_WRITER"
+WRITER_VERSION = "69.10.0_FEATURE_STORE_WRITER"
 
 _GAP_S = float(os.getenv("FLOW_CLUSTER_GAP_S", "120"))
 # A decision informed by a 20-minute-old frame is barely informed. Recorded per
@@ -223,6 +224,15 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 continue
 
             feats = features_from_frame(frame) + _cluster_features(cl, decision_time)
+            # Freeze learning-first Flow Surprise at the same immutable decision boundary.
+            surprise = evaluate_flow_surprise(
+                cl, session_date=session_date, decision_time=decision_time,
+                historical_rows=feature_store_db.historical_feature_rows(
+                    ticker=cl.get("ticker") or ticker, limit=5000))
+            for k, v in surprise.items():
+                if k in {"schema_version", "cluster_id"} or isinstance(v, (dict, list)):
+                    continue
+                feats.append(Feature(name=f"flow_surprise_{k}", value=v, available_at=decision_time, source="flow_surprise"))
             try:
                 vec = build_pre_decision_vector(
                     sample_id=sid, decision_time=decision_time,

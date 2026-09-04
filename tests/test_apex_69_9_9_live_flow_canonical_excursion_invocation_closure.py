@@ -65,8 +65,8 @@ def _cluster(pl=125.0):
 
 def test_release_truth_6999():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.9.10"
-    assert manifest["build_name"] == "Recommendation-Layer No-Trade Blocker Attribution Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.0"
+    assert manifest["build_name"] == "Flow Surprise Intelligence & Gamma Transition Dynamics"
     g = manifest["guardrails"]
     assert g["live_flow_excursion_capture_owned_by_feature_writer"] is True
     assert g["live_flow_excursion_capture_deferred_in_production"] is False
@@ -78,9 +78,9 @@ def test_release_truth_6999():
     assert g["live_flow_excursion_changes_execution_authority"] is False
 
     registry = Path("config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.9.10" in registry
+    assert "apex_version: 69.10.0" in registry
     assert 'live_flow_excursion_invocation_closure:' in registry
-    assert 'version: "69.9.10"' in registry
+    assert 'version: "69.10.0"' in registry
     assert "feature_writer_owned_capture" in registry
     assert "production_defer_disabled" in registry
 
