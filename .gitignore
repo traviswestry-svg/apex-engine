@@ -43,3 +43,7 @@ Thumbs.db
 
 # APEX audit/runtime artifacts
 audit_artifacts/
+# Repository hygiene: generated build/review bundles
+*.zip
+*.patch
+
