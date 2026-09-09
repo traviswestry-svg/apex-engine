@@ -1,4 +1,4 @@
-"""APEX 69.10.1 cross-process scanner lifecycle truth.
+"""APEX 69.10.2 cross-process scanner lifecycle truth.
 
 Production normally owns scanning in ``scanner_worker.py`` while Flask/Gunicorn
 runs in a different process.  A web-process local ``SCANNER_STARTED`` flag is
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
-VERSION = "69.10.1"
+VERSION = "69.10.2"
 
 
 def resolve_scanner_runtime(*, local_started: bool, local_thread_alive: bool,

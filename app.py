@@ -805,15 +805,20 @@ FLOW_PL_SAMPLE_SESSIONS = {
     os.getenv("FLOW_PL_SAMPLE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
 }
 
-# APEX 69.10.1: scanner-owned observability for the live flow learning/capture path.
+# APEX 69.10.2: scanner-owned observability for the live flow learning/capture path.
 # This is process-local telemetry only and never participates in decisions. The
 # dedicated scanner process publishes it through the canonical heartbeat.
 _FLOW_LEARNING_RUNTIME = {
-    "version": "69.10.1",
+    "version": "69.10.2",
     "cycles": 0,
     "live_session_cycles": 0,
     "pipeline_runs": 0,
     "source_clusters": 0,
+    "raw_flow_rows": 0,
+    "normalized_flow_rows": 0,
+    "classified_flow_events": 0,
+    "unclusterable_flow_events": 0,
+    "invalid_trade_time": 0,
     "samples_recorded": 0,
     "writer_invocations": 0,
     "feature_rows_written": 0,
@@ -828,6 +833,7 @@ _FLOW_LEARNING_RUNTIME = {
     "last_state": "NOT_RUN",
     "last_skip_reason": None,
     "last_pipeline_status": None,
+    "last_source_diagnostics": {},
 }
 
 def flow_learning_runtime_status():
@@ -2715,8 +2721,8 @@ def quantdata_order_flow_layer(ticker: str) -> Dict[str, Any]:
             sweep_count += 1
         if consolidation_type in ("BLOCK", "SPLIT"):
             block_count += 1
-        bullish_side = trade_side in ("ABOVE_ASK", "AT_ASK")
-        bearish_side = trade_side in ("BELOW_BID", "AT_BID")
+        bullish_side = trade_side in ("ABOVE_ASK", "ASK", "AT_ASK")
+        bearish_side = trade_side in ("BELOW_BID", "BID", "AT_BID")
         if bullish_side or (not bearish_side and contract_type == "CALL"):
             bull_premium += premium
         elif bearish_side or contract_type == "PUT":
@@ -4552,7 +4558,7 @@ def scanner_loop() -> None:
                     print(f"premium_strategy: graded {_pg} recommendation(s).", flush=True)
             except Exception as e:
                 print(f"premium grade error (recovered): {e}", flush=True)
-        # APEX 9 Step 4.1 / 5a.1 + 69.10.1 lifecycle closure: sample theoretical
+        # APEX 9 Step 4.1 / 5a.1 + 69.10.2 source-cluster closure: sample theoretical
         # flow P/L and persist sealed-cluster features from one canonical pipeline run. The feature writer itself remains the canonical post-persistence excursion owner.
         # Every cycle publishes an explicit state so zero capture attempts can be
         # distinguished from NO_FLOW, SESSION_GATED, PIPELINE_UNAVAILABLE, or errors.
@@ -4576,15 +4582,31 @@ def scanner_loop() -> None:
                 _FLOW_LEARNING_RUNTIME["last_pipeline_status"] = _res.get("upstream_status") or ("AVAILABLE" if _res.get("available") else "UNAVAILABLE")
                 _fs = int(_res.get("samples_recorded") or 0)
                 _clusters = list(_res.get("source_clusters") or [])
+                _diag = dict(_res.get("source_diagnostics") or {})
                 _FLOW_LEARNING_RUNTIME["samples_recorded"] += _fs
                 _FLOW_LEARNING_RUNTIME["source_clusters"] += len(_clusters)
+                _FLOW_LEARNING_RUNTIME["raw_flow_rows"] += int(_diag.get("raw_rows") or 0)
+                _FLOW_LEARNING_RUNTIME["normalized_flow_rows"] += int(_diag.get("normalized_rows") or 0)
+                _FLOW_LEARNING_RUNTIME["classified_flow_events"] += int(_diag.get("classified_events") or 0)
+                _FLOW_LEARNING_RUNTIME["unclusterable_flow_events"] += int(_diag.get("unclusterable") or 0)
+                _FLOW_LEARNING_RUNTIME["invalid_trade_time"] += int(_diag.get("invalid_trade_time") or 0)
+                _FLOW_LEARNING_RUNTIME["last_source_diagnostics"] = _diag
                 if _fs:
                     print(f"flow_pl: sampled {_fs} print(s).", flush=True)
 
                 if not _clusters:
+                    _reason = (_diag.get("reason") or _res.get("note") or
+                               _res.get("upstream_status") or "NO_SOURCE_CLUSTERS")
+                    _state = {
+                        "NO_NORMALIZED_FLOW_ROWS": "NO_NORMALIZED_FLOW_ROWS",
+                        "ALL_CLASSIFIED_EVENTS_UNCLUSTERABLE": "ALL_EVENTS_UNCLUSTERABLE",
+                        "CLASSIFIED_WITHOUT_CLUSTER_OUTPUT": "NO_CLUSTER_OUTPUT",
+                        "NO_CLASSIFIED_EVENTS": "NO_CLASSIFIED_EVENTS",
+                        "PIPELINE_ERROR": "PIPELINE_ERROR",
+                    }.get(str(_reason), "NO_SOURCE_CLUSTERS")
                     _FLOW_LEARNING_RUNTIME.update({
-                        "last_state": "NO_SOURCE_CLUSTERS",
-                        "last_skip_reason": _res.get("note") or _res.get("upstream_status") or "NO_SOURCE_CLUSTERS",
+                        "last_state": _state,
+                        "last_skip_reason": _reason,
                     })
                 elif not WRITE_FEATURES_IN_SCANNER:
                     _FLOW_LEARNING_RUNTIME.update({"last_state": "FEATURE_WRITER_DISABLED", "last_skip_reason": "WRITE_FEATURES_IN_SCANNER_FALSE"})

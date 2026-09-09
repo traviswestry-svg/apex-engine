@@ -122,18 +122,31 @@ def run_flow_pl(
     try:
         if flow_tape_provider is None:
             return {"available": False, "note": "No flow source wired — nothing to price.",
-                    "clusters": [], "single_events": [], "count": 0,
+                    "clusters": [], "source_clusters": [], "single_events": [], "count": 0,
+                    "source_diagnostics": {"raw_rows": 0, "normalized_rows": 0,
+                                           "classified_events": 0, "clusters": 0,
+                                           "singletons": 0, "unclusterable": 0,
+                                           "reason": "NO_FLOW_SOURCE"},
                     "label": THEORETICAL_PL_LABEL, "flow_pl_version": FLOW_PL_VERSION}
 
         tape = flow_tape_provider(tickers, min_premium) or {}
         rows = tape.get("rows") or []
         if not rows:
+            nd = tape.get("normalization_diagnostics") or {}
             return {"available": True,
                     "note": tape.get("message") or "No flow rows available to price.",
-                    "clusters": [], "single_events": [], "count": 0,
+                    "clusters": [], "source_clusters": [], "single_events": [], "count": 0,
                     "single_event_count": 0,
                     "upstream_status": tape.get("status"),
                     "samples_recorded": 0,
+                    "source_diagnostics": {
+                        "raw_rows": int(nd.get("raw_rows") or 0),
+                        "normalized_rows": int(nd.get("normalized_rows") or 0),
+                        "classified_events": 0, "clusters": 0, "singletons": 0,
+                        "unclusterable": 0,
+                        "invalid_trade_time": int(nd.get("invalid_trade_time") or 0),
+                        "reason": "NO_NORMALIZED_FLOW_ROWS",
+                    },
                     "label": THEORETICAL_PL_LABEL, "flow_pl_version": FLOW_PL_VERSION}
 
         spot = None
@@ -148,6 +161,26 @@ def run_flow_pl(
         classified = classify_flow_events(rows, spot=spot, as_of_secs=now_et_secs())
         events_by_id = {e["event_id"]: e for e in classified["events"]}
         clustered = build_flow_clusters(classified["events"])
+        nd = tape.get("normalization_diagnostics") or {}
+        source_diagnostics = {
+            "raw_rows": int(nd.get("raw_rows") or len(rows)),
+            "normalized_rows": len(rows),
+            "classified_events": len(classified.get("events") or []),
+            "clusters": len(clustered.get("clusters") or []),
+            "singletons": len(clustered.get("singletons") or []),
+            "unclusterable": len(clustered.get("unclusterable") or []),
+            "duplicates_dropped": int(clustered.get("duplicates_dropped") or 0),
+            "invalid_trade_time": int(nd.get("invalid_trade_time") or 0),
+            "classifier_quality": classified.get("summary", {}).get("by_data_quality", {}),
+        }
+        if source_diagnostics["clusters"] or source_diagnostics["singletons"]:
+            source_diagnostics["reason"] = "SOURCE_CLUSTERS_AVAILABLE"
+        elif source_diagnostics["unclusterable"]:
+            source_diagnostics["reason"] = "ALL_CLASSIFIED_EVENTS_UNCLUSTERABLE"
+        elif source_diagnostics["classified_events"]:
+            source_diagnostics["reason"] = "CLASSIFIED_WITHOUT_CLUSTER_OUTPUT"
+        else:
+            source_diagnostics["reason"] = "NO_CLASSIFIED_EVENTS"
 
         cache = ChainCache(chain_fetcher)
         session = session_date()
@@ -271,10 +304,13 @@ def run_flow_pl(
             "label": THEORETICAL_PL_LABEL,
             "flow_pl_version": FLOW_PL_VERSION,
             "tracking": flow_pl_store.is_ready(),
+            "source_diagnostics": source_diagnostics,
         }
     except Exception as e:  # pragma: no cover
         return {"available": False, "note": f"flow P/L pipeline recovered: {e}",
-                "clusters": [], "single_events": [], "count": 0, "samples_recorded": 0,
+                "clusters": [], "source_clusters": [], "single_events": [], "count": 0,
+                "samples_recorded": 0,
+                "source_diagnostics": {"reason": "PIPELINE_ERROR", "error_type": type(e).__name__},
                 "label": THEORETICAL_PL_LABEL, "flow_pl_version": FLOW_PL_VERSION}
 
 

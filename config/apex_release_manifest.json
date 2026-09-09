@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.1",
-  "build_name": "Scanner Lifecycle & Flow Excursion Capture Closure",
+  "apex_version": "69.10.2",
+  "build_name": "Canonical Live Flow Cluster Production Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-09-04",
+  "released_at": "2026-09-09",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -410,15 +410,21 @@
     "flow_excursion_historical_backfill_from_coarse_cluster_envelope": false,
     "flow_learning_runtime_observability": true,
     "execution_authority": false,
-    "behavioral_authority": false
+    "behavioral_authority": false,
+    "quantdata_order_flow_epoch_ms_normalized_to_et": true,
+    "invalid_flow_trade_time_replaced_with_current_clock": false,
+    "current_quantdata_trade_side_vocabulary_supported": true,
+    "live_flow_source_cluster_stage_diagnostics": true,
+    "synthetic_cluster_time_created": false,
+    "flow_cluster_qualification_relaxed": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.1",
-  "application_version": "69.10.1",
+  "semantic_version": "69.10.2",
+  "application_version": "69.10.2",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
