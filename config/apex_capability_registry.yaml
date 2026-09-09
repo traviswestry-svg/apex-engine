@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.1
+apex_version: 69.10.2
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
@@ -585,7 +585,7 @@ capabilities:
     canonical_modules: [engine.flow_surprise, engine.gamma_transition]
     deployed_modules: [engine.flow_clusters, engine.flow_surprise, engine.feature_store_writer, engine.gamma, engine.gamma_transition, engine.dynamic_state, app]
     status: observational_learning_first
-    version: "69.10.1"
+    version: "69.10.2"
     inputs: [canonical_flow_clusters, immutable_flow_features, existing_gamma_output, gamma_term_structure, gamma_path]
     outputs: [flow_surprise_context, gamma_transition_dynamics, immutable_decision_time_context]
     api_routes: [/api/flow_clusters, /api/dynamic-state]
@@ -596,4 +596,18 @@ capabilities:
     production_effect: NONE
     persistence: [existing_flow_features_store, canonical_db_gamma_observational_snapshots]
     guardrails: [canonical_cluster_identity_reused, no_duplicate_flow_cluster_engine, existing_gamma_engine_reused, no_duplicate_gamma_engine, no_duplicate_outcome_ledger, insufficient_history_fail_closed, stale_derivatives_rejected, no_flow_independence_double_discount, no_positive_conviction_authority, no_execution_authority]
+  canonical_live_flow_cluster_production_closure:
+    canonical_modules: [engine.flow_tape, engine.flow_classifier, engine.flow_clusters, engine.flow_pl_pipeline]
+    deployed_modules: [engine.flow_tape, engine.flow_classifier, engine.flow_clusters, engine.flow_pl_pipeline, app, scanner_worker]
+    status: active_observational_learning_path
+    version: "69.10.2"
+    inputs: [quantdata_consolidated_order_flow, provider_epoch_millisecond_trade_time, provider_trade_side_code]
+    outputs: [canonical_source_clusters, source_stage_diagnostics, scanner_flow_learning_runtime]
+    api_routes: [/api/flow_tape, /api/flow_pl, /api/learning/evidence-lifecycle]
+    decision_authority: none
+    behavioral_authority: none
+    execution_authority: none
+    automatic_calibration_activation: false
+    production_effect: OBSERVATIONAL_LEARNING_PIPELINE_ONLY
+    guardrails: [provider_time_normalized_without_synthesis, invalid_time_never_replaced_with_now, current_and_legacy_trade_side_vocabularies_supported, canonical_flow_cluster_engine_reused, no_duplicate_cluster_engine, no_cluster_qualification_relaxation, no_historical_backfill, no_synthetic_excursions, no_decision_authority, no_execution_authority]
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import math
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -35,11 +36,61 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 def _now_et_str() -> str:
     try:
-        import zoneinfo
-        tz = zoneinfo.ZoneInfo("America/New_York")
+        tz = ZoneInfo("America/New_York")
     except Exception:
         tz = dt.timezone(dt.timedelta(hours=-4))
     return dt.datetime.now(tz).strftime("%H:%M:%S")
+
+
+def _normalize_trade_time(value: Any) -> Optional[str]:
+    """Normalize provider tradeTime to HH:MM:SS ET without inventing time.
+
+    QuantData's consolidated order-flow contract returns ``tradeTime`` as an
+    epoch-millisecond Long. Older APEX fixtures and replay artifacts also carry
+    ISO timestamps or already-normalized ET clock strings, so all three shapes
+    remain supported. Invalid values return None and are surfaced by lifecycle
+    diagnostics rather than replaced with the current clock.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        # Provider canonical shape: Unix epoch milliseconds. Numeric strings are
+        # accepted because JSON adapters can stringify scalar fields.
+        if isinstance(value, (int, float)) or str(value).strip().isdigit():
+            raw = float(value)
+            if raw > 10_000_000_000:  # milliseconds, not seconds
+                raw /= 1000.0
+            if raw > 1_000_000_000:
+                return dt.datetime.fromtimestamp(raw, tz=dt.timezone.utc).astimezone(
+                    ZoneInfo("America/New_York")
+                ).strftime("%H:%M:%S")
+    except (ValueError, TypeError, OSError, OverflowError):
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        # ISO-8601, with or without Z/offset. Naive timestamps are treated as ET
+        # because legacy APEX replay rows were stored as local session time.
+        if "T" in text:
+            parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=ZoneInfo("America/New_York"))
+            else:
+                parsed = parsed.astimezone(ZoneInfo("America/New_York"))
+            return parsed.strftime("%H:%M:%S")
+    except ValueError:
+        return None
+
+    # Already-normalized clock string. Validate it rather than truncating an
+    # arbitrary long value into something that looks like a time.
+    clock = text[:8]
+    try:
+        dt.datetime.strptime(clock, "%H:%M:%S")
+        return clock
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -54,11 +105,16 @@ def _now_et_str() -> str:
 #   MID        → neutral / passive fill
 
 _SIDE_CODE_AGGRESSOR: Dict[str, str] = {
-    "ABOVE_ASK": "BUY",
-    "AT_ASK":    "BUY",
-    "AT_BID":    "SELL",
-    "BELOW_BID": "SELL",
-    "MID":       "NEUTRAL",
+    # Current QuantData response vocabulary.
+    "ABOVE_ASK":  "BUY",
+    "ASK":        "BUY",
+    "MID_MARKET": "NEUTRAL",
+    "BID":        "SELL",
+    "BELOW_BID":  "SELL",
+    # Historical aliases retained for replay/backward compatibility.
+    "AT_ASK":     "BUY",
+    "MID":        "NEUTRAL",
+    "AT_BID":     "SELL",
 }
 
 _CONSOLIDATION_SUFFIX: Dict[str, str] = {
@@ -169,13 +225,12 @@ def _normalize_row(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         exp_raw = f"{exp_raw[:4]}-{exp_raw[4:6]}-{exp_raw[6:]}"
     expiration = exp_raw[:10] if exp_raw else ""
 
-    # Time (ET string)
-    time_raw = str(raw.get("tradeTime") or raw.get("time") or raw.get("timestamp") or "")
-    if "T" in time_raw:
-        time_raw = time_raw.split("T")[-1][:8]
-    elif len(time_raw) > 8:
-        time_raw = time_raw[:8]
-    time_et = time_raw if time_raw else _now_et_str()
+    # Time: QuantData returns tradeTime as epoch milliseconds. Preserve older
+    # ISO / HH:MM:SS replay shapes, but never substitute "now" when the provider
+    # timestamp is malformed because that would manufacture temporal proximity.
+    time_et = _normalize_trade_time(raw.get("tradeTime") if raw.get("tradeTime") is not None
+                                    else raw.get("time") if raw.get("time") is not None
+                                    else raw.get("timestamp"))
 
     aggressor, tape_label = _classify_row(raw)
     importance = _importance_score(premium, aggressor, consolidation_type)
@@ -404,11 +459,18 @@ def build_flow_tape(
         }
 
     normalized: List[Dict[str, Any]] = []
+    rejected_normalization = 0
+    rejected_min_premium = 0
+    invalid_trade_time = 0
     for raw in raw_rows:
         row = _normalize_row(raw)
         if row is None:
+            rejected_normalization += 1
             continue
+        if row.get("time_et") is None:
+            invalid_trade_time += 1
         if min_premium > 0 and _safe_float(row.get("premium"), 0.0) < min_premium:
+            rejected_min_premium += 1
             continue
         normalized.append(row)
 
@@ -428,10 +490,19 @@ def build_flow_tape(
         "strike_clusters": clusters,
         "spread_candidates": spread_candidates,
         "institutional_alerts": [x for x in clusters if x["institutional_size"]][:10],
+        "normalization_diagnostics": {
+            "raw_rows": len(raw_rows),
+            "normalized_rows": len(normalized),
+            "rejected_normalization": rejected_normalization,
+            "rejected_min_premium": rejected_min_premium,
+            "invalid_trade_time": invalid_trade_time,
+            "trade_time_contract": "QUANTDATA_EPOCH_MILLISECONDS_TO_ET",
+        },
         "methodology": {
             "direction_requires_execution_side": True,
             "missing_side_is_unresolved": True,
             "spread_detection_is_probabilistic": True,
             "price_confirmation_is_response_not_intent_proof": True,
+            "invalid_trade_time_is_not_replaced_with_now": True,
         },
     }

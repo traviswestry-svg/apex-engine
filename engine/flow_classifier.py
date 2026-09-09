@@ -113,11 +113,16 @@ DEGRADED = "DEGRADED"
 
 # Provider execution codes → aggression. Read directly; no contract_type fallback.
 _SIDE_CODE_AGGRESSION: Dict[str, str] = {
+    # Current QuantData response vocabulary.
     "ABOVE_ASK": AGGRESSIVE_BUY,
+    "ASK": BUY,
+    "MID_MARKET": PASSIVE_MID,
+    "BID": SELL,
+    "BELOW_BID": AGGRESSIVE_SELL,
+    # Historical aliases retained for replay/backward compatibility.
     "AT_ASK": BUY,
     "MID": PASSIVE_MID,
     "AT_BID": SELL,
-    "BELOW_BID": AGGRESSIVE_SELL,
 }
 
 _BUY_SIDE = {AGGRESSIVE_BUY, BUY}

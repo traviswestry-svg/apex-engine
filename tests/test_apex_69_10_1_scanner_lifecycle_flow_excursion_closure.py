@@ -8,10 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_version_truth_and_release_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "69.10.1"
-    assert manifest["semantic_version"] == "69.10.1"
-    assert manifest["application_version"] == "69.10.1"
-    assert manifest["build_name"] == "Scanner Lifecycle & Flow Excursion Capture Closure"
+    assert manifest["apex_version"] == "69.10.2"
+    assert manifest["semantic_version"] == "69.10.2"
+    assert manifest["application_version"] == "69.10.2"
+    assert manifest["build_name"] == "Canonical Live Flow Cluster Production Closure"
     g = manifest["guardrails"]
     assert g["scanner_health_prefers_fresh_cross_process_heartbeat"] is True
     assert g["flow_excursion_capture_forward_only"] is True
