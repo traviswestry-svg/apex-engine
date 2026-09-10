@@ -805,11 +805,11 @@ FLOW_PL_SAMPLE_SESSIONS = {
     os.getenv("FLOW_PL_SAMPLE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
 }
 
-# APEX 69.10.2: scanner-owned observability for the live flow learning/capture path.
+# APEX 69.10.3: scanner-owned observability for the live flow learning/capture path.
 # This is process-local telemetry only and never participates in decisions. The
 # dedicated scanner process publishes it through the canonical heartbeat.
 _FLOW_LEARNING_RUNTIME = {
-    "version": "69.10.2",
+    "version": "69.10.3",
     "cycles": 0,
     "live_session_cycles": 0,
     "pipeline_runs": 0,

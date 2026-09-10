@@ -23,7 +23,7 @@ try:
 except Exception:  # pragma: no cover
     ET = dt.timezone(dt.timedelta(hours=-5))
 
-VERSION = "49.1.0_FORECAST_ARCHIVE_INTEGRITY"
+VERSION = "69.10.3_MORNING_FORECAST_EVENING_VALIDATION_INTEGRITY"
 DB_PATH = persistent_sqlite_path("APEX_GOVERNANCE_DB", "apex_governance.db")
 FEED_REQUIRED = "[FEED REQUIRED]"
 REGIMES = ("EVENT DRIVEN", "MEAN REVERSION", "HIGH VOLATILITY", "LOW VOLATILITY", "BALANCED AUCTION", "COMPRESSION", "EXPANSION", "TREND")
@@ -61,22 +61,60 @@ def init_db() -> None:
     init_evening_archive_db(DB_PATH)
 
 
-def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
-    """Archive every generated brief while preserving the first as official.
+def _parse_generated_at(value: Any) -> dt.datetime:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=ET)
+        return parsed.astimezone(ET)
+    except Exception:
+        return _now_et()
 
-    The official snapshot is immutable. Later generations are retained as
-    revisions so forecast validation can never be rewritten after the fact.
+
+def _official_forecast_eligibility(payload: dict) -> tuple[bool, str, str]:
+    """Return (eligible, reason, canonical target session date).
+
+    Official forecasts are forward-looking only. Live/after-close briefs remain
+    revisions and can never become grading authority.
     """
+    target = str(payload.get("target_session_date") or payload.get("session_date") or "").strip()
+    sc = payload.get("session_context") or {}
+    mode = str(sc.get("brief_mode") or (payload.get("forecast_identity") or {}).get("brief_mode") or "").upper()
+    state = str(sc.get("state") or "").upper()
+    generated = _parse_generated_at(payload.get("generated_at"))
+    if not target:
+        return False, "TARGET_SESSION_DATE_MISSING", target
+    try:
+        target_date = dt.date.fromisoformat(target)
+    except Exception:
+        return False, "TARGET_SESSION_DATE_INVALID", target
+    if mode and mode not in {"PREMARKET", "NEXT_SESSION_PREP"}:
+        return False, f"POST_OUTCOME_OR_LIVE_MODE:{mode}", target
+    if state in {"OPENING_DRIVE", "MID_MORNING", "LUNCH", "AFTERNOON", "POWER_HOUR", "AFTER_HOURS"}:
+        return False, f"POST_OUTCOME_OR_LIVE_STATE:{state}", target
+    cutoff = dt.datetime.combine(target_date, dt.time(9, 30), tzinfo=ET)
+    if generated >= cutoff:
+        return False, "GENERATED_AT_OR_AFTER_RTH_OPEN", target
+    return True, "PRE_OUTCOME_FORECAST" if mode else "LEGACY_PREOPEN_FORECAST", target
+
+
+def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
+    """Archive every brief revision; preserve only eligible pre-outcome forecasts as official."""
     init_db()
-    sdate = str(payload.get("session_date") or _now_et().date().isoformat())
+    eligible, reason, sdate = _official_forecast_eligibility(payload)
     generated_at = str(payload.get("generated_at") or _now_et().isoformat())
-    body = _json(payload)
+    stored = dict(payload)
+    stored["forecast_archive_eligibility"] = {
+        "eligible_for_official": eligible, "reason": reason,
+        "canonical_session_date": sdate, "version": VERSION,
+    }
+    body = _json(stored)
     with canonical_connect(DB_PATH, timeout=10) as c:
         existing = c.execute(
             "SELECT generated_at FROM apex49_morning_snapshots WHERE session_date=?",
             (sdate,),
-        ).fetchone()
-        is_official = existing is None
+        ).fetchone() if sdate else None
+        is_official = bool(eligible and existing is None)
         if is_official:
             c.execute(
                 "INSERT INTO apex49_morning_snapshots VALUES(?,?,?,?,?)",
@@ -86,22 +124,19 @@ def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
             """INSERT INTO apex49_morning_revisions
                (session_date,generated_at,ticker,payload_json,version,is_official)
                VALUES(?,?,?,?,?,?)""",
-            (sdate, generated_at, ticker, body, VERSION, 1 if is_official else 0),
+            (sdate or "UNKNOWN", generated_at, ticker, body, VERSION, 1 if is_official else 0),
         )
         revision_count = c.execute(
             "SELECT COUNT(*) FROM apex49_morning_revisions WHERE session_date=?",
-            (sdate,),
+            (sdate or "UNKNOWN",),
         ).fetchone()[0]
-        official_generated_at = generated_at if is_official else existing[0]
+        official_generated_at = generated_at if is_official else (existing[0] if existing else None)
     return {
-        "session_date": sdate,
-        "archived": True,
-        "is_official": is_official,
-        "official_generated_at": official_generated_at,
-        "revision_count": int(revision_count),
+        "session_date": sdate, "archived": True, "is_official": is_official,
+        "eligible_for_official": eligible, "eligibility_reason": reason,
+        "official_generated_at": official_generated_at, "revision_count": int(revision_count),
         "version": VERSION,
     }
-
 
 def morning_archive_status(session_date: str) -> dict:
     init_db()
@@ -196,12 +231,21 @@ def actual_session(bars: Iterable[dict], session_date: str) -> dict:
 
 
 def extract_projected_regime(markdown: str) -> Optional[str]:
+    """Legacy diagnostic only. Never use free text as validation authority."""
     text = (markdown or "").upper()
     for regime in REGIMES:
         if re.search(r"\b" + re.escape(regime) + r"\b", text):
             return regime.title()
     return None
 
+
+def structured_projected_regime(morning: dict) -> tuple[Optional[str], str]:
+    structured = morning.get("structured") or {}
+    value = str(structured.get("forecast_regime") or "").strip()
+    if not value or value == FEED_REQUIRED:
+        return None, str(structured.get("forecast_regime_source") or "STRUCTURED_FORECAST_UNAVAILABLE")
+    canonical = {r.upper(): r.title() for r in REGIMES}
+    return canonical.get(value.upper()), str(structured.get("forecast_regime_source") or "STRUCTURED_FORECAST")
 
 def classify_actual_regime(actual: dict, expected_move: Optional[float]) -> str:
     if not actual.get("available"):
@@ -265,39 +309,44 @@ def build_comparison(morning: dict, bars: Iterable[dict], session_date: str) -> 
     actual = actual_session(bars, session_date)
     em = structured.get("expected_move") or {}
     em1, upper, lower = _num(em.get("one_sigma")), _num(em.get("upper")), _num(em.get("lower"))
-    projected_regime = extract_projected_regime(morning.get("markdown", ""))
+    projected_regime, projected_regime_source = structured_projected_regime(morning)
     actual_regime = classify_actual_regime(actual, em1)
+    reference = _num(structured.get("spot"))
     checks = []
     if actual.get("available") and upper is not None and lower is not None:
         contained = actual["high"] <= upper and actual["low"] >= lower
-        checks.append({"key": "expected_move_containment", "label": "Expected-move containment", "projected": f"{lower:.2f} to {upper:.2f}", "actual": f"{actual['low']:.2f} to {actual['high']:.2f}", "correct": contained})
+        checks.append({"key": "expected_move_containment", "label": "Expected-move containment", "projected": f"{lower:.2f} to {upper:.2f}", "actual": f"{actual['low']:.2f} to {actual['high']:.2f}", "accuracy": 1.0 if contained else 0.0, "weight": 0.35, "correct": contained})
     if projected_regime:
         compatible = projected_regime.upper() == actual_regime.upper()
-        # Trend and Expansion are directionally compatible; Balanced and Mean Reversion likewise.
         families = ({"TREND", "EXPANSION"}, {"BALANCED AUCTION", "MEAN REVERSION", "COMPRESSION"})
         compatible = compatible or any(projected_regime.upper() in f and actual_regime.upper() in f for f in families)
-        checks.append({"key": "regime", "label": "Regime projection", "projected": projected_regime, "actual": actual_regime, "correct": compatible})
-    if actual.get("available") and em1 is not None:
-        realized_half_range = actual["range"] / 2.0
-        error = abs(realized_half_range - em1)
+        checks.append({"key": "regime", "label": "Regime projection", "projected": projected_regime, "actual": actual_regime, "accuracy": 1.0 if compatible else 0.0, "weight": 0.35, "correct": compatible, "source": projected_regime_source})
+    if actual.get("available") and em1 is not None and reference is not None:
+        realized_displacement = max(abs(actual["high"] - reference), abs(actual["low"] - reference))
+        error = abs(realized_displacement - em1)
         accuracy = max(0.0, 1.0 - error / em1) if em1 > 0 else 0.0
-        checks.append({"key": "expected_move_size", "label": "Expected-move size", "projected": round(em1, 2), "actual": round(realized_half_range, 2), "accuracy": round(accuracy, 3), "correct": accuracy >= 0.70})
-    score = round(100.0 * sum(1 for c in checks if c.get("correct")) / len(checks), 1) if checks else None
+        checks.append({"key": "expected_move_size", "label": "Expected-move size", "projected": round(em1, 2), "actual": round(realized_displacement, 2), "actual_metric": "MAX_ABS_EXCURSION_FROM_FROZEN_MORNING_SPOT", "reference_spot": round(reference, 2), "accuracy": round(accuracy, 3), "weight": 0.30, "correct": accuracy >= 0.70})
+    legacy_score = round(100.0 * sum(1 for c in checks if c.get("correct")) / len(checks), 1) if checks else None
+    available_weight = sum(float(c.get("weight") or 0.0) for c in checks)
+    score = round(100.0 * sum(float(c.get("weight") or 0.0) * float(c.get("accuracy") or 0.0) for c in checks) / available_weight, 1) if available_weight > 0 else None
     levels = evaluate_levels(structured.get("levels") or [], bars, session_date)
     return {
-        "actual": actual, "projected_regime": projected_regime or "Not explicitly classified",
-        "actual_regime": actual_regime, "checks": checks, "score": score, "grade": _grade(score),
+        "actual": actual, "projected_regime": projected_regime or "Not structurally classified",
+        "projected_regime_source": projected_regime_source, "actual_regime": actual_regime,
+        "checks": checks, "score": score, "grade": _grade(score),
+        "legacy_binary_score": legacy_score, "score_method": "WEIGHTED_CONTINUOUS_V69_10_3",
         "levels": levels, "level_summary": {
             "evaluated": len(levels), "touched": sum(1 for x in levels if x["touched"]),
             "not_tested": sum(1 for x in levels if not x["touched"]),
         },
     }
 
-
 def render_deterministic_markdown(session_date: str, comparison: dict) -> str:
     a = comparison["actual"]
     lines = [f"# APEX EVENING RECAP — {session_date}", "", "## Forecast Scorecard", ""]
     lines.append(f"**Validated accuracy:** {comparison['score'] if comparison['score'] is not None else 'N/A'}% · **Grade {comparison['grade']}**")
+    if comparison.get("legacy_binary_score") is not None:
+        lines.append(f"Legacy 3-check diagnostic: **{comparison['legacy_binary_score']}%** (not grading authority).")
     lines += ["", "| Projection | Morning | Actual | Result |", "|---|---:|---:|---|"]
     for c in comparison["checks"]:
         result = "PASS" if c.get("correct") else "MISS"
