@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.2",
-  "build_name": "Canonical Live Flow Cluster Production Closure",
+  "apex_version": "69.10.3",
+  "build_name": "Morning Forecast & Evening Validation Integrity Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-09-09",
+  "released_at": "2026-09-10",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -416,15 +416,26 @@
     "current_quantdata_trade_side_vocabulary_supported": true,
     "live_flow_source_cluster_stage_diagnostics": true,
     "synthetic_cluster_time_created": false,
-    "flow_cluster_qualification_relaxed": false
+    "flow_cluster_qualification_relaxed": false,
+    "morning_forecast_identity_uses_target_session_date": true,
+    "post_open_brief_can_become_official_forecast": false,
+    "after_close_brief_can_become_official_forecast": false,
+    "evening_regime_validation_uses_free_text_markdown": false,
+    "structured_forecast_regime_required_for_regime_grade": true,
+    "expected_move_validation_uses_equivalent_displacement_metric": true,
+    "legacy_three_check_score_is_grading_authority": false,
+    "historical_forecasts_rewritten": false,
+    "historical_recaps_automatically_rescored": false,
+    "forecast_validation_changes_trade_decisions": false,
+    "forecast_validation_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.2",
-  "application_version": "69.10.2",
+  "semantic_version": "69.10.3",
+  "application_version": "69.10.3",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

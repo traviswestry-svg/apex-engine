@@ -146,6 +146,39 @@ def build_deterministic(**kwargs) -> tuple[Any, str, dict]:
     return dkl, sections, context
 
 
+
+def _deterministic_forecast_regime(dkl) -> dict:
+    """Return a pre-outcome structured regime from active deterministic trade-map hints.
+
+    This deliberately does not inspect narrative Markdown. Ambiguous/tied evidence
+    remains unavailable rather than forcing a label.
+    """
+    mapping = {
+        "trend": "Trend",
+        "momentum": "Trend",
+        "balance": "Balanced Auction",
+        "mean_reversion": "Mean Reversion",
+        "expansion": "Expansion",
+        "compression": "Compression",
+    }
+    votes = {}
+    for line in getattr(dkl, "trade_map", []) or []:
+        label = mapping.get(str(getattr(line, "regime_hint", "") or "").strip().lower())
+        if label:
+            votes[label] = votes.get(label, 0) + 1
+    if not votes:
+        return {"regime": None, "source": "UNAVAILABLE", "vote_counts": {}, "confidence": None}
+    ordered = sorted(votes.items(), key=lambda item: (-item[1], item[0]))
+    if len(ordered) > 1 and ordered[0][1] == ordered[1][1]:
+        return {"regime": None, "source": "AMBIGUOUS_TRADE_MAP_CONSENSUS", "vote_counts": votes, "confidence": None}
+    total = sum(votes.values())
+    return {
+        "regime": ordered[0][0],
+        "source": "DETERMINISTIC_ACTIVE_TRADE_MAP_CONSENSUS",
+        "vote_counts": votes,
+        "confidence": round(ordered[0][1] / total, 3) if total else None,
+    }
+
 # --------------------------------------------------------------------------- #
 # 2) Prompt — the model gets the real data + strict guardrails
 # --------------------------------------------------------------------------- #
@@ -759,6 +792,20 @@ def generate_morning_brief(
         "anthropic_telemetry": ai_telemetry,
         "markdown": markdown,
         "structured": dkl.to_dict(),
+    }
+    # APEX 69.10.3: freeze a structured, pre-outcome regime projection.
+    # Evening validation may never infer the forecast from free-text Markdown.
+    _regime = _deterministic_forecast_regime(dkl)
+    result["structured"]["forecast_regime"] = _regime["regime"] or str(FEED_REQUIRED)
+    result["structured"]["forecast_regime_source"] = _regime["source"]
+    result["structured"]["forecast_regime_vote_counts"] = _regime["vote_counts"]
+    result["structured"]["forecast_regime_confidence"] = _regime["confidence"]
+    result["forecast_identity"] = {
+        "target_session_date": target_date,
+        "source_session_date": source_date,
+        "brief_mode": mode,
+        "pre_outcome": mode in {"PREMARKET", "NEXT_SESSION_PREP"},
+        "version": "69.10.3",
     }
     if deferred_async_request is not None:
         result["_async_narrative_request"] = deferred_async_request
