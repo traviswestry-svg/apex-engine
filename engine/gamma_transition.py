@@ -11,8 +11,8 @@ import json, math, os
 from typing import Any, Dict, Mapping, Optional
 from .canonical_persistence import connect
 
-VERSION = "69.10.0"
-SCHEMA_VERSION = "apex.gamma_transition.v1"
+VERSION = "69.10.4"
+SCHEMA_VERSION = "apex.gamma_transition.v2"
 MAX_STALE_SECONDS = 900
 
 
@@ -74,37 +74,60 @@ def _delta(cur: Mapping[str, Any], prev: Optional[Mapping[str, Any]], key: str, 
     pt=_parse(prev.get("observed_at")); a,b=_f(cur.get(key)),_f(prev.get(key))
     if pt is None or a is None or b is None: return None
     age=(observed-pt).total_seconds()
-    # Reject snapshots too old to represent the requested horizon.
-    if age < minutes*60 or age > minutes*60 + MAX_STALE_SECONDS: return None
+    # Reject snapshots too old to represent the requested horizon. The new 1m
+    # derivative needs a tight window; a five-minute-old point is not a 1m sample.
+    lag_tolerance = 60 if minutes <= 1 else MAX_STALE_SECONDS
+    if age < minutes*60 or age > minutes*60 + lag_tolerance: return None
     return round(a-b, 6)
+
+
+def _normalized_change(cur: Mapping[str, Any], prev: Optional[Mapping[str, Any]], key: str,
+                       observed: dt.datetime, minutes: int) -> Optional[float]:
+    """Change divided by the prior absolute level. Never substitutes a fake baseline."""
+    d = _delta(cur, prev, key, observed, minutes)
+    prior = _f(prev.get(key)) if prev else None
+    if d is None or prior is None or abs(prior) < 1e-9:
+        return None
+    return round(d / abs(prior), 6)
 
 
 def compute_transition(current: Mapping[str, Any], *, db_path: Optional[str]=None) -> Dict[str, Any]:
     path=db_path or _db_path(); observed=_parse(current.get("observed_at"))
-    base={"status":"UNAVAILABLE","transition_state":"UNAVAILABLE","net_gex_change_5m":None,"net_gex_change_15m":None,"net_gex_change_30m":None,
+    base={"status":"UNAVAILABLE","transition_state":"UNAVAILABLE",
+          "net_gex_change_1m":None,"net_gex_change_5m":None,"net_gex_change_15m":None,"net_gex_change_30m":None,
+          "net_gex_transition_ratio_1m":None,"net_gex_transition_ratio_5m":None,
+          "net_gex_transition_ratio_15m":None,"net_gex_transition_ratio_30m":None,
+          "transition_magnitude_ratio":None,"gamma_capacity_change_15m":None,
           "gamma_flip_change":None,"gamma_flip_velocity":None,"zero_dte_share_change":None,"zero_one_dte_share_change":None,
           "weekly_gamma_share_change":None,"durability_change":None,"gamma_path_transition":None,"schema_version":SCHEMA_VERSION,
           "behavioral_authority":False,"execution_authority":False,"automatic_calibration_activation":False,"production_effect":"NONE"}
     if observed is None: return base
     try:
-        p5,p15,p30=(_prior(path,str(current.get("ticker") or "SPX"),observed,m) for m in (5,15,30))
+        p1,p5,p15,p30=(_prior(path,str(current.get("ticker") or "SPX"),observed,m) for m in (1,5,15,30))
     except Exception: return base
-    d5=_delta(current,p5,"net_gex",observed,5); d15=_delta(current,p15,"net_gex",observed,15); d30=_delta(current,p30,"net_gex",observed,30)
+    d1=_delta(current,p1,"net_gex",observed,1); d5=_delta(current,p5,"net_gex",observed,5); d15=_delta(current,p15,"net_gex",observed,15); d30=_delta(current,p30,"net_gex",observed,30)
+    r1=_normalized_change(current,p1,"net_gex",observed,1); r5=_normalized_change(current,p5,"net_gex",observed,5); r15=_normalized_change(current,p15,"net_gex",observed,15); r30=_normalized_change(current,p30,"net_gex",observed,30)
     flip15=_delta(current,p15,"gamma_flip",observed,15)
+    capacity15=_delta(current,p15,"capacity_ratio",observed,15)
     z15=_delta(current,p15,"zero_dte_share",observed,15); zo15=_delta(current,p15,"zero_one_dte_share",observed,15); w15=_delta(current,p15,"weekly_gamma_share",observed,15)
-    available=[x for x in (d5,d15,d30,flip15,z15,zo15,w15) if x is not None]
+    available=[x for x in (d1,d5,d15,d30,flip15,z15,zo15,w15,capacity15) if x is not None]
     if not available:
         return {**base,"status":"COLLECTING","transition_state":"INSUFFICIENT_HISTORY"}
-    # Scale direction by current absolute GEX to avoid hard-coding provider units.
-    ng=_f(current.get("net_gex")); rel15=(d15/abs(ng)) if d15 is not None and ng not in (None,0) else None
-    rel5=(d5/abs(ng)) if d5 is not None and ng not in (None,0) else None
-    rapid = rel5 is not None and abs(rel5) >= .30
+    # Normalize against the prior observed level so identical absolute changes
+    # are interpreted relative to the structure they displaced.
+    rapid = r1 is not None and abs(r1) >= .20 or r5 is not None and abs(r5) >= .30
     if rapid: state="RAPID_TRANSITION"
-    elif rel15 is not None and rel15 >= .10: state="STRENGTHENING"
-    elif rel15 is not None and rel15 <= -.10: state="WEAKENING"
+    elif r15 is not None and r15 >= .10: state="STRENGTHENING"
+    elif r15 is not None and r15 <= -.10: state="WEAKENING"
     else: state="STABLE"
-    prev=p15 or p5 or p30
-    return {**base,"status":"AVAILABLE","transition_state":state,"net_gex_change_5m":d5,"net_gex_change_15m":d15,"net_gex_change_30m":d30,
+    prev=p15 or p5 or p1 or p30
+    ratios=[abs(x) for x in (r1,r5,r15,r30) if x is not None]
+    return {**base,"status":"AVAILABLE","transition_state":state,
+            "net_gex_change_1m":d1,"net_gex_change_5m":d5,"net_gex_change_15m":d15,"net_gex_change_30m":d30,
+            "net_gex_transition_ratio_1m":r1,"net_gex_transition_ratio_5m":r5,
+            "net_gex_transition_ratio_15m":r15,"net_gex_transition_ratio_30m":r30,
+            "transition_magnitude_ratio":round(max(ratios),6) if ratios else None,
+            "gamma_capacity_change_15m":capacity15,
             "gamma_flip_change":flip15,"gamma_flip_velocity":None if flip15 is None else round(flip15/15.0,6),
             "zero_dte_share_change":z15,"zero_one_dte_share_change":zo15,"weekly_gamma_share_change":w15,
             "durability_change":None if not prev else f"{prev.get('durability') or 'UNKNOWN'}->{current.get('durability') or 'UNKNOWN'}",

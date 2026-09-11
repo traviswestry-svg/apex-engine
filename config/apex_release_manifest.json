@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.3",
-  "build_name": "Morning Forecast & Evening Validation Integrity Closure",
+  "apex_version": "69.10.4",
+  "build_name": "Cluster Greek Structure & Multi-Horizon Transition Context",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-09-10",
+  "released_at": "2026-09-11",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -427,15 +427,27 @@
     "historical_forecasts_rewritten": false,
     "historical_recaps_automatically_rescored": false,
     "forecast_validation_changes_trade_decisions": false,
-    "forecast_validation_changes_execution_authority": false
+    "forecast_validation_changes_execution_authority": false,
+    "cluster_greek_structure_observational_only": true,
+    "cluster_greek_structure_provider_greeks_only": true,
+    "cluster_greek_structure_synthetic_greeks_allowed": false,
+    "cluster_greek_structure_changes_trade_decisions": false,
+    "cluster_greek_structure_changes_execution_authority": false,
+    "gamma_transition_normalized_to_prior_structure": true,
+    "gamma_transition_one_minute_context_enabled": true,
+    "multi_horizon_transition_context_observational_only": true,
+    "multi_horizon_transition_context_changes_trade_decisions": false,
+    "multi_horizon_transition_context_changes_execution_authority": false,
+    "multi_horizon_transition_context_auto_activates_calibration": false,
+    "transaction_count_horizons_relabelled_as_clock_time": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.3",
-  "application_version": "69.10.3",
+  "semantic_version": "69.10.4",
+  "application_version": "69.10.4",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

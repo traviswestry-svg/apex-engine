@@ -1,4 +1,4 @@
-"""APEX 69.10.3 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
+"""APEX 69.10.4 — Live Actionability Capture Probe & Lifecycle Attribution Closure.
 
 Runtime-only bridge connecting the canonical Institutional OS decision to the
 existing durable evidence ledger.  This module is observational: it never
@@ -18,7 +18,7 @@ from .evidence_pipeline import DEFAULT_DB, readiness, record_price, record_snaps
 from .outcome_grader import run_grader
 from .canonical_persistence import connect as canonical_connect
 
-VERSION = "69.10.3"
+VERSION = "69.10.4"
 SCHEMA_VERSION = "apex.historical_evidence_lifecycle.v1.6"
 
 _LOCK = threading.RLock()
@@ -551,6 +551,7 @@ def actionability_capture_audit(*, path: str | Path = DEFAULT_DB, limit: int = 1
     audit reads the canonical decision ledger directly and never mutates evidence.
     """
     resolved = Path(path)
+    current_release = _release_version() or VERSION
     base = {
         "ok": True,
         "version": VERSION,
@@ -559,7 +560,7 @@ def actionability_capture_audit(*, path: str | Path = DEFAULT_DB, limit: int = 1
         "behavioral_authority": False,
         "execution_authority": False,
         "historical_policy_inference": False,
-        "current_release": VERSION,
+        "current_release": current_release,
     }
     if not resolved.exists():
         return {**base, "status": "WAITING_FOR_EVIDENCE_DB", "sample_size": 0,
@@ -635,7 +636,7 @@ def actionability_capture_audit(*, path: str | Path = DEFAULT_DB, limit: int = 1
         return {**base, "ok": False, "status": "EVIDENCE_READ_ERROR",
                 "error": f"{type(exc).__name__}: {exc}", "recent_decisions": []}
 
-    current = [r for r in rows if r.get("release_version") == VERSION]
+    current = [r for r in rows if r.get("release_version") == current_release]
     current_ready = [r for r in current if r.get("lifecycle_stage") == "DECISION_PERSISTED_ENTRY_WINDOW_READY"]
     source_counts: Dict[str, int] = {}
     stage_counts: Dict[str, int] = {}

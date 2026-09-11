@@ -60,6 +60,10 @@ _GAMMA_TRANSITION_PATHS = (
     "dealer_positioning.gamma_transition", "gamma.gamma_transition",
     "gamma_transition", "dealer_positioning.gamma.gamma_transition",
 )
+_FLOW_SURPRISE_PATHS = (
+    "flow_surprise", "institutional_options_flow.flow_surprise",
+    "options_flow.flow_surprise", "flow.flow_surprise",
+)
 _RESIDUAL_PATHS = (
     "execution_intelligence.residual_pressure_memory", "residual_pressure_memory",
 )
@@ -203,6 +207,15 @@ def _gamma_transition(lr: Mapping[str, Any]) -> Dict[str, Any]:
     out["execution_authority"] = False
     return out
 
+
+def _flow_surprise_context(lr: Mapping[str, Any]) -> Dict[str, Any]:
+    for p in _FLOW_SURPRISE_PATHS:
+        cand = _get(lr, p)
+        if isinstance(cand, Mapping):
+            return dict(cand)
+    return {"status": "UNAVAILABLE", "flow_surprise_state": "UNAVAILABLE",
+            "behavioral_authority": False, "execution_authority": False}
+
 def _gamma_context(lr: Mapping[str, Any], gamma_path: Mapping[str, Any], gamma_term: Mapping[str, Any]) -> Dict[str, Any]:
     maturity = gamma_term.get("maturity_concentration") if isinstance(gamma_term.get("maturity_concentration"), Mapping) else {}
     expected_move = _f(_first(lr, _EXPECTED_MOVE_PATHS))
@@ -263,6 +276,16 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
     gamma_term = _gamma_term_structure(lr)
     gamma_transition = _gamma_transition(lr)
     gamma_context = _gamma_context(lr, gamma, gamma_term)
+    flow_surprise = _flow_surprise_context(lr)
+    try:
+        from .multi_horizon_transition_context import build_multi_horizon_transition_context
+        tick = scanner_state.get("tick_momentum") if isinstance(scanner_state, Mapping) else None
+        multi_horizon = build_multi_horizon_transition_context(
+            gamma_transition=gamma_transition, flow_surprise=flow_surprise, tick_momentum=tick
+        )
+    except Exception:
+        multi_horizon = {"available": False, "transition_alignment": "UNAVAILABLE",
+                         "behavioral_authority": False, "execution_authority": False}
     event_phase = _event_phase(lr)
     available = any(x.get("available") for x in (flow, residual, gamma, gamma_term, gamma_context, event_phase))
 
@@ -279,6 +302,8 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
         notes.append(f"gamma {str(gamma['current_regime']).replace('_', ' ').lower()}")
     if gamma_context.get("available") and gamma_context.get("structure_durability") == "LOW":
         notes.append("gamma structure durability low")
+    if multi_horizon.get("available") and multi_horizon.get("multi_horizon_disagreement"):
+        notes.append("multi-horizon gamma transition disagreement")
     if event_phase.get("available") and event_phase.get("phase") not in ("NORMAL", None):
         notes.append(f"event {str(event_phase['phase']).replace('_', ' ').lower()}")
 
@@ -290,6 +315,8 @@ def build_dynamic_state(last_result: Optional[Mapping[str, Any]],
         "gamma_term_structure": gamma_term,
         "gamma_transition": gamma_transition,
         "gamma_context": gamma_context,
+        "flow_surprise": flow_surprise,
+        "multi_horizon_transition_context": multi_horizon,
         "event_phase": event_phase,
         "summary": " · ".join(notes) if notes else None,
     }

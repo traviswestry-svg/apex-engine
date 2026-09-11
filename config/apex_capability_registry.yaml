@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.3
+apex_version: 69.10.4
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
@@ -610,6 +610,22 @@ capabilities:
     automatic_calibration_activation: false
     production_effect: OBSERVATIONAL_LEARNING_PIPELINE_ONLY
     guardrails: [provider_time_normalized_without_synthesis, invalid_time_never_replaced_with_now, current_and_legacy_trade_side_vocabularies_supported, canonical_flow_cluster_engine_reused, no_duplicate_cluster_engine, no_cluster_qualification_relaxation, no_historical_backfill, no_synthetic_excursions, no_decision_authority, no_execution_authority]
+
+  cluster_greek_structure_multi_horizon_transition:
+    description: "Provider-grounded cluster Greek/concentration structure plus read-only 1m/5m/15m/30m gamma transition context."
+    canonical_modules: [engine.flow_tape, engine.flow_classifier, engine.flow_clusters, engine.gamma_transition, engine.multi_horizon_transition_context, engine.dynamic_state]
+    deployed_modules: [engine.flow_tape, engine.flow_classifier, engine.flow_clusters, engine.flow_clusters_routes, engine.gamma_transition, engine.multi_horizon_transition_context, engine.dynamic_state, engine.dynamic_state_routes, app]
+    status: observational_learning_first
+    version: "69.10.4"
+    inputs: [provider_supplied_flow_greeks_when_available, canonical_flow_clusters, canonical_gamma_observational_snapshots, existing_flow_surprise, optional_es_tick_momentum]
+    outputs: [cluster_delta_exposure, cluster_gamma_exposure, weighted_delta, weighted_gamma, strike_dispersion, volume_concentration, gamma_concentration, liquidity_quality, normalized_gamma_transition_ratios, multi_horizon_transition_alignment, multi_horizon_disagreement, transition_acceleration]
+    api_routes: [/api/flow_clusters, /api/dynamic-state]
+    decision_authority: none
+    behavioral_authority: none
+    execution_authority: none
+    automatic_calibration_activation: false
+    production_effect: NONE
+    guardrails: [provider_greeks_only_no_synthetic_greeks, missing_greeks_remain_unavailable, normalized_transition_uses_prior_observed_structure, stale_gamma_snapshots_rejected, transaction_count_horizons_not_relabelled_as_clock_time, no_positive_conviction_authority, no_execution_authority]
 
 
   morning_forecast_evening_validation_integrity_closure:

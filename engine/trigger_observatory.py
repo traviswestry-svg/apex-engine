@@ -33,6 +33,17 @@ MAX_DAILY_TRADES = int(os.getenv("APEX_MAX_DAILY_TRADES", "3"))
 _RECOMMENDATION_NO_TRADE_STATES = {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
 
 
+
+def _canonical_release_version() -> str:
+    """Current deployment cohort from canonical release truth; implementation VERSION stays historical."""
+    try:
+        manifest = Path(__file__).resolve().parents[1] / "config" / "apex_release_manifest.json"
+        payload = json.loads(manifest.read_text())
+        value = str(payload.get("apex_version") or "").strip()
+        return value or VERSION
+    except Exception:
+        return VERSION
+
 def _recommendation_layer_blocks(actionability: Dict[str, Any]) -> bool:
     """Return True when captured recommendation intent itself abstains.
 
@@ -1648,6 +1659,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
         entry_sources: Dict[str, int] = {}
         field_status_counts: Dict[str, Dict[str, int]] = {field: {} for field in fields}
         ready = 0
+        current_release = _canonical_release_version()
         current_release_rows = 0
         current_release_ready = 0
         for row in group_rows:
@@ -1673,7 +1685,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             )
             if window_ready:
                 ready += 1
-            if str(row.get("_release_version") or "UNKNOWN") == VERSION:
+            if str(row.get("_release_version") or "UNKNOWN") == current_release:
                 current_release_rows += 1
                 if window_ready:
                     current_release_ready += 1
@@ -1722,7 +1734,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             "capture_version_counts": capture_versions,
             "entry_window_source_counts": entry_sources,
             "field_status_counts": field_status_counts,
-            "current_release": VERSION,
+            "current_release": current_release,
             "current_release_rows": current_release_rows,
             "current_release_entry_window_evidence_available": current_release_ready,
             "current_release_entry_window_evidence_pct": (

@@ -8,10 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_version_truth_and_release_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "69.10.3"
-    assert manifest["semantic_version"] == "69.10.3"
-    assert manifest["application_version"] == "69.10.3"
-    assert manifest["build_name"] == "Morning Forecast & Evening Validation Integrity Closure"
+    versions = [manifest["apex_version"], manifest["semantic_version"], manifest["application_version"]]
+    assert len(set(versions)) == 1
+    assert tuple(map(int, versions[0].split("."))) >= (69, 10, 1)
     g = manifest["guardrails"]
     assert g["scanner_health_prefers_fresh_cross_process_heartbeat"] is True
     assert g["flow_excursion_capture_forward_only"] is True

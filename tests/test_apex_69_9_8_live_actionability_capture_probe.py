@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from engine.historical_evidence_lifecycle import (
+    VERSION,
     actionability_capture_audit,
     capture_decision,
     runtime_status,
@@ -73,7 +74,7 @@ def test_runtime_probe_records_capture_source_immediately(tmp_path, monkeypatch)
     runtime = status["runtime"]
     assert runtime["actionability_capture_attempts"] >= 1
     assert runtime["actionability_capture_ready"] >= 1
-    assert runtime["last_actionability_capture_version"] == "69.10.3"
+    assert runtime["last_actionability_capture_version"] == VERSION
     assert runtime["last_entry_window_source"] == "TRADE_RISK_GUARD_POLICY"
     assert runtime["last_entry_cutoff_et"] == "11:30"
     assert runtime["last_cutoff_passed"] is False
@@ -113,8 +114,8 @@ def test_counterfactual_readiness_separates_pregrade_capture_from_graded_rows(tm
 
 def test_release_truth_routes_and_guardrails_are_69_9_8():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.3"
-    assert manifest["build_name"] == "Morning Forecast & Evening Validation Integrity Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 9, 8)
     g = manifest["guardrails"]
     assert g["pregrade_live_actionability_audit_observational_only"] is True
     assert g["pregrade_live_actionability_audit_changes_trade_decisions"] is False
@@ -124,7 +125,7 @@ def test_release_truth_routes_and_guardrails_are_69_9_8():
     assert g["live_capture_audit_infers_missing_policy"] is False
 
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.3" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "pregrade_live_actionability_capture_audit" in registry
     assert "/api/triggers/actionability-capture-readiness" in registry
 
