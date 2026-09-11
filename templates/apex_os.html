@@ -687,6 +687,11 @@
         <div class="ds-state" id="dsEligState">—</div>
         <div class="ds-meta" id="dsEligMeta"></div>
       </div>
+      <div class="ds-card">
+        <div class="ds-clabel">Multi-Horizon Transition</div>
+        <div class="ds-state" id="dsTransitionState">—</div>
+        <div class="ds-meta" id="dsTransitionMeta"></div>
+      </div>
     </div>
   </div>
   <script>
@@ -742,6 +747,15 @@
       document.getElementById('dsEligMeta').innerHTML=ee.available?
         ('full '+n2(ec.FULL||0)+' · discounted '+n2(ec.DISCOUNTED||0)+'<br>context '+n2(ec.CONTEXT_ONLY||0)+' · watch '+n2(ec.WATCH_ONLY||0)+' · ineligible '+n2(ec.INELIGIBLE||0)):
         'No eligibility readout this cycle';
+      // Read-only multi-horizon transition context
+      var mh=d.multi_horizon_transition_context||{},ms=document.getElementById('dsTransitionState');
+      ms.textContent=mh.available?String(mh.transition_alignment||'UNAVAILABLE').replace(/_/g,' '):'Unavailable';
+      ms.className='ds-state '+(!mh.available?'mut':mh.multi_horizon_disagreement?'warn':'good');
+      var hh=mh.horizons||{},parts=[];['1m','5m','15m','30m'].forEach(function(h){var x=hh[h]||{};parts.push(h+' '+(x.gamma_transition_ratio==null?'—':(Math.round(x.gamma_transition_ratio*1000)/10)+'%'));});
+      var mt=parts.join(' · ');
+      if(mh.transition_acceleration!=null)mt+='<br>accel '+n2(mh.transition_acceleration)+' · confidence '+Math.round((mh.context_confidence||0)*100)+'%';
+      if(mh.multi_horizon_disagreement)mt+='<br>horizon disagreement';
+      document.getElementById('dsTransitionMeta').innerHTML=mt;
     }
     function renderCalibration(c){
       var el=document.getElementById('dsCalibration');if(!el)return;

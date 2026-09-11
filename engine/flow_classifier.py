@@ -209,7 +209,8 @@ def _observable_facts(row: Dict[str, Any]) -> Dict[str, Any]:
         "quote_at_trade": ({"bid": row.get("bid"), "ask": row.get("ask")}
                            if row.get("bid") is not None or row.get("ask") is not None else None),
         "delta": row.get("delta") if row.get("delta") is not None else None,
-        "implied_volatility": None,
+        "gamma": row.get("gamma") if row.get("gamma") is not None else None,
+        "implied_volatility": row.get("implied_volatility") if row.get("implied_volatility") is not None else None,
     }
 
 

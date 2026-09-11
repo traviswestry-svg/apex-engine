@@ -551,6 +551,7 @@ def actionability_capture_audit(*, path: str | Path = DEFAULT_DB, limit: int = 1
     audit reads the canonical decision ledger directly and never mutates evidence.
     """
     resolved = Path(path)
+    current_release = _release_version() or VERSION
     base = {
         "ok": True,
         "version": VERSION,
@@ -559,7 +560,7 @@ def actionability_capture_audit(*, path: str | Path = DEFAULT_DB, limit: int = 1
         "behavioral_authority": False,
         "execution_authority": False,
         "historical_policy_inference": False,
-        "current_release": VERSION,
+        "current_release": current_release,
     }
     if not resolved.exists():
         return {**base, "status": "WAITING_FOR_EVIDENCE_DB", "sample_size": 0,
@@ -635,7 +636,7 @@ def actionability_capture_audit(*, path: str | Path = DEFAULT_DB, limit: int = 1
         return {**base, "ok": False, "status": "EVIDENCE_READ_ERROR",
                 "error": f"{type(exc).__name__}: {exc}", "recent_decisions": []}
 
-    current = [r for r in rows if r.get("release_version") == VERSION]
+    current = [r for r in rows if r.get("release_version") == current_release]
     current_ready = [r for r in current if r.get("lifecycle_stage") == "DECISION_PERSISTED_ENTRY_WINDOW_READY"]
     source_counts: Dict[str, int] = {}
     stage_counts: Dict[str, int] = {}

@@ -332,10 +332,12 @@ def test_underivable_metrics_are_none_with_a_stated_reason(metric):
     assert len(c["unavailable_metrics"][metric]) > 20      # a real reason, not a shrug
 
 
-def test_health_declares_unavailable_metrics():
+def test_health_declares_provider_conditional_greeks_and_hard_unavailable_metrics():
     h = health()
-    assert set(h["unavailable_metrics"]) == {"weighted_delta", "weighted_implied_volatility",
-                                             "number_of_exchanges"}
+    assert set(h["unavailable_metrics"]) == {"number_of_exchanges"}
+    assert {"weighted_delta", "weighted_gamma", "weighted_implied_volatility"}.issubset(
+        set(h["conditionally_available_metrics"])
+    )
 
 
 # ── intent uncertainty is reported, never resolved away ───────────────────

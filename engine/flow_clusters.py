@@ -30,14 +30,13 @@ mutation. `cluster_id` hashes the config version + key + sorted member ids, so a
 identical input always yields an identical id, and a membership change is visible
 as a new id rather than a silent edit.
 
-WHAT THIS MODULE CANNOT COMPUTE (and never fakes)
--------------------------------------------------
-The spec's cluster output asks for weighted delta, weighted implied volatility,
-and number of exchanges. Verified against the classified event contract: the
-provider supplies **none** of these per print (`implied_volatility` and
-`exchange_count` are explicitly None; there is no delta field at all). They are
-emitted as None with a stated reason in `unavailable_metrics`, never modelled
-here. Deriving delta would require backing IV out of a single trade print at an
+PROVIDER-GROUNDED GREEKS (and what this module never fakes)
+----------------------------------------------------------
+APEX 69.10.4 preserves delta/gamma/IV only when the live provider supplied them
+on the print. The cluster layer aggregates those observed values and reports
+coverage/concentration. Missing Greeks remain None with a stated reason; they are
+never modelled from trade price or substituted from unrelated chain snapshots.
+The feed still does not provide exchange identity/count. Deriving missing Greeks would require backing IV out of a single trade print at an
 unknown quote — a fabrication dressed as precision. If they become required,
 enrich from `engine/options/options_data_bus.py` (which has OI/greeks) as an
 explicit, stamped step.
@@ -196,7 +195,17 @@ def _summarize_members(members: List[Dict[str, Any]]) -> Dict[str, Any]:
     times: List[int] = []
     agg_num = 0.0
     contracts_by_key: Dict[Tuple[Any, Any, Any], int] = {}
+    contract_qty_by_key: Dict[Tuple[Any, Any, Any], float] = {}
     premiums: List[float] = []
+    delta_num = delta_den = 0.0
+    gamma_num = gamma_den = 0.0
+    iv_num = iv_den = 0.0
+    signed_delta_exposure = 0.0
+    signed_gamma_exposure = 0.0
+    abs_gamma_by_key: Dict[Tuple[Any, Any, Any], float] = {}
+    greek_measured_contracts = 0.0
+    quoted_prints = 0
+    relative_spreads: List[float] = []
     classifications: Dict[str, int] = {}
     qualities: Dict[str, int] = {}
     intents: Dict[str, int] = {}
@@ -221,6 +230,35 @@ def _summarize_members(members: List[Dict[str, Any]]) -> Dict[str, Any]:
         agg_num += _AGGRESSION_WEIGHT.get(ev.get("execution_aggression"), 0.0)
         ck = (f.get("contract_type"), f.get("strike"), f.get("expiration"))
         contracts_by_key[ck] = contracts_by_key.get(ck, 0) + 1
+        contract_qty_by_key[ck] = contract_qty_by_key.get(ck, 0.0) + qty
+
+        # APEX 69.10.4: preserve provider-supplied Greeks at the canonical cluster
+        # level. Missing values remain missing; no model-derived Greeks are created.
+        delta = _safe_float(f.get("delta"))
+        gamma = _safe_float(f.get("gamma"))
+        iv = _safe_float(f.get("implied_volatility"))
+        aggression = str(ev.get("execution_aggression") or "").upper()
+        sign = 1.0 if aggression in ("AGGRESSIVE_BUY", "BUY") else -1.0 if aggression in ("AGGRESSIVE_SELL", "SELL") else 0.0
+        if delta is not None and qty > 0:
+            delta_num += delta * qty
+            delta_den += qty
+            signed_delta_exposure += sign * delta * qty * 100.0
+            greek_measured_contracts += qty
+        if gamma is not None and qty > 0:
+            gamma_num += gamma * qty
+            gamma_den += qty
+            signed_gamma_exposure += sign * gamma * qty * 100.0
+            abs_gamma_by_key[ck] = abs_gamma_by_key.get(ck, 0.0) + abs(gamma * qty * 100.0)
+        if iv is not None and qty > 0:
+            iv_num += iv * qty
+            iv_den += qty
+        quote = f.get("quote_at_trade") if isinstance(f.get("quote_at_trade"), dict) else {}
+        bid = _safe_float(quote.get("bid")); ask = _safe_float(quote.get("ask"))
+        if bid is not None and ask is not None and ask >= bid and (ask + bid) > 0:
+            quoted_prints += 1
+            mid = (ask + bid) / 2.0
+            if mid > 0:
+                relative_spreads.append((ask - bid) / mid)
         c = ev.get("classification")
         classifications[c] = classifications.get(c, 0) + 1
         q = ev.get("data_quality")
@@ -235,6 +273,28 @@ def _summarize_members(members: List[Dict[str, Any]]) -> Dict[str, Any]:
     # premium concentration: does one print dominate the cluster?
     premium_concentration = round(max(premiums) / total_premium, 3) \
         if premiums and total_premium > 0 else None
+    volume_concentration = (round(max(contract_qty_by_key.values()) / total_contracts, 3)
+                            if contract_qty_by_key and total_contracts > 0 else None)
+    gamma_total_abs = sum(abs_gamma_by_key.values())
+    gamma_concentration = (round(max(abs_gamma_by_key.values()) / gamma_total_abs, 3)
+                           if abs_gamma_by_key and gamma_total_abs > 0 else None)
+    strike_dispersion = round(max(strikes) - min(strikes), 4) if len(strikes) >= 2 else (0.0 if strikes else None)
+    quote_coverage = round(quoted_prints / prints, 3) if prints else 0.0
+    median_spread = None
+    if relative_spreads:
+        rs = sorted(relative_spreads)
+        m = len(rs) // 2
+        median_spread = rs[m] if len(rs) % 2 else (rs[m-1] + rs[m]) / 2.0
+    if median_spread is None:
+        liquidity_state = "UNAVAILABLE"
+    elif quote_coverage < 0.5:
+        liquidity_state = "LOW_COVERAGE"
+    elif median_spread <= 0.08:
+        liquidity_state = "HIGH"
+    elif median_spread <= 0.18:
+        liquidity_state = "MODERATE"
+    else:
+        liquidity_state = "LOW"
 
     return {
         "number_of_prints": prints,
@@ -249,6 +309,20 @@ def _summarize_members(members: List[Dict[str, Any]]) -> Dict[str, Any]:
         "repeat_intensity_score": repeat_intensity,
         "distinct_contracts": len(contracts_by_key),
         "premium_concentration": premium_concentration,
+        "volume_concentration": volume_concentration,
+        "strike_dispersion": strike_dispersion,
+        "weighted_delta": round(delta_num / delta_den, 6) if delta_den > 0 else None,
+        "weighted_gamma": round(gamma_num / gamma_den, 8) if gamma_den > 0 else None,
+        "weighted_implied_volatility": round(iv_num / iv_den, 6) if iv_den > 0 else None,
+        "cluster_delta_exposure": round(signed_delta_exposure, 4) if delta_den > 0 else None,
+        "cluster_gamma_exposure": round(signed_gamma_exposure, 6) if gamma_den > 0 else None,
+        "gamma_concentration": gamma_concentration,
+        "greek_coverage_pct": round(100.0 * greek_measured_contracts / total_contracts, 1) if total_contracts > 0 else 0.0,
+        "liquidity_quality": {
+            "state": liquidity_state,
+            "quote_coverage_pct": round(quote_coverage * 100.0, 1),
+            "median_relative_spread": round(median_spread, 6) if median_spread is not None else None,
+        },
         "classification_summary": classifications,
         "data_quality_summary": qualities,
         "intent_summary": intents,
@@ -353,16 +427,17 @@ def _build_cluster(key: Tuple[Any, ...], members: List[Dict[str, Any]]) -> Dict[
         **stats,
         "confidence": _cluster_confidence(stats, members),
         "intent_uncertainty": _intent_uncertainty(members, stats),
-        # Required by spec but NOT derivable from the provider's per-print data.
-        # Emitted explicitly as unavailable rather than modelled into false precision.
-        "weighted_delta": None,
-        "weighted_implied_volatility": None,
         "number_of_exchanges": None,
+        "cluster_greek_structure_version": "69.10.4",
         "unavailable_metrics": {
-            "weighted_delta": "No delta on the print, and no IV to derive one; modelling it "
-                              "from a single trade price at an unknown quote would be false "
-                              "precision.",
-            "weighted_implied_volatility": "Provider supplies no per-print implied volatility.",
+            **({"weighted_delta": "Provider supplied no delta for any member print."}
+               if stats.get("weighted_delta") is None else {}),
+            **({"weighted_gamma": "Provider supplied no gamma for any member print."}
+               if stats.get("weighted_gamma") is None else {}),
+            **({"weighted_implied_volatility": "Provider supplied no implied volatility for any member print."}
+               if stats.get("weighted_implied_volatility") is None else {}),
+            **({"gamma_concentration": "Gamma concentration requires provider-supplied gamma on member prints."}
+               if stats.get("gamma_concentration") is None else {}),
             "number_of_exchanges": "Provider supplies no exchange field; a SWEEP is taken as "
                                    "provider-reported rather than counted across venues.",
         },
@@ -606,8 +681,10 @@ def health() -> Dict[str, Any]:
         },
         "key_dimensions": ["ticker", "option_type", "expiration",
                            "directional_interpretation", "strike_band", "timestamp_proximity"],
-        "unavailable_metrics": ["weighted_delta", "weighted_implied_volatility",
-                                "number_of_exchanges"],
+        "conditionally_available_metrics": ["weighted_delta", "weighted_gamma",
+                                              "weighted_implied_volatility", "cluster_delta_exposure",
+                                              "cluster_gamma_exposure", "gamma_concentration"],
+        "unavailable_metrics": ["number_of_exchanges"],
         "determinism": "Events are de-duplicated by event_id and sorted by (time, event_id) "
                        "before chaining, so clustering is independent of arrival order.",
     }
