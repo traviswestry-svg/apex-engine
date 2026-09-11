@@ -80,8 +80,9 @@ def test_release_truth_6999():
     registry = Path("config/apex_capability_registry.yaml").read_text()
     assert f"apex_version: {manifest['apex_version']}" in registry
     assert 'live_flow_excursion_invocation_closure:' in registry
-    assert 'version: "69.10.3"' in registry
+    assert 'version: "69.10.5"' in registry
     assert "feature_writer_owned_capture" in registry
+    assert "source_stage_capture_forbidden" in registry
     assert "production_defer_disabled" in registry
 
 

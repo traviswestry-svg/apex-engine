@@ -805,11 +805,11 @@ FLOW_PL_SAMPLE_SESSIONS = {
     os.getenv("FLOW_PL_SAMPLE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
 }
 
-# APEX 69.10.3: scanner-owned observability for the live flow learning/capture path.
+# APEX 69.10.5: scanner-owned observability for the canonical live flow learning/capture path.
 # This is process-local telemetry only and never participates in decisions. The
 # dedicated scanner process publishes it through the canonical heartbeat.
 _FLOW_LEARNING_RUNTIME = {
-    "version": "69.10.3",
+    "version": "69.10.5",
     "cycles": 0,
     "live_session_cycles": 0,
     "pipeline_runs": 0,
@@ -820,8 +820,14 @@ _FLOW_LEARNING_RUNTIME = {
     "unclusterable_flow_events": 0,
     "invalid_trade_time": 0,
     "samples_recorded": 0,
+    "flow_pl_observations_recorded": 0,
     "writer_invocations": 0,
     "feature_rows_written": 0,
+    "sealed_feature_candidates": 0,
+    "skipped_before_persist_no_frame": 0,
+    "skipped_before_persist_refused": 0,
+    "canonical_lookup_missing": 0,
+    "identity_registration_failures": 0,
     "capture_attempts": 0,
     "capture_inserted": 0,
     "capture_updated": 0,
@@ -4584,6 +4590,10 @@ def scanner_loop() -> None:
                 _clusters = list(_res.get("source_clusters") or [])
                 _diag = dict(_res.get("source_diagnostics") or {})
                 _FLOW_LEARNING_RUNTIME["samples_recorded"] += _fs
+                # ``samples_recorded`` is the legacy flow-P/L observation count,
+                # not the count of immutable feature samples. Keep it for API
+                # compatibility while publishing the unambiguous name alongside it.
+                _FLOW_LEARNING_RUNTIME["flow_pl_observations_recorded"] += _fs
                 _FLOW_LEARNING_RUNTIME["source_clusters"] += len(_clusters)
                 _FLOW_LEARNING_RUNTIME["raw_flow_rows"] += int(_diag.get("raw_rows") or 0)
                 _FLOW_LEARNING_RUNTIME["normalized_flow_rows"] += int(_diag.get("normalized_rows") or 0)
@@ -4628,13 +4638,28 @@ def scanner_loop() -> None:
                         now_et_seconds=_n.hour * 3600 + _n.minute * 60 + _n.second,
                         ticker=ASSISTANT_TICKER, defer_excursion_capture=False)
                     _FLOW_LEARNING_RUNTIME["feature_rows_written"] += int(_rep.get("written") or 0)
+                    _FLOW_LEARNING_RUNTIME["sealed_feature_candidates"] += int(_rep.get("sealed_candidates") or 0)
+                    _FLOW_LEARNING_RUNTIME["skipped_before_persist_no_frame"] += int(_rep.get("skipped_before_persist_no_frame") or 0)
+                    _FLOW_LEARNING_RUNTIME["skipped_before_persist_refused"] += int(_rep.get("skipped_before_persist_refused") or 0)
+                    _FLOW_LEARNING_RUNTIME["canonical_lookup_missing"] += int(_rep.get("canonical_lookup_missing") or 0)
+                    _FLOW_LEARNING_RUNTIME["identity_registration_failures"] += int(_rep.get("identity_registration_failures") or 0)
                     _FLOW_LEARNING_RUNTIME["capture_attempts"] += int(_rep.get("excursion_capture_attempts") or 0)
                     _FLOW_LEARNING_RUNTIME["capture_inserted"] += int(_rep.get("excursions_inserted") or 0)
                     _FLOW_LEARNING_RUNTIME["capture_updated"] += int(_rep.get("excursions_updated") or 0)
                     _FLOW_LEARNING_RUNTIME["capture_missing_pl"] += int(_rep.get("excursion_missing_pl") or 0)
                     _FLOW_LEARNING_RUNTIME["capture_errors"] += int(_rep.get("excursion_capture_errors") or 0)
+                    if _rep.get("canonical_lookup_missing"):
+                        _writer_state = "CANONICAL_FEATURE_LOOKUP_MISSING"
+                    elif _rep.get("identity_registration_failures"):
+                        _writer_state = "IDENTITY_REGISTRATION_FAILED"
+                    elif _rep.get("excursion_capture_attempts"):
+                        _writer_state = "CAPTURE_ATTEMPTED"
+                    elif _rep.get("skipped_before_persist_no_frame"):
+                        _writer_state = "PRE_PERSIST_REPLAY_FRAME_GATED"
+                    else:
+                        _writer_state = "WRITER_NO_CAPTURE_TARGET"
                     _FLOW_LEARNING_RUNTIME.update({
-                        "last_state": "CAPTURE_ATTEMPTED" if _rep.get("excursion_capture_attempts") else "WRITER_NO_CAPTURE_TARGET",
+                        "last_state": _writer_state,
                         "last_skip_reason": None if _rep.get("excursion_capture_attempts") else ((_rep.get("reasons") or ["NO_SEALED_CAPTURE_TARGET"])[0]),
                     })
                     if _rep.get("excursion_capture_attempts"):

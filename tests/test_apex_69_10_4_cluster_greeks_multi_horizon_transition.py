@@ -119,7 +119,8 @@ def test_dynamic_state_exposes_multi_horizon_context_read_only():
 
 def test_release_truth_69_10_4():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.4"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"]
+    assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 10, 4)
     registry = Path("config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.4" in registry
+    assert f"apex_version: {manifest['apex_version']}" in registry
     assert "cluster_greek_structure_multi_horizon_transition" in registry

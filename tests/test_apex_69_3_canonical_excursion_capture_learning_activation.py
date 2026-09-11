@@ -68,7 +68,9 @@ def _sealed_seconds():
 def test_release_identity_69_3_and_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
     assert tuple(map(int, manifest["apex_version"].split("."))) >= (69, 3, 0)
-    assert VERSION == manifest["apex_version"]
+    # Implementation version and current release cohort are intentionally separate
+    # after the 69.10.4 release-cohort integrity closure.
+    assert tuple(map(int, VERSION.split("."))) <= tuple(map(int, manifest["apex_version"].split(".")))
     schema_major_minor = tuple(map(int, SCHEMA_VERSION.rsplit(".v", 1)[1].split(".")))
     assert schema_major_minor >= (1, 4)
     g = manifest["guardrails"]
