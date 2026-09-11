@@ -805,11 +805,11 @@ FLOW_PL_SAMPLE_SESSIONS = {
     os.getenv("FLOW_PL_SAMPLE_SESSIONS", "MARKET_OPEN").split(",") if s.strip()
 }
 
-# APEX 69.10.5: scanner-owned observability for the canonical live flow learning/capture path.
+# APEX 69.10.6: scanner-owned observability for canonical live flow learning/capture and replay-frame availability.
 # This is process-local telemetry only and never participates in decisions. The
 # dedicated scanner process publishes it through the canonical heartbeat.
 _FLOW_LEARNING_RUNTIME = {
-    "version": "69.10.5",
+    "version": "69.10.6",
     "cycles": 0,
     "live_session_cycles": 0,
     "pipeline_runs": 0,
@@ -822,6 +822,8 @@ _FLOW_LEARNING_RUNTIME = {
     "samples_recorded": 0,
     "flow_pl_observations_recorded": 0,
     "writer_invocations": 0,
+    "replay_frames_available": 0,
+    "last_replay_frame_at": None,
     "feature_rows_written": 0,
     "sealed_feature_candidates": 0,
     "skipped_before_persist_no_frame": 0,
@@ -4630,6 +4632,10 @@ def scanner_loop() -> None:
                     with REPLAY_STORE_LOCK:
                         _frames = [f for f in REPLAY_STORE.get(_sess, [])
                                    if str(f.get("ticker", "")).upper() == ASSISTANT_TICKER]
+                    _FLOW_LEARNING_RUNTIME["replay_frames_available"] = len(_frames)
+                    _FLOW_LEARNING_RUNTIME["last_replay_frame_at"] = (
+                        f"{_frames[-1].get('session_date')}T{_frames[-1].get('frame_time')}"
+                        if _frames else None)
                     _FLOW_LEARNING_RUNTIME["writer_invocations"] += 1
                     _FLOW_LEARNING_RUNTIME["last_writer_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
                     _rep = _fs_writer.write_samples(

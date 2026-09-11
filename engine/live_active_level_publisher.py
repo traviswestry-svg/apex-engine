@@ -17,12 +17,46 @@ from .canonical_session_context import LIVE_MUTABLE_LEVEL_KINDS, normalize_level
 from .daily_key_levels_adapters import build_daily_key_levels, intraday_time_to_close_frac
 
 VERSION = "66.1.2_DYNAMIC_LEVEL_IDENTITY"
+LEARNING_REPLAY_VERSION = "69.10.6_DECISION_TIME_REPLAY_FRAME"
 _ET = ZoneInfo("America/New_York")
 
 PROFILE_KINDS = {"developing_poc", "vah", "val", "hvn", "lvn"}
 LIQUIDITY_KINDS = {"swing_high", "swing_low", "fair_value_gap", "buyside_liquidity", "sellside_liquidity", "unfilled_gap"}
 OPENING_KINDS = {"or5_high", "or5_low", "or15_high", "or15_low", "initial_balance_high", "initial_balance_low", "ib_extension"}
 GAMMA_KINDS = {"gamma_flip", "zero_gamma", "call_wall", "put_wall", "high_gamma_strike", "low_gamma_strike", "volatility_trigger", "large_option_strike", "dealer_hedge_zone"}
+
+
+def build_learning_replay_snapshot(*, canonical: Mapping[str, Any], flow: Mapping[str, Any],
+                                   volume: Mapping[str, Any]) -> Dict[str, Any]:
+    """Build a point-in-time SPX replay frame from already-observed live state.
+
+    This is intentionally a read-model adapter, not a second market-state engine.
+    It reuses the same live flow/profile inputs already fetched by the active-level
+    publisher and emits only values that were observable when the publisher ran.
+    Missing values remain absent; nothing is inferred or synthesized.
+    """
+    canonical = dict(canonical or {})
+    flow = dict(flow or {})
+    volume = dict(volume or {})
+    profile = (volume.get("profile") or {}) if isinstance(volume.get("profile"), Mapping) else {}
+    levels = (profile.get("levels") or {}) if isinstance(profile.get("levels"), Mapping) else {}
+    auction = (volume.get("auction") or {}) if isinstance(volume.get("auction"), Mapping) else {}
+
+    values = {
+        "stock_price": canonical.get("price") or flow.get("stock_price"),
+        "vwap": canonical.get("vwap"),
+        "poc": canonical.get("poc") or levels.get("poc") or auction.get("poc"),
+        "vah": canonical.get("vah") or levels.get("vah") or auction.get("vah"),
+        "val": canonical.get("val") or levels.get("val") or auction.get("val"),
+        "gamma_regime": canonical.get("gamma_regime") or flow.get("gamma_regime"),
+        "call_wall": canonical.get("call_wall") or flow.get("call_wall"),
+        "put_wall": canonical.get("put_wall") or flow.get("put_wall"),
+        "zero_gamma": canonical.get("zero_gamma") or flow.get("zero_gamma"),
+        "flow_bias": canonical.get("flow_bias") or flow.get("flow_bias") or flow.get("bias"),
+    }
+    # Preserve false/zero values when genuinely present; only unavailable values
+    # are omitted so an empty source cannot masquerade as a usable replay frame.
+    return {k: v for k, v in values.items() if v is not None and v != ""}
 
 
 class LiveActiveLevelPublisher:
@@ -36,6 +70,9 @@ class LiveActiveLevelPublisher:
         self.runs = 0
         self.successes = 0
         self.skips = 0
+        self.learning_replay_frames_published = 0
+        self.last_learning_replay_frame_at: Optional[str] = None
+        self.last_learning_replay_frame_state = "NOT_RUN"
         self._daily_cache = {"at": 0.0, "rows": []}
         self._stop_event = threading.Event()
         self._thread = None
@@ -73,10 +110,49 @@ class LiveActiveLevelPublisher:
             "last_error": self.last_error,
             "last_result": dict(self.last_result or {}),
             "thread_alive": bool(self._thread and self._thread.is_alive()),
+            "learning_replay_version": LEARNING_REPLAY_VERSION,
+            "learning_replay_frames_published": self.learning_replay_frames_published,
+            "last_learning_replay_frame_at": self.last_learning_replay_frame_at,
+            "last_learning_replay_frame_state": self.last_learning_replay_frame_state,
         }
 
     def due(self) -> bool:
         return (time.monotonic() - self.last_run_monotonic) >= self.interval_seconds
+
+
+    def _record_learning_replay_frame(self, *, canonical: Mapping[str, Any],
+                                      flow: Mapping[str, Any],
+                                      volume: Mapping[str, Any],
+                                      observed_at: str) -> dict:
+        """Record one forward-only SPX frame for point-in-time feature joins.
+
+        The normal equity scanner universe does not contain SPX, so its generic
+        per-ticker replay hook cannot populate SPX frames. This publisher already
+        owns a live SPX context refresh every minute; reusing that observed state
+        closes the availability gap without adding a second provider path.
+        """
+        recorder = getattr(self.app, "_record_replay_frame", None)
+        if not callable(recorder):
+            self.last_learning_replay_frame_state = "RECORDER_UNAVAILABLE"
+            return {"ok": False, "state": self.last_learning_replay_frame_state,
+                    "version": LEARNING_REPLAY_VERSION}
+        snapshot = build_learning_replay_snapshot(canonical=canonical, flow=flow, volume=volume)
+        if not snapshot:
+            self.last_learning_replay_frame_state = "NO_OBSERVED_CONTEXT"
+            return {"ok": False, "state": self.last_learning_replay_frame_state,
+                    "version": LEARNING_REPLAY_VERSION}
+        try:
+            recorder(self.symbol, snapshot)
+            self.learning_replay_frames_published += 1
+            self.last_learning_replay_frame_at = observed_at
+            self.last_learning_replay_frame_state = "RECORDED"
+            return {"ok": True, "state": "RECORDED", "feature_count": len(snapshot),
+                    "observed_at": observed_at, "version": LEARNING_REPLAY_VERSION}
+        except Exception as exc:
+            self.last_learning_replay_frame_state = f"RECORD_ERROR:{type(exc).__name__}"
+            return {"ok": False, "state": "RECORD_ERROR",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "version": LEARNING_REPLAY_VERSION}
 
     def _daily_bars(self):
         now = time.monotonic()
@@ -117,6 +193,8 @@ class LiveActiveLevelPublisher:
             intraday = self.app.get_intraday_bars(self.symbol, multiplier=1, limit_days=1) or []
             volume = self.app._volume_profile_bundle(self.symbol, 1, 5) or {}
             canonical = self.app._morning_brief_market_state(flow, volume) or {}
+            learning_replay = self._record_learning_replay_frame(
+                canonical=canonical, flow=flow, volume=volume, observed_at=now_et.isoformat())
             daily = self._daily_bars()
 
             live_profile_levels = ((volume.get("profile") or {}).get("levels") or {})
@@ -168,6 +246,7 @@ class LiveActiveLevelPublisher:
                 component_version=VERSION,
             )
             result["input_level_count"] = len(levels)
+            result["learning_replay_frame"] = learning_replay
             result["provider_state"] = {
                 "flow": bool(flow),
                 "intraday_bars": len(intraday),
