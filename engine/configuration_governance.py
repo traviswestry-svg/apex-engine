@@ -204,6 +204,8 @@ _REGISTRY_DATA.extend([
 _REGISTRY_DATA.extend([
  {'name':'APEX_CORRUPT_DB_RETENTION_DAYS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'14','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum operator-governed retention window in days before quarantined corrupt database artifacts become cleanup-eligible.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_EVIDENCE_PRICE_RETENTION_DAYS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'14','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Retention window in days for mature forward price samples; pending-decision evidence is preserved regardless of this setting.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_STORAGE_WARN_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'25','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a storage-retention warning state.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_STORAGE_CRITICAL_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a storage-retention critical state.','safety_critical':False,'used_in_code':True},
 ])
 
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
