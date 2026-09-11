@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.5",
-  "build_name": "Canonical Flow Sample Identity & Excursion Capture Closure",
+  "apex_version": "69.10.6",
+  "build_name": "Decision-Time Replay Frame Availability & Canonical Feature Persistence Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -449,15 +449,26 @@
     "flow_learning_samples_recorded_legacy_semantics_preserved": true,
     "flow_learning_unambiguous_pl_observation_counter_enabled": true,
     "storage_capacity_warning_observational_only": true,
-    "storage_capacity_automatic_cleanup": false
+    "storage_capacity_automatic_cleanup": false,
+    "spx_learning_replay_frame_producer_enabled": true,
+    "spx_learning_replay_reuses_live_active_level_provider_inputs": true,
+    "spx_learning_replay_adds_provider_path": false,
+    "spx_learning_replay_forward_only": true,
+    "spx_learning_replay_future_frame_allowed": false,
+    "spx_learning_replay_stale_frame_tolerance_relaxed": false,
+    "spx_learning_replay_synthetic_context_allowed": false,
+    "canonical_feature_persistence_requires_prior_replay_frame": true,
+    "feature_max_frame_staleness_seconds_unchanged": true,
+    "replay_frame_availability_changes_trade_decisions": false,
+    "replay_frame_availability_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.5",
-  "application_version": "69.10.5",
+  "semantic_version": "69.10.6",
+  "application_version": "69.10.6",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
