@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from engine.historical_evidence_lifecycle import (
+    VERSION,
     actionability_capture_audit,
     capture_decision,
     runtime_status,
@@ -73,7 +74,7 @@ def test_runtime_probe_records_capture_source_immediately(tmp_path, monkeypatch)
     runtime = status["runtime"]
     assert runtime["actionability_capture_attempts"] >= 1
     assert runtime["actionability_capture_ready"] >= 1
-    assert runtime["last_actionability_capture_version"] == "69.10.4"
+    assert runtime["last_actionability_capture_version"] == VERSION
     assert runtime["last_entry_window_source"] == "TRADE_RISK_GUARD_POLICY"
     assert runtime["last_entry_cutoff_et"] == "11:30"
     assert runtime["last_cutoff_passed"] is False
