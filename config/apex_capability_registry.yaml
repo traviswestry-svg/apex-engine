@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.4
+apex_version: 69.10.5
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
@@ -112,17 +112,17 @@ capabilities:
     production_effect: STORAGE_SHAPE_ONLY
     guardrails: [no_trade_decision_change, no_execution_authority_change, no_grade_eligibility_change, source_snapshot_hash_preserved, no_automatic_historical_rewrite, no_canonical_evidence_delete, audit_payload_values_not_exposed]
   live_flow_excursion_invocation_closure:
-    canonical_module: engine.flow_pl_pipeline
+    canonical_module: engine.feature_store_writer
     deployed_modules: [engine.flow_pl_pipeline, engine.feature_store_writer, engine.flow_pl_store, scanner_worker, app]
     status: active
-    version: "69.9.9"
-    inputs: [real_live_flow_marks, sealed_feature_samples, canonical_sample_identity_map]
-    outputs: [canonical_sample_excursion, scanner_capture_telemetry]
+    version: "69.10.5"
+    inputs: [real_live_flow_marks, sealed_feature_samples, exact_persisted_feature_sample_id, canonical_sample_identity_map]
+    outputs: [canonical_sample_excursion, scanner_capture_telemetry, pre_persistence_skip_diagnostics, canonical_identity_integrity_diagnostics]
     api_routes: [/api/learning/evidence-lifecycle]
     decision_authority: none
     execution_authority: none
     production_effect: OBSERVATIONAL_LEARNING_ONLY
-    guardrails: [post_feature_persistence_capture, feature_writer_owned_capture, production_defer_disabled, canonical_sample_id_only, no_historical_backfill, no_synthetic_pl, no_settlement_relaxation, no_decision_authority, no_execution_authority]
+    guardrails: [post_feature_persistence_capture, feature_writer_owned_capture, source_stage_capture_forbidden, production_defer_disabled, exact_persisted_sample_id_only, identity_registration_verified, pre_persistence_skips_not_capture_failures, legacy_missing_feature_counter_not_rewritten, canonical_capture_counter_forward_only, no_historical_backfill, no_synthetic_pl, no_settlement_relaxation, no_decision_authority, no_execution_authority]
   market_microstructure_governance_truth_closure:
     canonical_module: engine.market_microstructure
     deployed_modules: [engine.market_microstructure, engine.market_microstructure_ingest, engine.market_microstructure_store, engine.market_microstructure_calibration, engine.market_microstructure_routes]
@@ -572,7 +572,7 @@ capabilities:
   governed_storage_retention:
     canonical_module: engine.storage_retention
     status: active
-    version: 69.4.3
+    version: 69.10.5
     inputs: [persistent_disk_inventory, sqlite_wal_state, evidence_pipeline_price_samples, pending_decision_floor, db_resilience_quarantine_artifacts]
     outputs: [storage_retention_audit, operator_maintenance_plan, bounded_price_sample_prune, wal_checkpoint_result]
     routes: [/api/admin/storage/audit]
@@ -580,7 +580,7 @@ capabilities:
     decision_authority: none
     execution_authority: none
     production_effect: OPERATIONS_ONLY
-    guardrails: [no_automatic_delete, no_automatic_vacuum, preserve_canonical_decisions, preserve_grading_results, preserve_flow_features, preserve_excursion_evidence, preserve_calibration_evidence, human_approval_required_for_quarantine_cleanup, pending_decision_floor_protects_price_samples, storage_audit_endpoint_read_only, storage_audit_endpoint_does_not_invoke_maintenance]
+    guardrails: [no_automatic_delete, no_automatic_vacuum, preserve_canonical_decisions, preserve_grading_results, preserve_flow_features, preserve_excursion_evidence, preserve_calibration_evidence, human_approval_required_for_quarantine_cleanup, pending_decision_floor_protects_price_samples, storage_audit_endpoint_read_only, storage_audit_endpoint_does_not_invoke_maintenance, capacity_warning_observational_only, capacity_warning_never_auto_deletes]
   flow_surprise_gamma_transition_dynamics:
     canonical_modules: [engine.flow_surprise, engine.gamma_transition]
     deployed_modules: [engine.flow_clusters, engine.flow_surprise, engine.feature_store_writer, engine.gamma, engine.gamma_transition, engine.dynamic_state, app]

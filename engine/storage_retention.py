@@ -19,6 +19,9 @@ QUARANTINE_RETENTION_DAYS = int(os.getenv("APEX_CORRUPT_DB_RETENTION_DAYS", "14"
 
 DECISION_AUDIT_SAMPLE_LIMIT = 20
 
+STORAGE_WARN_FREE_PCT = float(os.getenv("APEX_STORAGE_WARN_FREE_PCT", "25"))
+STORAGE_CRITICAL_FREE_PCT = float(os.getenv("APEX_STORAGE_CRITICAL_FREE_PCT", "15"))
+
 
 def _decision_storage_amplification(c: sqlite3.Connection) -> dict[str, Any]:
     """Read-only size diagnostics for decisions.snapshot_json.
@@ -122,8 +125,31 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
                 except sqlite3.DatabaseError:
                     evidence["table_bytes_unavailable"]=True
         except Exception as exc: evidence["audit_error"]=f"{type(exc).__name__}: {exc}"
-    return {"ok":True,"version":VERSION,"storage":storage_status(),"files":files,"operator_reclaimable_bytes":reclaimable,"evidence_pipeline":evidence,
-            "guardrails":{"automatic_delete":False,"automatic_vacuum":False,"canonical_evidence_delete":False,"human_approval_required":True,"no_fabrication":True}}
+    storage = storage_status()
+    try:
+        free_pct = float(storage.get("free_pct"))
+    except (TypeError, ValueError, AttributeError):
+        free_pct = None
+    if free_pct is None:
+        capacity_state = "UNKNOWN"
+    elif free_pct < STORAGE_CRITICAL_FREE_PCT:
+        capacity_state = "CRITICAL"
+    elif free_pct < STORAGE_WARN_FREE_PCT:
+        capacity_state = "WARN"
+    else:
+        capacity_state = "PASS"
+    capacity = {
+        "state": capacity_state,
+        "free_pct": free_pct,
+        "warn_below_pct": STORAGE_WARN_FREE_PCT,
+        "critical_below_pct": STORAGE_CRITICAL_FREE_PCT,
+        "automatic_cleanup": False,
+        "operator_action_required": capacity_state in {"WARN", "CRITICAL"},
+    }
+    return {"ok":True,"version":VERSION,"storage":storage,"storage_capacity":capacity,
+            "files":files,"operator_reclaimable_bytes":reclaimable,"evidence_pipeline":evidence,
+            "guardrails":{"automatic_delete":False,"automatic_vacuum":False,"canonical_evidence_delete":False,"human_approval_required":True,"no_fabrication":True,
+                          "capacity_warning_observational_only":True}}
 
 
 def prune_mature_price_samples(path: str | Path = DEFAULT_DB, retention_days: int = PRICE_RETENTION_DAYS, *, apply: bool=False) -> dict[str,Any]:

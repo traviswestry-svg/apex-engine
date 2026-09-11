@@ -258,26 +258,17 @@ def run_flow_pl(
                 "legacy_cluster_key": ckey_s,
             }
 
-            # APEX 69.4.1: live excursion capture resolves the exact sample_id
-            # published by the feature writer. It never reconstructs identity.
-            # A missing mapping is explicit evidence that no sealed feature sample
-            # exists yet; count it, but never create an orphan excursion.
-            try:
-                if priced.get("estimated_pl_dollars") is not None and flow_pl_store.is_ready():
-                    identity = flow_pl_store.resolve_sample_identity(
-                        session_date=session, legacy_cluster_key=ckey_s)
-                    if identity and identity.get("sample_id"):
-                        flow_pl_store.record_sample_excursion(
-                            sample_id=identity["sample_id"], session_date=session,
-                            ticker=priced.get("ticker") or ckey.get("ticker") or default_ticker,
-                            pl_dollars=priced.get("estimated_pl_dollars"),
-                            cost_basis=priced.get("cost_basis_dollars"),
-                            decision_time=identity.get("decision_time"), legacy_cluster_key=ckey_s)
-                    else:
-                        flow_pl_store.record_capture_audit(attempted=1, missing_feature=1)
-            except Exception:
-                # Observational learning must never break live flow pricing.
-                flow_pl_store.record_capture_audit(attempted=1, errors=1)
+            # APEX 69.10.5: this source-stage pipeline MUST NOT attempt canonical
+            # sample excursion capture. At this point the cluster may not be sealed,
+            # may fail the replay-frame freshness guard, or may never become an
+            # immutable feature sample. Counting that ordinary pre-persistence state
+            # as ``missing_feature_sample`` created thousands of false capture
+            # failures and could also resolve a coarse legacy key to the wrong sealed
+            # incarnation. The feature writer is the sole production capture owner:
+            # it first confirms the exact feature ``sample_id`` exists, registers the
+            # identity bridge, and only then records a real P/L mark. No identity is
+            # reconstructed here and no missing canonical sample is treated as an
+            # attempted capture.
             sources.append(src)
             return priced
 
@@ -354,7 +345,7 @@ def capture_persisted_feature_excursions(targets: List[Dict[str, Any]]) -> Dict[
             if target.get("pl_dollars") is None:
                 report["missing_pl"] += 1
                 flow_pl_store.record_capture_audit(
-                    attempted=1, missing_pl=1, sample_id=sid)
+                    attempted=1, missing_pl=1, sample_id=sid, canonical_attempted=1)
                 continue
             cap = flow_pl_store.record_sample_excursion(
                 sample_id=sid,

@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.4",
-  "build_name": "Cluster Greek Structure & Multi-Horizon Transition Context",
+  "apex_version": "69.10.5",
+  "build_name": "Canonical Flow Sample Identity & Excursion Capture Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -439,15 +439,25 @@
     "multi_horizon_transition_context_changes_trade_decisions": false,
     "multi_horizon_transition_context_changes_execution_authority": false,
     "multi_horizon_transition_context_auto_activates_calibration": false,
-    "transaction_count_horizons_relabelled_as_clock_time": false
+    "transaction_count_horizons_relabelled_as_clock_time": false,
+    "flow_source_stage_canonical_excursion_capture_allowed": false,
+    "flow_source_stage_missing_feature_counts_as_capture_failure": false,
+    "canonical_flow_capture_requires_exact_persisted_feature_lookup": true,
+    "canonical_flow_identity_registration_verified_before_capture": true,
+    "canonical_flow_capture_candidate_skips_separated_from_capture_failures": true,
+    "canonical_flow_capture_observability_split_from_legacy_prewrite_counts": true,
+    "flow_learning_samples_recorded_legacy_semantics_preserved": true,
+    "flow_learning_unambiguous_pl_observation_counter_enabled": true,
+    "storage_capacity_warning_observational_only": true,
+    "storage_capacity_automatic_cleanup": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.4",
-  "application_version": "69.10.4",
+  "semantic_version": "69.10.5",
+  "application_version": "69.10.5",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

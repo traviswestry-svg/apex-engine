@@ -10,11 +10,15 @@ def test_release_truth_6941():
     assert d['guardrails']['canonical_flow_identity_mapping_required'] is True
 
 
-def test_flow_live_path_uses_persisted_identity_mapping():
+def test_flow_live_path_does_not_reconstruct_or_preempt_feature_writer_identity():
     src=Path('engine/flow_pl_pipeline.py').read_text()
-    assert 'resolve_sample_identity' in src
-    assert 'make_sample_id' not in src[src.index('APEX 69.4.1: live excursion capture'):src.index('sources.append(src)', src.index('APEX 69.4.1: live excursion capture'))]
-    assert 'missing_feature=1' in src
+    start=src.index('APEX 69.10.5: this source-stage pipeline MUST NOT attempt canonical')
+    end=src.index('sources.append(src)', start)
+    source_stage=src[start:end]
+    assert 'make_sample_id' not in source_stage
+    assert 'record_sample_excursion(' not in source_stage
+    assert 'missing_feature=1' not in source_stage
+    assert 'feature writer is the sole production capture owner' in source_stage
 
 
 def test_feature_writer_registers_exact_identity():

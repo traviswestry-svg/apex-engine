@@ -63,7 +63,7 @@ from .feature_store import (
 from . import feature_store_db, flow_pl_store, decision_provenance
 from .flow_surprise import evaluate_flow_surprise
 
-WRITER_VERSION = "69.10.3_FEATURE_STORE_WRITER"
+WRITER_VERSION = "69.10.5_FEATURE_STORE_WRITER"
 
 _GAP_S = float(os.getenv("FLOW_CLUSTER_GAP_S", "120"))
 # A decision informed by a 20-minute-old frame is barely informed. Recorded per
@@ -128,29 +128,111 @@ def _cluster_features(cl: Dict[str, Any], at: str) -> List[Feature]:
     return out
 
 
+def _capture_exact_persisted_sample(*, report: Dict[str, Any], sid: str,
+                                    session_date: str, ticker: str,
+                                    decision_time: str, legacy_cluster_key: str,
+                                    excursion: Dict[str, Any],
+                                    defer_excursion_capture: bool) -> None:
+    """Publish lineage and capture only for one exact persisted feature sample.
+
+    This is the 69.10.5 authority boundary. Candidate clusters, unsealed clusters,
+    and clusters rejected by the replay-frame freshness guard never reach this
+    function. A feature row is re-read by exact ``sample_id`` before lineage or
+    excursion capture so the writer cannot create an orphan outcome.
+    """
+    persisted = feature_store_db.get_features(sid)
+    if not persisted:
+        report["canonical_lookup_missing"] += 1
+        report["excursion_capture_attempts"] += 1
+        report["excursion_capture_errors"] += 1
+        report["reasons"].append(
+            f"{sid}: canonical feature lookup missing after persistence boundary; capture suppressed")
+        flow_pl_store.record_capture_audit(
+            attempted=1, missing_feature=1, errors=1, sample_id=sid,
+            canonical_attempted=1, canonical_missing_feature=1)
+        return
+
+    registered = flow_pl_store.register_sample_identity(
+        sample_id=sid, session_date=session_date,
+        legacy_cluster_key=legacy_cluster_key, decision_time=decision_time)
+    if not registered:
+        report["identity_registration_failures"] += 1
+        report["excursion_capture_errors"] += 1
+        report["reasons"].append(
+            f"{sid}: canonical identity registration verification failed; capture suppressed")
+        flow_pl_store.record_capture_audit(
+            errors=1, sample_id=sid, identity_registration_failure=1)
+        return
+
+    target = {
+        "sample_id": sid,
+        "session_date": session_date,
+        "ticker": excursion.get("ticker") or ticker,
+        "pl_dollars": excursion.get("pl_dollars"),
+        "cost_basis": excursion.get("cost_basis"),
+        "decision_time": decision_time,
+        "legacy_cluster_key": legacy_cluster_key,
+    }
+    if defer_excursion_capture:
+        report["capture_targets"].append(target)
+        return
+
+    report["excursion_capture_attempts"] += 1
+    if excursion.get("pl_dollars") is None:
+        report["excursion_missing_pl"] += 1
+        flow_pl_store.record_capture_audit(
+            attempted=1, missing_pl=1, sample_id=sid, canonical_attempted=1)
+        return
+
+    if not flow_pl_store.is_ready():
+        report["excursion_capture_errors"] += 1
+        report["reasons"].append(f"{sid}: flow P/L store unavailable at capture boundary")
+        return
+
+    cap = flow_pl_store.record_sample_excursion(
+        sample_id=sid, session_date=session_date,
+        ticker=target["ticker"], pl_dollars=target["pl_dollars"],
+        cost_basis=target["cost_basis"], decision_time=decision_time,
+        legacy_cluster_key=legacy_cluster_key)
+    if cap:
+        if cap.get("first_sample"):
+            report["excursions_inserted"] += 1
+        else:
+            report["excursions_updated"] += 1
+    else:
+        report["excursion_capture_errors"] += 1
+
+
 def write_samples(*, priced_clusters: List[Dict[str, Any]],
                   replay_rows: List[Dict[str, Any]],
                   session_date: str,
                   now_et_seconds: int,
                   ticker: str = "SPX",
                   defer_excursion_capture: bool = False) -> Dict[str, Any]:
-    """Write pre-decision vectors for every SEALED cluster. Never raises.
+    """Write immutable pre-decision vectors for SEALED clusters. Never raises.
 
-    Production callers must use the default ``defer_excursion_capture=False``.
-    The compatibility switch remains test/replay-only; live persistence owns
-    canonical excursion invocation at the same post-write identity boundary.
-
-    Returns a report — counts plus why samples were skipped, so a store that
-    stays empty explains itself instead of looking healthy.
+    APEX 69.10.5 makes the identity boundary explicit: live excursion capture is
+    owned only by this writer *after* exact feature persistence. Source-stage P/L
+    observations are not capture attempts. Candidates rejected before persistence
+    are counted separately and never inflate ``missing_feature_sample``.
     """
-    report = {"written": 0, "already_present": 0, "not_sealed": 0,
-              "no_frame": 0, "refused": 0, "reasons": [],
-              "excursion_capture_attempts": 0, "excursions_inserted": 0,
-              "excursions_updated": 0, "excursion_missing_pl": 0,
-              "excursion_capture_errors": 0,
-              "capture_targets": [],
-              "excursion_capture_deferred": bool(defer_excursion_capture),
-              "writer_version": WRITER_VERSION}
+    report = {
+        "written": 0, "already_present": 0, "not_sealed": 0,
+        "no_frame": 0, "refused": 0, "reasons": [],
+        "candidate_clusters_seen": len(priced_clusters or []),
+        "sealed_candidates": 0,
+        "skipped_before_persist_no_frame": 0,
+        "skipped_before_persist_refused": 0,
+        "canonical_lookup_missing": 0,
+        "identity_registration_failures": 0,
+        "excursion_capture_attempts": 0, "excursions_inserted": 0,
+        "excursions_updated": 0, "excursion_missing_pl": 0,
+        "excursion_capture_errors": 0,
+        "capture_targets": [],
+        "excursion_capture_deferred": bool(defer_excursion_capture),
+        "capture_owner": "FEATURE_STORE_WRITER_POST_PERSISTENCE",
+        "writer_version": WRITER_VERSION,
+    }
     if not feature_store_db.is_ready():
         report["reasons"].append("feature store not ready")
         return report
@@ -162,61 +244,34 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
             end_t = _secs(cl.get("end_time"))
             if end_t is None:
                 report["refused"] += 1
+                report["skipped_before_persist_refused"] += 1
                 continue
-            # SEAL: no later print can chain to this cluster any more.
             if now_et_seconds - end_t < _GAP_S:
                 report["not_sealed"] += 1
                 continue
+            report["sealed_candidates"] += 1
 
             decision_time = f"{session_date}T{cl.get('end_time')}"
             ckey = cl.get("cluster_key_string") or _key_string(cl)
             sid = make_sample_id(ticker=cl.get("ticker") or ticker,
                                  decision_time=decision_time, cluster_key=ckey)
-            # APEX 69.3: canonical excursion evidence may only exist for an
-            # immutable feature sample that actually exists. This prevents
-            # orphan excursion rows and makes the prospective capture lifecycle
-            # auditable. Existing sealed samples are updated on every real P/L
-            # observation; new samples receive their first excursion only after
-            # the feature write succeeds.
             xo = cl.get("_excursion_observation") or {}
+
             existing = feature_store_db.get_features(sid)
             if existing:
                 report["already_present"] += 1
-                flow_pl_store.register_sample_identity(
-                    sample_id=sid, session_date=session_date, legacy_cluster_key=ckey,
-                    decision_time=decision_time)
-                if defer_excursion_capture:
-                    report["capture_targets"].append({
-                        "sample_id": sid, "session_date": session_date,
-                        "ticker": xo.get("ticker") or cl.get("ticker") or ticker,
-                        "pl_dollars": xo.get("pl_dollars"), "cost_basis": xo.get("cost_basis"),
-                        "decision_time": decision_time, "legacy_cluster_key": ckey,
-                    })
-                else:
-                    report["excursion_capture_attempts"] += 1
-                    if xo.get("pl_dollars") is None:
-                        report["excursion_missing_pl"] += 1
-                        flow_pl_store.record_capture_audit(
-                            attempted=1, missing_pl=1, sample_id=sid)
-                    elif flow_pl_store.is_ready():
-                        cap = flow_pl_store.record_sample_excursion(
-                            sample_id=sid, session_date=session_date,
-                            ticker=xo.get("ticker") or cl.get("ticker") or ticker,
-                            pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
-                            decision_time=decision_time, legacy_cluster_key=ckey)
-                        if cap:
-                            if cap.get("first_sample"):
-                                report["excursions_inserted"] += 1
-                            else:
-                                report["excursions_updated"] += 1
-                        else:
-                            report["excursion_capture_errors"] += 1
+                _capture_exact_persisted_sample(
+                    report=report, sid=sid, session_date=session_date,
+                    ticker=cl.get("ticker") or ticker, decision_time=decision_time,
+                    legacy_cluster_key=ckey, excursion=xo,
+                    defer_excursion_capture=defer_excursion_capture)
                 continue
 
             frame = resolve_frame_at_or_before(
                 frames, decision_time, max_staleness_seconds=_MAX_FRAME_STALENESS_S)
             if frame is None:
                 report["no_frame"] += 1
+                report["skipped_before_persist_no_frame"] += 1
                 report["reasons"].append(
                     f"{sid}: no replay frame at-or-before {decision_time} within "
                     f"{_MAX_FRAME_STALENESS_S:.0f}s — sample skipped rather than "
@@ -224,7 +279,6 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 continue
 
             feats = features_from_frame(frame) + _cluster_features(cl, decision_time)
-            # Freeze learning-first Flow Surprise at the same immutable decision boundary.
             surprise = evaluate_flow_surprise(
                 cl, session_date=session_date, decision_time=decision_time,
                 historical_rows=feature_store_db.historical_feature_rows(
@@ -232,51 +286,42 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
             for k, v in surprise.items():
                 if k in {"schema_version", "cluster_id"} or isinstance(v, (dict, list)):
                     continue
-                feats.append(Feature(name=f"flow_surprise_{k}", value=v, available_at=decision_time, source="flow_surprise"))
+                feats.append(Feature(name=f"flow_surprise_{k}", value=v,
+                                     available_at=decision_time, source="flow_surprise"))
             try:
                 vec = build_pre_decision_vector(
                     sample_id=sid, decision_time=decision_time,
                     ticker=cl.get("ticker") or ticker, features=feats,
                     session_date=session_date)
             except LeakageError as e:
-                # The guards did their job. Never downgrade this to a warning.
                 report["refused"] += 1
+                report["skipped_before_persist_refused"] += 1
                 report["reasons"].append(f"{sid}: REFUSED — {e}")
                 continue
-            if feature_store_db.write_features(vec):
+
+            wrote = feature_store_db.write_features(vec)
+            if wrote:
                 report["written"] += 1
-                # Publish the exact persisted feature identity before excursion
-                # capture. Live marks resolve this authoritative mapping instead
-                # of rebuilding sample_id from mutable cluster formatting.
-                flow_pl_store.register_sample_identity(
-                    sample_id=sid, session_date=session_date, legacy_cluster_key=ckey,
-                    decision_time=decision_time)
-                # First canonical excursion sample is recorded only after the
-                # immutable feature row is confirmed persisted. No P/L means no
-                # excursion row — the missing evidence is counted, never filled.
-                if defer_excursion_capture:
-                    report["capture_targets"].append({
-                        "sample_id": sid, "session_date": session_date,
-                        "ticker": xo.get("ticker") or cl.get("ticker") or ticker,
-                        "pl_dollars": xo.get("pl_dollars"), "cost_basis": xo.get("cost_basis"),
-                        "decision_time": decision_time, "legacy_cluster_key": ckey,
-                    })
+            else:
+                # Duplicate/race is benign only when the exact immutable row now
+                # exists. A false write with no persisted row is not reclassified as
+                # already-present because doing so would create capture authority.
+                if feature_store_db.get_features(sid):
+                    report["already_present"] += 1
                 else:
-                    report["excursion_capture_attempts"] += 1
-                    if xo.get("pl_dollars") is None:
-                        report["excursion_missing_pl"] += 1
-                        flow_pl_store.record_capture_audit(
-                            attempted=1, missing_pl=1, sample_id=sid)
-                    elif flow_pl_store.is_ready():
-                        cap = flow_pl_store.record_sample_excursion(
-                            sample_id=sid, session_date=session_date,
-                            ticker=xo.get("ticker") or cl.get("ticker") or ticker,
-                            pl_dollars=xo.get("pl_dollars"), cost_basis=xo.get("cost_basis"),
-                            decision_time=decision_time, legacy_cluster_key=ckey)
-                        if cap:
-                            report["excursions_inserted"] += 1
-                        else:
-                            report["excursion_capture_errors"] += 1
+                    report["refused"] += 1
+                    report["skipped_before_persist_refused"] += 1
+                    report["reasons"].append(
+                        f"{sid}: feature write returned false and no exact persisted row exists")
+                    continue
+
+            _capture_exact_persisted_sample(
+                report=report, sid=sid, session_date=session_date,
+                ticker=cl.get("ticker") or ticker, decision_time=decision_time,
+                legacy_cluster_key=ckey, excursion=xo,
+                defer_excursion_capture=defer_excursion_capture)
+
+            if wrote:
                 frame_quality = frame.get("chain_quality") or frame.get("chain_quality_gate") or {}
                 snap = decision_provenance.build_snapshot(
                     sample_id=sid,
@@ -294,8 +339,6 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 )
                 if not decision_provenance.write_snapshot(snap):
                     report["reasons"].append(f"{sid}: provenance snapshot not written")
-            else:
-                report["already_present"] += 1
         return report
     except Exception as e:  # pragma: no cover
         report["reasons"].append(f"writer recovered: {e}")

@@ -39,7 +39,7 @@ _DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.3.0_CANONICAL_EXCURSION_CAPTURE"
+STORE_VERSION = "69.10.5_CANONICAL_SAMPLE_IDENTITY_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -172,9 +172,25 @@ def init_db() -> bool:
                        capture_errors INTEGER DEFAULT 0,
                        last_attempt_at TEXT,
                        last_success_at TEXT,
-                       last_sample_id TEXT
+                       last_sample_id TEXT,
+                       canonical_capture_attempts INTEGER DEFAULT 0,
+                       canonical_missing_feature_sample INTEGER DEFAULT 0,
+                       identity_registration_failures INTEGER DEFAULT 0
                    )"""
             )
+            # APEX 69.10.5 adds post-persistence-only counters without rewriting
+            # the historical aggregate. ``missing_feature_sample`` may include the
+            # pre-69.10.5 source-stage false attempts; the canonical counters start
+            # at zero on upgrade and measure only exact feature-sample targets.
+            audit_cols = {r["name"] for r in c.execute(
+                "PRAGMA table_info(flow_excursion_capture_audit)")}
+            for col, decl in (
+                ("canonical_capture_attempts", "INTEGER DEFAULT 0"),
+                ("canonical_missing_feature_sample", "INTEGER DEFAULT 0"),
+                ("identity_registration_failures", "INTEGER DEFAULT 0"),
+            ):
+                if col not in audit_cols:
+                    c.execute(f"ALTER TABLE flow_excursion_capture_audit ADD COLUMN {col} {decl}")
             c.execute("INSERT OR IGNORE INTO flow_excursion_capture_audit(id) VALUES (1)")
             c.commit()
         _DB_READY = True
@@ -317,7 +333,13 @@ def get_excursions(event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
 
 def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluster_key: str,
                              decision_time: str) -> bool:
-    """Register the exact immutable feature identity for later live excursion marks."""
+    """Register and verify the exact immutable feature identity.
+
+    ``INSERT OR IGNORE`` is retained for duplicate-safe replay, but success now
+    means the persisted row actually matches all four identity fields. A uniqueness
+    collision therefore fails closed instead of being reported as a successful
+    lineage publication.
+    """
     if not _DB_READY or not sample_id or not session_date or not legacy_cluster_key or not decision_time:
         return False
     try:
@@ -328,8 +350,16 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
                    VALUES (?,?,?,?,?)""",
                 (session_date, legacy_cluster_key, decision_time, sample_id, _now_iso()),
             )
+            row = c.execute(
+                """SELECT session_date,legacy_cluster_key,decision_time,sample_id
+                   FROM flow_sample_identity_map WHERE sample_id=?""",
+                (sample_id,),
+            ).fetchone()
             c.commit()
-        return True
+        return bool(row and row["session_date"] == session_date
+                    and row["legacy_cluster_key"] == legacy_cluster_key
+                    and row["decision_time"] == decision_time
+                    and row["sample_id"] == sample_id)
     except Exception:
         return False
 
@@ -359,8 +389,15 @@ def resolve_sample_identity(*, session_date: str, legacy_cluster_key: str) -> Op
 def record_capture_audit(*, attempted: int = 0, inserted: int = 0, updated: int = 0,
                          missing_feature: int = 0, missing_pl: int = 0,
                          errors: int = 0, sample_id: Optional[str] = None,
-                         success: bool = False) -> None:
-    """Persist scanner/web-process-neutral excursion capture telemetry."""
+                         success: bool = False, canonical_attempted: int = 0,
+                         canonical_missing_feature: int = 0,
+                         identity_registration_failure: int = 0) -> None:
+    """Persist scanner/web-process-neutral excursion capture telemetry.
+
+    The legacy aggregate is preserved for backward compatibility. The canonical
+    counters were introduced in 69.10.5 and only advance after a feature sample is
+    expected to exist at the post-persistence writer boundary.
+    """
     if not _DB_READY:
         return
     try:
@@ -374,11 +411,16 @@ def record_capture_audit(*, attempted: int = 0, inserted: int = 0, updated: int 
                      missing_feature_sample=missing_feature_sample+?,
                      missing_pl=missing_pl+?,
                      capture_errors=capture_errors+?,
+                     canonical_capture_attempts=canonical_capture_attempts+?,
+                     canonical_missing_feature_sample=canonical_missing_feature_sample+?,
+                     identity_registration_failures=identity_registration_failures+?,
                      last_attempt_at=CASE WHEN ?>0 THEN ? ELSE last_attempt_at END,
                      last_success_at=CASE WHEN ? THEN ? ELSE last_success_at END,
                      last_sample_id=COALESCE(?, last_sample_id)
                    WHERE id=1""",
                 (attempted, inserted, updated, missing_feature, missing_pl, errors,
+                 canonical_attempted, canonical_missing_feature,
+                 identity_registration_failure,
                  attempted, now, 1 if success else 0, now, sample_id),
             )
             c.commit()
@@ -436,10 +478,11 @@ def record_sample_excursion(*, sample_id: str, session_date: str,
                           "first_sample": False, "mfe_dollars": mfe, "mae_dollars": mae}
                 audit_updated = 1
         record_capture_audit(attempted=1, inserted=audit_inserted, updated=audit_updated,
-                             sample_id=sample_id, success=True)
+                             sample_id=sample_id, success=True, canonical_attempted=1)
         return result
     except Exception as e:  # pragma: no cover
-        record_capture_audit(attempted=1, errors=1, sample_id=sample_id)
+        record_capture_audit(attempted=1, errors=1, sample_id=sample_id,
+                             canonical_attempted=1)
         record_degradation(
             component="flow_pl_store", operation="record_sample_excursion", exc=e,
             fallback="SAMPLE_EXCURSION_NOT_PERSISTED", decision_authority_suppressed=False,
@@ -480,12 +523,16 @@ def get_sample_excursions(sample_ids: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def sample_excursion_health() -> Dict[str, Any]:
-    out = {"ok": _DB_READY, "version": "69.3.0", "sample_excursions": 0,
+    out = {"ok": _DB_READY, "version": "69.10.5", "sample_excursions": 0,
            "sessions": 0, "latest_at": None, "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+           "capture_owner": "FEATURE_STORE_WRITER_POST_PERSISTENCE",
            "capture": {"capture_attempts": 0, "excursions_inserted": 0,
                        "excursions_updated": 0, "missing_feature_sample": 0,
                        "missing_pl": 0, "capture_errors": 0, "last_attempt_at": None,
-                       "last_success_at": None, "last_sample_id": None}}
+                       "last_success_at": None, "last_sample_id": None,
+                       "canonical_capture_attempts": 0,
+                       "canonical_missing_feature_sample": 0,
+                       "identity_registration_failures": 0}}
     if not _DB_READY:
         return out
     try:
@@ -497,6 +544,8 @@ def sample_excursion_health() -> Dict[str, Any]:
             audit = c.execute("SELECT * FROM flow_excursion_capture_audit WHERE id=1").fetchone()
             if audit is not None:
                 out["capture"] = {k: audit[k] for k in audit.keys() if k != "id"}
+                out["capture"]["legacy_missing_feature_sample_includes_pre_69_10_5_source_stage"] = True
+                out["capture"]["canonical_counter_start_release"] = "69.10.5"
     except Exception as exc:  # pragma: no cover
         out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
     return out
