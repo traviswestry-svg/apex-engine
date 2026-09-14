@@ -48,6 +48,21 @@ def test_learning_replay_snapshot_reuses_observed_state_without_inference():
     assert "decision_state" not in snap  # never inferred from unavailable context
 
 
+def test_learning_replay_snapshot_preserves_observed_zero_values():
+    snap = build_learning_replay_snapshot(
+        canonical={"price": 0.0, "poc": 0.0, "call_wall": 0.0, "flow_bias": "NEUTRAL"},
+        flow={"stock_price": 6500.0, "call_wall": 6550.0, "put_wall": 0.0, "zero_gamma": 0.0},
+        volume={"profile": {"levels": {"vah": 0.0, "val": 0.0}}},
+    )
+    assert snap["stock_price"] == 0.0
+    assert snap["poc"] == 0.0
+    assert snap["vah"] == 0.0
+    assert snap["val"] == 0.0
+    assert snap["call_wall"] == 0.0
+    assert snap["put_wall"] == 0.0
+    assert snap["zero_gamma"] == 0.0
+
+
 def test_publisher_records_forward_only_spx_learning_frame():
     class FakeApp:
         def __init__(self):
