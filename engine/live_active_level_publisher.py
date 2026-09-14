@@ -42,17 +42,25 @@ def build_learning_replay_snapshot(*, canonical: Mapping[str, Any], flow: Mappin
     levels = (profile.get("levels") or {}) if isinstance(profile.get("levels"), Mapping) else {}
     auction = (volume.get("auction") or {}) if isinstance(volume.get("auction"), Mapping) else {}
 
+    def _first_observed(*sources: tuple[Mapping[str, Any], str]) -> Any:
+        for mapping, key in sources:
+            if key in mapping:
+                value = mapping.get(key)
+                if value is not None and value != "":
+                    return value
+        return None
+
     values = {
-        "stock_price": canonical.get("price") or flow.get("stock_price"),
-        "vwap": canonical.get("vwap"),
-        "poc": canonical.get("poc") or levels.get("poc") or auction.get("poc"),
-        "vah": canonical.get("vah") or levels.get("vah") or auction.get("vah"),
-        "val": canonical.get("val") or levels.get("val") or auction.get("val"),
-        "gamma_regime": canonical.get("gamma_regime") or flow.get("gamma_regime"),
-        "call_wall": canonical.get("call_wall") or flow.get("call_wall"),
-        "put_wall": canonical.get("put_wall") or flow.get("put_wall"),
-        "zero_gamma": canonical.get("zero_gamma") or flow.get("zero_gamma"),
-        "flow_bias": canonical.get("flow_bias") or flow.get("flow_bias") or flow.get("bias"),
+        "stock_price": _first_observed((canonical, "price"), (flow, "stock_price")),
+        "vwap": _first_observed((canonical, "vwap")),
+        "poc": _first_observed((canonical, "poc"), (levels, "poc"), (auction, "poc")),
+        "vah": _first_observed((canonical, "vah"), (levels, "vah"), (auction, "vah")),
+        "val": _first_observed((canonical, "val"), (levels, "val"), (auction, "val")),
+        "gamma_regime": _first_observed((canonical, "gamma_regime"), (flow, "gamma_regime")),
+        "call_wall": _first_observed((canonical, "call_wall"), (flow, "call_wall")),
+        "put_wall": _first_observed((canonical, "put_wall"), (flow, "put_wall")),
+        "zero_gamma": _first_observed((canonical, "zero_gamma"), (flow, "zero_gamma")),
+        "flow_bias": _first_observed((canonical, "flow_bias"), (flow, "flow_bias"), (flow, "bias")),
     }
     # Preserve false/zero values when genuinely present; only unavailable values
     # are omitted so an empty source cannot masquerade as a usable replay frame.
