@@ -18,8 +18,8 @@ from .evidence_pipeline import DEFAULT_DB as EVIDENCE_DB, _persisted_snapshot_pr
 from .persistent_store import persistent_sqlite_path
 from .trigger_observatory import _bounded_trigger_evidence
 
-VERSION = "69.10.10"
-SCHEMA_VERSION = "apex.historical_payload_compaction_readiness.v1"
+VERSION = "69.10.11"
+SCHEMA_VERSION = "apex.historical_payload_compaction_readiness.v2"
 TRIGGER_DB = persistent_sqlite_path("APEX_TRIGGER_OBSERVATORY_DB", "apex_trigger_observatory.db")
 DEFAULT_SAMPLE_LIMIT = 50
 
@@ -188,6 +188,23 @@ def _project_rows(
     }
 
 
+def _archive_foundation_status() -> dict[str, Any]:
+    """Report archival foundation availability without creating the sidecar."""
+    try:
+        from .historical_payload_archive import archive_status
+        status = archive_status()
+    except Exception as exc:
+        status = {"ok": False, "state": "ARCHIVE_STATUS_UNAVAILABLE", "error": f"{type(exc).__name__}: {exc}"}
+    return {
+        "implemented": True,
+        "version": "69.10.11",
+        "archive_status": status,
+        "production_reads_redirected": False,
+        "automatic_historical_archive": False,
+        "automatic_historical_rewrite": False,
+    }
+
+
 def audit_historical_payload_compaction(
     *,
     trigger_path: str | Path = TRIGGER_DB,
@@ -226,7 +243,7 @@ def audit_historical_payload_compaction(
         "TRIGGER_HISTORY_FULL_PAYLOAD_CONSUMER_PRESENT",
         "TRIGGER_PREMIUM_EVIDENCE_CONSUMER_PRESENT",
         "DECISION_SNAPSHOT_FALLBACK_CONSUMERS_PRESENT",
-        "IMMUTABLE_ARCHIVAL_SIDECAR_NOT_IMPLEMENTED",
+        "IMMUTABLE_ARCHIVAL_SIDECAR_NOT_POPULATED_OR_SHADOW_VALIDATED",
     ]
     return {
         "ok": True,
@@ -243,11 +260,14 @@ def audit_historical_payload_compaction(
         },
         "compaction_readiness": {
             "ready_for_historical_rewrite": False,
-            "state": "BLOCKED_PENDING_DEPENDENCY_PRESERVATION",
+            "state": "FOUNDATION_IMPLEMENTED_AWAITING_ARCHIVE_AND_SHADOW_VALIDATION",
             "blockers": blockers,
             "recommended_future_pattern": "IMMUTABLE_ARCHIVAL_SIDECAR_PLUS_CANONICAL_COMPACT_PROJECTION",
+            "archive_foundation_version": "69.10.11",
+            "production_read_redirect_enabled": False,
             "destructive_in_place_rewrite_recommended": False,
         },
+        "archive_foundation": _archive_foundation_status(),
         "guardrails": {
             "read_only": True,
             "historical_rows_mutated": False,
