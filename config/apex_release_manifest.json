@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.9",
-  "build_name": "Trigger Observatory Retention & Evidence Payload Governance",
+  "apex_version": "69.10.10",
+  "build_name": "Historical Evidence Payload Dependency & Compaction Readiness",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -498,15 +498,28 @@
     "historical_trigger_rows_rewritten": false,
     "automatic_trigger_pruning": false,
     "decision_snapshot_hard_size_guardrail": true,
-    "decision_snapshot_max_bytes_default": 131072
+    "decision_snapshot_max_bytes_default": 131072,
+    "historical_payload_dependency_audit": true,
+    "historical_payload_compaction_readiness_read_only": true,
+    "historical_payload_compaction_exhaustive_operator_scan_available": true,
+    "historical_payload_rewrite_enabled": false,
+    "historical_trigger_payload_rewrite_enabled": false,
+    "historical_decision_snapshot_rewrite_enabled": false,
+    "historical_payload_destructive_in_place_rewrite_recommended": false,
+    "historical_payload_dependency_preservation_required": true,
+    "historical_payload_archival_sidecar_required_before_lossy_rewrite": true,
+    "historical_payload_audit_exposes_values": false,
+    "historical_payload_audit_vacuum_performed": false,
+    "historical_payload_audit_changes_trade_decisions": false,
+    "historical_payload_audit_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.9",
-  "application_version": "69.10.9",
+  "semantic_version": "69.10.10",
+  "application_version": "69.10.10",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
@@ -542,6 +555,16 @@
     "operator_maintenance_dry_run_default": true,
     "operator_maintenance_requires_explicit_apply": true,
     "active_database_unlink_forbidden": true,
-    "raw_trigger_observation_auto_prune": false
+    "raw_trigger_observation_auto_prune": false,
+    "historical_payload_dependency_audit": true,
+    "historical_payload_compaction_readiness_version": "69.10.10",
+    "historical_payload_compaction_read_only": true,
+    "historical_payload_rewrite_enabled": false,
+    "historical_payload_bounded_endpoint_scan": true,
+    "historical_payload_exhaustive_operator_scan": "scripts/apex_storage_maintenance.py payload-compaction-readiness",
+    "historical_payload_values_exposed": false,
+    "historical_payload_filesystem_reclaim_promised": false,
+    "historical_payload_destructive_in_place_rewrite_recommended": false,
+    "historical_payload_archival_sidecar_required_before_lossy_rewrite": true
   }
 }

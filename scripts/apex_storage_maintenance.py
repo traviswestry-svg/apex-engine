@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from engine.historical_payload_compaction import audit_historical_payload_compaction
 from engine.storage_retention import (
     audit,
     checkpoint_wals,
@@ -29,7 +30,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="APEX governed storage maintenance")
     parser.add_argument(
         "action",
-        choices=("audit", "checkpoint-wals", "cleanup-quarantine", "prune-price-samples", "prune-trigger-observations"),
+        choices=("audit", "payload-compaction-readiness", "checkpoint-wals", "cleanup-quarantine", "prune-price-samples", "prune-trigger-observations"),
         nargs="?",
         default="audit",
     )
@@ -38,6 +39,10 @@ def main() -> int:
 
     if args.action == "audit":
         result = audit()
+    elif args.action == "payload-compaction-readiness":
+        if args.apply:
+            parser.error("payload-compaction-readiness is read-only; --apply is not supported")
+        result = audit_historical_payload_compaction(exhaustive=True)
     elif args.action == "checkpoint-wals":
         result = checkpoint_wals(apply=args.apply)
     elif args.action == "cleanup-quarantine":

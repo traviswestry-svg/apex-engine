@@ -12,6 +12,7 @@ from .operational_runtime import persistent_root, storage_status
 from .evidence_pipeline import DEFAULT_DB
 from .release_manager import APP_VERSION
 from .storage_capacity_policy import classify_free_pct, policy as storage_capacity_policy
+from .historical_payload_compaction import audit_historical_payload_compaction
 
 VERSION = APP_VERSION
 QUARANTINE_RE = re.compile(r"\.corrupt-(\d{8,14})(?:\.bak)?$")
@@ -292,6 +293,9 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
         except Exception as exc: evidence["audit_error"]=f"{type(exc).__name__}: {exc}"
     evidence["price_prune_plan"] = _price_prune_plan(DEFAULT_DB, PRICE_RETENTION_DAYS)
     trigger_retention = _trigger_retention_audit(TRIGGER_DB, TRIGGER_RETENTION_DAYS)
+    historical_payload_compaction = audit_historical_payload_compaction(
+        trigger_path=TRIGGER_DB, evidence_path=DEFAULT_DB, exhaustive=False
+    )
     storage = storage_status()
     capacity = _capacity_governance(storage, reclaimable_quarantine_bytes=reclaimable, wal_bytes=wal_bytes)
     db_footprints = [_sqlite_footprint(p) for p in sorted(active_dbs)]
@@ -305,12 +309,14 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
         "files":files,"operator_reclaimable_bytes":reclaimable,"wal_bytes":wal_bytes,
         "largest_databases":largest_databases,"database_footprints":db_footprints,
         "evidence_pipeline":evidence,"trigger_observatory_retention":trigger_retention,
+        "historical_payload_compaction":historical_payload_compaction,
         "guardrails":{
             "automatic_delete":False,"automatic_vacuum":False,"canonical_evidence_delete":False,
             "human_approval_required":True,"no_fabrication":True,"capacity_warning_observational_only":True,
             "capacity_policy_canonical":True,"filesystem_reclaim_not_inferred_from_sqlite_delete":True,
             "active_database_unlink_forbidden":True,"raw_trigger_observation_auto_prune":False,
             "trigger_prune_explicit_apply_only":True,"trigger_open_rows_protected":True,"trigger_unlinked_rows_protected":True,
+            "historical_payload_compaction_read_only":True,"historical_payload_rewrite_enabled":False,
         },
     }
 

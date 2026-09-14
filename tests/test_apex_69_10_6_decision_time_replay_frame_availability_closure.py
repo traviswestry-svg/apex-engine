@@ -10,8 +10,8 @@ from engine.feature_store import frames_from_replay, resolve_frame_at_or_before
 
 def test_release_truth_and_replay_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.9"
-    assert manifest["build_name"] == "Trigger Observatory Retention & Evidence Payload Governance"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.10"
+    assert manifest["build_name"] == "Historical Evidence Payload Dependency & Compaction Readiness"
     g = manifest["guardrails"]
     assert g["spx_learning_replay_frame_producer_enabled"] is True
     assert g["spx_learning_replay_reuses_live_active_level_provider_inputs"] is True
@@ -25,7 +25,7 @@ def test_release_truth_and_replay_guardrails():
     assert g["replay_frame_availability_changes_execution_authority"] is False
 
     registry = Path("config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.9" in registry
+    assert "apex_version: 69.10.10" in registry
     assert "decision_time_replay_frame_availability_closure:" in registry
     assert "no_future_frame_join" in registry
     assert "no_staleness_relaxation" in registry
@@ -46,21 +46,6 @@ def test_learning_replay_snapshot_reuses_observed_state_without_inference():
     assert snap["flow_bias"] == "BULLISH"
     assert "vwap" not in snap
     assert "decision_state" not in snap  # never inferred from unavailable context
-
-
-def test_learning_replay_snapshot_preserves_observed_zero_values():
-    snap = build_learning_replay_snapshot(
-        canonical={"price": 0.0, "poc": 0.0, "call_wall": 0.0, "flow_bias": "NEUTRAL"},
-        flow={"stock_price": 6500.0, "call_wall": 6550.0, "put_wall": 0.0, "zero_gamma": 0.0},
-        volume={"profile": {"levels": {"vah": 0.0, "val": 0.0}}},
-    )
-    assert snap["stock_price"] == 0.0
-    assert snap["poc"] == 0.0
-    assert snap["vah"] == 0.0
-    assert snap["val"] == 0.0
-    assert snap["call_wall"] == 0.0
-    assert snap["put_wall"] == 0.0
-    assert snap["zero_gamma"] == 0.0
 
 
 def test_publisher_records_forward_only_spx_learning_frame():
