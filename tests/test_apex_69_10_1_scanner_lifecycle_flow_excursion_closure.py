@@ -56,7 +56,7 @@ def test_app_health_uses_effective_cross_process_state_by_construction():
     assert 'scanner_started=bool(_scanner_runtime.get("effective_started"))' in src
     assert '"scanner_started": bool(_scanner_runtime.get("effective_started"))' in src
     assert '"scanner_state_source": _scanner_runtime.get("source")' in src
-    assert 'or _scanner_runtime.get("process_last_scan_at")' in src
+    assert '_scanner_runtime.get("process_last_scan_at") if _process_authoritative else None' in src
     assert 'else _scanner_runtime.get("heartbeat")' in src
 
 

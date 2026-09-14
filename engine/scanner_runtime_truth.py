@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
-VERSION = "69.10.3"
+VERSION = "69.10.7"
 
 
 def resolve_scanner_runtime(*, local_started: bool, local_thread_alive: bool,
@@ -35,13 +35,19 @@ def resolve_scanner_runtime(*, local_started: bool, local_thread_alive: bool,
     effective_thread_alive = bool(local_thread_alive or process_thread_alive)
     source = "SCANNER_PROCESS_HEARTBEAT" if process_started else "WEB_PROCESS_LOCAL_STATE"
 
+    completion = dict(hb.get("scan_completion_runtime") or {}) if fresh else {}
+    process_completed_at = completion.get("last_completed_at") or (hb.get("last_scan_at") if fresh else None)
+    process_scan_duration = completion.get("last_duration_seconds")
+
     return {
         "version": VERSION,
         "heartbeat": hb,
         "heartbeat_fresh": fresh,
         "effective_started": effective_started,
         "effective_thread_alive": effective_thread_alive,
-        "process_last_scan_at": hb.get("last_scan_at") if fresh else None,
+        "process_last_scan_at": process_completed_at,
+        "process_last_scan_duration_seconds": process_scan_duration,
+        "process_scan_completion": completion,
         "process_heartbeat_at": hb.get("updated_at") if fresh else None,
         "source": source,
         "execution_authority": False,

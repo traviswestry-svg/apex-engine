@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.6",
-  "build_name": "Decision-Time Replay Frame Availability & Canonical Feature Persistence Closure",
+  "apex_version": "69.10.7",
+  "build_name": "Scanner Completion Truth & Live Health State Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-09-11",
+  "released_at": "2026-09-14",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -460,15 +460,25 @@
     "canonical_feature_persistence_requires_prior_replay_frame": true,
     "feature_max_frame_staleness_seconds_unchanged": true,
     "replay_frame_availability_changes_trade_decisions": false,
-    "replay_frame_availability_changes_execution_authority": false
+    "replay_frame_availability_changes_execution_authority": false,
+    "scanner_completion_truth_separates_heartbeat_from_full_scan": true,
+    "scanner_background_activity_substitutes_for_full_scan": false,
+    "scanner_process_completion_timestamp_authoritative_when_heartbeat_fresh": true,
+    "scanner_stale_threshold_relaxed": false,
+    "scanner_fresh_heartbeat_can_mask_stale_full_scan": false,
+    "scanner_lock_contention_observable": true,
+    "scanner_lock_contention_bypasses_lock": false,
+    "scanner_lock_contention_bounded_retry": true,
+    "scanner_health_changes_trade_decisions": false,
+    "scanner_health_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.6",
-  "application_version": "69.10.6",
+  "semantic_version": "69.10.7",
+  "application_version": "69.10.7",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
