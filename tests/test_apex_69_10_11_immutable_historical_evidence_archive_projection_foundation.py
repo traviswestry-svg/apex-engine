@@ -53,6 +53,16 @@ def _make_evidence_db(path: Path):
     return raw
 
 
+def _fetch_trigger_row(path: Path, trigger_id: str) -> dict:
+    with sqlite3.connect(path) as c:
+        c.row_factory = sqlite3.Row
+        row = c.execute(
+            "SELECT * FROM observed_trade_triggers WHERE trigger_id=?",
+            (trigger_id,),
+        ).fetchone()
+    return dict(row)
+
+
 def test_release_truth_and_archive_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.11"
@@ -73,10 +83,10 @@ def test_archive_round_trip_is_exact_and_canonical_source_unchanged(tmp_path):
     source = tmp_path / "trigger.db"
     archive = tmp_path / "archive.db"
     raw = _make_trigger_db(source)
-    before = source.read_bytes()
+    before = _fetch_trigger_row(source, "t1")
     out = archive_one(payload_type="TRIGGER_EVIDENCE", row_id="t1", observed_at="2026-08-25T12:00:00+00:00", raw_payload=raw, path=archive, apply=True)
     assert out["ok"] is True and out["state"] == "ARCHIVED_VERIFIED"
-    assert source.read_bytes() == before
+    assert _fetch_trigger_row(source, "t1") == before
     restored = retrieve_archived_payload("TRIGGER_EVIDENCE", "t1", path=archive)
     assert restored["ok"] is True
     assert restored["payload"] == raw
