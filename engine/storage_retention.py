@@ -13,6 +13,7 @@ from .evidence_pipeline import DEFAULT_DB
 from .release_manager import APP_VERSION
 from .storage_capacity_policy import classify_free_pct, policy as storage_capacity_policy
 from .historical_payload_compaction import audit_historical_payload_compaction
+from .historical_payload_archive import archive_status as historical_payload_archive_status
 
 VERSION = APP_VERSION
 QUARANTINE_RE = re.compile(r"\.corrupt-(\d{8,14})(?:\.bak)?$")
@@ -296,6 +297,7 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
     historical_payload_compaction = audit_historical_payload_compaction(
         trigger_path=TRIGGER_DB, evidence_path=DEFAULT_DB, exhaustive=False
     )
+    historical_payload_archive = historical_payload_archive_status()
     storage = storage_status()
     capacity = _capacity_governance(storage, reclaimable_quarantine_bytes=reclaimable, wal_bytes=wal_bytes)
     db_footprints = [_sqlite_footprint(p) for p in sorted(active_dbs)]
@@ -310,6 +312,7 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
         "largest_databases":largest_databases,"database_footprints":db_footprints,
         "evidence_pipeline":evidence,"trigger_observatory_retention":trigger_retention,
         "historical_payload_compaction":historical_payload_compaction,
+        "historical_payload_archive":historical_payload_archive,
         "guardrails":{
             "automatic_delete":False,"automatic_vacuum":False,"canonical_evidence_delete":False,
             "human_approval_required":True,"no_fabrication":True,"capacity_warning_observational_only":True,
@@ -317,6 +320,8 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
             "active_database_unlink_forbidden":True,"raw_trigger_observation_auto_prune":False,
             "trigger_prune_explicit_apply_only":True,"trigger_open_rows_protected":True,"trigger_unlinked_rows_protected":True,
             "historical_payload_compaction_read_only":True,"historical_payload_rewrite_enabled":False,
+            "historical_payload_archive_additive_only":True,"historical_payload_archive_automatic":False,
+            "historical_payload_production_read_redirect_enabled":False,
         },
     }
 

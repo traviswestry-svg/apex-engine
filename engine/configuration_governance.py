@@ -218,6 +218,12 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_SCANNER_LOCK_RETRY_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'5','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded delay in seconds before the scanner scheduler retries once after a non-blocking scan-lock contention result. Runtime clamps the value to 1–15 seconds.','safety_critical':False,'used_in_code':True},
 ])
 
+
+# APEX 69.10.11 — immutable historical payload archive foundation.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_HISTORICAL_PAYLOAD_ARCHIVE_DB','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Optional path override for the immutable historical evidence payload archive sidecar database.','safety_critical':False,'used_in_code':True},
+])
+
 # APEX 69.4.3 — governed storage-retention operational controls.
 _REGISTRY_DATA.extend([
  {'name':'APEX_CORRUPT_DB_RETENTION_DAYS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'14','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Minimum operator-governed retention window in days before quarantined corrupt database artifacts become cleanup-eligible.','safety_critical':False,'used_in_code':True},

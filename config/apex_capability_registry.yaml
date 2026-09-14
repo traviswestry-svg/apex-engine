@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.10
+apex_version: 69.10.11
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
@@ -36,6 +36,20 @@ capabilities:
     execution_authority: none
     production_effect: OPERATIONS_ONLY
     guardrails: [read_only, no_historical_rewrite, no_canonical_evidence_delete, no_vacuum, no_filesystem_reclaim_promise, payload_values_not_exposed, full_payload_consumer_blocks_destructive_trigger_rewrite, snapshot_fallback_consumers_block_destructive_decision_rewrite, immutable_archival_sidecar_required_before_lossy_rewrite, no_decision_authority, no_execution_authority]
+
+  immutable_historical_evidence_archive_projection_foundation:
+    canonical_module: engine.historical_payload_archive
+    deployed_modules: [engine.historical_payload_archive, engine.historical_payload_compaction, engine.storage_retention, scripts.apex_storage_maintenance]
+    status: operations_foundation
+    version: "69.10.11"
+    inputs: [trigger_observatory_evidence_json, evidence_pipeline_snapshot_json, current_bounded_storage_projections, source_verified_dependency_contract]
+    outputs: [immutable_compressed_archive_sidecar, source_sha256_integrity, exact_round_trip_verification, bounded_operator_archive, archive_status, shadow_read_validation, critical_capacity_write_block]
+    api_routes: [/api/admin/storage/audit]
+    operator_cli: scripts/apex_storage_maintenance.py
+    decision_authority: none
+    execution_authority: none
+    production_effect: OPERATIONS_ONLY
+    guardrails: [additive_archive_only, no_canonical_source_rewrite, no_canonical_source_delete, no_archive_update, no_archive_delete, explicit_apply_required_for_archive_write, dry_run_default, critical_capacity_blocks_archive_write, zlib_compressed_archive, source_sha256_required, exact_byte_round_trip_required, shadow_validation_does_not_redirect_production_reads, no_mass_compaction, no_vacuum, no_filesystem_reclaim_promise, no_decision_authority, no_execution_authority]
 
   failed_breakdown_lifecycle_intelligence:
     canonical_module: engine.failed_breakdown_lifecycle
