@@ -77,8 +77,8 @@ _REGISTRY_DATA.extend([
 # APEX 24.2.1 - production runtime and storage telemetry.
 _REGISTRY_DATA.extend([
  {'name':'APEX_SQLITE_TIMEOUT_SECONDS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite connection and busy timeout in seconds.','safety_critical':False,'used_in_code':True},
- {'name':'APEX_DISK_WARN_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a warning.','safety_critical':False,'used_in_code':True},
- {'name':'APEX_DISK_CRITICAL_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'7','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a critical state.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_DISK_WARN_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'25','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a warning.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_DISK_CRITICAL_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a critical state.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_LOCAL_DATA_DIR','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'.','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Writable local fallback when a persistent mount is unavailable.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_SCANNER_HEARTBEAT_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/scanner_heartbeat.json','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cross-process scanner heartbeat file.','safety_critical':False,'used_in_code':True},
 ])
@@ -198,6 +198,12 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_FLOW_SETTLEMENT_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'300','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cadence in seconds for the flow-settlement scheduler background loop.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_FLOW_SETTLEMENT_MAX_SESSIONS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'30','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Maximum feature sessions recovered per flow-settlement scheduler pass.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_FLOW_SETTLEMENT_SCHEDULER_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'true','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables the dedicated flow-settlement scheduler loop.','safety_critical':False,'used_in_code':True},
+])
+
+# APEX 69.10.8 — canonical storage-capacity policy; legacy APEX_DISK_* names remain supported.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_STORAGE_WARN_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'25','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Canonical free disk percentage at or below which storage enters WARNING state.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_STORAGE_CRITICAL_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Canonical free disk percentage at or below which storage enters CRITICAL state.','safety_critical':False,'used_in_code':True},
 ])
 
 # APEX 69.4.3 — governed storage-retention operational controls.

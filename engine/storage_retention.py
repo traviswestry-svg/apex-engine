@@ -11,6 +11,7 @@ from typing import Any
 from .operational_runtime import persistent_root, storage_status
 from .evidence_pipeline import DEFAULT_DB
 from .release_manager import APP_VERSION
+from .storage_capacity_policy import classify_free_pct, policy as storage_capacity_policy
 
 VERSION = APP_VERSION
 QUARANTINE_RE = re.compile(r"\.corrupt-(\d{8,14})(?:\.bak)?$")
@@ -19,9 +20,133 @@ QUARANTINE_RETENTION_DAYS = int(os.getenv("APEX_CORRUPT_DB_RETENTION_DAYS", "14"
 
 DECISION_AUDIT_SAMPLE_LIMIT = 20
 
-STORAGE_WARN_FREE_PCT = float(os.getenv("APEX_STORAGE_WARN_FREE_PCT", "25"))
-STORAGE_CRITICAL_FREE_PCT = float(os.getenv("APEX_STORAGE_CRITICAL_FREE_PCT", "15"))
 
+
+
+def _sqlite_footprint(path: Path) -> dict[str, Any]:
+    """Read-only SQLite allocation and per-table diagnostics.
+
+    Free-list pages are reusable *inside* SQLite and are not represented as
+    filesystem bytes reclaimed.  No checkpoint, VACUUM, DELETE, or schema
+    mutation is performed by this audit helper.
+    """
+    out: dict[str, Any] = {"name": path.name, "path": str(path), "exists": path.exists()}
+    if not path.exists():
+        return out
+    try:
+        out["file_bytes"] = path.stat().st_size
+    except OSError:
+        out["file_bytes"] = None
+    try:
+        uri = f"file:{path.resolve().as_posix()}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=5) as c:
+            page_count = int(c.execute("PRAGMA page_count").fetchone()[0] or 0)
+            page_size = int(c.execute("PRAGMA page_size").fetchone()[0] or 0)
+            freelist = int(c.execute("PRAGMA freelist_count").fetchone()[0] or 0)
+            out.update({
+                "page_count": page_count,
+                "page_size": page_size,
+                "allocated_page_bytes": page_count * page_size,
+                "freelist_pages": freelist,
+                "sqlite_reusable_page_bytes": freelist * page_size,
+                "filesystem_reclaimed_by_audit": 0,
+            })
+            try:
+                rows = c.execute(
+                    "SELECT name, SUM(pgsize) bytes FROM dbstat GROUP BY name ORDER BY bytes DESC"
+                ).fetchall()
+                out["top_objects"] = [
+                    {"name": str(r[0]), "bytes": int(r[1] or 0)} for r in rows[:20]
+                ]
+            except sqlite3.DatabaseError:
+                out["top_objects_unavailable"] = True
+    except Exception as exc:
+        out["audit_error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def _price_prune_plan(path: str | Path = DEFAULT_DB, retention_days: int = PRICE_RETENTION_DAYS) -> dict[str, Any]:
+    """Read-only eligibility plan for bounded evidence price-sample pruning."""
+    db = Path(path)
+    out: dict[str, Any] = {
+        "path": str(db),
+        "retention_days": max(1, int(retention_days)),
+        "exists": db.exists(),
+        "apply": False,
+        "filesystem_reclaim_estimate_bytes": None,
+        "note": "DELETE reuses SQLite pages internally; filesystem bytes are not promised without VACUUM.",
+    }
+    if not db.exists():
+        return out
+    cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=max(1, int(retention_days)))).isoformat()
+    try:
+        uri = f"file:{db.resolve().as_posix()}?mode=ro"
+        with sqlite3.connect(uri, uri=True, timeout=5) as c:
+            pending = c.execute("SELECT MIN(observed_at) FROM decisions WHERE status='PENDING'").fetchone()[0]
+            safe_cutoff = min(cutoff, pending) if pending else cutoff
+            eligible = int(c.execute("SELECT COUNT(*) FROM price_samples WHERE observed_at < ?", (safe_cutoff,)).fetchone()[0])
+            out.update({
+                "eligible_rows": eligible,
+                "safe_cutoff_exclusive": safe_cutoff,
+                "pending_decision_floor": pending,
+                "canonical_decisions_protected": True,
+                "grading_results_protected": True,
+            })
+    except Exception as exc:
+        out["audit_error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def _capacity_governance(storage: dict[str, Any], *, reclaimable_quarantine_bytes: int, wal_bytes: int) -> dict[str, Any]:
+    classified = classify_free_pct(storage.get("free_pct"))
+    try:
+        total = int(storage.get("total_bytes") or 0)
+        free = int(storage.get("free_bytes") or 0)
+    except (TypeError, ValueError):
+        total = free = 0
+    warn_target = int(total * (float(classified["warn_free_pct"]) / 100.0)) if total else 0
+    critical_target = int(total * (float(classified["critical_free_pct"]) / 100.0)) if total else 0
+    actions: list[dict[str, Any]] = []
+    if classified["state"] == "CRITICAL":
+        actions.append({
+            "priority": "P0",
+            "action": "INCREASE_PERSISTENT_DISK_CAPACITY",
+            "reason": "Free capacity is at or below the canonical critical threshold; in-place VACUUM remains prohibited.",
+            "automatic": False,
+        })
+    if reclaimable_quarantine_bytes > 0:
+        actions.append({
+            "priority": "P1",
+            "action": "REVIEW_MATURE_QUARANTINED_DB_ARTIFACTS",
+            "eligible_bytes": int(reclaimable_quarantine_bytes),
+            "automatic": False,
+            "requires_explicit_apply": True,
+        })
+    if wal_bytes > 0:
+        actions.append({
+            "priority": "P1",
+            "action": "REVIEW_SQLITE_WAL_CHECKPOINT",
+            "wal_bytes": int(wal_bytes),
+            "automatic": False,
+            "requires_explicit_apply": True,
+        })
+    actions.append({
+        "priority": "P1" if classified["state"] in {"WARNING", "CRITICAL"} else "P2",
+        "action": "REVIEW_MATURE_EVIDENCE_PRICE_SAMPLE_PRUNE",
+        "automatic": False,
+        "requires_explicit_apply": True,
+        "filesystem_reclaim_promised": False,
+    })
+    return {
+        **classified,
+        "free_bytes": free,
+        "total_bytes": total,
+        "bytes_to_warn_headroom": max(0, warn_target - free),
+        "bytes_to_critical_boundary": max(0, critical_target - free),
+        "automatic_cleanup": False,
+        "automatic_vacuum": False,
+        "actions": actions,
+    }
 
 def _decision_storage_amplification(c: sqlite3.Connection) -> dict[str, Any]:
     """Read-only size diagnostics for decisions.snapshot_json.
@@ -96,17 +221,22 @@ def _age_days(path: Path, now: dt.datetime) -> float:
 def audit(root: str | Path | None = None) -> dict[str, Any]:
     root = Path(root) if root else persistent_root()
     now = dt.datetime.now(dt.timezone.utc)
-    files=[]; reclaimable=0
+    files=[]; reclaimable=0; wal_bytes=0
+    active_dbs: list[Path] = []
     for p in sorted(root.glob("*.db*")):
         try: size=p.stat().st_size
         except OSError: continue
         name=p.name; cls="CANONICAL_ACTIVE_DB"; eligible=False; reason="canonical evidence/state preserved"
         if name.endswith("-wal") or name.endswith("-shm"):
             cls="SQLITE_TRANSIENT"; reason="managed by SQLite; checkpoint only, never unlink while active"
+            if name.endswith("-wal"):
+                wal_bytes += size
         elif ".corrupt-" in name:
             cls="QUARANTINED_CORRUPT_DB"; age=_age_days(p,now); eligible=age >= QUARANTINE_RETENTION_DAYS
             reason=f"quarantined by db_resilience; operator-removable after {QUARANTINE_RETENTION_DAYS}d retention"
             if eligible: reclaimable += size
+        elif name.endswith(".db"):
+            active_dbs.append(p)
         files.append({"name":name,"bytes":size,"classification":cls,"operator_cleanup_eligible":eligible,"reason":reason})
     evidence={"path":str(DEFAULT_DB),"exists":Path(DEFAULT_DB).exists(),"price_retention_days":PRICE_RETENTION_DAYS}
     if Path(DEFAULT_DB).exists():
@@ -125,31 +255,27 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
                 except sqlite3.DatabaseError:
                     evidence["table_bytes_unavailable"]=True
         except Exception as exc: evidence["audit_error"]=f"{type(exc).__name__}: {exc}"
+    evidence["price_prune_plan"] = _price_prune_plan(DEFAULT_DB, PRICE_RETENTION_DAYS)
     storage = storage_status()
-    try:
-        free_pct = float(storage.get("free_pct"))
-    except (TypeError, ValueError, AttributeError):
-        free_pct = None
-    if free_pct is None:
-        capacity_state = "UNKNOWN"
-    elif free_pct < STORAGE_CRITICAL_FREE_PCT:
-        capacity_state = "CRITICAL"
-    elif free_pct < STORAGE_WARN_FREE_PCT:
-        capacity_state = "WARN"
-    else:
-        capacity_state = "PASS"
-    capacity = {
-        "state": capacity_state,
-        "free_pct": free_pct,
-        "warn_below_pct": STORAGE_WARN_FREE_PCT,
-        "critical_below_pct": STORAGE_CRITICAL_FREE_PCT,
-        "automatic_cleanup": False,
-        "operator_action_required": capacity_state in {"WARN", "CRITICAL"},
+    capacity = _capacity_governance(storage, reclaimable_quarantine_bytes=reclaimable, wal_bytes=wal_bytes)
+    db_footprints = [_sqlite_footprint(p) for p in sorted(active_dbs)]
+    largest_databases = sorted(
+        [{"name": x.get("name"), "bytes": int(x.get("file_bytes") or 0)} for x in db_footprints],
+        key=lambda x: x["bytes"], reverse=True
+    )[:10]
+    return {
+        "ok":True,"version":VERSION,"storage":storage,"storage_capacity":capacity,
+        "capacity_policy":storage_capacity_policy(),
+        "files":files,"operator_reclaimable_bytes":reclaimable,"wal_bytes":wal_bytes,
+        "largest_databases":largest_databases,"database_footprints":db_footprints,
+        "evidence_pipeline":evidence,
+        "guardrails":{
+            "automatic_delete":False,"automatic_vacuum":False,"canonical_evidence_delete":False,
+            "human_approval_required":True,"no_fabrication":True,"capacity_warning_observational_only":True,
+            "capacity_policy_canonical":True,"filesystem_reclaim_not_inferred_from_sqlite_delete":True,
+            "active_database_unlink_forbidden":True,"raw_trigger_observation_auto_prune":False,
+        },
     }
-    return {"ok":True,"version":VERSION,"storage":storage,"storage_capacity":capacity,
-            "files":files,"operator_reclaimable_bytes":reclaimable,"evidence_pipeline":evidence,
-            "guardrails":{"automatic_delete":False,"automatic_vacuum":False,"canonical_evidence_delete":False,"human_approval_required":True,"no_fabrication":True,
-                          "capacity_warning_observational_only":True}}
 
 
 def prune_mature_price_samples(path: str | Path = DEFAULT_DB, retention_days: int = PRICE_RETENTION_DAYS, *, apply: bool=False) -> dict[str,Any]:

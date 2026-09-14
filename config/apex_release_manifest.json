@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.7",
-  "build_name": "Scanner Completion Truth & Live Health State Closure",
+  "apex_version": "69.10.8",
+  "build_name": "Storage Retention & Capacity Governance Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -470,15 +470,30 @@
     "scanner_lock_contention_bypasses_lock": false,
     "scanner_lock_contention_bounded_retry": true,
     "scanner_health_changes_trade_decisions": false,
-    "scanner_health_changes_execution_authority": false
+    "scanner_health_changes_execution_authority": false,
+    "storage_capacity_policy_canonical": true,
+    "storage_capacity_warn_free_pct_default": 25.0,
+    "storage_capacity_critical_free_pct_default": 15.0,
+    "storage_health_thresholds_aligned": true,
+    "storage_critical_state_can_be_masked_by_legacy_warning_threshold": false,
+    "storage_capacity_auto_delete": false,
+    "storage_capacity_auto_vacuum": false,
+    "storage_active_database_unlink_allowed": false,
+    "storage_sqlite_delete_promises_filesystem_reclaim": false,
+    "storage_database_table_footprint_audit_enabled": true,
+    "storage_operator_maintenance_dry_run_default": true,
+    "storage_operator_maintenance_requires_explicit_apply": true,
+    "storage_trigger_raw_observation_auto_prune": false,
+    "storage_changes_trade_decisions": false,
+    "storage_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.7",
-  "application_version": "69.10.7",
+  "semantic_version": "69.10.8",
+  "application_version": "69.10.8",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
@@ -502,6 +517,18 @@
     "existing_decision_rows_preserved": true,
     "future_decision_snapshot_projection": "BOUNDED_CANONICAL_PROJECTION",
     "future_decision_projection_version": "69.4.4",
-    "automatic_historical_decision_rewrite": false
+    "automatic_historical_decision_rewrite": false,
+    "capacity_policy_version": "69.10.8",
+    "canonical_warn_free_pct_default": 25.0,
+    "canonical_critical_free_pct_default": 15.0,
+    "runtime_health_thresholds_aligned": true,
+    "database_table_footprint_audit": true,
+    "largest_database_ranking": true,
+    "sqlite_freelist_reuse_reported_separately_from_filesystem_reclaim": true,
+    "operator_maintenance_script": "scripts/apex_storage_maintenance.py",
+    "operator_maintenance_dry_run_default": true,
+    "operator_maintenance_requires_explicit_apply": true,
+    "active_database_unlink_forbidden": true,
+    "raw_trigger_observation_auto_prune": false
   }
 }
