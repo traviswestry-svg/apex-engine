@@ -17,6 +17,8 @@ VERSION = APP_VERSION
 QUARANTINE_RE = re.compile(r"\.corrupt-(\d{8,14})(?:\.bak)?$")
 PRICE_RETENTION_DAYS = int(os.getenv("APEX_EVIDENCE_PRICE_RETENTION_DAYS", "14"))
 QUARANTINE_RETENTION_DAYS = int(os.getenv("APEX_CORRUPT_DB_RETENTION_DAYS", "14"))
+TRIGGER_RETENTION_DAYS = int(os.getenv("APEX_TRIGGER_OBSERVATORY_RETENTION_DAYS", "30"))
+TRIGGER_DB = Path(os.getenv("APEX_TRIGGER_OBSERVATORY_DB", str(persistent_root() / "apex_trigger_observatory.db")))
 
 DECISION_AUDIT_SAMPLE_LIMIT = 20
 
@@ -214,6 +216,39 @@ def _decision_storage_amplification(c: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _trigger_retention_audit(path: str | Path = TRIGGER_DB, retention_days: int = TRIGGER_RETENTION_DAYS) -> dict[str, Any]:
+    db = Path(path); days=max(1,int(retention_days)); cutoff=(dt.datetime.now(dt.timezone.utc)-dt.timedelta(days=days)).isoformat()
+    out={"path":str(db),"exists":db.exists(),"retention_days":days,"safe_cutoff_exclusive":cutoff,"apply":False}
+    if not db.exists(): return out
+    try:
+        uri=f"file:{db.resolve().as_posix()}?mode=ro"
+        with sqlite3.connect(uri,uri=True,timeout=5) as c:
+            c.row_factory=sqlite3.Row
+            agg=c.execute("SELECT COUNT(*) n,MIN(triggered_at) oldest,MAX(triggered_at) newest,COALESCE(SUM(LENGTH(evidence_json)),0) evidence_bytes,COALESCE(AVG(LENGTH(evidence_json)),0) avg_evidence,COALESCE(MAX(LENGTH(evidence_json)),0) max_evidence FROM observed_trade_triggers").fetchone()
+            statuses=[dict(r) for r in c.execute("SELECT status,COUNT(*) count FROM observed_trade_triggers GROUP BY status ORDER BY count DESC")]
+            eligible=int(c.execute("SELECT COUNT(*) FROM observed_trade_triggers WHERE triggered_at < ? AND status IN ('OBSERVED','OBSERVATION_WINDOW_INCOMPLETE') AND decision_id IS NOT NULL AND canonical_grade_status IS NOT NULL",(cutoff,)).fetchone()[0])
+            protected_open=int(c.execute("SELECT COUNT(*) FROM observed_trade_triggers WHERE status='OBSERVING'").fetchone()[0])
+            protected_unlinked=int(c.execute("SELECT COUNT(*) FROM observed_trade_triggers WHERE triggered_at < ? AND status IN ('OBSERVED','OBSERVATION_WINDOW_INCOMPLETE') AND (decision_id IS NULL OR canonical_grade_status IS NULL)",(cutoff,)).fetchone()[0])
+            out.update({"rows":int(agg['n']),"oldest_triggered_at":agg['oldest'],"newest_triggered_at":agg['newest'],"evidence_json_total_bytes":int(agg['evidence_bytes'] or 0),"evidence_json_average_bytes":round(float(agg['avg_evidence'] or 0),2),"evidence_json_max_bytes":int(agg['max_evidence'] or 0),"status_counts":statuses,"eligible_terminal_linked_graded_rows":eligible,"protected_open_rows":protected_open,"protected_old_unlinked_rows":protected_unlinked,"open_rows_protected":True,"unlinked_rows_protected":True,"canonical_grade_required_for_prune":True,"automatic_prune":False,"vacuum_performed":False,"filesystem_reclaim_promised":False})
+    except Exception as exc: out['audit_error']=f"{type(exc).__name__}: {exc}"
+    return out
+
+def prune_mature_trigger_observations(path: str | Path = TRIGGER_DB, retention_days: int = TRIGGER_RETENTION_DAYS, *, apply: bool=False) -> dict[str, Any]:
+    """Operator-only bounded prune of mature terminal, canonically linked+graded triggers. No VACUUM."""
+    db=Path(path); days=max(1,int(retention_days)); cutoff=(dt.datetime.now(dt.timezone.utc)-dt.timedelta(days=days)).isoformat()
+    if not db.exists(): return {"ok":True,"apply":apply,"exists":False,"eligible_rows":0,"deleted_rows":0}
+    with sqlite3.connect(str(db),timeout=15) as c:
+        where="triggered_at < ? AND status IN ('OBSERVED','OBSERVATION_WINDOW_INCOMPLETE') AND decision_id IS NOT NULL AND canonical_grade_status IS NOT NULL"
+        ids=[r[0] for r in c.execute(f"SELECT trigger_id FROM observed_trade_triggers WHERE {where}",(cutoff,)).fetchall()]
+        child=0
+        if ids:
+            marks=','.join('?' for _ in ids); child=int(c.execute(f"SELECT COUNT(*) FROM trade_trigger_price_observations WHERE trigger_id IN ({marks})",ids).fetchone()[0])
+            if apply:
+                c.execute(f"DELETE FROM trade_trigger_price_observations WHERE trigger_id IN ({marks})",ids)
+                c.execute(f"DELETE FROM observed_trade_triggers WHERE trigger_id IN ({marks})",ids); c.commit()
+        return {"ok":True,"apply":apply,"exists":True,"retention_days":days,"safe_cutoff_exclusive":cutoff,"eligible_rows":len(ids),"eligible_child_price_rows":child,"deleted_rows":len(ids) if apply else 0,"deleted_child_price_rows":child if apply else 0,"vacuum_performed":False,"filesystem_reclaim_promised":False,"open_rows_protected":True,"unlinked_rows_protected":True,"human_approval_required":True}
+
+
 def _age_days(path: Path, now: dt.datetime) -> float:
     return max(0.0, (now.timestamp() - path.stat().st_mtime) / 86400.0)
 
@@ -256,6 +291,7 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
                     evidence["table_bytes_unavailable"]=True
         except Exception as exc: evidence["audit_error"]=f"{type(exc).__name__}: {exc}"
     evidence["price_prune_plan"] = _price_prune_plan(DEFAULT_DB, PRICE_RETENTION_DAYS)
+    trigger_retention = _trigger_retention_audit(TRIGGER_DB, TRIGGER_RETENTION_DAYS)
     storage = storage_status()
     capacity = _capacity_governance(storage, reclaimable_quarantine_bytes=reclaimable, wal_bytes=wal_bytes)
     db_footprints = [_sqlite_footprint(p) for p in sorted(active_dbs)]
@@ -268,12 +304,13 @@ def audit(root: str | Path | None = None) -> dict[str, Any]:
         "capacity_policy":storage_capacity_policy(),
         "files":files,"operator_reclaimable_bytes":reclaimable,"wal_bytes":wal_bytes,
         "largest_databases":largest_databases,"database_footprints":db_footprints,
-        "evidence_pipeline":evidence,
+        "evidence_pipeline":evidence,"trigger_observatory_retention":trigger_retention,
         "guardrails":{
             "automatic_delete":False,"automatic_vacuum":False,"canonical_evidence_delete":False,
             "human_approval_required":True,"no_fabrication":True,"capacity_warning_observational_only":True,
             "capacity_policy_canonical":True,"filesystem_reclaim_not_inferred_from_sqlite_delete":True,
             "active_database_unlink_forbidden":True,"raw_trigger_observation_auto_prune":False,
+            "trigger_prune_explicit_apply_only":True,"trigger_open_rows_protected":True,"trigger_unlinked_rows_protected":True,
         },
     }
 

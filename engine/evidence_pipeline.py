@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from .canonical_persistence import connect as canonical_connect
 from .persistent_store import persistent_sqlite_path
-VERSION="68.6.0"; SCHEMA_VERSION="apex.evidence_readiness.v2"; DEFAULT_DB=persistent_sqlite_path("APEX_EVIDENCE_PIPELINE_DB", "apex_evidence_pipeline.db")
+VERSION="68.6.0"; MAX_PERSISTED_SNAPSHOT_BYTES=int(os.getenv("APEX_DECISION_SNAPSHOT_MAX_BYTES","131072")); SCHEMA_VERSION="apex.evidence_readiness.v2"; DEFAULT_DB=persistent_sqlite_path("APEX_EVIDENCE_PIPELINE_DB", "apex_evidence_pipeline.db")
 def _now(): return datetime.now(timezone.utc).isoformat()
 
 
@@ -26,6 +26,14 @@ _IDO_PERSIST_KEYS = (
 
 def _json_bytes(value: Any) -> bytes:
     return json.dumps(value, default=str, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+_ROOT_PERSIST_KEYS = (
+    "decision_id","timestamp","ticker","session","direction","action","decision_state",
+    "entry_reference","confidence","learning_eligible","observational_learning_eligible",
+    "execution_actionable","actionable","eligibility_reason","eligibility_inputs",
+    "setup","market_regime","volatility_regime","pre_governance_decision",
+    "trade_horizon_intelligence","institutional_decision_object",
+)
 
 def _persisted_snapshot_projection(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     """Return the bounded canonical form stored in decisions.snapshot_json.
@@ -52,6 +60,20 @@ def _persisted_snapshot_projection(snapshot: Mapping[str, Any]) -> dict[str, Any
         "omitted_fields_are_redundant_runtime_bulk": True,
         "canonical_decision_semantics_preserved": True,
     }
+    # A second guardrail prevents unrelated top-level runtime bulk from recreating
+    # the historical >1 MB amplification pattern. The decision is still persisted.
+    pre_guard = len(_json_bytes(projected))
+    if pre_guard > MAX_PERSISTED_SNAPSHOT_BYTES:
+        projected = {key: projected.get(key) for key in _ROOT_PERSIST_KEYS if key in projected}
+        projected["storage_projection"] = {
+            "schema_version": "apex.decision_snapshot_storage.v1",
+            "projection_version": "69.10.9",
+            "source_snapshot_bytes": len(raw),
+            "source_snapshot_sha256": hashlib.sha256(raw).hexdigest(),
+            "hard_size_guardrail_applied": True,
+            "max_persisted_snapshot_bytes": MAX_PERSISTED_SNAPSHOT_BYTES,
+            "canonical_decision_semantics_preserved": True,
+        }
     # Resolve the self-reported persisted byte count to a stable exact value.
     projected["storage_projection"]["persisted_snapshot_bytes"] = 0
     for _ in range(3):
