@@ -14,6 +14,7 @@ import sqlite3
 from typing import Any, Dict, Optional
 
 from .canonical_persistence import connect as canonical_connect
+from .storage_capacity_policy import classify_free_pct
 
 VERSION = "24.2.1_PRODUCTION_HARDENING"
 
@@ -72,12 +73,12 @@ def storage_status() -> Dict[str, Any]:
         total_db_bytes += size
         files.append({"name": path.name, "bytes": size})
     free_pct = (usage.free / usage.total * 100.0) if usage.total else 0.0
-    warn_pct = float(os.getenv("APEX_DISK_WARN_FREE_PCT", "15"))
-    critical_pct = float(os.getenv("APEX_DISK_CRITICAL_FREE_PCT", "7"))
-    state = "CRITICAL" if free_pct <= critical_pct else "WARNING" if free_pct <= warn_pct else "PASS"
+    capacity = classify_free_pct(free_pct)
+    state = capacity["state"]
     return {
         "ok": state != "CRITICAL",
         "state": state,
+        "capacity_policy": capacity,
         "root": str(root),
         "total_bytes": usage.total,
         "used_bytes": usage.used,

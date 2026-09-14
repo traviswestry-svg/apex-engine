@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.7
+apex_version: 69.10.8
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
@@ -583,17 +583,19 @@ capabilities:
       - no_execution_authority
 
   governed_storage_retention:
-    canonical_module: engine.storage_retention
-    status: active
-    version: 69.10.5
-    inputs: [persistent_disk_inventory, sqlite_wal_state, evidence_pipeline_price_samples, pending_decision_floor, db_resilience_quarantine_artifacts]
-    outputs: [storage_retention_audit, operator_maintenance_plan, bounded_price_sample_prune, wal_checkpoint_result]
+    canonical_modules: [engine.storage_retention, engine.storage_capacity_policy, engine.operational_runtime]
+    deployed_modules: [engine.storage_retention, engine.storage_capacity_policy, engine.operational_runtime, engine.configuration_governance, app]
+    status: active_capacity_governance
+    version: "69.10.8"
+    inputs: [persistent_disk_inventory, canonical_capacity_policy, sqlite_page_allocation, sqlite_wal_state, evidence_pipeline_price_samples, pending_decision_floor, db_resilience_quarantine_artifacts]
+    outputs: [storage_retention_audit, canonical_capacity_state, database_table_footprint_audit, largest_database_ranking, operator_maintenance_plan, bounded_price_sample_prune, wal_checkpoint_result]
     routes: [/api/admin/storage/audit]
     route_access: application_wide_authenticated
+    operator_cli: scripts/apex_storage_maintenance.py
     decision_authority: none
     execution_authority: none
     production_effect: OPERATIONS_ONLY
-    guardrails: [no_automatic_delete, no_automatic_vacuum, preserve_canonical_decisions, preserve_grading_results, preserve_flow_features, preserve_excursion_evidence, preserve_calibration_evidence, human_approval_required_for_quarantine_cleanup, pending_decision_floor_protects_price_samples, storage_audit_endpoint_read_only, storage_audit_endpoint_does_not_invoke_maintenance, capacity_warning_observational_only, capacity_warning_never_auto_deletes]
+    guardrails: [canonical_warn_threshold_25_pct_default, canonical_critical_threshold_15_pct_default, runtime_health_and_storage_audit_thresholds_aligned, no_automatic_delete, no_automatic_vacuum, active_database_unlink_forbidden, preserve_canonical_decisions, preserve_grading_results, preserve_flow_features, preserve_excursion_evidence, preserve_calibration_evidence, raw_trigger_observation_auto_prune_forbidden, human_approval_required_for_quarantine_cleanup, pending_decision_floor_protects_price_samples, sqlite_delete_does_not_promise_filesystem_reclaim, storage_audit_endpoint_read_only, storage_audit_endpoint_does_not_invoke_maintenance, operator_maintenance_dry_run_default, explicit_apply_required_for_mutation, no_decision_authority, no_execution_authority]
   flow_surprise_gamma_transition_dynamics:
     canonical_modules: [engine.flow_surprise, engine.gamma_transition]
     deployed_modules: [engine.flow_clusters, engine.flow_surprise, engine.feature_store_writer, engine.gamma, engine.gamma_transition, engine.dynamic_state, app]
