@@ -212,6 +212,11 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_EVIDENCE_PRICE_RETENTION_DAYS','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'14','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Retention window in days for mature forward price samples; pending-decision evidence is preserved regardless of this setting.','safety_critical':False,'used_in_code':True},
 ])
 
+# APEX 69.10.7 — bounded retry delay after scanner lock contention.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_SCANNER_LOCK_RETRY_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'5','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded backoff delay in seconds before one retry after scanner lock contention.','safety_critical':False,'used_in_code':True},
+])
+
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
 def _utcnow() -> str: return datetime.now(timezone.utc).isoformat()
