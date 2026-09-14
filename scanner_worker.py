@@ -422,6 +422,7 @@ def main() -> int:
             "scanner_lease": _PROCESS_LEASE,
             "thread_alive": bool(apex_app.STATE.get("scanner_thread_alive", False)),
             "last_scan_at": apex_app.SCANNER_STATE.get("updated_at") or apex_app.STATE.get("updated_at"),
+            "scan_completion_runtime": apex_app.scanner_completion_runtime_status(),
             "last_error": apex_app.STATE.get("last_error"),
             "hlce_collector_running": bool(service.collector_running()),
             "hlce_provider_ok": bool(_HLCE_RUNTIME.get("provider_ok")),

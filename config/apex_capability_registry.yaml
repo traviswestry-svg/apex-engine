@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.6
+apex_version: 69.10.7
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
@@ -656,3 +656,18 @@ capabilities:
       - no_automatic_historical_rescore
       - no_trade_decision_authority
       - no_execution_authority
+  scanner_completion_truth_live_health_state_closure:
+    description: "Cross-process full-scan completion truth separated from heartbeat/background activity, with fail-closed stale health and bounded lock-contention retry."
+    canonical_modules: [engine.scanner_runtime_truth, app, scanner_worker]
+    deployed_modules: [engine.scanner_runtime_truth, app, scanner_worker]
+    status: active_operational_truth
+    version: "69.10.7"
+    inputs: [scanner_process_heartbeat, full_scan_attempts, full_scan_completions, full_scan_failures, scan_lock_contention, last_completed_scan_timestamp]
+    outputs: [scan_completion_runtime, authoritative_process_last_completed_scan, full_scan_stalled_health_state, lock_contention_diagnostics]
+    api_routes: [/health, /api/runtime/health]
+    decision_authority: none
+    behavioral_authority: none
+    execution_authority: none
+    production_effect: OPERATIONS_ONLY
+    guardrails: [heartbeat_does_not_equal_full_scan_completion, background_learning_does_not_mask_stale_full_scan, stale_threshold_unchanged, process_completion_timestamp_used_only_when_heartbeat_fresh, lock_never_bypassed, bounded_retry_only_after_lock_busy, no_trade_decision_authority, no_execution_authority]
+

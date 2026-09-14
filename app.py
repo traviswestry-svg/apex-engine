@@ -1811,6 +1811,36 @@ class CircuitBreaker:
 
 BREAKER = CircuitBreaker(max_failures=BREAKER_MAX_FAILURES)
 
+# APEX 69.10.7 — scanner completion truth.  Heartbeat activity and full-scan
+# completion are separate lifecycle facts.  These counters are observational only
+# and let the dedicated scanner process prove attempts, completions, failures and
+# lock contention without treating background learning activity as a completed scan.
+_SCAN_COMPLETION_RUNTIME: Dict[str, Any] = {
+    "version": "69.10.7",
+    "scan_attempts": 0,
+    "scan_completed": 0,
+    "scan_failures": 0,
+    "scan_lock_skips": 0,
+    "scheduler_lock_retries": 0,
+    "last_attempt_at": None,
+    "last_completed_at": None,
+    "last_failure_at": None,
+    "last_failure": None,
+    "last_lock_skip_at": None,
+    "last_lock_acquired_at": None,
+    "last_lock_released_at": None,
+    "last_duration_seconds": None,
+    "last_result": "NOT_RUN",
+}
+
+def scanner_completion_runtime_status() -> Dict[str, Any]:
+    with STATE_LOCK:
+        out = dict(_SCAN_COMPLETION_RUNTIME)
+        out["scan_in_progress"] = bool(STATE.get("scan_in_progress"))
+        out["scan_started_at"] = STATE.get("scan_started_at")
+        out["scanner_thread_alive"] = bool(STATE.get("scanner_thread_alive"))
+    return out
+
 STATE: Dict[str, Any] = {
     "mode": VERSION,
     "updated_at": None,
@@ -4419,11 +4449,21 @@ def maybe_alert(idea: Dict[str, Any]) -> None:
 
 
 def run_scan_once(force: bool = False) -> bool:
+    _attempt_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    with STATE_LOCK:
+        _SCAN_COMPLETION_RUNTIME["scan_attempts"] += 1
+        _SCAN_COMPLETION_RUNTIME["last_attempt_at"] = _attempt_at
     if not SCAN_LOCK.acquire(blocking=False):
         with STATE_LOCK:
-            STATE["last_scan_status"] = "Scan already running; skipped duplicate request."
+            _SCAN_COMPLETION_RUNTIME["scan_lock_skips"] += 1
+            _SCAN_COMPLETION_RUNTIME["last_lock_skip_at"] = _attempt_at
+            _SCAN_COMPLETION_RUNTIME["last_result"] = "LOCK_BUSY"
+            STATE["last_scan_status"] = "Scan scheduler lock busy; duplicate request skipped."
         return False
     scan_start = time.monotonic()
+    with STATE_LOCK:
+        _SCAN_COMPLETION_RUNTIME["last_lock_acquired_at"] = _attempt_at
+        _SCAN_COMPLETION_RUNTIME["last_result"] = "RUNNING"
     try:
         print(f"🔥 APEX ENGINE {VERSION} SCAN START 🔥", flush=True)
         BREAKER.reset()
@@ -4483,6 +4523,11 @@ def run_scan_once(force: bool = False) -> bool:
                 # last_result is populated by /api/institutional_os, not the scanner
             })
             status = STATE["last_scan_status"]
+            _SCAN_COMPLETION_RUNTIME["scan_completed"] += 1
+            _SCAN_COMPLETION_RUNTIME["last_completed_at"] = STATE.get("updated_at")
+            _SCAN_COMPLETION_RUNTIME["last_duration_seconds"] = duration
+            _SCAN_COMPLETION_RUNTIME["last_failure"] = None
+            _SCAN_COMPLETION_RUNTIME["last_result"] = "COMPLETED"
         print(status, flush=True)
         return True
     except Exception as e:
@@ -4490,10 +4535,16 @@ def run_scan_once(force: bool = False) -> bool:
             STATE["last_error"] = str(e)
             STATE["last_scan_status"] = "Scan failed"
             STATE["scan_in_progress"] = False
+            _SCAN_COMPLETION_RUNTIME["scan_failures"] += 1
+            _SCAN_COMPLETION_RUNTIME["last_failure_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            _SCAN_COMPLETION_RUNTIME["last_failure"] = f"{type(e).__name__}: {e}"
+            _SCAN_COMPLETION_RUNTIME["last_result"] = "FAILED"
         print(f"Fatal scan error: {e}", flush=True)
         return False
     finally:
         SCAN_LOCK.release()
+        with STATE_LOCK:
+            _SCAN_COMPLETION_RUNTIME["last_lock_released_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
 
 
 def scanner_loop() -> None:
@@ -4507,7 +4558,16 @@ def scanner_loop() -> None:
         with STATE_LOCK:
             STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         try:
-            run_scan_once()
+            _scan_ran = run_scan_once()
+            # APEX 69.10.7: a transient duplicate/lock collision must not cost a
+            # full scanner cadence. Retry once after a short bounded wait. This
+            # never bypasses the lock and therefore cannot create concurrent scans.
+            if not _scan_ran and _SCAN_COMPLETION_RUNTIME.get("last_result") == "LOCK_BUSY":
+                _retry_s = max(1, min(15, int(os.getenv("APEX_SCANNER_LOCK_RETRY_SECONDS", "5"))))
+                time.sleep(_retry_s)
+                with STATE_LOCK:
+                    _SCAN_COMPLETION_RUNTIME["scheduler_lock_retries"] += 1
+                run_scan_once()
         except Exception as e:
             # run_scan_once() already catches its own exceptions internally. This is a
             # last-resort backstop: if something still slips through (or raises outside
@@ -6987,7 +7047,8 @@ def api_market_status():
 
 
 def _resolve_health_state(session, scan_in_progress, updated_at, last_scan_duration,
-                          scanner_started, now=None):
+                          scanner_started, now=None, scanner_heartbeat_fresh=False,
+                          scan_completion_runtime=None):
     """Disambiguate the runtime health of the scan pipeline into ONE explicit state.
 
     Resolves the ambiguity the assessment flagged: 'is the system idle because the
@@ -7074,6 +7135,20 @@ def _resolve_health_state(session, scan_in_progress, updated_at, last_scan_durat
                 "data_fresh": False,
                 "scanner_expected": True,
                 "scanner_state": "SCANNING"}
+    completion = dict(scan_completion_runtime or {})
+    if scanner_heartbeat_fresh:
+        lock_skips = int(completion.get("scan_lock_skips") or 0)
+        last_result = completion.get("last_result")
+        detail = (
+            f"Scanner heartbeat is fresh, but the last full scan completed "
+            f"{int(age) if age is not None else 'unknown'}s ago (> {int(STALE_AFTER_S)}s)."
+        )
+        if last_result == "LOCK_BUSY" or lock_skips:
+            detail += f" Scan scheduler lock contention observed ({lock_skips} skip(s))."
+        else:
+            detail += " Background activity does not substitute for a completed full scan."
+        return {"state": "STALE", "detail": detail, "data_fresh": False,
+                "scanner_expected": True, "scanner_state": "FULL_SCAN_STALLED"}
     return {"state": "STALE",
             "detail": f"Last scan {int(age) if age is not None else 'unknown'}s ago (> {int(STALE_AFTER_S)}s) — data may be stale.",
             "data_fresh": False,
@@ -7257,9 +7332,13 @@ def health():
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
+    _process_completion = dict(_scanner_runtime.get("process_scan_completion") or {})
+    _process_authoritative = _scanner_runtime.get("source") == "SCANNER_PROCESS_HEARTBEAT" and bool(_scanner_runtime.get("heartbeat_fresh"))
     with STATE_LOCK:
-        scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at") or _scanner_runtime.get("process_last_scan_at")
-        s_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
+        _local_scan_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
+        _local_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
+        scan_updated_at = (_scanner_runtime.get("process_last_scan_at") if _process_authoritative else None) or _local_scan_at
+        s_duration = (_scanner_runtime.get("process_last_scan_duration_seconds") if _process_authoritative else None) or _local_duration
         s_sources = SCANNER_STATE.get("data_sources") or STATE.get("data_sources") or {}
         s_session = session_status()
         s_inprog = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
@@ -7272,6 +7351,8 @@ def health():
             session=s_session, scan_in_progress=s_inprog,
             updated_at=scan_updated_at, last_scan_duration=s_duration,
             scanner_started=bool(_scanner_runtime.get("effective_started")),
+            scanner_heartbeat_fresh=bool(_scanner_runtime.get("heartbeat_fresh")),
+            scan_completion_runtime=_process_completion,
         )
 
     scan_age = _iso_age_seconds(scan_updated_at, generated_dt)
@@ -7303,6 +7384,7 @@ def health():
         "process_uptime_seconds": _iso_age_seconds(APP_PROCESS_STARTED_AT, generated_dt),
         "scanner_started": bool(_scanner_runtime.get("effective_started")),
         "scanner_state_source": _scanner_runtime.get("source"),
+        "scan_completion_runtime": _process_completion if _process_authoritative else scanner_completion_runtime_status(),
         "scanner_thread_alive": scanner_thread_alive,
         "scanner_heartbeat_at": scanner_heartbeat_at,
         "scanner_heartbeat_age_seconds": heartbeat_age,
@@ -14655,9 +14737,13 @@ def _apex65_runtime_health_payload():
         }
 
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
+    _process_completion = dict(_scanner_runtime.get("process_scan_completion") or {})
+    _process_authoritative = _scanner_runtime.get("source") == "SCANNER_PROCESS_HEARTBEAT" and bool(_scanner_runtime.get("heartbeat_fresh"))
     with STATE_LOCK:
-        scan_updated_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at") or _scanner_runtime.get("process_last_scan_at")
-        scan_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
+        _local_scan_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
+        _local_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
+        scan_updated_at = (_scanner_runtime.get("process_last_scan_at") if _process_authoritative else None) or _local_scan_at
+        scan_duration = (_scanner_runtime.get("process_last_scan_duration_seconds") if _process_authoritative else None) or _local_duration
         raw_sources = dict(SCANNER_STATE.get("data_sources") or STATE.get("data_sources") or {})
         scan_in_progress = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
         last = dict(STATE.get("last_result") or {})
@@ -14665,6 +14751,8 @@ def _apex65_runtime_health_payload():
     hstate = _resolve_health_state(
         session=session, scan_in_progress=scan_in_progress, updated_at=scan_updated_at,
         last_scan_duration=scan_duration, scanner_started=bool(_scanner_runtime.get("effective_started")), now=generated_dt,
+        scanner_heartbeat_fresh=bool(_scanner_runtime.get("heartbeat_fresh")),
+        scan_completion_runtime=_process_completion,
     )
     engine_rows, engine_counts = _compute_engine_health(last)
     engine_counts["expected"] = bool(session == "MARKET_OPEN" or last)
@@ -14681,6 +14769,7 @@ def _apex65_runtime_health_payload():
             "last_scan_age_seconds": _iso_age_seconds(scan_updated_at, generated_dt),
             "last_scan_duration_seconds": scan_duration,
             "scan_in_progress": scan_in_progress,
+            "scan_completion_runtime": _process_completion if _process_authoritative else scanner_completion_runtime_status(),
         },
         sources=sources, engine_health=engine_counts, trade_director=td_health,
         auth_layer_available=bool(AUTH_LAYER_AVAILABLE), generated_at=generated_at,
