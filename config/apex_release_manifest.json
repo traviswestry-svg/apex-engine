@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.8",
-  "build_name": "Storage Retention & Capacity Governance Closure",
+  "apex_version": "69.10.9",
+  "build_name": "Trigger Observatory Retention & Evidence Payload Governance",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -485,15 +485,28 @@
     "storage_operator_maintenance_requires_explicit_apply": true,
     "storage_trigger_raw_observation_auto_prune": false,
     "storage_changes_trade_decisions": false,
-    "storage_changes_execution_authority": false
+    "storage_changes_execution_authority": false,
+    "trigger_observatory_retention_audit": true,
+    "trigger_observatory_retention_days_default": 30,
+    "trigger_observatory_prune_explicit_apply_only": true,
+    "trigger_observatory_open_rows_protected": true,
+    "trigger_observatory_unlinked_rows_protected": true,
+    "trigger_observatory_canonical_grade_required_for_prune": true,
+    "trigger_observatory_prune_vacuum_performed": false,
+    "trigger_evidence_payload_projection": "BOUNDED_ON_AMPLIFICATION",
+    "trigger_evidence_max_bytes_default": 32768,
+    "historical_trigger_rows_rewritten": false,
+    "automatic_trigger_pruning": false,
+    "decision_snapshot_hard_size_guardrail": true,
+    "decision_snapshot_max_bytes_default": 131072
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.8",
-  "application_version": "69.10.8",
+  "semantic_version": "69.10.9",
+  "application_version": "69.10.9",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

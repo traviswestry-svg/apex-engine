@@ -21,6 +21,7 @@ from engine.storage_retention import (
     checkpoint_wals,
     cleanup_quarantined_backups,
     prune_mature_price_samples,
+    prune_mature_trigger_observations,
 )
 
 
@@ -28,7 +29,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="APEX governed storage maintenance")
     parser.add_argument(
         "action",
-        choices=("audit", "checkpoint-wals", "cleanup-quarantine", "prune-price-samples"),
+        choices=("audit", "checkpoint-wals", "cleanup-quarantine", "prune-price-samples", "prune-trigger-observations"),
         nargs="?",
         default="audit",
     )
@@ -41,8 +42,10 @@ def main() -> int:
         result = checkpoint_wals(apply=args.apply)
     elif args.action == "cleanup-quarantine":
         result = cleanup_quarantined_backups(apply=args.apply)
-    else:
+    elif args.action == "prune-price-samples":
         result = prune_mature_price_samples(apply=args.apply)
+    else:
+        result = prune_mature_trigger_observations(apply=args.apply)
 
     result = dict(result)
     result["operator_invoked"] = True

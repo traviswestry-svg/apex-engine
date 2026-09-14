@@ -30,6 +30,7 @@ MAX_CONTRACTS = int(os.getenv("APEX_MAX_CONTRACTS", "3"))
 MAX_RISK_PER_TRADE = float(os.getenv("APEX_MAX_TRADE_RISK", "2000"))
 MAX_DAILY_LOSS = float(os.getenv("APEX_MAX_DAILY_LOSS", "1000"))
 MAX_DAILY_TRADES = int(os.getenv("APEX_MAX_DAILY_TRADES", "3"))
+MAX_EVIDENCE_JSON_BYTES = int(os.getenv("APEX_TRIGGER_EVIDENCE_MAX_BYTES", "32768"))
 _RECOMMENDATION_NO_TRADE_STATES = {"NO_TRADE", "STAND_DOWN", "ABSTAIN", "WATCH", "WATCH_ONLY"}
 
 
@@ -458,6 +459,47 @@ def _manual_etrade_handoff(*, symbol: str, direction: str, disposition: str,
     }
 
 
+_TRIGGER_DECISION_EVIDENCE_KEYS = (
+    "decision_id", "recommendation_id", "timestamp", "ticker", "action", "decision_state",
+    "direction", "status", "actionable", "setup_family", "confidence", "raw_conviction",
+    "calibrated_conviction", "entry_reference", "invalidation", "target", "gamma_regime",
+    "volatility_regime", "auction_regime", "production_effect",
+)
+
+def _bounded_trigger_evidence(evidence: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+    """Bound future trigger evidence without changing trigger identity or decision semantics."""
+    source = dict(evidence or {})
+    raw = _json(source).encode("utf-8")
+    if len(raw) <= MAX_EVIDENCE_JSON_BYTES:
+        return source
+    projected = dict(source)
+    decision = source.get("decision")
+    if isinstance(decision, Mapping):
+        projected["decision"] = {k: decision.get(k) for k in _TRIGGER_DECISION_EVIDENCE_KEYS if k in decision}
+    projected["storage_projection"] = {
+        "schema_version": "apex.trigger_evidence_storage.v1",
+        "projection_version": "69.10.9",
+        "source_evidence_bytes": len(raw),
+        "source_evidence_sha256": hashlib.sha256(raw).hexdigest(),
+        "bounded": True,
+        "payload_values_dropped_only_from_redundant_runtime_bulk": True,
+    }
+    encoded = _json(projected).encode("utf-8")
+    if len(encoded) > MAX_EVIDENCE_JSON_BYTES:
+        # Last-resort fail-closed metadata projection: never persist unbounded runtime bulk.
+        projected = {
+            "storage_projection": {
+                "schema_version": "apex.trigger_evidence_storage.v1",
+                "projection_version": "69.10.9",
+                "source_evidence_bytes": len(raw),
+                "source_evidence_sha256": hashlib.sha256(raw).hexdigest(),
+                "bounded": True,
+                "minimal_projection": True,
+            }
+        }
+    return projected
+
+
 def record_trigger(*, source: str, trigger_type: str, symbol: str = "SPX",
                    direction: Any = None, disposition: str = "OBSERVED",
                    triggered_at: Any = None, source_event_key: Optional[str] = None,
@@ -491,7 +533,7 @@ def record_trigger(*, source: str, trigger_type: str, symbol: str = "SPX",
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?,?)""",
             (trigger_id, event_key, source, trigger_type, _u(setup_family), symbol, direction,
              disposition, at, now, _f(price), _f(confidence), entry_f, _f(stop), _f(target1),
-             _f(target2), _f(target3), _json(blocker_list), _json(dict(evidence or {})),
+             _f(target2), _f(target3), _json(blocker_list), _json(_bounded_trigger_evidence(evidence)),
              _json(handoff), status, MAX_HOLD_SECONDS, PRODUCTION_EFFECT,
              str(decision_id) if decision_id else None, now, now),
         )
