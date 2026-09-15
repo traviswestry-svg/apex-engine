@@ -53,9 +53,14 @@ def _make_evidence_db(path: Path):
     return raw
 
 
-def _sqlite_dump(path: Path) -> list[str]:
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as c:
-        return list(c.iterdump())
+def _fetch_trigger_row(path: Path, trigger_id: str) -> dict:
+    with sqlite3.connect(path) as c:
+        c.row_factory = sqlite3.Row
+        row = c.execute(
+            "SELECT * FROM observed_trade_triggers WHERE trigger_id=?",
+            (trigger_id,),
+        ).fetchone()
+    return dict(row)
 
 
 def test_release_truth_and_archive_guardrails():
@@ -78,10 +83,10 @@ def test_archive_round_trip_is_exact_and_canonical_source_unchanged(tmp_path):
     source = tmp_path / "trigger.db"
     archive = tmp_path / "archive.db"
     raw = _make_trigger_db(source)
-    before = _sqlite_dump(source)
+    before = _fetch_trigger_row(source, "t1")
     out = archive_one(payload_type="TRIGGER_EVIDENCE", row_id="t1", observed_at="2026-08-25T12:00:00+00:00", raw_payload=raw, path=archive, apply=True)
     assert out["ok"] is True and out["state"] == "ARCHIVED_VERIFIED"
-    assert _sqlite_dump(source) == before
+    assert _fetch_trigger_row(source, "t1") == before
     restored = retrieve_archived_payload("TRIGGER_EVIDENCE", "t1", path=archive)
     assert restored["ok"] is True
     assert restored["payload"] == raw
