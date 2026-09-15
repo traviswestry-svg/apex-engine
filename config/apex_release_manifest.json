@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.11",
-  "build_name": "Immutable Historical Evidence Archive & Dependency-Preserving Projection Foundation",
+  "apex_version": "69.10.12",
+  "build_name": "Scanner Process Authority & Cross-Process Health Truth Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-09-14",
+  "released_at": "2026-09-15",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -531,15 +531,23 @@
     "historical_payload_archive_deletes_allowed": false,
     "historical_payload_archive_updates_allowed": false,
     "historical_payload_archive_changes_trade_decisions": false,
-    "historical_payload_archive_changes_execution_authority": false
+    "historical_payload_archive_changes_execution_authority": false,
+    "scanner_fresh_heartbeat_is_cross_process_authority": true,
+    "scanner_process_false_state_overridden_by_web_local_true": false,
+    "scanner_completion_runtime_uses_process_authority_when_heartbeat_fresh": true,
+    "scanner_scan_in_progress_uses_process_authority_when_heartbeat_fresh": true,
+    "scanner_process_phase_and_pid_observable": true,
+    "scanner_missing_or_stale_heartbeat_fails_to_web_local_fallback": true,
+    "scanner_authority_changes_trade_decisions": false,
+    "scanner_authority_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.11",
-  "application_version": "69.10.11",
+  "semantic_version": "69.10.12",
+  "application_version": "69.10.12",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

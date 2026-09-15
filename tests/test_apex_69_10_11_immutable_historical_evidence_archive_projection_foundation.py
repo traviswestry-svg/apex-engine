@@ -65,8 +65,8 @@ def _fetch_trigger_row(path: Path, trigger_id: str) -> dict:
 
 def test_release_truth_and_archive_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.11"
-    assert manifest["build_name"] == "Immutable Historical Evidence Archive & Dependency-Preserving Projection Foundation"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.12"
+    assert manifest["build_name"] == "Scanner Process Authority & Cross-Process Health Truth Closure"
     g = manifest["guardrails"]
     assert g["historical_payload_archive_foundation"] is True
     assert g["historical_payload_archive_additive_only"] is True
@@ -74,7 +74,7 @@ def test_release_truth_and_archive_guardrails():
     assert g["historical_payload_production_read_redirect_enabled"] is False
     assert g["historical_payload_mass_compaction_enabled"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.11" in registry
+    assert "apex_version: 69.10.12" in registry
     assert "immutable_historical_evidence_archive_projection_foundation:" in registry
 
 

@@ -7333,7 +7333,7 @@ def health():
     generated_at = generated_dt.isoformat()
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
     _process_completion = dict(_scanner_runtime.get("process_scan_completion") or {})
-    _process_authoritative = _scanner_runtime.get("source") == "SCANNER_PROCESS_HEARTBEAT" and bool(_scanner_runtime.get("heartbeat_fresh"))
+    _process_authoritative = _scanner_runtime.get("authority") == "SCANNER_PROCESS" and bool(_scanner_runtime.get("heartbeat_fresh"))
     with STATE_LOCK:
         _local_scan_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
         _local_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
@@ -7341,8 +7341,10 @@ def health():
         s_duration = (_scanner_runtime.get("process_last_scan_duration_seconds") if _process_authoritative else None) or _local_duration
         s_sources = SCANNER_STATE.get("data_sources") or STATE.get("data_sources") or {}
         s_session = session_status()
-        s_inprog = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
-        scan_started_at = SCANNER_STATE.get("scan_started_at") or STATE.get("scan_started_at")
+        _local_inprog = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
+        _local_scan_started_at = SCANNER_STATE.get("scan_started_at") or STATE.get("scan_started_at")
+        s_inprog = bool(_scanner_runtime.get("process_scan_in_progress")) if _process_authoritative else _local_inprog
+        scan_started_at = _scanner_runtime.get("process_scan_started_at") if _process_authoritative else _local_scan_started_at
         scanner_heartbeat_at = SCANNER_STATE.get("scanner_heartbeat_at") or STATE.get("scanner_heartbeat_at") or _scanner_runtime.get("process_heartbeat_at")
         scanner_thread_alive = bool(_scanner_runtime.get("effective_thread_alive"))
         last_error = STATE.get("last_error")
@@ -7384,6 +7386,9 @@ def health():
         "process_uptime_seconds": _iso_age_seconds(APP_PROCESS_STARTED_AT, generated_dt),
         "scanner_started": bool(_scanner_runtime.get("effective_started")),
         "scanner_state_source": _scanner_runtime.get("source"),
+        "scanner_state_authority": _scanner_runtime.get("authority"),
+        "scanner_process_phase": _scanner_runtime.get("process_phase"),
+        "scanner_process_pid": _scanner_runtime.get("process_pid"),
         "scan_completion_runtime": _process_completion if _process_authoritative else scanner_completion_runtime_status(),
         "scanner_thread_alive": scanner_thread_alive,
         "scanner_heartbeat_at": scanner_heartbeat_at,
@@ -14738,7 +14743,7 @@ def _apex65_runtime_health_payload():
 
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
     _process_completion = dict(_scanner_runtime.get("process_scan_completion") or {})
-    _process_authoritative = _scanner_runtime.get("source") == "SCANNER_PROCESS_HEARTBEAT" and bool(_scanner_runtime.get("heartbeat_fresh"))
+    _process_authoritative = _scanner_runtime.get("authority") == "SCANNER_PROCESS" and bool(_scanner_runtime.get("heartbeat_fresh"))
     with STATE_LOCK:
         _local_scan_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
         _local_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")

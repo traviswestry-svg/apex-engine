@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.11
+apex_version: 69.10.12
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
@@ -50,6 +50,20 @@ capabilities:
     execution_authority: none
     production_effect: OPERATIONS_ONLY
     guardrails: [additive_archive_only, no_canonical_source_rewrite, no_canonical_source_delete, no_archive_update, no_archive_delete, explicit_apply_required_for_archive_write, dry_run_default, critical_capacity_blocks_archive_write, zlib_compressed_archive, source_sha256_required, exact_byte_round_trip_required, shadow_validation_does_not_redirect_production_reads, no_mass_compaction, no_vacuum, no_filesystem_reclaim_promise, no_decision_authority, no_execution_authority]
+
+
+  scanner_process_authority_cross_process_health_truth_closure:
+    canonical_module: engine.scanner_runtime_truth
+    deployed_modules: [engine.scanner_runtime_truth, scanner_worker, app]
+    status: production_observability
+    version: "69.10.12"
+    inputs: [durable_scanner_process_heartbeat, scanner_process_completion_runtime, web_process_local_scanner_state]
+    outputs: [canonical_scanner_process_authority, authoritative_completion_runtime, authoritative_scan_in_progress, process_phase, process_pid, explicit_fallback_source]
+    api_routes: [/health]
+    decision_authority: none
+    execution_authority: none
+    production_effect: OBSERVABILITY_ONLY
+    guardrails: [fresh_heartbeat_establishes_process_authority_even_before_scanner_started, fresh_process_false_not_overridden_by_web_local_true, stale_or_missing_heartbeat_never_proves_process_health, process_completion_truth_authoritative_when_fresh, no_scanner_cadence_change, no_scan_logic_change, no_decision_authority, no_execution_authority]
 
   failed_breakdown_lifecycle_intelligence:
     canonical_module: engine.failed_breakdown_lifecycle
