@@ -1,10 +1,11 @@
-"""APEX 69.10.3 cross-process scanner lifecycle truth.
+"""APEX 69.10.12 cross-process scanner lifecycle and completion truth.
 
-Production normally owns scanning in ``scanner_worker.py`` while Flask/Gunicorn
-runs in a different process.  A web-process local ``SCANNER_STARTED`` flag is
-therefore not authoritative.  This module deterministically merges local state
-with the durable scanner heartbeat; a fresh heartbeat may prove the scanner is
-running, while a stale or missing heartbeat never does.
+The dedicated ``scanner_worker.py`` process owns production scanning.  Flask /
+Gunicorn process-local scanner flags are not authoritative when a fresh durable
+scanner heartbeat exists.  This resolver therefore treats any fresh heartbeat
+as the canonical process-boundary authority, including STARTING/NOT_STARTED
+states, rather than requiring ``scanner_started`` to already be true before the
+heartbeat can become authoritative.
 
 Observational only: no decision, calibration, broker, or execution authority.
 """
@@ -12,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping
 
-VERSION = "69.10.7"
+VERSION = "69.10.12"
 
 
 def resolve_scanner_runtime(*, local_started: bool, local_thread_alive: bool,
@@ -31,13 +32,27 @@ def resolve_scanner_runtime(*, local_started: bool, local_thread_alive: bool,
 
     process_started = bool(fresh and hb.get("scanner_started"))
     process_thread_alive = bool(fresh and hb.get("thread_alive"))
-    effective_started = bool(local_started or process_started)
-    effective_thread_alive = bool(local_thread_alive or process_thread_alive)
-    source = "SCANNER_PROCESS_HEARTBEAT" if process_started else "WEB_PROCESS_LOCAL_STATE"
+
+    # 69.10.12: freshness establishes process authority.  A fresh STARTING
+    # heartbeat is still authoritative evidence that the scanner owner has not
+    # started its scan thread yet.  Never merge a web-local True into a fresh
+    # scanner-process False; that recreates the cross-process truth ambiguity.
+    if fresh:
+        effective_started = process_started
+        effective_thread_alive = process_thread_alive
+        source = "SCANNER_PROCESS_HEARTBEAT"
+        authority = "SCANNER_PROCESS"
+    else:
+        effective_started = bool(local_started)
+        effective_thread_alive = bool(local_thread_alive)
+        source = "WEB_PROCESS_LOCAL_STATE"
+        authority = "WEB_PROCESS_FALLBACK"
 
     completion = dict(hb.get("scan_completion_runtime") or {}) if fresh else {}
     process_completed_at = completion.get("last_completed_at") or (hb.get("last_scan_at") if fresh else None)
     process_scan_duration = completion.get("last_duration_seconds")
+    process_scan_in_progress = bool(completion.get("scan_in_progress")) if fresh else False
+    process_scan_started_at = completion.get("scan_started_at") if fresh else None
 
     return {
         "version": VERSION,
@@ -48,8 +63,13 @@ def resolve_scanner_runtime(*, local_started: bool, local_thread_alive: bool,
         "process_last_scan_at": process_completed_at,
         "process_last_scan_duration_seconds": process_scan_duration,
         "process_scan_completion": completion,
+        "process_scan_in_progress": process_scan_in_progress,
+        "process_scan_started_at": process_scan_started_at,
         "process_heartbeat_at": hb.get("updated_at") if fresh else None,
+        "process_phase": hb.get("phase") if fresh else None,
+        "process_pid": hb.get("pid") if fresh else None,
         "source": source,
+        "authority": authority,
         "execution_authority": False,
         "behavioral_authority": False,
     }
