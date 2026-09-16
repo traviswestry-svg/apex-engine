@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.12",
-  "build_name": "Scanner Process Authority & Cross-Process Health Truth Closure",
+  "apex_version": "69.10.13",
+  "build_name": "Historical Payload Archive Pagination & Complete Shadow Validation Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "5",
-  "released_at": "2026-09-15",
+  "released_at": "2026-09-16",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -513,7 +513,7 @@
     "historical_payload_audit_changes_trade_decisions": false,
     "historical_payload_audit_changes_execution_authority": false,
     "historical_payload_archive_foundation": true,
-    "historical_payload_archive_version": "69.10.11",
+    "historical_payload_archive_version": "69.10.13",
     "historical_payload_archive_additive_only": true,
     "historical_payload_archive_immutable": true,
     "historical_payload_archive_compression_codec": "ZLIB_9",
@@ -539,15 +539,20 @@
     "scanner_process_phase_and_pid_observable": true,
     "scanner_missing_or_stale_heartbeat_fails_to_web_local_fallback": true,
     "scanner_authority_changes_trade_decisions": false,
-    "scanner_authority_changes_execution_authority": false
+    "scanner_authority_changes_execution_authority": false,
+    "historical_payload_archive_resumable_batches": true,
+    "historical_payload_archive_batch_max_rows": 500,
+    "historical_payload_archive_next_unarchived_selection": true,
+    "historical_payload_shadow_validation_paginated": true,
+    "historical_payload_shadow_validation_complete_coverage_observable": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.12",
-  "application_version": "69.10.12",
+  "semantic_version": "69.10.13",
+  "application_version": "69.10.13",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
@@ -594,7 +599,7 @@
     "historical_payload_filesystem_reclaim_promised": false,
     "historical_payload_destructive_in_place_rewrite_recommended": false,
     "historical_payload_archival_sidecar_required_before_lossy_rewrite": true,
-    "historical_payload_archive_foundation_version": "69.10.11",
+    "historical_payload_archive_foundation_version": "69.10.13",
     "historical_payload_archive_db": "apex_historical_payload_archive.db",
     "historical_payload_archive_additive_only": true,
     "historical_payload_archive_immutable": true,
@@ -606,6 +611,9 @@
     "historical_payload_shadow_validation_available": true,
     "historical_payload_production_read_redirect_enabled": false,
     "historical_payload_mass_compaction_enabled": false,
-    "historical_payload_source_rows_rewritten": false
+    "historical_payload_source_rows_rewritten": false,
+    "historical_payload_archive_resumable_batches": true,
+    "historical_payload_archive_batch_max_rows": 500,
+    "historical_payload_shadow_validation_paginated": true
   }
 }

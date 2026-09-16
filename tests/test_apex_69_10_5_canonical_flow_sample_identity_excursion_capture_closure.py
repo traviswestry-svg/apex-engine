@@ -65,8 +65,8 @@ def _cluster(*, end_time="10:31:11", pl=125.0, direction="BULLISH"):
 
 def test_release_truth_and_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.12"
-    assert manifest["build_name"] == "Scanner Process Authority & Cross-Process Health Truth Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.13"
+    assert manifest["build_name"] == "Historical Payload Archive Pagination & Complete Shadow Validation Closure"
     g = manifest["guardrails"]
     assert g["flow_source_stage_canonical_excursion_capture_allowed"] is False
     assert g["flow_source_stage_missing_feature_counts_as_capture_failure"] is False
@@ -76,7 +76,7 @@ def test_release_truth_and_guardrails():
     assert g["storage_capacity_automatic_cleanup"] is False
 
     registry = Path("config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.12" in registry
+    assert "apex_version: 69.10.13" in registry
     assert 'version: "69.10.5"' in registry
     assert "source_stage_capture_forbidden" in registry
     assert "pre_persistence_skips_not_capture_failures" in registry

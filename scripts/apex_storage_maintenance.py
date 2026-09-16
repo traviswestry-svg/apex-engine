@@ -40,7 +40,8 @@ def main() -> int:
         default="audit",
     )
     parser.add_argument("--apply", action="store_true", help="explicitly apply the selected bounded maintenance action")
-    parser.add_argument("--limit", type=int, default=25, help="bounded row limit for archive/shadow actions (default: 25, max: 500)")
+    parser.add_argument("--limit", type=int, default=25, help="bounded rows per archive/shadow page (default: 25, max: 500)")
+    parser.add_argument("--offset", type=int, default=0, help="read-only shadow validation source offset (default: 0)")
     args = parser.parse_args()
 
     if args.action == "audit":
@@ -64,11 +65,11 @@ def main() -> int:
     elif args.action == "shadow-validate-trigger-payloads":
         if args.apply:
             parser.error("shadow validation is read-only; --apply is not supported")
-        result = shadow_validate(payload_type="TRIGGER_EVIDENCE", source_path=HISTORICAL_TRIGGER_DB, limit=args.limit)
+        result = shadow_validate(payload_type="TRIGGER_EVIDENCE", source_path=HISTORICAL_TRIGGER_DB, limit=args.limit, offset=args.offset)
     elif args.action == "shadow-validate-decision-payloads":
         if args.apply:
             parser.error("shadow validation is read-only; --apply is not supported")
-        result = shadow_validate(payload_type="DECISION_SNAPSHOT", source_path=HISTORICAL_EVIDENCE_DB, limit=args.limit)
+        result = shadow_validate(payload_type="DECISION_SNAPSHOT", source_path=HISTORICAL_EVIDENCE_DB, limit=args.limit, offset=args.offset)
     elif args.action == "checkpoint-wals":
         result = checkpoint_wals(apply=args.apply)
     elif args.action == "cleanup-quarantine":

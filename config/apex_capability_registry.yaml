@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.12
+apex_version: 69.10.13
 capabilities:
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
@@ -51,6 +51,19 @@ capabilities:
     production_effect: OPERATIONS_ONLY
     guardrails: [additive_archive_only, no_canonical_source_rewrite, no_canonical_source_delete, no_archive_update, no_archive_delete, explicit_apply_required_for_archive_write, dry_run_default, critical_capacity_blocks_archive_write, zlib_compressed_archive, source_sha256_required, exact_byte_round_trip_required, shadow_validation_does_not_redirect_production_reads, no_mass_compaction, no_vacuum, no_filesystem_reclaim_promise, no_decision_authority, no_execution_authority]
 
+
+  historical_payload_archive_pagination_complete_shadow_validation_closure:
+    canonical_module: engine.historical_payload_archive
+    deployed_modules: [engine.historical_payload_archive, scripts.apex_storage_maintenance]
+    status: operations_foundation
+    version: "69.10.13"
+    inputs: [immutable_historical_payload_archive, canonical_trigger_evidence, canonical_decision_snapshots]
+    outputs: [resumable_next_unarchived_batches, archive_completion_counts, paginated_exact_shadow_validation, complete_coverage_observability]
+    operator_cli: scripts.apex_storage_maintenance.py
+    decision_authority: none
+    execution_authority: none
+    production_effect: OPERATIONS_ONLY
+    guardrails: [max_500_rows_per_invocation, deterministic_source_order, additive_archive_only, no_canonical_source_rewrite, no_canonical_source_delete, exact_byte_round_trip_required, explicit_apply_required_for_archive_write, shadow_validation_read_only, no_production_read_redirect, no_vacuum, no_decision_authority, no_execution_authority]
 
   scanner_process_authority_cross_process_health_truth_closure:
     canonical_module: engine.scanner_runtime_truth
