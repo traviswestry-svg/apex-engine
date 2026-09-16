@@ -23,7 +23,7 @@ from .persistent_store import persistent_sqlite_path
 from .storage_capacity_policy import classify_free_pct
 from .trigger_observatory import _bounded_trigger_evidence
 
-VERSION = "69.10.11"
+VERSION = "69.10.13"
 SCHEMA_VERSION = "apex.historical_payload_archive.v1"
 ARCHIVE_DB = persistent_sqlite_path(
     "APEX_HISTORICAL_PAYLOAD_ARCHIVE_DB",
@@ -241,22 +241,98 @@ def retrieve_archived_payload(
     }
 
 
-def _source_rows(path: str | Path, payload_type: str, limit: int | None = None):
+def _source_inventory(source_path: str | Path, payload_type: str) -> dict[str, Any]:
+    """Return source row/byte counts without exposing payload values."""
     spec = PAYLOAD_TYPES[payload_type]
-    p = Path(path)
+    p = Path(source_path)
     if not p.exists():
-        return []
-    sql = (
-        f"SELECT {spec['id_column']} row_id,{spec['time_column']} observed_at,"
-        f"{spec['payload_column']} payload FROM {spec['source_table']} ORDER BY {spec['time_column']}"
-    )
-    params: tuple[Any, ...] = ()
-    if limit is not None:
-        sql += " LIMIT ?"
-        params = (max(1, int(limit)),)
+        return {"source_rows": 0, "source_payload_bytes": 0}
     with canonical_connect(p, read_only=True, wal=False, heal=False) as conn:
         conn.row_factory = sqlite3.Row
-        return [dict(row) for row in conn.execute(sql, params)]
+        row = conn.execute(
+            f"SELECT COUNT(*) n,COALESCE(SUM(LENGTH({spec['payload_column']})),0) b "
+            f"FROM {spec['source_table']}"
+        ).fetchone()
+    return {"source_rows": int(row["n"] or 0), "source_payload_bytes": int(row["b"] or 0)}
+
+
+def _archived_row_ids(payload_type: str, archive_path: str | Path) -> set[str]:
+    """Return immutable archive identities only; payload bytes are never loaded."""
+    p = Path(archive_path)
+    if not p.exists():
+        return set()
+    with canonical_connect(p, read_only=True, wal=False, heal=False) as conn:
+        return {str(row[0]) for row in conn.execute(
+            "SELECT row_id FROM historical_payload_archive WHERE payload_type=? ORDER BY row_id",
+            (payload_type,),
+        )}
+
+
+def _source_rows(
+    source_path: str | Path,
+    payload_type: str,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+    row_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Read a deterministic bounded source page.
+
+    ``row_ids`` is limited to the operator batch ceiling and is used by the
+    resumable archive path after identities have been selected without loading
+    historical payload blobs.
+    """
+    spec = PAYLOAD_TYPES[payload_type]
+    p = Path(source_path)
+    if not p.exists():
+        return []
+    base = (
+        f"SELECT {spec['id_column']} row_id,{spec['time_column']} observed_at,"
+        f"{spec['payload_column']} payload FROM {spec['source_table']}"
+    )
+    params: list[Any] = []
+    if row_ids is not None:
+        if not row_ids:
+            return []
+        placeholders = ",".join("?" for _ in row_ids)
+        base += f" WHERE {spec['id_column']} IN ({placeholders})"
+        params.extend(row_ids)
+    base += f" ORDER BY {spec['time_column']},{spec['id_column']}"
+    if limit is not None:
+        base += " LIMIT ? OFFSET ?"
+        params.extend((max(1, int(limit)), max(0, int(offset))))
+    with canonical_connect(p, read_only=True, wal=False, heal=False) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(base, tuple(params))]
+
+
+def _next_unarchived_row_ids(
+    source_path: str | Path,
+    payload_type: str,
+    archive_path: str | Path,
+    limit: int,
+) -> tuple[list[str], int, int]:
+    """Select the next deterministic unarchived identities without payload IO."""
+    spec = PAYLOAD_TYPES[payload_type]
+    archived = _archived_row_ids(payload_type, archive_path)
+    p = Path(source_path)
+    if not p.exists():
+        return [], 0, len(archived)
+    selected: list[str] = []
+    source_rows = 0
+    archived_in_source = 0
+    with canonical_connect(p, read_only=True, wal=False, heal=False) as conn:
+        for row in conn.execute(
+            f"SELECT {spec['id_column']} FROM {spec['source_table']} "
+            f"ORDER BY {spec['time_column']},{spec['id_column']}"
+        ):
+            source_rows += 1
+            row_id = str(row[0])
+            if row_id in archived:
+                archived_in_source += 1
+            elif len(selected) < limit:
+                selected.append(row_id)
+    return selected, source_rows, archived_in_source
 
 
 def archive_plan(
@@ -353,48 +429,42 @@ def archive_batch(
     limit: int = 25,
     apply: bool = False,
 ) -> dict[str, Any]:
-    """Archive a bounded batch. Dry-run is default; canonical rows are untouched."""
+    """Archive the next bounded unarchived batch; canonical rows are untouched."""
     if payload_type not in PAYLOAD_TYPES:
         return {"ok": False, "state": "UNSUPPORTED_PAYLOAD_TYPE", "payload_type": payload_type}
     bounded_limit = max(1, min(int(limit), 500))
     capacity = _archive_capacity_status(archive_path)
     if apply and not capacity.get("archive_write_allowed"):
         return {
-            "ok": False,
-            "version": VERSION,
-            "payload_type": payload_type,
-            "apply": True,
-            "state": "STORAGE_CRITICAL_ARCHIVE_WRITE_BLOCKED",
-            "capacity": capacity,
-            "rows_considered": 0,
-            "rows_archived": 0,
-            "canonical_source_mutated": False,
+            "ok": False, "version": VERSION, "payload_type": payload_type, "apply": True,
+            "state": "STORAGE_CRITICAL_ARCHIVE_WRITE_BLOCKED", "capacity": capacity,
+            "rows_considered": 0, "rows_archived": 0, "canonical_source_mutated": False,
             "archive_immutable": True,
         }
-    rows = _source_rows(source_path, payload_type, limit=bounded_limit)
+    selected_ids, source_rows, archived_before = _next_unarchived_row_ids(
+        source_path, payload_type, archive_path, bounded_limit
+    )
+    rows = _source_rows(source_path, payload_type, row_ids=selected_ids)
     outcomes = [
         archive_one(
-            payload_type=payload_type,
-            row_id=str(row["row_id"]),
-            observed_at=row.get("observed_at"),
-            raw_payload=row.get("payload") or "",
-            path=archive_path,
-            apply=apply,
-        )
-        for row in rows
+            payload_type=payload_type, row_id=str(row["row_id"]), observed_at=row.get("observed_at"),
+            raw_payload=row.get("payload") or "", path=archive_path, apply=apply,
+        ) for row in rows
     ]
+    rows_archived = sum(1 for x in outcomes if x.get("state") == "ARCHIVED_VERIFIED")
+    rows_already = sum(1 for x in outcomes if x.get("state") == "ALREADY_ARCHIVED_VERIFIED")
+    archived_after = archived_before + (rows_archived if apply else 0)
+    remaining = max(0, source_rows - archived_after)
     return {
-        "ok": all(bool(x.get("ok")) for x in outcomes),
-        "version": VERSION,
-        "payload_type": payload_type,
-        "apply": bool(apply),
-        "rows_considered": len(rows),
-        "rows_archived": sum(1 for x in outcomes if x.get("state") == "ARCHIVED_VERIFIED"),
-        "rows_already_archived": sum(1 for x in outcomes if x.get("state") == "ALREADY_ARCHIVED_VERIFIED"),
-        "canonical_source_mutated": False,
-        "archive_immutable": True,
-        "capacity": capacity,
-        "outcomes": outcomes,
+        "ok": all(bool(x.get("ok")) for x in outcomes), "version": VERSION,
+        "schema_version": "apex.historical_payload_archive_batch.v2", "payload_type": payload_type,
+        "apply": bool(apply), "batch_limit": bounded_limit, "rows_considered": len(rows),
+        "rows_archived": rows_archived, "rows_already_archived": rows_already,
+        "archived_rows_before": archived_before, "archived_rows_after": archived_after,
+        "source_rows": source_rows, "remaining_rows": remaining,
+        "archive_complete": bool(apply and remaining == 0),
+        "canonical_source_mutated": False, "archive_immutable": True,
+        "capacity": capacity, "outcomes": outcomes,
     }
 
 
@@ -404,15 +474,20 @@ def shadow_validate(
     source_path: str | Path,
     archive_path: str | Path = ARCHIVE_DB,
     limit: int = 50,
+    offset: int = 0,
 ) -> dict[str, Any]:
-    """Compare canonical full payload, compact projection and archival fallback.
+    """Validate one deterministic source page against exact archival fallback.
 
-    This is a shadow validation only. Production readers are not redirected.
+    Pagination is explicit and read-only. Production readers are not redirected.
     """
     if payload_type not in PAYLOAD_TYPES:
         return {"ok": False, "state": "UNSUPPORTED_PAYLOAD_TYPE", "payload_type": payload_type}
     spec = PAYLOAD_TYPES[payload_type]
-    rows = _source_rows(source_path, payload_type, limit=max(1, min(int(limit), 500)))
+    bounded_limit = max(1, min(int(limit), 500))
+    bounded_offset = max(0, int(offset))
+    inventory = _source_inventory(source_path, payload_type)
+    source_rows = int(inventory["source_rows"])
+    rows = _source_rows(source_path, payload_type, limit=bounded_limit, offset=bounded_offset)
     checked = archived = hash_matches = projection_errors = archive_misses = 0
     mismatches: list[dict[str, Any]] = []
     for row in rows:
@@ -438,27 +513,21 @@ def shadow_validate(
             hash_matches += 1
         else:
             mismatches.append({"row_id": str(row["row_id"]), "reason": "ARCHIVE_SOURCE_MISMATCH"})
-        # The projection is intentionally smaller, but full-payload consumers are
-        # semantically preserved by exact archival fallback in shadow mode.
         if projected_bytes <= 0:
             mismatches.append({"row_id": str(row["row_id"]), "reason": "EMPTY_PROJECTION"})
-    ready = checked > 0 and archived == checked and hash_matches == checked and projection_errors == 0 and not mismatches
+    page_ready = checked > 0 and archived == checked and hash_matches == checked and projection_errors == 0 and not mismatches
+    next_offset = bounded_offset + checked
+    validation_complete = bool(page_ready and next_offset >= source_rows)
     return {
-        "ok": True,
-        "version": VERSION,
-        "schema_version": "apex.historical_payload_shadow_validation.v1",
-        "payload_type": payload_type,
-        "rows_checked": checked,
-        "rows_archived": archived,
-        "archive_misses": archive_misses,
-        "exact_archive_matches": hash_matches,
-        "projection_errors": projection_errors,
-        "mismatches": mismatches[:20],
-        "shadow_read_ready": bool(ready),
-        "production_reads_redirected": False,
-        "canonical_source_mutated": False,
-        "decision_authority": False,
-        "execution_authority": False,
+        "ok": True, "version": VERSION,
+        "schema_version": "apex.historical_payload_shadow_validation.v2", "payload_type": payload_type,
+        "batch_limit": bounded_limit, "offset": bounded_offset, "next_offset": next_offset,
+        "source_rows": source_rows, "rows_checked": checked, "rows_archived": archived,
+        "archive_misses": archive_misses, "exact_archive_matches": hash_matches,
+        "projection_errors": projection_errors, "mismatches": mismatches[:20],
+        "shadow_read_ready": bool(page_ready), "validation_complete": validation_complete,
+        "production_reads_redirected": False, "canonical_source_mutated": False,
+        "decision_authority": False, "execution_authority": False,
     }
 
 

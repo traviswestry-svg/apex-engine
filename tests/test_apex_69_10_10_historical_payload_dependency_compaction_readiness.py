@@ -7,15 +7,15 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_release_truth_and_compaction_guardrails():
     manifest=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.12'
-    assert manifest['build_name']=='Scanner Process Authority & Cross-Process Health Truth Closure'
+    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.13'
+    assert manifest['build_name']=='Historical Payload Archive Pagination & Complete Shadow Validation Closure'
     g=manifest['guardrails']
     assert g['historical_payload_dependency_audit'] is True
     assert g['historical_payload_compaction_readiness_read_only'] is True
     assert g['historical_payload_rewrite_enabled'] is False
     assert g['historical_payload_archival_sidecar_required_before_lossy_rewrite'] is True
     registry=(ROOT/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.12' in registry
+    assert 'apex_version: 69.10.13' in registry
     assert 'historical_evidence_payload_dependency_compaction_readiness:' in registry
 
 
