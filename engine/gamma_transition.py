@@ -460,6 +460,8 @@ def _continuity_for_new(path: str, snap: Mapping[str, Any]) -> Dict[str, Any]:
                 "SELECT * FROM gamma_observational_snapshots WHERE ticker=? "
                 "AND canonical_gamma_snapshot_id IS NOT NULL "
                 "AND provenance_class IN ('LIVE_OBSERVED','DECISION_TIME_CAPTURED') "
+                "AND is_current_authority=1 "
+                "AND COALESCE(replay_backfill_status,'NONE') IN ('','NONE','LIVE','DECISION_TIME_CAPTURED') "
                 "ORDER BY observed_at DESC LIMIT 1",
                 (str(snap.get("ticker") or "SPX"),),
             ).fetchone()
@@ -507,7 +509,8 @@ def get_snapshot_by_id(snapshot_id: str, *, db_path: Optional[str] = None) -> Op
         with connect(path, timeout=10) as c:
             c.row_factory = sqlite3.Row
             row = c.execute(
-                "SELECT * FROM gamma_observational_snapshots WHERE canonical_gamma_snapshot_id=? LIMIT 1",
+                "SELECT * FROM gamma_observational_snapshots WHERE canonical_gamma_snapshot_id=? "
+                "ORDER BY COALESCE(persisted_at, observed_at, '') DESC, COALESCE(observed_at, '') DESC, id DESC LIMIT 1",
                 (str(snapshot_id),),
             ).fetchone()
         return _row_to_snapshot(dict(row)) if row else None

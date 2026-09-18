@@ -168,6 +168,32 @@ def test_decision_time_captured_snapshots_remain_current_authority(tmp_path):
     assert current["provenance_class"] == "DECISION_TIME_CAPTURED"
 
 
+def test_continuity_ignores_non_current_live_rows(tmp_path):
+    from engine.gamma_transition import observe_gamma_transition
+
+    db = tmp_path / "gamma.db"
+    observe_gamma_transition(_gamma(100), db_path=str(db), observed_at="2026-09-18T13:30:00Z")
+    current = observe_gamma_transition(_gamma(110), db_path=str(db), observed_at="2026-09-18T13:31:00Z")
+    with sqlite3.connect(db) as c:
+        c.execute(
+            """INSERT INTO gamma_observational_snapshots(
+                ticker,observed_at,source,snapshot_json,canonical_gamma_snapshot_id,received_at,persisted_at,
+                provenance_class,replay_backfill_status,is_current_authority,freshness_state,continuity_state,
+                sequence_state,session_context_state
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "SPX", "2026-09-18T13:40:00Z", "QUANTDATA_EXPOSURE_BY_STRIKE", "{}",
+                "g_non_current_future", "2026-09-18T13:40:01Z", "2026-09-18T13:40:01Z",
+                "LIVE_OBSERVED", "LIVE", 0, "FRESH", "GAPPED", "OUT_OF_ORDER", "REGULAR_SESSION",
+            ),
+        )
+        c.commit()
+    next_live = observe_gamma_transition(_gamma(120), db_path=str(db), observed_at="2026-09-18T13:32:00Z")
+    assert next_live["continuity_state"] == "CONTINUOUS"
+    assert next_live["sequence_state"] == "IN_ORDER"
+    assert next_live["canonical_gamma_snapshot_id"] != current["canonical_gamma_snapshot_id"]
+
+
 def test_decision_freezes_exact_gamma_and_later_update_cannot_mutate_it(tmp_path, monkeypatch):
     from engine.gamma_transition import observe_gamma_transition
     from engine.historical_evidence_lifecycle import capture_decision
@@ -267,6 +293,24 @@ def test_trigger_fallback_reads_frozen_gamma_evidence_linkage(tmp_path):
         assert c.execute("SELECT canonical_gamma_snapshot_id FROM observed_trade_triggers WHERE decision_id='d-frozen'").fetchone()[0] == sid
 
 
+def test_trigger_fallback_reads_top_level_gamma_transition_linkage(tmp_path):
+    from engine.trigger_observatory import record_canonical_snapshot
+
+    trigger_db = tmp_path / "triggers.db"
+    sid = "g_transition_only"
+    canonical = {
+        "timestamp": "2026-09-18T13:30:00Z",
+        "ticker": "SPX",
+        "market_state": {"price": 6000.0},
+        "institutional_decision_object": {"decision_id": "d-transition", "action": "ENTER", "direction": "BULLISH", "actionable": True},
+        "gamma_transition": {"canonical_gamma_snapshot_id": sid},
+        "gamma_regime": "POSITIVE_GAMMA",
+    }
+    record_canonical_snapshot(canonical, path=str(trigger_db))
+    with sqlite3.connect(trigger_db) as c:
+        assert c.execute("SELECT canonical_gamma_snapshot_id FROM observed_trade_triggers WHERE decision_id='d-transition'").fetchone()[0] == sid
+
+
 
 def test_malformed_timestamps_fail_closed_and_future_receipt_is_not_decision_time_evidence(tmp_path):
     from engine.gamma_transition import observe_gamma_transition, decision_time_gamma_evidence
@@ -314,6 +358,42 @@ def test_insert_failure_is_not_reported_as_deduplicated(monkeypatch, tmp_path):
     assert out["snapshot_created"] is False
     assert out["snapshot_deduplicated"] is False
     assert out["evidence_integrity_available"] is False
+
+
+def test_get_snapshot_by_id_prefers_newest_duplicate_when_uniqueness_is_broken(monkeypatch, tmp_path):
+    import engine.gamma_transition as gt
+
+    db = tmp_path / "gamma.db"
+    with sqlite3.connect(db) as c:
+        c.execute("""CREATE TABLE gamma_observational_snapshots(
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, observed_at TEXT NOT NULL,
+            source_timestamp TEXT, source TEXT, path_version TEXT, net_gex REAL, gamma_flip REAL,
+            zero_dte_share REAL, zero_one_dte_share REAL, weekly_gamma_share REAL, durability TEXT,
+            capacity_ratio REAL, snapshot_json TEXT NOT NULL, canonical_gamma_snapshot_id TEXT,
+            session_date TEXT, received_at TEXT, persisted_at TEXT, provider_source_timestamp TEXT,
+            source_timestamp_provenance TEXT, provider_observation_id TEXT, level_version TEXT,
+            gamma_regime TEXT, net_gamma_ratio REAL, gex_score REAL, freshness_state TEXT,
+            continuity_state TEXT, sequence_state TEXT, provenance_class TEXT, session_context_state TEXT,
+            replay_backfill_status TEXT, snapshot_age_seconds REAL, is_current_authority INTEGER,
+            term_regime_divergence_available INTEGER, term_alignment INTEGER, term_divergence INTEGER,
+            lineage_json TEXT)""")
+        c.execute(
+            """INSERT INTO gamma_observational_snapshots(
+                ticker,observed_at,source,snapshot_json,canonical_gamma_snapshot_id,persisted_at
+            ) VALUES(?,?,?,?,?,?)""",
+            ("SPX", "2026-09-18T13:30:00Z", "QUANTDATA_EXPOSURE_BY_STRIKE", '{"version":"old"}', "g_dup", "2026-09-18T13:30:01Z"),
+        )
+        c.execute(
+            """INSERT INTO gamma_observational_snapshots(
+                ticker,observed_at,source,snapshot_json,canonical_gamma_snapshot_id,persisted_at
+            ) VALUES(?,?,?,?,?,?)""",
+            ("SPX", "2026-09-18T13:31:00Z", "QUANTDATA_EXPOSURE_BY_STRIKE", '{"version":"new"}', "g_dup", "2026-09-18T13:31:01Z"),
+        )
+        c.commit()
+    monkeypatch.setattr(gt, "init_db", lambda path=None: True)
+    row = gt.get_snapshot_by_id("g_dup", db_path=str(db))
+    assert row["observed_at"] == "2026-09-18T13:31:00Z"
+    assert row["version"] == "new"
 
 def test_legacy_schema_migrations_are_idempotent_and_preserve_rows(tmp_path):
     from engine.gamma_transition import init_db

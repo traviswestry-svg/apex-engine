@@ -688,7 +688,9 @@ def record_canonical_snapshot(snapshot: Optional[Mapping[str, Any]], *,
     gamma_evidence = s.get("gamma_evidence") if isinstance(s.get("gamma_evidence"), Mapping) else {}
     decision_id = str(canonical_decision_id or historical_capture.get("decision_id") or decision.get("decision_id") or "").strip() or None
     gamma_regime = s.get("gamma_regime") if isinstance(s.get("gamma_regime"), Mapping) else {}
-    gamma_transition = gamma_regime.get("gamma_transition") if isinstance(gamma_regime.get("gamma_transition"), Mapping) else {}
+    gamma_transition = s.get("gamma_transition") if isinstance(s.get("gamma_transition"), Mapping) else {}
+    if not gamma_transition and isinstance(gamma_regime.get("gamma_transition"), Mapping):
+        gamma_transition = gamma_regime.get("gamma_transition")
     gamma_snapshot_id = str(
         historical_capture.get("canonical_gamma_snapshot_id")
         or s.get("canonical_gamma_snapshot_id")
