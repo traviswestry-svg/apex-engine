@@ -6,8 +6,8 @@ is deterministic, non-direction-generative, and has no execution authority.
 from __future__ import annotations
 from typing import Any, Dict, Mapping, Optional
 
-VERSION = "69.6.0"
-SCHEMA_VERSION = "apex.evidence_eligibility.v1"
+VERSION = "69.10.14"
+SCHEMA_VERSION = "apex.evidence_eligibility.v2"
 STATES = {"FULL", "DISCOUNTED", "CONTEXT_ONLY", "WATCH_ONLY", "INELIGIBLE"}
 
 
@@ -61,14 +61,50 @@ def evaluate_evidence_eligibility(engine_name: str, opinion: Mapping[str, Any],
 
     if name == "dealer" and state not in {"INELIGIBLE", "WATCH_ONLY"}:
         gc = _m(ds.get("gamma_context"))
+        gt = _m(ds.get("gamma_transition"))
         durability = str(gc.get("structure_durability") or "UNKNOWN").upper()
         capacity = str(gc.get("capacity_state") or "UNKNOWN").upper()
-        if durability == "LOW":
-            state, factor = "CONTEXT_ONLY", 0.0
-            reasons.append("LOW_GAMMA_STRUCTURE_DURABILITY")
-        elif capacity == "WEAK" and state == "FULL":
-            state, factor = "DISCOUNTED", min(factor, 0.60)
-            reasons.append("WEAK_GAMMA_STABILIZATION_CAPACITY")
+
+        # APEX 69.10.14 — extend the established dealer eligibility gate; do
+        # not create a second eligibility engine. These checks apply only when
+        # canonical gamma integrity is actually present on the decision path,
+        # preserving legacy behavior for records that predate provenance.
+        integrity_available = bool(
+            gt.get("evidence_integrity_available")
+            or gt.get("canonical_gamma_snapshot_id")
+        )
+        if integrity_available:
+            gamma_freshness = str(gt.get("freshness_state") or "UNKNOWN").upper()
+            continuity = str(gt.get("continuity_state") or "UNKNOWN").upper()
+            provenance = str(gt.get("provenance_class") or "UNKNOWN").upper()
+            if gamma_freshness == "UNKNOWN":
+                state, factor = "INELIGIBLE", 0.0
+                reasons.append("GAMMA_INTEGRITY_FRESHNESS_UNKNOWN")
+            elif gamma_freshness == "STALE":
+                state, factor = "CONTEXT_ONLY", 0.0
+                reasons.append("STALE_CANONICAL_GAMMA_EVIDENCE")
+            elif gamma_freshness == "AGING" and state == "FULL":
+                state, factor = "DISCOUNTED", min(factor, 0.75)
+                reasons.append("AGING_CANONICAL_GAMMA_EVIDENCE")
+
+            if state not in {"INELIGIBLE", "WATCH_ONLY"}:
+                if provenance in {"RECONSTRUCTED", "REPLAYED", "BACKFILLED"}:
+                    state, factor = "CONTEXT_ONLY", 0.0
+                    reasons.append("NON_CONTEMPORANEOUS_GAMMA_PROVENANCE")
+                elif continuity == "GAPPED":
+                    state, factor = "CONTEXT_ONLY", 0.0
+                    reasons.append("GAPPED_GAMMA_OBSERVATION_SEQUENCE")
+                elif continuity == "UNKNOWN":
+                    state, factor = "CONTEXT_ONLY", 0.0
+                    reasons.append("GAMMA_CONTINUITY_UNKNOWN")
+
+        if state not in {"INELIGIBLE", "WATCH_ONLY", "CONTEXT_ONLY"}:
+            if durability == "LOW":
+                state, factor = "CONTEXT_ONLY", 0.0
+                reasons.append("LOW_GAMMA_STRUCTURE_DURABILITY")
+            elif capacity == "WEAK" and state == "FULL":
+                state, factor = "DISCOUNTED", min(factor, 0.60)
+                reasons.append("WEAK_GAMMA_STABILIZATION_CAPACITY")
 
     return {
         "schema_version": SCHEMA_VERSION,

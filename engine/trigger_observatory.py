@@ -356,7 +356,7 @@ CREATE TABLE IF NOT EXISTS observed_trade_triggers (
     mfe_points REAL, mae_points REAL, last_price REAL, observation_count INTEGER NOT NULL DEFAULT 0,
     observation_window_seconds INTEGER NOT NULL, terminal_at TEXT, outcome_label TEXT,
     execution_authority INTEGER NOT NULL DEFAULT 0, broker_mutation INTEGER NOT NULL DEFAULT 0,
-    production_effect TEXT NOT NULL, decision_id TEXT, canonical_grade_status TEXT,
+    production_effect TEXT NOT NULL, decision_id TEXT, canonical_gamma_snapshot_id TEXT, canonical_grade_status TEXT,
     canonical_grade_label TEXT, canonical_grade_json TEXT, canonical_graded_at TEXT,
     window_integrity_status TEXT, in_window_observation_count INTEGER NOT NULL DEFAULT 0,
     late_observation_count INTEGER NOT NULL DEFAULT 0, pre_trigger_observation_count INTEGER NOT NULL DEFAULT 0,
@@ -389,6 +389,7 @@ def initialize_store(path: Optional[str] = None, *, reconcile: bool = True) -> D
         existing = {row[1] for row in conn.execute("PRAGMA table_info(observed_trade_triggers)")}
         for name, decl in (
             ("decision_id", "TEXT"),
+            ("canonical_gamma_snapshot_id", "TEXT"),
             ("canonical_grade_status", "TEXT"),
             ("canonical_grade_label", "TEXT"),
             ("canonical_grade_json", "TEXT"),
@@ -412,6 +413,7 @@ def initialize_store(path: Optional[str] = None, *, reconcile: bool = True) -> D
             if name not in obs_existing:
                 conn.execute(f"ALTER TABLE trade_trigger_price_observations ADD COLUMN {name} {decl}")
         conn.execute("CREATE INDEX IF NOT EXISTS ix_trigger_decision_id ON observed_trade_triggers(decision_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS ix_trigger_gamma_snapshot_id ON observed_trade_triggers(canonical_gamma_snapshot_id)")
         reconciliation = _reconcile_window_integrity_conn(conn) if reconcile else {"reconciled": 0, "skipped": True}
         conn.commit()
     return {"ok": True, "status": "READY", "path": resolved, "version": VERSION,
@@ -507,7 +509,8 @@ def record_trigger(*, source: str, trigger_type: str, symbol: str = "SPX",
                    confidence: Any = None, entry: Any = None, stop: Any = None,
                    target1: Any = None, target2: Any = None, target3: Any = None,
                    blockers: Any = None, evidence: Optional[Mapping[str, Any]] = None,
-                   decision_id: Optional[str] = None, path: Optional[str] = None) -> Dict[str, Any]:
+                   decision_id: Optional[str] = None, canonical_gamma_snapshot_id: Optional[str] = None,
+                   path: Optional[str] = None) -> Dict[str, Any]:
     initialize_store(path, reconcile=False)
     at = _iso(triggered_at)
     symbol = _u(symbol, "SPX"); source = _u(source); trigger_type = _u(trigger_type)
@@ -529,18 +532,20 @@ def record_trigger(*, source: str, trigger_type: str, symbol: str = "SPX",
                disposition,triggered_at,observed_at,underlying_price,confidence,entry_reference,
                stop_reference,target1_reference,target2_reference,target3_reference,
                blocker_codes_json,evidence_json,etrade_handoff_json,status,observation_window_seconds,
-               execution_authority,broker_mutation,production_effect,decision_id,created_at,updated_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?,?)""",
+               execution_authority,broker_mutation,production_effect,decision_id,canonical_gamma_snapshot_id,created_at,updated_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,?,?,?,?,?)""",
             (trigger_id, event_key, source, trigger_type, _u(setup_family), symbol, direction,
              disposition, at, now, _f(price), _f(confidence), entry_f, _f(stop), _f(target1),
              _f(target2), _f(target3), _json(blocker_list), _json(_bounded_trigger_evidence(evidence)),
              _json(handoff), status, MAX_HOLD_SECONDS, PRODUCTION_EFFECT,
-             str(decision_id) if decision_id else None, now, now),
+             str(decision_id) if decision_id else None,
+             str(canonical_gamma_snapshot_id) if canonical_gamma_snapshot_id else None, now, now),
         )
         created = conn.execute("SELECT changes()").fetchone()[0] > 0
         conn.commit()
     return {"ok": True, "created": created, "trigger_id": trigger_id, "status": status,
             "disposition": disposition, "etrade_handoff": handoff,
+            "canonical_gamma_snapshot_id": str(canonical_gamma_snapshot_id) if canonical_gamma_snapshot_id else None,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
 
@@ -681,6 +686,14 @@ def record_canonical_snapshot(snapshot: Optional[Mapping[str, Any]], *,
     decision = s.get("institutional_decision_object") or s.get("canonical_decision") or {}
     historical_capture = s.get("historical_evidence_capture") if isinstance(s.get("historical_evidence_capture"), Mapping) else {}
     decision_id = str(canonical_decision_id or historical_capture.get("decision_id") or decision.get("decision_id") or "").strip() or None
+    gamma_regime = s.get("gamma_regime") if isinstance(s.get("gamma_regime"), Mapping) else {}
+    gamma_transition = gamma_regime.get("gamma_transition") if isinstance(gamma_regime.get("gamma_transition"), Mapping) else {}
+    gamma_snapshot_id = str(
+        historical_capture.get("canonical_gamma_snapshot_id")
+        or s.get("canonical_gamma_snapshot_id")
+        or gamma_transition.get("canonical_gamma_snapshot_id")
+        or ""
+    ).strip() or None
     action = _u(decision.get("action") or s.get("decision_state"))
     direction = decision.get("direction") or s.get("direction")
     blockers = _canonical_blockers(decision)
@@ -689,13 +702,14 @@ def record_canonical_snapshot(snapshot: Optional[Mapping[str, Any]], *,
             source="CANONICAL_DECISION", trigger_type=action, symbol=symbol, direction=direction,
             disposition="CONFIRMED" if decision.get("actionable", True) else "BLOCKED",
             triggered_at=s.get("timestamp") or _iso(), source_event_key=decision_id,
-            decision_id=decision_id,
+            decision_id=decision_id, canonical_gamma_snapshot_id=gamma_snapshot_id,
             setup_family=decision.get("setup_family") or s.get("setup_family") or "CANONICAL",
             price=price, confidence=decision.get("confidence") or decision.get("raw_conviction") or s.get("confidence"),
             entry=decision.get("entry_reference") or price, stop=decision.get("invalidation"),
             target1=decision.get("target") or (s.get("risk") or {}).get("target1"),
             target2=(s.get("risk") or {}).get("target2"), blockers=blockers,
-            evidence={"decision": decision, "canonical_decision_id": decision_id}, path=path))
+            evidence={"decision": decision, "canonical_decision_id": decision_id,
+                      "canonical_gamma_snapshot_id": gamma_snapshot_id}, path=path))
     for transition in (fbd_capture or {}).get("transitions") or []:
         if transition.get("state") != "ENTRY_ELIGIBLE": continue
         lifecycle_id = transition.get("lifecycle_id")
@@ -708,7 +722,8 @@ def record_canonical_snapshot(snapshot: Optional[Mapping[str, Any]], *,
             source_event_key=lifecycle_id, setup_family="FAILED_BREAKDOWN",
             price=price, entry=price, stop=current.get("invalidation_price"),
             target1=current.get("target1_price"), target2=current.get("target2_price"),
-            evidence={"lifecycle": current}, path=path))
+            canonical_gamma_snapshot_id=gamma_snapshot_id,
+            evidence={"lifecycle": current, "canonical_gamma_snapshot_id": gamma_snapshot_id}, path=path))
     return {"ok": True, "created": created, "price_observation": observed, "version": VERSION,
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
@@ -2394,6 +2409,7 @@ def trade_visualization(*, trigger_id: Optional[str] = None, symbol: str = "SPX"
         stop_hit = min(prices) <= stop if direction == "BULLISH" else max(prices) >= stop if direction == "BEARISH" else False
     trade = {
         "trigger_id": raw.get("trigger_id"), "decision_id": raw.get("decision_id"),
+        "canonical_gamma_snapshot_id": raw.get("canonical_gamma_snapshot_id"),
         "source": raw.get("source"), "trigger_type": raw.get("trigger_type"),
         "setup_family": raw.get("setup_family"), "symbol": raw.get("symbol"),
         "direction": direction, "disposition": raw.get("disposition"),

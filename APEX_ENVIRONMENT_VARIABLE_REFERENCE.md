@@ -17,6 +17,14 @@ This reference is generated from the authoritative registry in `engine/configura
 | `APEX_EVIDENCE_DB` | APPLICATION | OPTIONAL | — | string | — | No | APEX runtime setting used by application components. | `<value>` |
 | `APEX_GIT_BRANCH` | DEPLOYMENT | OPTIONAL | — | string | — | No | APEX runtime setting used by deployment components. | `<value>` |
 | `APEX_GIT_COMMIT` | DEPLOYMENT | OPTIONAL | — | string | — | No | APEX runtime setting used by deployment components. | `<value>` |
+| `APEX_GAMMA_AGING_SECONDS` | APPLICATION | OPTIONAL | — | integer | — | No | Generic maximum gamma observation age in seconds classified as AGING before becoming STALE. | `300` |
+| `APEX_GAMMA_EXPECTED_CADENCE_SECONDS` | APPLICATION | OPTIONAL | — | integer | — | No | Generic expected gamma observation cadence in seconds used for continuity assessment. | `60` |
+| `APEX_GAMMA_FRESH_SECONDS` | APPLICATION | OPTIONAL | — | integer | — | No | Generic maximum gamma observation age in seconds classified as FRESH when a provider-specific override is not configured. | `120` |
+| `APEX_GAMMA_GAP_SECONDS` | APPLICATION | OPTIONAL | — | integer | — | No | Generic elapsed seconds between gamma observations that marks the sequence GAPPED. | `180` |
+| `APEX_GAMMA_QUANTDATA_EXPOSURE_BY_STRIKE_AGING_SECONDS` | APPLICATION | OPTIONAL | — | integer | — | No | QuantData Exposure By Strike provider-specific AGING gamma age ceiling in seconds. | `300` |
+| `APEX_GAMMA_QUANTDATA_EXPOSURE_BY_STRIKE_EXPECTED_CADENCE_SECONDS` | APPLICATION | OPTIONAL | — | integer | — | No | QuantData Exposure By Strike expected observation cadence in seconds. | `60` |
+| `APEX_GAMMA_QUANTDATA_EXPOSURE_BY_STRIKE_FRESH_SECONDS` | APPLICATION | OPTIONAL | — | integer | — | No | QuantData Exposure By Strike provider-specific FRESH gamma age threshold in seconds. | `120` |
+| `APEX_GAMMA_QUANTDATA_EXPOSURE_BY_STRIKE_GAP_SECONDS` | APPLICATION | OPTIONAL | — | integer | — | No | QuantData Exposure By Strike elapsed seconds between observations that marks the sequence GAPPED. | `180` |
 | `APEX_GOVERNANCE_DB` | APPLICATION | OPTIONAL | — | string | — | No | APEX runtime setting used by application components. | `<value>` |
 | `APEX_HISTORY_MAX_EXCLUSION_RATE_PCT` | APPLICATION | OPTIONAL | — | number | — | No | APEX runtime setting used by application components. | `<value>` |
 | `APEX_HISTORY_MIN_DATE_DAYS` | APPLICATION | OPTIONAL | — | integer | — | No | APEX runtime setting used by application components. | `<value>` |
