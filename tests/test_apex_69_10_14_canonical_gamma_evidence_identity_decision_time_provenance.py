@@ -125,6 +125,31 @@ def test_continuity_gap_recovery_and_out_of_order_do_not_corrupt_current_authori
     assert closed["gamma_evidence_health"] == "PRIOR_SESSION_CONTEXT"
 
 
+def test_current_gamma_integrity_ignores_replayed_rows_marked_current(tmp_path):
+    from engine.gamma_transition import current_gamma_integrity, init_db, observe_gamma_transition
+
+    db = tmp_path / "gamma.db"
+    live = observe_gamma_transition(_gamma(100), db_path=str(db), observed_at="2026-09-18T13:30:00Z")
+    assert init_db(str(db)) is True
+    with sqlite3.connect(db) as c:
+        c.execute(
+            """INSERT INTO gamma_observational_snapshots(
+                ticker,observed_at,source,snapshot_json,canonical_gamma_snapshot_id,received_at,persisted_at,
+                provenance_class,replay_backfill_status,is_current_authority,freshness_state,continuity_state,
+                sequence_state,session_context_state
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "SPX", "2026-09-18T13:40:00Z", "QUANTDATA_EXPOSURE_BY_STRIKE", "{}",
+                "g_replayed_current", "2026-09-18T13:40:01Z", "2026-09-18T13:40:01Z",
+                "REPLAYED", "BACKFILL", 1, "FRESH", "BACKFILLED", "HISTORICAL_INSERT", "REGULAR_SESSION",
+            ),
+        )
+        c.commit()
+    current = current_gamma_integrity(ticker="SPX", db_path=str(db), reference_at="2026-09-18T13:30:30Z")
+    assert current["canonical_gamma_snapshot_id"] == live["canonical_gamma_snapshot_id"]
+    assert current["provenance_class"] == "LIVE_OBSERVED"
+
+
 def test_decision_freezes_exact_gamma_and_later_update_cannot_mutate_it(tmp_path, monkeypatch):
     from engine.gamma_transition import observe_gamma_transition
     from engine.historical_evidence_lifecycle import capture_decision
@@ -218,6 +243,41 @@ def test_malformed_timestamps_fail_closed_and_future_receipt_is_not_decision_tim
     assert frozen["available_at_decision"] is False
     assert frozen["freshness_state"] == "UNKNOWN"
     assert frozen["temporal_order_valid"] is False
+
+
+def test_insert_failure_is_not_reported_as_deduplicated(monkeypatch, tmp_path):
+    import engine.gamma_transition as gt
+
+    class _BrokenConnection:
+        row_factory = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, *args, **kwargs):
+            raise sqlite3.OperationalError("forced write failure")
+
+    monkeypatch.setattr(gt, "init_db", lambda path=None: True)
+    monkeypatch.setattr(gt, "connect", lambda *args, **kwargs: _BrokenConnection())
+    monkeypatch.setattr(gt, "compute_transition", lambda *args, **kwargs: {"transition_state": "UNCHANGED"})
+    monkeypatch.setattr(
+        gt,
+        "_continuity_for_new",
+        lambda *args, **kwargs: {
+            "continuity_state": "UNKNOWN",
+            "sequence_state": "FIRST_OBSERVATION",
+            "is_current_authority": True,
+            "gap_seconds": None,
+        },
+    )
+    out = gt.observe_gamma_transition(_gamma(), db_path=str(tmp_path / "gamma.db"), observed_at="2026-09-18T13:30:00Z")
+    assert out["status"] == "UNAVAILABLE"
+    assert out["snapshot_created"] is False
+    assert out["snapshot_deduplicated"] is False
+    assert out["evidence_integrity_available"] is False
 
 def test_legacy_schema_migrations_are_idempotent_and_preserve_rows(tmp_path):
     from engine.gamma_transition import init_db
@@ -315,4 +375,3 @@ def test_gamma_freshness_thresholds_are_registered_configuration_variables():
     env = {name: default for name, default in expected.items()}
     issues = cg.diagnostics(env)["issues"]
     assert not [issue for issue in issues if issue.get("code") == "UNKNOWN_APEX_VARIABLE" and issue.get("variable") in expected]
-

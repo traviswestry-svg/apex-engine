@@ -526,6 +526,8 @@ def current_gamma_integrity(*, ticker: str = "SPX", db_path: Optional[str] = Non
             row = c.execute(
                 "SELECT * FROM gamma_observational_snapshots WHERE ticker=? "
                 "AND canonical_gamma_snapshot_id IS NOT NULL AND is_current_authority=1 "
+                "AND provenance_class IN ('LIVE_OBSERVED','DECISION_TIME_CAPTURED') "
+                "AND COALESCE(replay_backfill_status,'NONE') IN ('','NONE','LIVE') "
                 "ORDER BY observed_at DESC LIMIT 1", (str(ticker).upper(),),
             ).fetchone()
     except Exception:
@@ -683,7 +685,34 @@ def observe_gamma_transition(
             created = cur.rowcount > 0
             c.commit()
     except Exception:
-        created = False
+        return {
+            **transition,
+            "status": "UNAVAILABLE",
+            "canonical_gamma_snapshot_id": snap.get("canonical_gamma_snapshot_id"),
+            "gamma_observation_timestamp": snap.get("observed_at"),
+            "gamma_received_at": snap.get("received_at"),
+            "gamma_provider_source_timestamp": snap.get("provider_source_timestamp"),
+            "gamma_source_timestamp_provenance": snap.get("source_timestamp_provenance"),
+            "gamma_source": snap.get("source"),
+            "gamma_snapshot_age_seconds": snap.get("snapshot_age_seconds"),
+            "freshness_state": snap.get("freshness_state") or "UNKNOWN",
+            "continuity_state": snap.get("continuity_state") or "UNKNOWN",
+            "sequence_state": snap.get("sequence_state") or "UNKNOWN",
+            "provenance_class": snap.get("provenance_class") or "UNKNOWN",
+            "session_context_state": snap.get("session_context_state") or "UNKNOWN",
+            "snapshot_created": False,
+            "snapshot_deduplicated": False,
+            "is_current_authority": bool(snap.get("is_current_authority", False)),
+            "term_regime_divergence_available": bool(snap.get("term_regime_divergence_available")),
+            "evidence_integrity_available": False,
+            "version": VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "gamma_provenance_metrics": metrics_snapshot(),
+            "behavioral_authority": False,
+            "execution_authority": False,
+            "automatic_calibration_activation": False,
+            "production_effect": "NONE",
+        }
     with _RUNTIME_LOCK:
         if created:
             _RUNTIME["gamma_snapshots_created"] += 1
