@@ -150,6 +150,24 @@ def test_current_gamma_integrity_ignores_replayed_rows_marked_current(tmp_path):
     assert current["provenance_class"] == "LIVE_OBSERVED"
 
 
+def test_decision_time_captured_snapshots_remain_current_authority(tmp_path):
+    from engine.gamma_transition import current_gamma_integrity, observe_gamma_transition
+
+    db = tmp_path / "gamma.db"
+    observe_gamma_transition(_gamma(100), db_path=str(db), observed_at="2026-09-18T13:30:00Z")
+    captured = observe_gamma_transition(
+        _gamma(105),
+        db_path=str(db),
+        observed_at="2026-09-18T13:31:00Z",
+        provenance_class="DECISION_TIME_CAPTURED",
+        replay_backfill_status="DECISION_TIME_CAPTURED",
+    )
+    assert captured["is_current_authority"] is True
+    current = current_gamma_integrity(ticker="SPX", db_path=str(db), reference_at="2026-09-18T13:31:10Z")
+    assert current["canonical_gamma_snapshot_id"] == captured["canonical_gamma_snapshot_id"]
+    assert current["provenance_class"] == "DECISION_TIME_CAPTURED"
+
+
 def test_decision_freezes_exact_gamma_and_later_update_cannot_mutate_it(tmp_path, monkeypatch):
     from engine.gamma_transition import observe_gamma_transition
     from engine.historical_evidence_lifecycle import capture_decision
@@ -229,6 +247,24 @@ def test_trigger_and_grader_preserve_frozen_gamma_linkage(tmp_path):
     record_canonical_snapshot(canonical, canonical_decision_id="d1", path=str(trigger_db))
     with sqlite3.connect(trigger_db) as c:
         assert c.execute("SELECT canonical_gamma_snapshot_id FROM observed_trade_triggers WHERE decision_id='d1'").fetchone()[0] == sid
+
+
+def test_trigger_fallback_reads_frozen_gamma_evidence_linkage(tmp_path):
+    from engine.trigger_observatory import record_canonical_snapshot
+
+    trigger_db = tmp_path / "triggers.db"
+    sid = "g_frozen_only"
+    canonical = {
+        "timestamp": "2026-09-18T13:30:00Z",
+        "ticker": "SPX",
+        "market_state": {"price": 6000.0},
+        "institutional_decision_object": {"decision_id": "d-frozen", "action": "ENTER", "direction": "BULLISH", "actionable": True},
+        "gamma_evidence": {"canonical_gamma_snapshot_id": sid},
+        "gamma_regime": "POSITIVE_GAMMA",
+    }
+    record_canonical_snapshot(canonical, path=str(trigger_db))
+    with sqlite3.connect(trigger_db) as c:
+        assert c.execute("SELECT canonical_gamma_snapshot_id FROM observed_trade_triggers WHERE decision_id='d-frozen'").fetchone()[0] == sid
 
 
 

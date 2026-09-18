@@ -451,7 +451,7 @@ def _continuity_for_new(path: str, snap: Mapping[str, Any]) -> Dict[str, Any]:
         return {"continuity_state": "UNKNOWN", "sequence_state": "MALFORMED_TIMESTAMP", "is_current_authority": False, "gap_seconds": None}
     provenance = str(snap.get("provenance_class") or "UNKNOWN").upper()
     replay_status = str(snap.get("replay_backfill_status") or "NONE").upper()
-    if provenance in {"REPLAYED", "BACKFILLED", "RECONSTRUCTED"} or replay_status not in {"", "NONE", "LIVE"}:
+    if provenance in {"REPLAYED", "BACKFILLED", "RECONSTRUCTED"} or replay_status not in {"", "NONE", "LIVE", "DECISION_TIME_CAPTURED"}:
         return {"continuity_state": "BACKFILLED", "sequence_state": "HISTORICAL_INSERT", "is_current_authority": False, "gap_seconds": None}
     try:
         with connect(path, timeout=10) as c:
@@ -527,7 +527,7 @@ def current_gamma_integrity(*, ticker: str = "SPX", db_path: Optional[str] = Non
                 "SELECT * FROM gamma_observational_snapshots WHERE ticker=? "
                 "AND canonical_gamma_snapshot_id IS NOT NULL AND is_current_authority=1 "
                 "AND provenance_class IN ('LIVE_OBSERVED','DECISION_TIME_CAPTURED') "
-                "AND COALESCE(replay_backfill_status,'NONE') IN ('','NONE','LIVE') "
+                "AND COALESCE(replay_backfill_status,'NONE') IN ('','NONE','LIVE','DECISION_TIME_CAPTURED') "
                 "ORDER BY observed_at DESC LIMIT 1", (str(ticker).upper(),),
             ).fetchone()
     except Exception:
