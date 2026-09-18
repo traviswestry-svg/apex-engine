@@ -1,6 +1,22 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.13
+apex_version: 69.10.14
 capabilities:
+  canonical_gamma_evidence_identity_decision_time_provenance:
+    description: "Deterministic gamma snapshot identity, bounded source provenance, freshness/continuity integrity, and immutable decision-time linkage."
+    canonical_modules: [engine.gamma_transition, engine.historical_evidence_lifecycle, engine.evidence_pipeline, engine.outcome_grader, engine.trigger_observatory, engine.evidence_eligibility]
+    deployed_modules: [engine.gamma_transition, engine.historical_evidence_lifecycle, engine.evidence_pipeline, engine.outcome_grader, engine.trigger_observatory, engine.evidence_eligibility, engine.dynamic_state, app]
+    status: active_evidence_integrity
+    version: "69.10.14"
+    inputs: [existing_gamma_output, gamma_term_structure, gamma_path, canonical_decisions, canonical_triggers, canonical_grading_results]
+    outputs: [canonical_gamma_snapshot_id, gamma_snapshot_deduplication, gamma_freshness_state, gamma_continuity_state, decision_time_gamma_linkage, trigger_gamma_linkage, frozen_gamma_evidence, grading_gamma_provenance, gamma_linkage_readiness]
+    api_routes: [/api/dynamic-state, /api/learning/evidence-lifecycle, /api/triggers/history, /api/triggers/trade-view]
+    persistence: [canonical_db_gamma_observational_snapshots, apex_evidence_pipeline_decisions, trigger_observatory_observed_trade_triggers]
+    decision_authority: none
+    behavioral_authority: evidence_eligibility_only
+    execution_authority: none
+    automatic_calibration_activation: false
+    production_effect: EVIDENCE_INTEGRITY_ONLY
+    guardrails: [deterministic_identity, canonical_serialization, duplicate_safe, provider_metadata_not_fabricated, provider_timestamp_distinguished_from_apex_parse_time, out_of_order_observations_not_current_authority, market_closed_aging_not_live_feed_failure, exact_decision_time_snapshot_reference, no_latest_gamma_substitution_for_historical_decisions, reconstructed_replayed_backfilled_not_live_observed, legacy_missing_linkage_explicit_unknown, bounded_transition_lineage, bounded_decision_evidence, existing_eligibility_engine_reused, no_parallel_grading_system, no_separate_gamma_outcome_store, no_trade_calls, no_direction_change, no_position_sizing_change, no_execution_authority, no_automatic_calibration_activation]
   universal_trade_trigger_observatory:
     canonical_module: engine.trigger_observatory
     deployed_modules: [engine.trigger_observatory, engine.trigger_observatory_routes, engine.outcome_grader, app]

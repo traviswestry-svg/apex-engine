@@ -7,8 +7,14 @@ def _seed(path):
     snap1={"setup":"ORB_RECLAIM","trade_horizon_intelligence":{"horizons":{"SCALP":{"direction":"BULLISH"},"INTRADAY":{"direction":"BULLISH"},"SWING":{"direction":"BEARISH"}}},"gamma_regime":"POSITIVE"}
     snap2={"setup":"ORB_RECLAIM","trade_horizon_intelligence":{"horizons":{"SCALP":{"direction":"BEARISH"},"INTRADAY":{"direction":"BEARISH"}}},"gamma_regime":"NEGATIVE"}
     with _connect(path) as c:
-        c.execute("INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?,?,?)",('d1','2026-08-10T14:00:00+00:00','SPX','MARKET_OPEN','BULLISH','TRADE',6400,80,1,json.dumps(snap1),'GRADED'))
-        c.execute("INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?,?,?)",('d2','2026-08-10T15:00:00+00:00','SPX','MARKET_OPEN','BEARISH','TRADE',6395,60,1,json.dumps(snap2),'GRADED'))
+        c.execute(
+            "INSERT INTO decisions(decision_id,observed_at,ticker,session,direction,action,entry_price,confidence,learning_eligible,snapshot_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ('d1','2026-08-10T14:00:00+00:00','SPX','MARKET_OPEN','BULLISH','TRADE',6400,80,1,json.dumps(snap1),'GRADED'),
+        )
+        c.execute(
+            "INSERT INTO decisions(decision_id,observed_at,ticker,session,direction,action,entry_price,confidence,learning_eligible,snapshot_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ('d2','2026-08-10T15:00:00+00:00','SPX','MARKET_OPEN','BEARISH','TRADE',6395,60,1,json.dumps(snap2),'GRADED'),
+        )
         c.execute("INSERT INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",('d1','2026-08-10T14:05:00+00:00','GRADED',None,300,json.dumps({'won':True,'direction_correct':True,'directional_move':4,'mfe':6,'mae':-1})))
         c.execute("INSERT INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",('d2','2026-08-10T15:05:00+00:00','GRADED',None,300,json.dumps({'won':False,'direction_correct':False,'directional_move':-2,'mfe':1,'mae':-4})))
 

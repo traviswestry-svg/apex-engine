@@ -5,8 +5,31 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from engine.evidence_pipeline import _connect, DEFAULT_DB, readiness
-VERSION='69.9.5'; SCHEMA_VERSION='apex.outcome_grader.v2'; DEFAULT_HORIZON=int(os.getenv('APEX_GRADING_HORIZON_SECONDS','300'))
+VERSION='69.10.14'; SCHEMA_VERSION='apex.outcome_grader.v3'; DEFAULT_HORIZON=int(os.getenv('APEX_GRADING_HORIZON_SECONDS','300'))
 def _dt(v): return datetime.fromisoformat(str(v).replace('Z','+00:00'))
+def _decision_time_gamma(row):
+ try: snap=json.loads(row['snapshot_json'] or '{}') or {}
+ except Exception: snap={}
+ frozen=snap.get('gamma_evidence') if isinstance(snap.get('gamma_evidence'),dict) else {}
+ sid=row['canonical_gamma_snapshot_id'] if 'canonical_gamma_snapshot_id' in row.keys() else None
+ sid=sid or frozen.get('canonical_gamma_snapshot_id')
+ if not sid:
+  return {'linkage_status':'LEGACY_OR_UNKNOWN','canonical_gamma_snapshot_id':None,'freshness_state':'UNKNOWN','continuity_state':'UNKNOWN','provenance_class':'UNKNOWN','gamma_snapshot_age_seconds':None,'decision_time_frozen':True}
+ return {
+  'linkage_status': frozen.get('linkage_status') or 'LINKED',
+  'canonical_gamma_snapshot_id': sid,
+  'freshness_state': frozen.get('freshness_state') or 'UNKNOWN',
+  'continuity_state': frozen.get('continuity_state') or 'UNKNOWN',
+  'provenance_class': frozen.get('provenance_class') or (row['gamma_provenance_class'] if 'gamma_provenance_class' in row.keys() else None) or 'UNKNOWN',
+  'gamma_snapshot_age_seconds': frozen.get('gamma_snapshot_age_seconds') if frozen.get('gamma_snapshot_age_seconds') is not None else (row['gamma_snapshot_age_seconds'] if 'gamma_snapshot_age_seconds' in row.keys() else None),
+  'gamma_regime': frozen.get('gamma_regime'),'durability': frozen.get('durability'),
+  'capacity_ratio': frozen.get('capacity_ratio'),'capacity_state': frozen.get('capacity_state'),
+  'expected_move_points': frozen.get('expected_move_points'),
+  'zero_dte_share': frozen.get('zero_dte_share'),'zero_one_dte_share': frozen.get('zero_one_dte_share'),
+  'weekly_gamma_share': frozen.get('weekly_gamma_share'),'transition_state': frozen.get('transition_state'),
+  'evidence_eligibility': frozen.get('evidence_eligibility') or {'state':'UNKNOWN'},
+  'decision_time_frozen': True,'latest_gamma_lookup_performed': False,
+ }
 def run_grader(path: str|Path=DEFAULT_DB,horizon_seconds:int=DEFAULT_HORIZON,limit:int=500)->dict[str,Any]:
  now=datetime.now(timezone.utc); counts={'graded':0,'excluded':0,'not_matured':0,'errors':0}
  with _connect(path) as c:
@@ -21,13 +44,13 @@ def run_grader(path: str|Path=DEFAULT_DB,horizon_seconds:int=DEFAULT_HORIZON,lim
     elif r['entry_price'] is None: reason='MISSING_ENTRY_PRICE'
     elif age < horizon_seconds: counts['not_matured']+=1; continue
     if reason:
-     c.execute("INSERT OR IGNORE INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",(did,now.isoformat(),'EXCLUDED',reason,horizon_seconds,json.dumps({'reason':reason}))); c.execute("UPDATE decisions SET status='EXCLUDED' WHERE decision_id=?",(did,)); counts['excluded']+=1; continue
+     c.execute("INSERT OR IGNORE INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",(did,now.isoformat(),'EXCLUDED',reason,horizon_seconds,json.dumps({'reason':reason,'gamma_evidence':_decision_time_gamma(r)}))); c.execute("UPDATE decisions SET status='EXCLUDED' WHERE decision_id=?",(did,)); counts['excluded']+=1; continue
     end=(observed.timestamp()+horizon_seconds)
     prices=c.execute("SELECT observed_at,price FROM price_samples WHERE ticker=? AND observed_at>=? AND observed_at<=? ORDER BY observed_at",(r['ticker'],r['observed_at'],datetime.fromtimestamp(end,timezone.utc).isoformat())).fetchall()
     if not prices:
-     c.execute("INSERT OR IGNORE INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",(did,now.isoformat(),'EXCLUDED','MISSING_FORWARD_PRICE',horizon_seconds,json.dumps({'reason':'MISSING_FORWARD_PRICE'}))); c.execute("UPDATE decisions SET status='EXCLUDED' WHERE decision_id=?",(did,)); counts['excluded']+=1; continue
+     c.execute("INSERT OR IGNORE INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",(did,now.isoformat(),'EXCLUDED','MISSING_FORWARD_PRICE',horizon_seconds,json.dumps({'reason':'MISSING_FORWARD_PRICE','gamma_evidence':_decision_time_gamma(r)}))); c.execute("UPDATE decisions SET status='EXCLUDED' WHERE decision_id=?",(did,)); counts['excluded']+=1; continue
     entry=float(r['entry_price']); vals=[float(x['price']) for x in prices]; final_row=prices[-1]; final=float(final_row['price']); bullish=str(r['direction']).upper()=='BULLISH'; move=(final-entry)*(1 if bullish else -1); mfe=max((p-entry)*(1 if bullish else -1) for p in vals); mae=min((p-entry)*(1 if bullish else -1) for p in vals); won=move>0
-    outcome={'won':won,'direction_correct':won,'entry_price':entry,'forward_price':final,'forward_observed_at':final_row['observed_at'],'directional_move':round(move,4),'mfe':round(mfe,4),'mae':round(mae,4),'horizon_seconds':horizon_seconds,'window_start_at':r['observed_at'],'window_end_at':datetime.fromtimestamp(end,timezone.utc).isoformat(),'price_sample_count':len(prices),'price_query_window_enforced':True}
+    outcome={'won':won,'direction_correct':won,'entry_price':entry,'forward_price':final,'forward_observed_at':final_row['observed_at'],'directional_move':round(move,4),'mfe':round(mfe,4),'mae':round(mae,4),'horizon_seconds':horizon_seconds,'window_start_at':r['observed_at'],'window_end_at':datetime.fromtimestamp(end,timezone.utc).isoformat(),'price_sample_count':len(prices),'price_query_window_enforced':True,'gamma_evidence':_decision_time_gamma(r)}
     c.execute("INSERT OR IGNORE INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",(did,now.isoformat(),'GRADED',None,horizon_seconds,json.dumps(outcome))); c.execute("UPDATE decisions SET status='GRADED' WHERE decision_id=?",(did,)); counts['graded']+=1
     try:
      # Observational NO_TRADE thesis grading is diagnostic only. It must never

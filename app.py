@@ -8630,7 +8630,12 @@ def api_institutional_os():
                     "ok": bool(_apex69_capture.get("ok")),
                     "inserted": bool(_apex69_capture.get("inserted")),
                     "decision_id": _apex69_capture.get("decision_id"),
-                    "version": "69.0.1",
+                    # APEX 69.10.14 — expose only the immutable canonical gamma
+                    # reference already frozen with the decision. Trigger capture
+                    # can reuse this reference without querying a newer gamma row.
+                    "canonical_gamma_snapshot_id": _apex69_capture.get("canonical_gamma_snapshot_id"),
+                    "gamma_linkage_status": _apex69_capture.get("gamma_linkage_status"),
+                    "version": "69.10.14",
                     "execution_authority": False,
                 }
             except Exception as _apex69_capture_err:

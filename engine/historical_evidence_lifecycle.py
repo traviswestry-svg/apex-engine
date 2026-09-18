@@ -171,6 +171,92 @@ def _extract_confidence(result: Mapping[str, Any], ido: Mapping[str, Any]) -> Op
     return _f(value)
 
 
+def _dealer_gamma_eligibility(ido: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the already-governed dealer/gamma eligibility, if present."""
+    opinions = ido.get("engine_opinions") if isinstance(ido.get("engine_opinions"), list) else []
+    for raw in opinions:
+        if not isinstance(raw, Mapping):
+            continue
+        name = str(raw.get("engine_name") or "").lower()
+        if name not in {"dealer", "gamma", "dealer_positioning"}:
+            continue
+        eligibility = raw.get("evidence_eligibility")
+        if isinstance(eligibility, Mapping):
+            return dict(eligibility)
+        state = raw.get("eligibility_state")
+        if state:
+            return {"state": str(state), "weight_factor": raw.get("eligibility_weight_factor")}
+    return {"state": "UNKNOWN", "reasons": ["DECISION_TIME_ELIGIBILITY_NOT_EXPOSED"]}
+
+
+def _freeze_gamma_evidence(root: Mapping[str, Any], ido: Mapping[str, Any],
+                           observed_dynamic_state: Mapping[str, Any], *,
+                           decision_time: str, session_state: Optional[str]) -> Dict[str, Any]:
+    """Freeze the exact gamma snapshot referenced by the finalized composition.
+
+    Crucially, this function never falls back to the newest gamma row. If the
+    finalized result does not carry a canonical snapshot identity, linkage remains
+    explicitly unknown for the legacy record.
+    """
+    candidate = _path(
+        root,
+        "gamma_regime.gamma_transition",
+        "gamma_transition",
+        "flow.gamma_transition",
+        "dealer_positioning.gamma_transition",
+    )
+    if not isinstance(candidate, Mapping):
+        candidate = observed_dynamic_state.get("gamma_transition") if isinstance(observed_dynamic_state.get("gamma_transition"), Mapping) else {}
+    transition = dict(candidate) if isinstance(candidate, Mapping) else {}
+    snapshot_id = str(transition.get("canonical_gamma_snapshot_id") or "").strip()
+    if snapshot_id:
+        try:
+            from .gamma_transition import decision_time_gamma_evidence
+            frozen = decision_time_gamma_evidence(
+                snapshot_id, decision_time=decision_time, market_state=session_state or root.get("session")
+            )
+        except Exception as exc:
+            frozen = {
+                "linkage_status": "LINKAGE_LOOKUP_ERROR",
+                "canonical_gamma_snapshot_id": snapshot_id,
+                "freshness_state": "UNKNOWN", "continuity_state": "UNKNOWN",
+                "provenance_class": "UNKNOWN", "gamma_snapshot_age_seconds": None,
+                "error": type(exc).__name__, "execution_authority": False,
+                "behavioral_authority": False,
+            }
+    else:
+        frozen = {
+            "linkage_status": "LEGACY_OR_UNKNOWN", "canonical_gamma_snapshot_id": None,
+            "freshness_state": "UNKNOWN", "continuity_state": "UNKNOWN",
+            "provenance_class": "UNKNOWN", "gamma_snapshot_age_seconds": None,
+            "execution_authority": False, "behavioral_authority": False,
+        }
+    frozen["evidence_eligibility"] = _dealer_gamma_eligibility(ido)
+    frozen["transition_state"] = transition.get("transition_state")
+    frozen["transition_status"] = transition.get("status")
+    frozen["transition_lineage"] = list(transition.get("transition_lineage") or [])[:4]
+
+    # Capacity is an existing decision-time dynamic-state derivation that also uses
+    # expected move, so it does not belong in the provider gamma snapshot itself.
+    # Freeze it only when the dynamic-state transition points at this exact snapshot.
+    dynamic_transition = observed_dynamic_state.get("gamma_transition") if isinstance(observed_dynamic_state.get("gamma_transition"), Mapping) else {}
+    dynamic_snapshot_id = str(dynamic_transition.get("canonical_gamma_snapshot_id") or "").strip()
+    gamma_context = observed_dynamic_state.get("gamma_context") if isinstance(observed_dynamic_state.get("gamma_context"), Mapping) else {}
+    if snapshot_id and dynamic_snapshot_id == snapshot_id and gamma_context:
+        frozen["capacity_ratio"] = gamma_context.get("capacity_ratio")
+        frozen["capacity_state"] = gamma_context.get("capacity_state") or "UNAVAILABLE"
+        frozen["expected_move_points"] = gamma_context.get("expected_move_points")
+        frozen["capacity_method"] = gamma_context.get("capacity_method")
+        frozen["gamma_context_snapshot_id"] = snapshot_id
+        if frozen.get("durability") in (None, "", "UNKNOWN"):
+            frozen["durability"] = gamma_context.get("structure_durability") or "UNKNOWN"
+
+    frozen["decision_time_frozen"] = True
+    frozen["later_gamma_substitution_allowed"] = False
+    frozen["reconstructed_gamma_may_masquerade_as_live"] = False
+    return frozen
+
+
 def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = None) -> Dict[str, Any]:
     """Build one bounded, decision-time-only snapshot from a composed IOS result."""
     root = dict(result or {})
@@ -223,6 +309,13 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         observed_dynamic_state = build_dynamic_state(root)
     except Exception:
         observed_dynamic_state = {}
+
+    # APEX 69.10.14 — freeze the exact canonical gamma observation carried by
+    # this finalized composition. Missing linkage remains explicit; there is no
+    # lookup of a later/latest gamma row.
+    gamma_evidence = _freeze_gamma_evidence(
+        root, ido, observed_dynamic_state, decision_time=timestamp, session_state=session_state
+    )
 
     # The finalized IDO already carries the policy used by conviction/consensus.
     # Prefer that exact policy over recomputation so historical context reflects
@@ -412,6 +505,10 @@ def build_snapshot(result: Mapping[str, Any], *, session_state: Optional[str] = 
         "trade_horizon_intelligence": _m(root.get("trade_horizon_intelligence")),
         "market_regime": _path(root, "market_regime.regime", "market_regime.state", "market_state.regime", "regime"),
         "gamma_regime": _path(root, "gamma_regime.regime", "gamma_regime.state", "dealer_positioning.gamma_regime", "gamma.regime"),
+        "canonical_gamma_snapshot_id": gamma_evidence.get("canonical_gamma_snapshot_id"),
+        "gamma_snapshot_age_seconds": gamma_evidence.get("gamma_snapshot_age_seconds"),
+        "gamma_provenance_class": gamma_evidence.get("provenance_class"),
+        "gamma_evidence": gamma_evidence,
         "volatility_regime": _path(root, "volatility_regime.regime", "volatility_regime.state", "volatility.regime"),
         "auction_regime": _path(root, "auction_regime.regime", "auction_regime.state", "auction.regime", "auction_intelligence.regime"),
         "apex_release_version": _release_version(),
@@ -462,7 +559,12 @@ def capture_decision(result: Mapping[str, Any], *, session_state: Optional[str] 
                 _RUNTIME["decision_duplicates"] += 1
             _RUNTIME["last_decision_at"] = snap["timestamp"]
         _capture_market_memory(result, snap)
-        return {"ok": True, "inserted": inserted, "decision_id": snap["decision_id"], "snapshot": snap}
+        return {
+            "ok": True, "inserted": inserted, "decision_id": snap["decision_id"],
+            "canonical_gamma_snapshot_id": snap.get("canonical_gamma_snapshot_id"),
+            "gamma_linkage_status": _m(snap.get("gamma_evidence")).get("linkage_status"),
+            "snapshot": snap,
+        }
     except Exception as exc:
         with _LOCK:
             _RUNTIME["decision_errors"] += 1
