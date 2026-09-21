@@ -94,6 +94,37 @@ def scanner_heartbeat_path() -> pathlib.Path:
     return pathlib.Path(persistent_path("scanner_heartbeat.json", "APEX_SCANNER_HEARTBEAT_PATH"))
 
 
+# APEX 69.10.15 — durable scanner-owned settlement reconciliation.  The
+# heartbeat is intentionally ephemeral; the last completed settlement result
+# must remain observable after the scanner becomes idle/stale.  This sidecar
+# contains diagnostics only and has no decision/execution authority.
+def settlement_reconciliation_path() -> pathlib.Path:
+    return pathlib.Path(persistent_path("flow_settlement_reconciliation.json"))
+
+
+def write_settlement_reconciliation(payload: Dict[str, Any]) -> None:
+    body = dict(payload or {})
+    body["persisted_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+    body["schema_version"] = "apex.flow_settlement_reconciliation.v1"
+    body["version"] = "69.10.15"
+    body["read_only_diagnostic"] = True
+    body["execution_authority"] = False
+    path = settlement_reconciliation_path()
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(json.dumps(body, sort_keys=True, default=str), encoding="utf-8")
+    temp.replace(path)
+
+
+def read_settlement_reconciliation() -> Dict[str, Any]:
+    path = settlement_reconciliation_path()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload.update({"available": True, "path": str(path)})
+        return payload
+    except Exception as exc:
+        return {"available": False, "path": str(path), "error": type(exc).__name__}
+
+
 def write_scanner_heartbeat(payload: Optional[Dict[str, Any]] = None) -> None:
     body = {
         "pid": os.getpid(),

@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.14",
-  "build_name": "Canonical Gamma Evidence Identity & Decision-Time Provenance",
+  "apex_version": "69.10.15",
+  "build_name": "Settlement Reconciliation & Gamma Linkage Production Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "6",
-  "released_at": "2026-09-18",
+  "released_at": "2026-09-21",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -560,15 +560,22 @@
     "gamma_provenance_changes_execution_authority": false,
     "gamma_provenance_creates_trade_calls": false,
     "gamma_integrity_uses_existing_evidence_eligibility": true,
-    "gamma_integrity_automatic_calibration_activation": false
+    "gamma_integrity_automatic_calibration_activation": false,
+    "durable_settlement_reconciliation": true,
+    "durable_settlement_reconciliation_read_only": true,
+    "settlement_reconciliation_changes_trade_decisions": false,
+    "settlement_reconciliation_changes_execution_authority": false,
+    "gamma_linkage_release_scoped_reconciliation": true,
+    "gamma_linkage_historical_reconstruction": false,
+    "gamma_linkage_latest_snapshot_substitution": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.14",
-  "application_version": "69.10.14",
+  "semantic_version": "69.10.15",
+  "application_version": "69.10.15",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

@@ -16,8 +16,8 @@ from zoneinfo import ZoneInfo
 
 from . import feature_store_writer
 
-VERSION = "69.0.2"
-SCHEMA_VERSION = "apex.flow_settlement_scheduler.v1"
+VERSION = "69.10.15"
+SCHEMA_VERSION = "apex.flow_settlement_scheduler.v1.1"
 _ET = ZoneInfo("America/New_York")
 
 _TRUE = {"1", "true", "yes", "on"}
@@ -110,7 +110,15 @@ class FlowSettlementScheduler:
                 })
                 if result.get("state") == "ERROR":
                     self._status["errors"] = int(self._status.get("errors") or 0) + 1
-                return dict(self._status)
+                durable = dict(self._status)
+            # Persist outside the scheduler lock. Failure to persist diagnostics
+            # must never change settlement success or scanner authority.
+            try:
+                from .operational_runtime import write_settlement_reconciliation
+                write_settlement_reconciliation(durable)
+            except Exception:
+                pass
+            return durable
         except Exception as exc:  # defensive boundary; scanner must remain alive
             with self._lock:
                 self._status["ok"] = False
@@ -120,7 +128,13 @@ class FlowSettlementScheduler:
                 self._status["settlement_scope"] = scope
                 self._status["eligible_session_cutoff_exclusive"] = cutoff
                 self._status["local_time_et"] = local_now.isoformat()
-                return dict(self._status)
+                durable = dict(self._status)
+            try:
+                from .operational_runtime import write_settlement_reconciliation
+                write_settlement_reconciliation(durable)
+            except Exception:
+                pass
+            return durable
 
     def status(self) -> Dict[str, Any]:
         with self._lock:

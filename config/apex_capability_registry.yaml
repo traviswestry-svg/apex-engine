@@ -1,6 +1,16 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.14
+apex_version: 69.10.15
 capabilities:
+  settlement_reconciliation_gamma_linkage_production_closure:
+    description: "Durable last-settlement reconciliation plus release-scoped canonical gamma linkage observability."
+    canonical_modules: [engine.flow_settlement_scheduler, engine.operational_runtime, engine.evidence_accumulation_routes, engine.evidence_pipeline]
+    status: active_observability
+    version: "69.10.15"
+    outputs: [durable_last_settlement, settlement_diagnostic_source, release_scoped_gamma_linkage]
+    decision_authority: none
+    execution_authority: none
+    production_effect: OBSERVABILITY_ONLY
+    guardrails: [no_synthetic_evidence, no_historical_gamma_reconstruction, no_latest_gamma_substitution, no_settlement_rule_relaxation, no_automatic_promotion]
   canonical_gamma_evidence_identity_decision_time_provenance:
     description: "Deterministic gamma snapshot identity, bounded source provenance, freshness/continuity integrity, and immutable decision-time linkage."
     canonical_modules: [engine.gamma_transition, engine.historical_evidence_lifecycle, engine.evidence_pipeline, engine.outcome_grader, engine.trigger_observatory, engine.evidence_eligibility]
