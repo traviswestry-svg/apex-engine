@@ -240,6 +240,22 @@ def run_flow_pl(
                     ticker=priced.get("ticker"),
                     pl_dollars=priced.get("estimated_pl_dollars"),
                     cost_basis=priced.get("cost_basis_dollars"))
+                # APEX 69.10.16 — once the feature writer has registered this
+                # exact sealed cluster identity, later genuine P/L observations can
+                # widen its canonical sample excursion even if the first writer-side
+                # capture had no mark.  Resolve the persisted tuple; never rebuild a
+                # sample_id and never use the coarse-key "latest" fallback.
+                decision_time = f"{session}T{cl.get('end_time')}" if cl.get("end_time") else None
+                identity = (flow_pl_store.resolve_exact_sample_identity(
+                    session_date=session, legacy_cluster_key=ckey_s,
+                    decision_time=decision_time) if decision_time else None)
+                if identity:
+                    flow_pl_store.record_sample_excursion(
+                        sample_id=identity["sample_id"], session_date=session,
+                        ticker=priced.get("ticker"),
+                        pl_dollars=priced.get("estimated_pl_dollars"),
+                        cost_basis=priced.get("cost_basis_dollars"),
+                        decision_time=decision_time, legacy_cluster_key=ckey_s)
             priced["cluster_key_string"] = ckey_s
             # The Step 3 cluster view, kept alongside the P/L view. The feature
             # writer needs the CLUSTER (end_time, aggression, print counts);

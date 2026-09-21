@@ -94,7 +94,7 @@ def scanner_heartbeat_path() -> pathlib.Path:
     return pathlib.Path(persistent_path("scanner_heartbeat.json", "APEX_SCANNER_HEARTBEAT_PATH"))
 
 
-# APEX 69.10.15 — durable scanner-owned settlement reconciliation.  The
+# APEX 69.10.16 — durable scanner-owned settlement reconciliation.  The
 # heartbeat is intentionally ephemeral; the last completed settlement result
 # must remain observable after the scanner becomes idle/stale.  This sidecar
 # contains diagnostics only and has no decision/execution authority.
@@ -106,7 +106,7 @@ def write_settlement_reconciliation(payload: Dict[str, Any]) -> None:
     body = dict(payload or {})
     body["persisted_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     body["schema_version"] = "apex.flow_settlement_reconciliation.v1"
-    body["version"] = "69.10.15"
+    body["version"] = "69.10.16"
     body["read_only_diagnostic"] = True
     body["execution_authority"] = False
     path = settlement_reconciliation_path()

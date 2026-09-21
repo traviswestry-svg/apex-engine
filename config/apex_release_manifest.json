@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.15",
-  "build_name": "Settlement Reconciliation & Gamma Linkage Production Closure",
+  "apex_version": "69.10.16",
+  "build_name": "Canonical Settlement Identity & Decision Gamma Linkage Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -567,15 +567,21 @@
     "settlement_reconciliation_changes_execution_authority": false,
     "gamma_linkage_release_scoped_reconciliation": true,
     "gamma_linkage_historical_reconstruction": false,
-    "gamma_linkage_latest_snapshot_substitution": false
+    "gamma_linkage_latest_snapshot_substitution": false,
+    "canonical_settlement_identity_recovery": "EXACT_REGISTERED_TUPLE_ONLY",
+    "settlement_recovery_reconstructs_sample_id": false,
+    "settlement_recovery_uses_real_forward_pl_only": true,
+    "decision_gamma_linkage_source": "COMPOSITION_INPUT_GAMMA_TRANSITION",
+    "decision_gamma_latest_substitution_allowed": false,
+    "decision_gamma_historical_reconstruction_allowed": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.15",
-  "application_version": "69.10.15",
+  "semantic_version": "69.10.16",
+  "application_version": "69.10.16",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

@@ -159,9 +159,9 @@ def readiness(path: str|Path=DEFAULT_DB)->dict[str,Any]:
   gamma_linked=c.execute("SELECT COUNT(*) n FROM decisions WHERE canonical_gamma_snapshot_id IS NOT NULL").fetchone()['n']; gamma_missing=max(0,total-gamma_linked)
   try:
    manifest=json.loads((Path(__file__).resolve().parents[1]/"config"/"apex_release_manifest.json").read_text(encoding="utf-8"))
-   current_release=str(manifest.get("apex_version") or "69.10.15")
+   current_release=str(manifest.get("apex_version") or "69.10.16")
   except Exception:
-   current_release="69.10.15"
+   current_release="69.10.16"
   gamma_release_linkage=_release_gamma_linkage(c,current_release)
   reasons={r['exclusion_reason']:r['n'] for r in c.execute("SELECT exclusion_reason,COUNT(*) n FROM grading_results WHERE status='EXCLUDED' GROUP BY exclusion_reason") if r['exclusion_reason']}
   eligibility_reasons={}; execution_actionable=0; observational_eligible=0
