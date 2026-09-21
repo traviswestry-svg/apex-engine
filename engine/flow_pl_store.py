@@ -39,7 +39,7 @@ _DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.5_CANONICAL_SAMPLE_IDENTITY_CLOSURE"
+STORE_VERSION = "69.10.16_CANONICAL_SETTLEMENT_IDENTITY_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -362,6 +362,31 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
                     and row["sample_id"] == sample_id)
     except Exception:
         return False
+
+
+def resolve_exact_sample_identity(*, session_date: str, legacy_cluster_key: str,
+                                  decision_time: str) -> Optional[Dict[str, Any]]:
+    """Resolve only an exact persisted feature identity tuple.
+
+    APEX 69.10.16 uses this on later live cluster P/L observations.  It never
+    reconstructs ``sample_id`` and never falls back to the newest sample for a
+    coarse cluster key, because either behavior could attach an outcome to the
+    wrong immutable feature vector.
+    """
+    if not _DB_READY or not session_date or not legacy_cluster_key or not decision_time:
+        return None
+    try:
+        with _conn() as c:
+            row = c.execute(
+                """SELECT sample_id,decision_time,session_date,legacy_cluster_key
+                   FROM flow_sample_identity_map
+                   WHERE session_date=? AND legacy_cluster_key=? AND decision_time=?
+                   LIMIT 1""",
+                (session_date, legacy_cluster_key, decision_time),
+            ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
 
 
 def resolve_sample_identity(*, session_date: str, legacy_cluster_key: str) -> Optional[Dict[str, Any]]:
