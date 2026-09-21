@@ -43,7 +43,7 @@ def register_evidence_accumulation_routes(app):
         # reads the durable DB correctly, but its in-memory counters are local
         # to the web process and can misleadingly remain zero. Prefer the fresh
         # scanner heartbeat while preserving web-local counters for diagnosis.
-        from .operational_runtime import read_scanner_heartbeat
+        from .operational_runtime import read_scanner_heartbeat, read_settlement_reconciliation
         hb = read_scanner_heartbeat()
         hb_fresh = bool(hb.get("available")) and float(hb.get("age_seconds") or 1e9) <= 60.0
         scanner_lifecycle = hb.get("historical_evidence_lifecycle") if hb_fresh else None
@@ -74,6 +74,21 @@ def register_evidence_accumulation_routes(app):
             flow_linkage = flow_pl_store.sample_excursion_health()
         except Exception as exc:
             flow_linkage = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        durable_settlement = read_settlement_reconciliation()
+        live_settlement = hb.get("feature_label_settlement") if hb_fresh else None
+        if isinstance(live_settlement, dict):
+            settlement = dict(live_settlement)
+            settlement["diagnostic_source"] = "SCANNER_HEARTBEAT_FRESH"
+        elif durable_settlement.get("available"):
+            settlement = dict(durable_settlement)
+            settlement["diagnostic_source"] = "DURABLE_LAST_SETTLEMENT"
+            settlement["heartbeat_fresh"] = False
+        else:
+            settlement = {
+                "state": "SCANNER_SETTLEMENT_DIAGNOSTICS_UNAVAILABLE",
+                "reason": "NO_FRESH_HEARTBEAT_OR_DURABLE_SETTLEMENT_RECORD",
+                "diagnostic_source": "UNAVAILABLE",
+            }
         payload["families"] = {
             "decisions": {
                 "captured": r.get("decisions_recorded", 0),
@@ -91,10 +106,7 @@ def register_evidence_accumulation_routes(app):
                 "unlabelled": fs.get("unlabelled", 0),
                 "sessions": fs.get("feature_sessions", fs.get("sessions_covered", 0)),
                 "state": "ACCUMULATING" if fs.get("feature_rows", 0) else "COLD",
-                "settlement": (hb.get("feature_label_settlement") if hb_fresh else None) or {
-                    "state": "SCANNER_SETTLEMENT_DIAGNOSTICS_UNAVAILABLE",
-                    "reason": "SCANNER_HEARTBEAT_STALE_OR_NO_SETTLEMENT_ATTEMPT",
-                },
+                "settlement": settlement,
                 "excursion_linkage": flow_linkage,
             },
             "market_memory": {
@@ -109,6 +121,7 @@ def register_evidence_accumulation_routes(app):
             "automatic_recalibration": False,
             "human_promotion_required": True,
             "runtime_telemetry_authority": "SCANNER_HEARTBEAT_WHEN_FRESH",
+            "settlement_telemetry_authority": "FRESH_HEARTBEAT_ELSE_DURABLE_LAST_SETTLEMENT",
         })
         return jsonify(payload), (200 if payload.get("ok") else 503)
 

@@ -18,7 +18,10 @@ def _seed(path, n=20, confidence=80.0, wins=10):
                     'INTRADAY':{'direction':direction,'confidence':confidence-5},
                 }},
             }
-            c.execute("INSERT INTO decisions VALUES(?,?,?,?,?,?,?,?,?,?,?)",(did,f'2026-08-{1+i//4:02d}T14:{i%60:02d}:00+00:00','SPX','MARKET_OPEN',direction,'TRADE',6400+i,confidence,1,json.dumps(snap),'GRADED'))
+            c.execute(
+                "INSERT INTO decisions(decision_id,observed_at,ticker,session,direction,action,entry_price,confidence,learning_eligible,snapshot_json,status) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (did,f'2026-08-{1+i//4:02d}T14:{i%60:02d}:00+00:00','SPX','MARKET_OPEN',direction,'TRADE',6400+i,confidence,1,json.dumps(snap),'GRADED'),
+            )
             c.execute("INSERT INTO grading_results(decision_id,graded_at,status,exclusion_reason,horizon_seconds,outcome_json) VALUES(?,?,?,?,?,?)",(did,f'2026-08-{1+i//4:02d}T14:{(i+5)%60:02d}:00+00:00','GRADED',None,300,json.dumps({'won':won,'direction_correct':won,'directional_move':2 if won else -2,'mfe':4,'mae':-2})))
 
 

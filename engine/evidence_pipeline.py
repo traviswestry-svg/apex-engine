@@ -32,7 +32,7 @@ _ROOT_PERSIST_KEYS = (
     "entry_reference","confidence","learning_eligible","observational_learning_eligible",
     "execution_actionable","actionable","eligibility_reason","eligibility_inputs",
     "setup","market_regime","volatility_regime","pre_governance_decision",
-    "trade_horizon_intelligence","institutional_decision_object",
+    "trade_horizon_intelligence","institutional_decision_object","apex_release_version",
     "canonical_gamma_snapshot_id","gamma_snapshot_age_seconds","gamma_provenance_class","gamma_evidence",
 )
 
@@ -128,12 +128,41 @@ def record_price(ticker:str, price:Any, observed_at:str|None=None,path: str|Path
  except (TypeError,ValueError): return False
  with _connect(path) as c: c.execute("INSERT INTO price_samples(ticker,observed_at,price) VALUES(?,?,?)",(ticker.upper(),observed_at or _now(),p))
  return True
+
+def _release_gamma_linkage(c, current_release: str) -> dict[str, Any]:
+    """Reconcile gamma linkage by recorded release without reconstructing history."""
+    cohorts: dict[str, dict[str, int]] = {}
+    for row in c.execute("SELECT canonical_gamma_snapshot_id,snapshot_json FROM decisions"):
+        try:
+            snap = json.loads(row["snapshot_json"]) or {}
+        except Exception:
+            snap = {}
+        release = str(snap.get("apex_release_version") or snap.get("version") or "UNKNOWN")
+        cohort = cohorts.setdefault(release, {"decisions": 0, "gamma_linked": 0, "gamma_missing": 0})
+        cohort["decisions"] += 1
+        if row["canonical_gamma_snapshot_id"]:
+            cohort["gamma_linked"] += 1
+        else:
+            cohort["gamma_missing"] += 1
+    current = dict(cohorts.get(current_release) or {"decisions": 0, "gamma_linked": 0, "gamma_missing": 0})
+    current["release_version"] = current_release
+    current["linkage_pct"] = round((100.0 * current["gamma_linked"] / current["decisions"]), 2) if current["decisions"] else None
+    current["legacy_rows_reconstructed"] = 0
+    current["latest_gamma_substitution_allowed"] = False
+    return {"current_release": current, "by_release": cohorts}
+
 def readiness(path: str|Path=DEFAULT_DB)->dict[str,Any]:
  with _connect(path) as c:
   total=c.execute('SELECT COUNT(*) n FROM decisions').fetchone()['n']; grade_eligible=c.execute('SELECT COUNT(*) n FROM decisions WHERE learning_eligible=1').fetchone()['n']
   graded=c.execute("SELECT COUNT(*) n FROM grading_results WHERE status='GRADED'").fetchone()['n']; excluded=c.execute("SELECT COUNT(*) n FROM grading_results WHERE status='EXCLUDED'").fetchone()['n']; pending=c.execute("SELECT COUNT(*) n FROM decisions WHERE status='PENDING'").fetchone()['n']; samples=c.execute('SELECT COUNT(*) n FROM price_samples').fetchone()['n']
   lastd=c.execute('SELECT MAX(observed_at) v FROM decisions').fetchone()['v']; lastg=c.execute("SELECT MAX(graded_at) v FROM grading_results WHERE status='GRADED'").fetchone()['v']
   gamma_linked=c.execute("SELECT COUNT(*) n FROM decisions WHERE canonical_gamma_snapshot_id IS NOT NULL").fetchone()['n']; gamma_missing=max(0,total-gamma_linked)
+  try:
+   manifest=json.loads((Path(__file__).resolve().parents[1]/"config"/"apex_release_manifest.json").read_text(encoding="utf-8"))
+   current_release=str(manifest.get("apex_version") or "69.10.15")
+  except Exception:
+   current_release="69.10.15"
+  gamma_release_linkage=_release_gamma_linkage(c,current_release)
   reasons={r['exclusion_reason']:r['n'] for r in c.execute("SELECT exclusion_reason,COUNT(*) n FROM grading_results WHERE status='EXCLUDED' GROUP BY exclusion_reason") if r['exclusion_reason']}
   eligibility_reasons={}; execution_actionable=0; observational_eligible=0
   for row in c.execute('SELECT snapshot_json FROM decisions'):
@@ -148,4 +177,4 @@ def readiness(path: str|Path=DEFAULT_DB)->dict[str,Any]:
  elif grade_eligible==0: status='NO_GRADE_ELIGIBLE_DECISIONS'
  elif pending>0 and samples==0: status='GRADING_WINDOW_NOT_MATURED'
  else: status='HEALTHY'
- return {'ok':True,'status':status,'decisions_recorded':total,'actionable_decisions':execution_actionable,'execution_actionable_decisions':execution_actionable,'grade_eligible_decisions':grade_eligible,'observational_eligible_decisions':observational_eligible,'feature_vectors_stored':grade_eligible,'matured_outcomes':graded+excluded,'graded_outcomes':graded,'excluded_outcomes':excluded,'pending_decisions':pending,'price_samples':samples,'shadow_observations':graded,'gamma_decisions_linked':gamma_linked,'gamma_decisions_missing_linkage':gamma_missing,'last_decision_write':lastd,'last_successful_grade':lastg,'exclusion_reasons':reasons,'eligibility_reasons':eligibility_reasons,'schema_version':SCHEMA_VERSION,'engine_version':VERSION,'execution_authority':False}
+ return {'ok':True,'status':status,'decisions_recorded':total,'actionable_decisions':execution_actionable,'execution_actionable_decisions':execution_actionable,'grade_eligible_decisions':grade_eligible,'observational_eligible_decisions':observational_eligible,'feature_vectors_stored':grade_eligible,'matured_outcomes':graded+excluded,'graded_outcomes':graded,'excluded_outcomes':excluded,'pending_decisions':pending,'price_samples':samples,'shadow_observations':graded,'gamma_decisions_linked':gamma_linked,'gamma_decisions_missing_linkage':gamma_missing,'gamma_release_linkage':gamma_release_linkage,'last_decision_write':lastd,'last_successful_grade':lastg,'exclusion_reasons':reasons,'eligibility_reasons':eligibility_reasons,'schema_version':SCHEMA_VERSION,'engine_version':VERSION,'execution_authority':False}

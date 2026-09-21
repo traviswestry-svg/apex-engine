@@ -451,7 +451,7 @@ def _continuity_for_new(path: str, snap: Mapping[str, Any]) -> Dict[str, Any]:
         return {"continuity_state": "UNKNOWN", "sequence_state": "MALFORMED_TIMESTAMP", "is_current_authority": False, "gap_seconds": None}
     provenance = str(snap.get("provenance_class") or "UNKNOWN").upper()
     replay_status = str(snap.get("replay_backfill_status") or "NONE").upper()
-    if provenance in {"REPLAYED", "BACKFILLED", "RECONSTRUCTED"} or replay_status not in {"", "NONE", "LIVE"}:
+    if provenance in {"REPLAYED", "BACKFILLED", "RECONSTRUCTED"} or replay_status not in {"", "NONE", "LIVE", "DECISION_TIME_CAPTURED"}:
         return {"continuity_state": "BACKFILLED", "sequence_state": "HISTORICAL_INSERT", "is_current_authority": False, "gap_seconds": None}
     try:
         with connect(path, timeout=10) as c:
@@ -460,6 +460,8 @@ def _continuity_for_new(path: str, snap: Mapping[str, Any]) -> Dict[str, Any]:
                 "SELECT * FROM gamma_observational_snapshots WHERE ticker=? "
                 "AND canonical_gamma_snapshot_id IS NOT NULL "
                 "AND provenance_class IN ('LIVE_OBSERVED','DECISION_TIME_CAPTURED') "
+                "AND is_current_authority=1 "
+                "AND COALESCE(replay_backfill_status,'NONE') IN ('','NONE','LIVE','DECISION_TIME_CAPTURED') "
                 "ORDER BY observed_at DESC LIMIT 1",
                 (str(snap.get("ticker") or "SPX"),),
             ).fetchone()
@@ -507,7 +509,8 @@ def get_snapshot_by_id(snapshot_id: str, *, db_path: Optional[str] = None) -> Op
         with connect(path, timeout=10) as c:
             c.row_factory = sqlite3.Row
             row = c.execute(
-                "SELECT * FROM gamma_observational_snapshots WHERE canonical_gamma_snapshot_id=? LIMIT 1",
+                "SELECT * FROM gamma_observational_snapshots WHERE canonical_gamma_snapshot_id=? "
+                "ORDER BY COALESCE(persisted_at, observed_at, '') DESC, COALESCE(observed_at, '') DESC, id DESC LIMIT 1",
                 (str(snapshot_id),),
             ).fetchone()
         return _row_to_snapshot(dict(row)) if row else None
@@ -526,6 +529,8 @@ def current_gamma_integrity(*, ticker: str = "SPX", db_path: Optional[str] = Non
             row = c.execute(
                 "SELECT * FROM gamma_observational_snapshots WHERE ticker=? "
                 "AND canonical_gamma_snapshot_id IS NOT NULL AND is_current_authority=1 "
+                "AND provenance_class IN ('LIVE_OBSERVED','DECISION_TIME_CAPTURED') "
+                "AND COALESCE(replay_backfill_status,'NONE') IN ('','NONE','LIVE','DECISION_TIME_CAPTURED') "
                 "ORDER BY observed_at DESC LIMIT 1", (str(ticker).upper(),),
             ).fetchone()
     except Exception:
@@ -683,7 +688,34 @@ def observe_gamma_transition(
             created = cur.rowcount > 0
             c.commit()
     except Exception:
-        created = False
+        return {
+            **transition,
+            "status": "UNAVAILABLE",
+            "canonical_gamma_snapshot_id": snap.get("canonical_gamma_snapshot_id"),
+            "gamma_observation_timestamp": snap.get("observed_at"),
+            "gamma_received_at": snap.get("received_at"),
+            "gamma_provider_source_timestamp": snap.get("provider_source_timestamp"),
+            "gamma_source_timestamp_provenance": snap.get("source_timestamp_provenance"),
+            "gamma_source": snap.get("source"),
+            "gamma_snapshot_age_seconds": snap.get("snapshot_age_seconds"),
+            "freshness_state": snap.get("freshness_state") or "UNKNOWN",
+            "continuity_state": snap.get("continuity_state") or "UNKNOWN",
+            "sequence_state": snap.get("sequence_state") or "UNKNOWN",
+            "provenance_class": snap.get("provenance_class") or "UNKNOWN",
+            "session_context_state": snap.get("session_context_state") or "UNKNOWN",
+            "snapshot_created": False,
+            "snapshot_deduplicated": False,
+            "is_current_authority": bool(snap.get("is_current_authority", False)),
+            "term_regime_divergence_available": bool(snap.get("term_regime_divergence_available")),
+            "evidence_integrity_available": False,
+            "version": VERSION,
+            "schema_version": SCHEMA_VERSION,
+            "gamma_provenance_metrics": metrics_snapshot(),
+            "behavioral_authority": False,
+            "execution_authority": False,
+            "automatic_calibration_activation": False,
+            "production_effect": "NONE",
+        }
     with _RUNTIME_LOCK:
         if created:
             _RUNTIME["gamma_snapshots_created"] += 1
