@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.17
+apex_version: 69.10.18
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -768,3 +768,18 @@ capabilities:
     production_effect: OPERATIONS_ONLY
     guardrails: [heartbeat_does_not_equal_full_scan_completion, background_learning_does_not_mask_stale_full_scan, stale_threshold_unchanged, process_completion_timestamp_used_only_when_heartbeat_fresh, lock_never_bypassed, bounded_retry_only_after_lock_busy, no_trade_decision_authority, no_execution_authority]
 
+
+  canonical_sample_identity_join_integrity_closure:
+    description: "Read-only exact sample-ID intersection audit across feature vectors, identity map, and sample excursions; distinguishes registered-without-excursion from identity divergence."
+    modules: [engine.flow_pl_store, engine.feature_store_writer]
+    status: active_evidence_integrity
+    version: 69.10.18
+    production_effect: EVIDENCE_INTEGRITY_ONLY
+    decision_authority: none
+    execution_authority: none
+    guardrails:
+      exact_sample_id_only: true
+      reconstructs_identity: false
+      fuzzy_matching: false
+      writes_evidence: false
+      historical_backfill: false
