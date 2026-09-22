@@ -1,11 +1,11 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.16
+apex_version: 69.10.17
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
     canonical_modules: [engine.flow_pl_store, engine.flow_pl_pipeline, engine.historical_evidence_lifecycle, app]
     status: active_evidence_integrity
-    version: "69.10.16"
+    version: "69.10.17"
     outputs: [exact_sample_excursion_recovery, decision_time_gamma_identity_propagation]
     decision_authority: none
     execution_authority: none
