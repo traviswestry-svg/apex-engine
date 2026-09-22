@@ -10,8 +10,8 @@ from engine.feature_store import frames_from_replay, resolve_frame_at_or_before
 
 def test_release_truth_and_replay_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.18"
-    assert manifest["build_name"] == "Canonical Sample Identity Join Integrity Closure"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.19"
+    assert manifest["build_name"] == "Canonical Feature Sample P/L Excursion Linkage Closure"
     g = manifest["guardrails"]
     assert g["spx_learning_replay_frame_producer_enabled"] is True
     assert g["spx_learning_replay_reuses_live_active_level_provider_inputs"] is True
@@ -25,7 +25,7 @@ def test_release_truth_and_replay_guardrails():
     assert g["replay_frame_availability_changes_execution_authority"] is False
 
     registry = Path("config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.18" in registry
+    assert "apex_version: 69.10.19" in registry
     assert "decision_time_replay_frame_availability_closure:" in registry
     assert "no_future_frame_join" in registry
     assert "no_staleness_relaxation" in registry

@@ -250,12 +250,20 @@ def run_flow_pl(
                     session_date=session, legacy_cluster_key=ckey_s,
                     decision_time=decision_time) if decision_time else None)
                 if identity:
-                    flow_pl_store.record_sample_excursion(
+                    cap = flow_pl_store.record_sample_excursion(
                         sample_id=identity["sample_id"], session_date=session,
                         ticker=priced.get("ticker"),
                         pl_dollars=priced.get("estimated_pl_dollars"),
                         cost_basis=priced.get("cost_basis_dollars"),
                         decision_time=decision_time, legacy_cluster_key=ckey_s)
+                    if cap:
+                        flow_pl_store.record_sample_pl_lifecycle(
+                            sample_id=identity["sample_id"], session_date=session,
+                            legacy_cluster_key=ckey_s, decision_time=decision_time,
+                            state=("PL_OBSERVED_EXCURSION_WRITTEN" if cap.get("first_sample")
+                                   else "PL_OBSERVED_EXCURSION_UPDATED"),
+                            reason="LATER_EXACT_TUPLE_REAL_PL", pl_observed=True,
+                            excursion_written=True)
             priced["cluster_key_string"] = ckey_s
             # The Step 3 cluster view, kept alongside the P/L view. The feature
             # writer needs the CLUSTER (end_time, aggression, print counts);
@@ -362,6 +370,11 @@ def capture_persisted_feature_excursions(targets: List[Dict[str, Any]]) -> Dict[
                 report["missing_pl"] += 1
                 flow_pl_store.record_capture_audit(
                     attempted=1, missing_pl=1, sample_id=sid, canonical_attempted=1)
+                flow_pl_store.record_sample_pl_lifecycle(
+                    sample_id=sid, session_date=target.get("session_date"),
+                    legacy_cluster_key=target.get("legacy_cluster_key"),
+                    decision_time=target.get("decision_time"), state="AWAITING_REAL_PL",
+                    reason="DEFERRED_CAPTURE_HAS_NO_REAL_PL")
                 continue
             cap = flow_pl_store.record_sample_excursion(
                 sample_id=sid,
@@ -375,8 +388,16 @@ def capture_persisted_feature_excursions(targets: List[Dict[str, Any]]) -> Dict[
             if cap:
                 if cap.get("first_sample"):
                     report["inserted"] += 1
+                    _state = "PL_OBSERVED_EXCURSION_WRITTEN"
                 else:
                     report["updated"] += 1
+                    _state = "PL_OBSERVED_EXCURSION_UPDATED"
+                flow_pl_store.record_sample_pl_lifecycle(
+                    sample_id=sid, session_date=target.get("session_date"),
+                    legacy_cluster_key=target.get("legacy_cluster_key"),
+                    decision_time=target.get("decision_time"), state=_state,
+                    reason="DEFERRED_EXACT_SAMPLE_REAL_PL", pl_observed=True,
+                    excursion_written=True)
             else:
                 report["errors"] += 1
         return report

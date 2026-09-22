@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from . import feature_store_writer
 
-VERSION = "69.10.18"
+VERSION = "69.10.19"
 SCHEMA_VERSION = "apex.flow_settlement_scheduler.v1.1"
 _ET = ZoneInfo("America/New_York")
 
