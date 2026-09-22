@@ -428,7 +428,7 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         "excursion_store": excursion_db,
         "match": bool(authority_match),
         "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
-        "release": "69.10.17",
+        "release": "69.10.18",
     }
     if not authority_match:
         report["state"] = "PERSISTENCE_AUTHORITY_MISMATCH"
@@ -456,6 +456,11 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         exc = flow_pl_store.get_sample_excursions(sample_ids)
         report["canonical_excursion_rows_found"] = len(exc or {})
         report["identity_basis"] = "CANONICAL_FEATURE_SAMPLE_ID"
+        # APEX 69.10.18: expose the exact persisted identity contract before any
+        # compatibility lookup. This is read-only observability and never repairs,
+        # reconstructs, or substitutes evidence.
+        report["canonical_identity_join_audit"] = flow_pl_store.audit_sample_identity_join(
+            sample_ids, session_date=session_date, sample_limit=5)
 
         # Evidence-backed compatibility only: a legacy coarse key may be used
         # when exactly ONE pending feature vector maps to that key for the

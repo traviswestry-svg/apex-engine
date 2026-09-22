@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.17_CANONICAL_FEATURE_EXCURSION_SETTLEMENT_IDENTITY_CLOSURE"
+STORE_VERSION = "69.10.18_CANONICAL_SAMPLE_IDENTITY_JOIN_INTEGRITY_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -527,6 +527,87 @@ def record_sample_excursion(*, sample_id: str, session_date: str,
             source=__name__, context={"db_path": _db_path(), "sample_id": sample_id},
         )
         return None
+
+
+def audit_sample_identity_join(sample_ids: List[str], *, session_date: Optional[str] = None, sample_limit: int = 5) -> Dict[str, Any]:
+    """Audit the persisted three-table canonical identity contract without repairing it.
+
+    APEX 69.10.18 is diagnostic-first: feature sample IDs are compared directly
+    with the identity bridge and sample excursion ledger.  No identity is
+    reconstructed, no coarse key is substituted, and no evidence is written.
+    """
+    ids = sorted({str(x) for x in (sample_ids or []) if x})
+    out: Dict[str, Any] = {
+        "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+        "release": "69.10.18",
+        "feature_sample_ids": len(ids),
+        "identity_map_matches": 0,
+        "excursion_matches": 0,
+        "registered_without_excursion": 0,
+        "excursion_without_identity_map": 0,
+        "identity_tuple_mismatches": 0,
+        "feature_only_ids": 0,
+        "exact_three_table_matches": 0,
+        "diagnostic_samples": [],
+        "writes_evidence": False,
+        "reconstructs_identity": False,
+    }
+    if not _DB_READY or not ids:
+        return out
+    try:
+        identity_rows: Dict[str, Dict[str, Any]] = {}
+        excursion_rows: Dict[str, Dict[str, Any]] = {}
+        with _conn() as c:
+            for i in range(0, len(ids), 400):
+                chunk = ids[i:i+400]
+                q = ",".join("?" * len(chunk))
+                args: List[Any] = list(chunk)
+                sess_clause = ""
+                if session_date:
+                    sess_clause = " AND session_date=?"
+                    args.append(session_date)
+                for r in c.execute(
+                    f"SELECT sample_id,session_date,legacy_cluster_key,decision_time FROM flow_sample_identity_map WHERE sample_id IN ({q}){sess_clause}", args):
+                    identity_rows[str(r["sample_id"])] = dict(r)
+                args2: List[Any] = list(chunk)
+                if session_date:
+                    args2.append(session_date)
+                for r in c.execute(
+                    f"SELECT sample_id,session_date,legacy_cluster_key,decision_time,samples FROM flow_sample_excursions WHERE sample_id IN ({q}){sess_clause}", args2):
+                    excursion_rows[str(r["sample_id"])] = dict(r)
+        im = set(identity_rows)
+        ex = set(excursion_rows)
+        fs = set(ids)
+        out["identity_map_matches"] = len(fs & im)
+        out["excursion_matches"] = len(fs & ex)
+        out["registered_without_excursion"] = len((fs & im) - ex)
+        out["excursion_without_identity_map"] = len((fs & ex) - im)
+        out["feature_only_ids"] = len(fs - im - ex)
+        out["exact_three_table_matches"] = len(fs & im & ex)
+        mismatches = []
+        for sid in sorted(fs & im & ex):
+            a, b = identity_rows[sid], excursion_rows[sid]
+            if (a.get("session_date") != b.get("session_date") or
+                a.get("decision_time") != b.get("decision_time") or
+                a.get("legacy_cluster_key") != b.get("legacy_cluster_key")):
+                mismatches.append(sid)
+        out["identity_tuple_mismatches"] = len(mismatches)
+        sample_ids_diag = sorted(fs - ex)[:max(0, int(sample_limit))]
+        for sid in sample_ids_diag:
+            ir = identity_rows.get(sid)
+            er = excursion_rows.get(sid)
+            out["diagnostic_samples"].append({
+                "sample_id": sid,
+                "identity_map_present": bool(ir),
+                "excursion_present": bool(er),
+                "identity_session_date": ir.get("session_date") if ir else None,
+                "identity_decision_time": ir.get("decision_time") if ir else None,
+                "identity_legacy_cluster_key": ir.get("legacy_cluster_key") if ir else None,
+            })
+        return out
+    except Exception as e:
+        out["error"] = type(e).__name__
+        return out
 
 def get_sample_excursions(sample_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     """Return exact sample-scoped excursions. No legacy-key fallback is allowed."""

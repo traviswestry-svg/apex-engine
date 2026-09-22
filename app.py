@@ -7720,7 +7720,7 @@ def api_institutional_os():
                 session_is_tradeable=session_ctx.get("is_tradeable_session", False),
             )
 
-            # APEX 69.10.17 — preserve the exact scanner-owned gamma observation
+            # APEX 69.10.18 — preserve the exact scanner-owned gamma observation
             # fetched as an input to this composition. The institutional builder
             # projects regime fields but historically dropped canonical transition
             # identity. This is propagation only; no newer/latest gamma lookup.
@@ -8642,7 +8642,7 @@ def api_institutional_os():
                     # can reuse this reference without querying a newer gamma row.
                     "canonical_gamma_snapshot_id": _apex69_capture.get("canonical_gamma_snapshot_id"),
                     "gamma_linkage_status": _apex69_capture.get("gamma_linkage_status"),
-                    "version": "69.10.17",
+                    "version": "69.10.18",
                     "execution_authority": False,
                 }
             except Exception as _apex69_capture_err:
