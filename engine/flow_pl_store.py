@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.18_CANONICAL_SAMPLE_IDENTITY_JOIN_INTEGRITY_CLOSURE"
+STORE_VERSION = "69.10.19_CANONICAL_FEATURE_SAMPLE_PL_EXCURSION_LINKAGE_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -171,6 +171,25 @@ def init_db() -> bool:
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_fsim_lookup "
                       "ON flow_sample_identity_map(session_date, legacy_cluster_key)")
+            # APEX 69.10.19: durable observational lifecycle for exact canonical
+            # feature-sample P/L linkage. This table records why a registered sample
+            # does or does not have an excursion; it never manufactures P/L.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_sample_pl_lifecycle (
+                       sample_id TEXT PRIMARY KEY,
+                       session_date TEXT NOT NULL,
+                       legacy_cluster_key TEXT NOT NULL,
+                       decision_time TEXT NOT NULL,
+                       state TEXT NOT NULL,
+                       reason TEXT,
+                       first_registered_at TEXT NOT NULL,
+                       last_observed_at TEXT NOT NULL,
+                       pl_observations INTEGER DEFAULT 0,
+                       excursion_writes INTEGER DEFAULT 0
+                   )"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_fspl_state "
+                      "ON flow_sample_pl_lifecycle(session_date, state)")
             # APEX 69.3: durable capture audit. This is observability only; it
             # never manufactures excursion evidence and never participates in
             # label selection.
@@ -375,6 +394,56 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
                     and row["sample_id"] == sample_id)
     except Exception:
         return False
+
+
+def record_sample_pl_lifecycle(*, sample_id: str, session_date: str,
+                               legacy_cluster_key: str, decision_time: str,
+                               state: str, reason: Optional[str] = None,
+                               pl_observed: bool = False, excursion_written: bool = False) -> bool:
+    """Record the exact canonical sample's real-P/L linkage state.
+
+    APEX 69.10.19 observability only: callers must already possess the persisted
+    canonical sample_id. This function never resolves, reconstructs, or substitutes
+    identity and never creates P/L/excursion evidence.
+    """
+    if not _DB_READY or not all((sample_id, session_date, legacy_cluster_key, decision_time, state)):
+        return False
+    try:
+        now = _now_iso()
+        with _LOCK, _conn() as c:
+            c.execute(
+                """INSERT INTO flow_sample_pl_lifecycle
+                   (sample_id,session_date,legacy_cluster_key,decision_time,state,reason,
+                    first_registered_at,last_observed_at,pl_observations,excursion_writes)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(sample_id) DO UPDATE SET
+                     state=excluded.state, reason=excluded.reason,
+                     last_observed_at=excluded.last_observed_at,
+                     pl_observations=flow_sample_pl_lifecycle.pl_observations+excluded.pl_observations,
+                     excursion_writes=flow_sample_pl_lifecycle.excursion_writes+excluded.excursion_writes""",
+                (sample_id,session_date,legacy_cluster_key,decision_time,state,reason,now,now,
+                 1 if pl_observed else 0, 1 if excursion_written else 0))
+            c.commit()
+        return True
+    except Exception:
+        return False
+
+
+def sample_pl_lifecycle_health() -> Dict[str, Any]:
+    out = {"version": "69.10.19", "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+           "writes_evidence": False, "reconstructs_identity": False, "states": {},
+           "registered_samples": 0, "pl_observations": 0, "excursion_writes": 0}
+    if not _DB_READY:
+        return out
+    try:
+        with _conn() as c:
+            rows=c.execute("SELECT state,COUNT(*) n FROM flow_sample_pl_lifecycle GROUP BY state").fetchall()
+            out["states"]={r["state"]: r["n"] for r in rows}
+            r=c.execute("SELECT COUNT(*) n,COALESCE(SUM(pl_observations),0) p,COALESCE(SUM(excursion_writes),0) w FROM flow_sample_pl_lifecycle").fetchone()
+            out.update({"registered_samples":r["n"],"pl_observations":r["p"],"excursion_writes":r["w"]})
+    except Exception as exc:
+        out["error"]=f"{type(exc).__name__}: {exc}"
+    return out
 
 
 def resolve_exact_sample_identity(*, session_date: str, legacy_cluster_key: str,
@@ -665,6 +734,7 @@ def sample_excursion_health() -> Dict[str, Any]:
                 out["capture"] = {k: audit[k] for k in audit.keys() if k != "id"}
                 out["capture"]["legacy_missing_feature_sample_includes_pre_69_10_5_source_stage"] = True
                 out["capture"]["canonical_counter_start_release"] = "69.10.5"
+                out["pl_excursion_linkage_lifecycle"] = sample_pl_lifecycle_health()
     except Exception as exc:  # pragma: no cover
         out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
     return out

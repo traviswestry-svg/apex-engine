@@ -164,6 +164,11 @@ def _capture_exact_persisted_sample(*, report: Dict[str, Any], sid: str,
             errors=1, sample_id=sid, identity_registration_failure=1)
         return
 
+    flow_pl_store.record_sample_pl_lifecycle(
+        sample_id=sid, session_date=session_date, legacy_cluster_key=legacy_cluster_key,
+        decision_time=decision_time, state="REGISTERED_AWAITING_REAL_PL",
+        reason="POST_PERSISTENCE_IDENTITY_REGISTERED")
+
     target = {
         "sample_id": sid,
         "session_date": session_date,
@@ -182,6 +187,10 @@ def _capture_exact_persisted_sample(*, report: Dict[str, Any], sid: str,
         report["excursion_missing_pl"] += 1
         flow_pl_store.record_capture_audit(
             attempted=1, missing_pl=1, sample_id=sid, canonical_attempted=1)
+        flow_pl_store.record_sample_pl_lifecycle(
+            sample_id=sid, session_date=session_date, legacy_cluster_key=legacy_cluster_key,
+            decision_time=decision_time, state="AWAITING_REAL_PL",
+            reason="WRITER_OBSERVATION_HAS_NO_REAL_PL")
         return
 
     if not flow_pl_store.is_ready():
@@ -197,8 +206,14 @@ def _capture_exact_persisted_sample(*, report: Dict[str, Any], sid: str,
     if cap:
         if cap.get("first_sample"):
             report["excursions_inserted"] += 1
+            _state = "PL_OBSERVED_EXCURSION_WRITTEN"
         else:
             report["excursions_updated"] += 1
+            _state = "PL_OBSERVED_EXCURSION_UPDATED"
+        flow_pl_store.record_sample_pl_lifecycle(
+            sample_id=sid, session_date=session_date, legacy_cluster_key=legacy_cluster_key,
+            decision_time=decision_time, state=_state, reason="WRITER_REAL_PL",
+            pl_observed=True, excursion_written=True)
     else:
         report["excursion_capture_errors"] += 1
 
