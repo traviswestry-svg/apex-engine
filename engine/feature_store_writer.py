@@ -412,6 +412,28 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
     if not flow_pl_store.is_ready():
         report["state"] = "FLOW_PL_STORE_NOT_READY"
         return report
+
+    # APEX 69.10.17 — settlement is allowed only when the immutable feature
+    # store and canonical excursion ledger resolve to the same persistence
+    # authority.  This catches late DB_PATH injection/process-start ordering
+    # explicitly instead of presenting a false "missing excursion" diagnosis.
+    feature_db = feature_store_db.active_db_path()
+    excursion_db = flow_pl_store.active_db_path()
+    try:
+        authority_match = os.path.abspath(feature_db) == os.path.abspath(excursion_db)
+    except Exception:
+        authority_match = feature_db == excursion_db
+    report["persistence_authority"] = {
+        "feature_store": feature_db,
+        "excursion_store": excursion_db,
+        "match": bool(authority_match),
+        "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+        "release": "69.10.17",
+    }
+    if not authority_match:
+        report["state"] = "PERSISTENCE_AUTHORITY_MISMATCH"
+        report["errors"] = int(report.get("errors") or 0) + 1
+        return report
     try:
         pending = feature_store_db.unlabelled_samples(session_date)
         report["pending"] = len(pending)

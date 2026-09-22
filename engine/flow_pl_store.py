@@ -35,22 +35,35 @@ from typing import Any, Dict, List, Optional
 from .canonical_persistence import connect as canonical_connect
 from .silent_degradation_observability import record_degradation
 
-_DB_PATH = os.getenv("DB_PATH", "apex_tracking.db")
+_DB_PATH = None
+
+def _db_path() -> str:
+    """Resolve canonical DB authority at call time.
+
+    APEX 69.10.17: scanner/web processes may inject DB_PATH after module import.
+    Freezing the path at import can split feature and excursion evidence across
+    different SQLite files while both stores individually report healthy.
+    Explicit _DB_PATH overrides remain supported for tests and controlled tools.
+    """
+    return _DB_PATH or os.getenv("DB_PATH", "apex_tracking.db")
+
+def active_db_path() -> str:
+    return _db_path()
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.16_CANONICAL_SETTLEMENT_IDENTITY_CLOSURE"
+STORE_VERSION = "69.10.17_CANONICAL_FEATURE_EXCURSION_SETTLEMENT_IDENTITY_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
-    return canonical_connect(_DB_PATH, timeout=10)
+    return canonical_connect(_db_path(), timeout=10)
 
 
 def init_db() -> bool:
     """Create/upgrade the tracking table. Non-fatal: disables tracking on error."""
     global _DB_READY
     try:
-        d = os.path.dirname(_DB_PATH)
+        d = os.path.dirname(_db_path())
         if d:
             os.makedirs(d, exist_ok=True)
         with _conn() as c:
@@ -199,9 +212,9 @@ def init_db() -> bool:
         record_degradation(
             component="flow_pl_store", operation="init_db", exc=e,
             fallback="FLOW_PL_TRACKING_DISABLED", decision_authority_suppressed=False,
-            source=__name__, context={"db_path": _DB_PATH},
+            source=__name__, context={"db_path": _db_path()},
         )
-        print(f"Flow P/L tracking DISABLED — DB init failed at '{_DB_PATH}': {e}", flush=True)
+        print(f"Flow P/L tracking DISABLED — DB init failed at '{_db_path()}': {e}", flush=True)
     return _DB_READY
 
 
@@ -276,7 +289,7 @@ def record_observation(pl: Dict[str, Any], *, cluster_key: Optional[str] = None,
         record_degradation(
             component="flow_pl_store", operation="record_observation", exc=e,
             fallback="OBSERVATION_NOT_PERSISTED", decision_authority_suppressed=False,
-            source=__name__, context={"db_path": _DB_PATH},
+            source=__name__, context={"db_path": _db_path()},
         )
         print(f"flow_pl_store.record_observation failed (non-fatal): {e}", flush=True)
         return None
@@ -324,7 +337,7 @@ def get_excursions(event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         record_degradation(
             component="flow_pl_store", operation="get_excursions", exc=e,
             fallback="EMPTY_EXCURSION_HISTORY", decision_authority_suppressed=False,
-            source=__name__, context={"db_path": _DB_PATH},
+            source=__name__, context={"db_path": _db_path()},
         )
         print(f"flow_pl_store.get_excursions failed (non-fatal): {e}", flush=True)
         return {}
@@ -511,7 +524,7 @@ def record_sample_excursion(*, sample_id: str, session_date: str,
         record_degradation(
             component="flow_pl_store", operation="record_sample_excursion", exc=e,
             fallback="SAMPLE_EXCURSION_NOT_PERSISTED", decision_authority_suppressed=False,
-            source=__name__, context={"db_path": _DB_PATH, "sample_id": sample_id},
+            source=__name__, context={"db_path": _db_path(), "sample_id": sample_id},
         )
         return None
 
@@ -542,7 +555,7 @@ def get_sample_excursions(sample_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         record_degradation(
             component="flow_pl_store", operation="get_sample_excursions", exc=e,
             fallback="EMPTY_SAMPLE_EXCURSION_HISTORY", decision_authority_suppressed=False,
-            source=__name__, context={"db_path": _DB_PATH},
+            source=__name__, context={"db_path": _db_path()},
         )
         return {}
 
@@ -578,7 +591,7 @@ def sample_excursion_health() -> Dict[str, Any]:
 
 def health() -> Dict[str, Any]:
     info: Dict[str, Any] = {"ready": _DB_READY, "store_version": STORE_VERSION,
-                            "db_path": _DB_PATH, "tracked_events": None}
+                            "db_path": _db_path(), "tracked_events": None}
     if _DB_READY:
         try:
             with _conn() as c:
@@ -644,7 +657,7 @@ def record_cluster_observation(*, cluster_key: str, session_date: str,
         record_degradation(
             component="flow_pl_store", operation="record_cluster_observation", exc=e,
             fallback="CLUSTER_OBSERVATION_NOT_PERSISTED", decision_authority_suppressed=False,
-            source=__name__, context={"db_path": _DB_PATH},
+            source=__name__, context={"db_path": _db_path()},
         )
         print(f"flow_pl_store.record_cluster_observation failed (non-fatal): {e}", flush=True)
         return None
@@ -681,7 +694,7 @@ def get_cluster_excursions(cluster_keys: List[str], session_date: str
         record_degradation(
             component="flow_pl_store", operation="get_cluster_excursions", exc=e,
             fallback="EMPTY_CLUSTER_EXCURSION_HISTORY", decision_authority_suppressed=False,
-            source=__name__, context={"db_path": _DB_PATH},
+            source=__name__, context={"db_path": _db_path()},
         )
         print(f"flow_pl_store.get_cluster_excursions failed (non-fatal): {e}", flush=True)
         return {}

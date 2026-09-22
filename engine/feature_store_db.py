@@ -51,6 +51,11 @@ _DB_PATH = None
 
 def _db_path() -> str:
     return _DB_PATH or os.getenv("DB_PATH", "apex_tracking.db")
+
+
+def active_db_path() -> str:
+    """Return the effective canonical persistence path for reconciliation telemetry."""
+    return _db_path()
 _LOCK = threading.Lock()
 _DB_READY = False
 
