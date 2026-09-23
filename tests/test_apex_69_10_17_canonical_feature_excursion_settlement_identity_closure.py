@@ -9,8 +9,8 @@ from engine import feature_store_writer as writer
 
 def test_release_truth_69_10_17():
     m=json.load(open('config/apex_release_manifest.json'))
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.19'
-    assert m['build_name']=='Canonical Feature Sample P/L Excursion Linkage Closure'
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.20'
+    assert m['build_name']=='Canonical Excursion Write-to-Settlement Read Closure'
 
 
 def test_flow_store_db_path_is_dynamic_after_import(monkeypatch, tmp_path):
