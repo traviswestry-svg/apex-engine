@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.19
+apex_version: 69.10.20
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -801,3 +801,15 @@ capabilities:
       fuzzy_matching: false
       historical_backfill: false
       lifecycle_writes_evidence: false
+
+  canonical_excursion_write_settlement_read_closure:
+    version: 69.10.20
+    state: ACTIVE_OBSERVABILITY
+    identity_basis: CANONICAL_FEATURE_SAMPLE_ID
+    write_table: flow_sample_excursions
+    settlement_reader: get_sample_excursions
+    immediate_exact_readback_required: true
+    reconstructs_identity: false
+    writes_evidence: false
+    changes_trade_decisions: false
+    execution_authority: false

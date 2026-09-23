@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.19",
-  "build_name": "Canonical Feature Sample P/L Excursion Linkage Closure",
+  "apex_version": "69.10.20",
+  "build_name": "Canonical Excursion Write-to-Settlement Read Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -581,15 +581,20 @@
     "sample_pl_reconstruction_allowed": false,
     "synthetic_excursion_allowed": false,
     "fuzzy_sample_recovery_allowed": false,
-    "pl_excursion_lifecycle_observational_only": true
+    "pl_excursion_lifecycle_observational_only": true,
+    "excursion_write_readback_required": true,
+    "excursion_write_readback_reader": "get_sample_excursions",
+    "excursion_write_readback_exact_sample_id_only": true,
+    "excursion_write_readback_writes_evidence": false,
+    "excursion_write_readback_reconstructs_identity": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.19",
-  "application_version": "69.10.19",
+  "semantic_version": "69.10.20",
+  "application_version": "69.10.20",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

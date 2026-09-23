@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.19_CANONICAL_FEATURE_SAMPLE_PL_EXCURSION_LINKAGE_CLOSURE"
+STORE_VERSION = "69.10.20_CANONICAL_EXCURSION_WRITE_SETTLEMENT_READ_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -224,6 +224,28 @@ def init_db() -> bool:
                 if col not in audit_cols:
                     c.execute(f"ALTER TABLE flow_excursion_capture_audit ADD COLUMN {col} {decl}")
             c.execute("INSERT OR IGNORE INTO flow_excursion_capture_audit(id) VALUES (1)")
+            # APEX 69.10.20: prove that every canonical excursion counted as a
+            # successful write is immediately retrievable through the exact same
+            # public read contract used by settlement. Observability only.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_excursion_write_readback_audit (
+                       id INTEGER PRIMARY KEY CHECK (id=1),
+                       write_commits INTEGER DEFAULT 0,
+                       readback_attempts INTEGER DEFAULT 0,
+                       readback_verified INTEGER DEFAULT 0,
+                       readback_missing INTEGER DEFAULT 0,
+                       readback_identity_mismatch INTEGER DEFAULT 0,
+                       last_sample_id TEXT,
+                       last_session_date TEXT,
+                       last_db_path TEXT,
+                       last_table TEXT,
+                       last_write_mode TEXT,
+                       last_rows_affected INTEGER,
+                       last_readback_found INTEGER,
+                       last_verified_at TEXT
+                   )"""
+            )
+            c.execute("INSERT OR IGNORE INTO flow_excursion_write_readback_audit(id) VALUES (1)")
             c.commit()
         _DB_READY = True
     except Exception as e:  # pragma: no cover
@@ -535,6 +557,57 @@ def record_capture_audit(*, attempted: int = 0, inserted: int = 0, updated: int 
         return
 
 
+def _record_write_readback_audit(*, sample_id: str, session_date: str,
+                                 write_mode: str, rows_affected: int,
+                                 readback_found: bool, identity_match: bool) -> None:
+    """Persist 69.10.20 write/read observability; never selects evidence."""
+    if not _DB_READY:
+        return
+    try:
+        verified = bool(readback_found and identity_match)
+        with _LOCK, _conn() as c:
+            c.execute(
+                """UPDATE flow_excursion_write_readback_audit SET
+                     write_commits=write_commits+1,
+                     readback_attempts=readback_attempts+1,
+                     readback_verified=readback_verified+?,
+                     readback_missing=readback_missing+?,
+                     readback_identity_mismatch=readback_identity_mismatch+?,
+                     last_sample_id=?, last_session_date=?, last_db_path=?,
+                     last_table='flow_sample_excursions', last_write_mode=?,
+                     last_rows_affected=?, last_readback_found=?, last_verified_at=?
+                   WHERE id=1""",
+                (1 if verified else 0, 0 if readback_found else 1,
+                 1 if readback_found and not identity_match else 0,
+                 sample_id, session_date, os.path.abspath(_db_path()), write_mode,
+                 int(rows_affected or 0), 1 if readback_found else 0, _now_iso()),
+            )
+            c.commit()
+    except Exception:
+        return
+
+
+def excursion_write_readback_health() -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "version": "69.10.20", "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+        "db_path": os.path.abspath(_db_path()), "table": "flow_sample_excursions",
+        "reader": "get_sample_excursions", "write_commits": 0,
+        "readback_attempts": 0, "readback_verified": 0, "readback_missing": 0,
+        "readback_identity_mismatch": 0, "writes_evidence": False,
+        "reconstructs_identity": False,
+    }
+    if not _DB_READY:
+        return out
+    try:
+        with _conn() as c:
+            r = c.execute("SELECT * FROM flow_excursion_write_readback_audit WHERE id=1").fetchone()
+            if r:
+                out.update({k: r[k] for k in r.keys() if k != "id"})
+    except Exception as e:
+        out["error"] = type(e).__name__
+    return out
+
+
 def record_sample_excursion(*, sample_id: str, session_date: str,
                             ticker: Optional[str], pl_dollars: Optional[float],
                             cost_basis: Optional[float], decision_time: Optional[str] = None,
@@ -584,6 +657,24 @@ def record_sample_excursion(*, sample_id: str, session_date: str,
                 result = {"sample_id": sample_id, "samples": (row["samples"] or 0) + 1,
                           "first_sample": False, "mfe_dollars": mfe, "mae_dollars": mae}
                 audit_updated = 1
+        # APEX 69.10.20: post-commit exact read-after-write using the same
+        # retrieval function settlement calls. A write is not reported successful
+        # unless that exact canonical sample_id is visible through this contract.
+        readback = get_sample_excursions([sample_id])
+        rb = (readback or {}).get(sample_id)
+        readback_found = rb is not None
+        identity_match = bool(readback_found)  # dict key is the persisted exact sample_id
+        _record_write_readback_audit(
+            sample_id=sample_id, session_date=session_date,
+            write_mode="INSERT" if audit_inserted else "UPDATE",
+            rows_affected=1, readback_found=readback_found, identity_match=identity_match)
+        if not readback_found:
+            record_capture_audit(attempted=1, errors=1, sample_id=sample_id,
+                                 canonical_attempted=1)
+            return None
+        result["readback_verified"] = True
+        result["readback_db_path"] = os.path.abspath(_db_path())
+        result["readback_table"] = "flow_sample_excursions"
         record_capture_audit(attempted=1, inserted=audit_inserted, updated=audit_updated,
                              sample_id=sample_id, success=True, canonical_attempted=1)
         return result
@@ -735,6 +826,7 @@ def sample_excursion_health() -> Dict[str, Any]:
                 out["capture"]["legacy_missing_feature_sample_includes_pre_69_10_5_source_stage"] = True
                 out["capture"]["canonical_counter_start_release"] = "69.10.5"
                 out["pl_excursion_linkage_lifecycle"] = sample_pl_lifecycle_health()
+                out["excursion_write_readback"] = excursion_write_readback_health()
     except Exception as exc:  # pragma: no cover
         out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
     return out
