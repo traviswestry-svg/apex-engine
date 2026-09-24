@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.20",
-  "build_name": "Canonical Excursion Write-to-Settlement Read Closure",
+  "apex_version": "69.10.21",
+  "build_name": "Canonical Settlement Cohort Identity Reconciliation",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "6",
-  "released_at": "2026-09-21",
+  "released_at": "2026-09-24",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -586,15 +586,24 @@
     "excursion_write_readback_reader": "get_sample_excursions",
     "excursion_write_readback_exact_sample_id_only": true,
     "excursion_write_readback_writes_evidence": false,
-    "excursion_write_readback_reconstructs_identity": false
+    "excursion_write_readback_reconstructs_identity": false,
+    "canonical_settlement_cohort_reconciliation": true,
+    "canonical_settlement_cohort_reconciliation_version": "69.10.21",
+    "canonical_settlement_cohort_exact_sample_id_only": true,
+    "canonical_settlement_cohort_writes_evidence": false,
+    "canonical_settlement_cohort_reconstructs_identity": false,
+    "canonical_settlement_cohort_fuzzy_matching": false,
+    "canonical_settlement_cohort_historical_backfill": false,
+    "canonical_settlement_cohort_changes_trade_decisions": false,
+    "canonical_settlement_cohort_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.20",
-  "application_version": "69.10.20",
+  "semantic_version": "69.10.21",
+  "application_version": "69.10.21",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
