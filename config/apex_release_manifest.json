@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.21",
-  "build_name": "Canonical Settlement Cohort Identity Reconciliation",
+  "apex_version": "69.10.22",
+  "build_name": "Canonical Feature Sample Excursion Ownership Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -595,15 +595,22 @@
     "canonical_settlement_cohort_fuzzy_matching": false,
     "canonical_settlement_cohort_historical_backfill": false,
     "canonical_settlement_cohort_changes_trade_decisions": false,
-    "canonical_settlement_cohort_changes_execution_authority": false
+    "canonical_settlement_cohort_changes_execution_authority": false,
+    "canonical_feature_sample_excursion_ownership_required": true,
+    "canonical_excursion_write_requires_registered_owner": true,
+    "canonical_pending_outcome_eligibility_version": "69.10.22",
+    "canonical_pending_outcome_audit_writes_evidence": false,
+    "canonical_pending_outcome_reconstructs_identity": false,
+    "canonical_pending_outcome_fuzzy_matching": false,
+    "canonical_pending_outcome_synthetic_pl": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.21",
-  "application_version": "69.10.21",
+  "semantic_version": "69.10.22",
+  "application_version": "69.10.22",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

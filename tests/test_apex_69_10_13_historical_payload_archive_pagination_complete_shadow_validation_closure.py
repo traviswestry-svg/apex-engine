@@ -14,14 +14,14 @@ def _trigger_db(path: Path, n: int = 12):
 
 def test_release_identity_and_registry_alignment():
     m = json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-    assert m['apex_version'] == m['semantic_version'] == m['application_version'] == '69.10.21'
-    assert m['build_name'] == 'Canonical Settlement Cohort Identity Reconciliation'
+    assert m['apex_version'] == m['semantic_version'] == m['application_version'] == '69.10.22'
+    assert m['build_name'] == 'Canonical Feature Sample Excursion Ownership Closure'
     g = m['guardrails']
     assert g['historical_payload_archive_resumable_batches'] is True
     assert g['historical_payload_archive_batch_max_rows'] == 500
     assert g['historical_payload_shadow_validation_paginated'] is True
     registry = (ROOT/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.21' in registry
+    assert 'apex_version: 69.10.22' in registry
     assert 'historical_payload_archive_pagination_complete_shadow_validation_closure:' in registry
 
 

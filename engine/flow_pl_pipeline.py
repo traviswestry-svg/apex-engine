@@ -255,7 +255,8 @@ def run_flow_pl(
                         ticker=priced.get("ticker"),
                         pl_dollars=priced.get("estimated_pl_dollars"),
                         cost_basis=priced.get("cost_basis_dollars"),
-                        decision_time=decision_time, legacy_cluster_key=ckey_s)
+                        decision_time=decision_time, legacy_cluster_key=ckey_s,
+                        require_registered_owner=True)
                     if cap:
                         flow_pl_store.record_sample_pl_lifecycle(
                             sample_id=identity["sample_id"], session_date=session,
@@ -384,6 +385,7 @@ def capture_persisted_feature_excursions(targets: List[Dict[str, Any]]) -> Dict[
                 cost_basis=target.get("cost_basis"),
                 decision_time=target.get("decision_time"),
                 legacy_cluster_key=target.get("legacy_cluster_key"),
+                require_registered_owner=True,
             )
             if cap:
                 if cap.get("first_sample"):
