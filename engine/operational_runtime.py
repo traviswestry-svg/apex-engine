@@ -106,7 +106,7 @@ def write_settlement_reconciliation(payload: Dict[str, Any]) -> None:
     body = dict(payload or {})
     body["persisted_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     body["schema_version"] = "apex.flow_settlement_reconciliation.v1"
-    body["version"] = "69.10.21"
+    body["version"] = "69.10.22"
     body["read_only_diagnostic"] = True
     body["execution_authority"] = False
     path = settlement_reconciliation_path()

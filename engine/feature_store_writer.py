@@ -202,7 +202,7 @@ def _capture_exact_persisted_sample(*, report: Dict[str, Any], sid: str,
         sample_id=sid, session_date=session_date,
         ticker=target["ticker"], pl_dollars=target["pl_dollars"],
         cost_basis=target["cost_basis"], decision_time=decision_time,
-        legacy_cluster_key=legacy_cluster_key)
+        legacy_cluster_key=legacy_cluster_key, require_registered_owner=True)
     if cap:
         if cap.get("first_sample"):
             report["excursions_inserted"] += 1
@@ -482,6 +482,12 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         report["canonical_settlement_cohort_reconciliation"] = (
             flow_pl_store.reconcile_settlement_excursion_cohort(
                 sample_ids, session_date=session_date, sample_limit=10))
+        # APEX 69.10.22: pending means unlabelled, not necessarily broken.
+        # Classify exact pending IDs by whether genuine P/L was ever observed and
+        # whether the persisted identity/excursion ownership contract is intact.
+        report["canonical_pending_outcome_eligibility"] = (
+            flow_pl_store.audit_pending_sample_outcome_eligibility(
+                sample_ids, session_date=session_date, sample_limit=10))
 
         # Evidence-backed compatibility only: a legacy coarse key may be used
         # when exactly ONE pending feature vector maps to that key for the
@@ -602,6 +608,21 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
             "reconstructs_identity": False,
             "fuzzy_matching": False,
         },
+        "canonical_pending_outcome_summary": {
+            "version": "69.10.22",
+            "pending_sample_ids": 0,
+            "registered_identity": 0,
+            "exact_excursion_present": 0,
+            "awaiting_real_pl": 0,
+            "pl_observed_without_excursion": 0,
+            "excursion_state_without_excursion": 0,
+            "no_lifecycle_record": 0,
+            "feature_only_unregistered": 0,
+            "ownership_integrity_failures": 0,
+            "writes_evidence": False,
+            "reconstructs_identity": False,
+            "fuzzy_matching": False,
+        },
         "writer_version": WRITER_VERSION,
         "observability_version": "69.3.0",
     }
@@ -633,6 +654,13 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
                           "excursion_not_requested", "identity_map_only_requested",
                           "feature_only_requested"):
                 cs[field] += int(cr.get(field) or 0)
+            pe = row.get("canonical_pending_outcome_eligibility") or {}
+            ps = report["canonical_pending_outcome_summary"]
+            for field in ("pending_sample_ids", "registered_identity", "exact_excursion_present",
+                          "awaiting_real_pl", "pl_observed_without_excursion",
+                          "excursion_state_without_excursion", "no_lifecycle_record",
+                          "feature_only_unregistered", "ownership_integrity_failures"):
+                ps[field] += int(pe.get(field) or 0)
             report["session_reports"].append({"session_date": session_date, **row})
         if report["labelled"]:
             report["state"] = "RECOVERED_LABELS"

@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.21_CANONICAL_SETTLEMENT_COHORT_IDENTITY_RECONCILIATION"
+STORE_VERSION = "69.10.22_CANONICAL_FEATURE_SAMPLE_EXCURSION_OWNERSHIP_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -468,6 +468,32 @@ def sample_pl_lifecycle_health() -> Dict[str, Any]:
     return out
 
 
+
+def verify_sample_identity_owner(*, sample_id: str, session_date: str,
+                                 legacy_cluster_key: str, decision_time: str) -> bool:
+    """Verify that an excursion write is owned by the exact persisted feature identity.
+
+    APEX 69.10.22 is fail-closed: canonical callers may not write an excursion merely
+    because they possess a sample_id.  The immutable sample_id and its complete
+    persisted identity tuple must already agree in ``flow_sample_identity_map``.
+    This never reconstructs or substitutes identity.
+    """
+    if not _DB_READY or not all((sample_id, session_date, legacy_cluster_key, decision_time)):
+        return False
+    try:
+        with _conn() as c:
+            row = c.execute(
+                """SELECT sample_id,session_date,legacy_cluster_key,decision_time
+                   FROM flow_sample_identity_map WHERE sample_id=? LIMIT 1""",
+                (sample_id,),
+            ).fetchone()
+        return bool(row and row["sample_id"] == sample_id
+                    and row["session_date"] == session_date
+                    and row["legacy_cluster_key"] == legacy_cluster_key
+                    and row["decision_time"] == decision_time)
+    except Exception:
+        return False
+
 def resolve_exact_sample_identity(*, session_date: str, legacy_cluster_key: str,
                                   decision_time: str) -> Optional[Dict[str, Any]]:
     """Resolve only an exact persisted feature identity tuple.
@@ -611,13 +637,20 @@ def excursion_write_readback_health() -> Dict[str, Any]:
 def record_sample_excursion(*, sample_id: str, session_date: str,
                             ticker: Optional[str], pl_dollars: Optional[float],
                             cost_basis: Optional[float], decision_time: Optional[str] = None,
-                            legacy_cluster_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                            legacy_cluster_key: Optional[str] = None,
+                            require_registered_owner: bool = False) -> Optional[Dict[str, Any]]:
     """Persist MFE/MAE under the exact immutable feature ``sample_id``.
 
     APEX 69.3 keeps the immutable sample as the only label-selecting identity and
     records durable capture telemetry outside the database write lock.
     """
     if not _DB_READY or not sample_id or pl_dollars is None:
+        return None
+    if require_registered_owner and not verify_sample_identity_owner(
+            sample_id=sample_id, session_date=session_date,
+            legacy_cluster_key=legacy_cluster_key or "", decision_time=decision_time or ""):
+        record_capture_audit(attempted=1, errors=1, sample_id=sample_id,
+                             canonical_attempted=1, identity_registration_failure=1)
         return None
     try:
         now = _now_iso()
@@ -688,6 +721,94 @@ def record_sample_excursion(*, sample_id: str, session_date: str,
         )
         return None
 
+
+
+def audit_pending_sample_outcome_eligibility(sample_ids: List[str], *,
+                                             session_date: Optional[str] = None,
+                                             sample_limit: int = 10) -> Dict[str, Any]:
+    """Classify unlabelled feature samples by exact outcome-evidence state.
+
+    This is read-only evidence observability.  A pending feature is not assumed to
+    be broken merely because it lacks an excursion: genuine P/L may never have
+    been observable.  Conversely, any persisted lifecycle claiming P/L/excursion
+    activity without an exact excursion row is surfaced as an integrity failure.
+    """
+    ids = sorted({str(x) for x in (sample_ids or []) if x})
+    out: Dict[str, Any] = {
+        "version": "69.10.22",
+        "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+        "pending_sample_ids": len(ids),
+        "registered_identity": 0,
+        "exact_excursion_present": 0,
+        "awaiting_real_pl": 0,
+        "pl_observed_without_excursion": 0,
+        "excursion_state_without_excursion": 0,
+        "no_lifecycle_record": 0,
+        "feature_only_unregistered": 0,
+        "ownership_integrity_failures": 0,
+        "reconstructs_identity": False,
+        "fuzzy_matching": False,
+        "writes_evidence": False,
+        "samples": [],
+    }
+    if not _DB_READY or not ids:
+        out["state"] = "NO_PENDING_SAMPLES" if not ids else "STORE_NOT_READY"
+        return out
+    try:
+        q = ",".join("?" for _ in ids)
+        with _conn() as c:
+            identity = {r["sample_id"]: dict(r) for r in c.execute(
+                f"SELECT sample_id,session_date,legacy_cluster_key,decision_time FROM flow_sample_identity_map WHERE sample_id IN ({q})", ids)}
+            lifecycle = {r["sample_id"]: dict(r) for r in c.execute(
+                f"SELECT sample_id,state,reason,pl_observations,excursion_writes FROM flow_sample_pl_lifecycle WHERE sample_id IN ({q})", ids)}
+            excursions = {r["sample_id"]: dict(r) for r in c.execute(
+                f"SELECT sample_id,session_date,legacy_cluster_key,decision_time FROM flow_sample_excursions WHERE sample_id IN ({q})", ids)}
+        out["registered_identity"] = len(identity)
+        out["exact_excursion_present"] = len(excursions)
+        for sid in ids:
+            ir, lr, er = identity.get(sid), lifecycle.get(sid), excursions.get(sid)
+            if ir is None:
+                out["feature_only_unregistered"] += 1
+                cls = "FEATURE_ONLY_UNREGISTERED"
+            elif er is not None:
+                mismatch = (ir.get("session_date") != er.get("session_date") or
+                            ir.get("legacy_cluster_key") != er.get("legacy_cluster_key") or
+                            ir.get("decision_time") != er.get("decision_time"))
+                if mismatch:
+                    out["ownership_integrity_failures"] += 1
+                    cls = "EXCURSION_OWNER_TUPLE_MISMATCH"
+                else:
+                    cls = "EXACT_EXCURSION_PRESENT"
+            elif lr is None:
+                out["no_lifecycle_record"] += 1
+                cls = "NO_LIFECYCLE_RECORD"
+            elif int(lr.get("excursion_writes") or 0) > 0 or str(lr.get("state") or "").startswith("PL_OBSERVED_EXCURSION_"):
+                out["excursion_state_without_excursion"] += 1
+                out["ownership_integrity_failures"] += 1
+                cls = "EXCURSION_STATE_WITHOUT_ROW"
+            elif int(lr.get("pl_observations") or 0) > 0:
+                out["pl_observed_without_excursion"] += 1
+                out["ownership_integrity_failures"] += 1
+                cls = "PL_OBSERVED_WITHOUT_EXCURSION"
+            else:
+                out["awaiting_real_pl"] += 1
+                cls = "AWAITING_GENUINE_REAL_PL"
+            if len(out["samples"]) < max(0, int(sample_limit)):
+                out["samples"].append({
+                    "sample_id": sid, "classification": cls,
+                    "identity_present": ir is not None,
+                    "lifecycle_state": (lr or {}).get("state"),
+                    "lifecycle_reason": (lr or {}).get("reason"),
+                    "pl_observations": int((lr or {}).get("pl_observations") or 0),
+                    "excursion_writes": int((lr or {}).get("excursion_writes") or 0),
+                })
+        out["state"] = ("OWNERSHIP_INTEGRITY_FAILURE" if out["ownership_integrity_failures"]
+                        else "PENDING_AWAITING_EVIDENCE")
+        return out
+    except Exception as exc:
+        out["state"] = "ERROR"
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        return out
 
 def audit_sample_identity_join(sample_ids: List[str], *, session_date: Optional[str] = None, sample_limit: int = 5) -> Dict[str, Any]:
     """Audit the persisted three-table canonical identity contract without repairing it.

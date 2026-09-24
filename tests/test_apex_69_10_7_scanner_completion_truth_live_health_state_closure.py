@@ -6,8 +6,8 @@ from engine.scanner_runtime_truth import resolve_scanner_runtime
 
 def test_release_truth_and_scanner_completion_guardrails():
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.21'
-    assert manifest['build_name'] == 'Canonical Settlement Cohort Identity Reconciliation'
+    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.22'
+    assert manifest['build_name'] == 'Canonical Feature Sample Excursion Ownership Closure'
     g = manifest['guardrails']
     assert g['scanner_completion_truth_separates_heartbeat_from_full_scan'] is True
     assert g['scanner_background_activity_substitutes_for_full_scan'] is False
@@ -21,7 +21,7 @@ def test_release_truth_and_scanner_completion_guardrails():
     assert g['scanner_health_changes_execution_authority'] is False
 
     registry = Path('config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.21' in registry
+    assert 'apex_version: 69.10.22' in registry
     assert 'scanner_completion_truth_live_health_state_closure:' in registry
     assert 'heartbeat_does_not_equal_full_scan_completion' in registry
     assert 'stale_threshold_unchanged' in registry

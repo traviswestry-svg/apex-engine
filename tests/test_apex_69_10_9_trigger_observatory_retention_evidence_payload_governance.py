@@ -6,8 +6,8 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_release_truth_and_guardrails():
     m=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.21'
-    assert m['build_name']=='Canonical Settlement Cohort Identity Reconciliation'
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.22'
+    assert m['build_name']=='Canonical Feature Sample Excursion Ownership Closure'
     g=m['guardrails']
     assert g['automatic_trigger_pruning'] is False
     assert g['trigger_observatory_prune_explicit_apply_only'] is True
