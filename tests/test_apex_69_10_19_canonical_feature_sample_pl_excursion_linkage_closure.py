@@ -16,8 +16,8 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d=json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert d['apex_version']=='69.10.20'
-    assert d['build_name']=='Canonical Excursion Write-to-Settlement Read Closure'
+    assert d['apex_version']=='69.10.21'
+    assert d['build_name']=='Canonical Settlement Cohort Identity Reconciliation'
     assert d['guardrails']['sample_pl_reconstruction_allowed'] is False
     assert d['guardrails']['synthetic_excursion_allowed'] is False
     assert d['guardrails']['fuzzy_sample_recovery_allowed'] is False

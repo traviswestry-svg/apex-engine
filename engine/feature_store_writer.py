@@ -476,6 +476,12 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         # reconstructs, or substitutes evidence.
         report["canonical_identity_join_audit"] = flow_pl_store.audit_sample_identity_join(
             sample_ids, session_date=session_date, sample_limit=5)
+        # APEX 69.10.21: exact, read-only cohort reconciliation. Compare the
+        # IDs settlement is requesting with every canonical excursion ID actually
+        # persisted for this session. No recovery or matching semantics change.
+        report["canonical_settlement_cohort_reconciliation"] = (
+            flow_pl_store.reconcile_settlement_excursion_cohort(
+                sample_ids, session_date=session_date, sample_limit=10))
 
         # Evidence-backed compatibility only: a legacy coarse key may be used
         # when exactly ONE pending feature vector maps to that key for the
@@ -583,6 +589,19 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
         "write_failures": 0,
         "skipped": 0,
         "session_reports": [],
+        "canonical_settlement_cohort_summary": {
+            "version": "69.10.21",
+            "settlement_requested_ids": 0,
+            "excursion_session_ids": 0,
+            "requested_with_excursion": 0,
+            "requested_without_excursion": 0,
+            "excursion_not_requested": 0,
+            "identity_map_only_requested": 0,
+            "feature_only_requested": 0,
+            "writes_evidence": False,
+            "reconstructs_identity": False,
+            "fuzzy_matching": False,
+        },
         "writer_version": WRITER_VERSION,
         "observability_version": "69.3.0",
     }
@@ -607,6 +626,13 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
             row = settle_labels(session_date=session_date, ticker=ticker)
             for field in aggregate_fields:
                 report[field] += int(row.get(field) or 0)
+            cr = row.get("canonical_settlement_cohort_reconciliation") or {}
+            cs = report["canonical_settlement_cohort_summary"]
+            for field in ("settlement_requested_ids", "excursion_session_ids",
+                          "requested_with_excursion", "requested_without_excursion",
+                          "excursion_not_requested", "identity_map_only_requested",
+                          "feature_only_requested"):
+                cs[field] += int(cr.get(field) or 0)
             report["session_reports"].append({"session_date": session_date, **row})
         if report["labelled"]:
             report["state"] = "RECOVERED_LABELS"

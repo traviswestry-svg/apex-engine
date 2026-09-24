@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.20_CANONICAL_EXCURSION_WRITE_SETTLEMENT_READ_CLOSURE"
+STORE_VERSION = "69.10.21_CANONICAL_SETTLEMENT_COHORT_IDENTITY_RECONCILIATION"
 
 
 def _conn() -> sqlite3.Connection:
@@ -768,6 +768,93 @@ def audit_sample_identity_join(sample_ids: List[str], *, session_date: Optional[
     except Exception as e:
         out["error"] = type(e).__name__
         return out
+
+def reconcile_settlement_excursion_cohort(sample_ids: List[str], *, session_date: str, sample_limit: int = 10) -> Dict[str, Any]:
+    """Compare settlement's exact requested IDs with the persisted excursion cohort.
+
+    APEX 69.10.21 is diagnostic-only. It does not repair, reconstruct, remap,
+    fuzzy-match, or write evidence. The comparison is exact sample_id equality
+    within the explicitly requested session_date.
+    """
+    requested = sorted({str(x) for x in (sample_ids or []) if x})
+    out: Dict[str, Any] = {
+        "version": "69.10.21",
+        "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+        "session_date": str(session_date or "")[:10],
+        "settlement_requested_ids": len(requested),
+        "excursion_session_ids": 0,
+        "requested_with_excursion": 0,
+        "requested_without_excursion": 0,
+        "excursion_not_requested": 0,
+        "identity_map_only_requested": 0,
+        "feature_only_requested": 0,
+        "exact_requested_excursion_overlap_pct": 0.0,
+        "requested_without_excursion_samples": [],
+        "excursion_not_requested_samples": [],
+        "writes_evidence": False,
+        "reconstructs_identity": False,
+        "fuzzy_matching": False,
+        "historical_backfill": False,
+    }
+    if not _DB_READY:
+        out["state"] = "FLOW_PL_STORE_NOT_READY"
+        return out
+    try:
+        identity_rows: Dict[str, Dict[str, Any]] = {}
+        excursion_rows: Dict[str, Dict[str, Any]] = {}
+        with _conn() as c:
+            for r in c.execute(
+                "SELECT sample_id,session_date,legacy_cluster_key,decision_time,samples "
+                "FROM flow_sample_excursions WHERE session_date=?", (out["session_date"],)):
+                excursion_rows[str(r["sample_id"])] = dict(r)
+            if requested:
+                for i in range(0, len(requested), 400):
+                    chunk = requested[i:i+400]
+                    q = ",".join("?" * len(chunk))
+                    args: List[Any] = list(chunk) + [out["session_date"]]
+                    for r in c.execute(
+                        f"SELECT sample_id,session_date,legacy_cluster_key,decision_time "
+                        f"FROM flow_sample_identity_map WHERE sample_id IN ({q}) AND session_date=?", args):
+                        identity_rows[str(r["sample_id"])] = dict(r)
+        req, ex, im = set(requested), set(excursion_rows), set(identity_rows)
+        overlap = req & ex
+        missing = req - ex
+        extra = ex - req
+        out.update({
+            "excursion_session_ids": len(ex),
+            "requested_with_excursion": len(overlap),
+            "requested_without_excursion": len(missing),
+            "excursion_not_requested": len(extra),
+            "identity_map_only_requested": len((req & im) - ex),
+            "feature_only_requested": len(req - im - ex),
+            "exact_requested_excursion_overlap_pct": round((len(overlap) / len(req) * 100.0), 4) if req else 0.0,
+            "state": "EXACT_COHORT_ALIGNED" if req == ex else "EXACT_COHORT_DIVERGENCE",
+        })
+        lim=max(0,int(sample_limit))
+        for sid in sorted(missing)[:lim]:
+            ir=identity_rows.get(sid)
+            out["requested_without_excursion_samples"].append({
+                "sample_id": sid,
+                "identity_map_present": bool(ir),
+                "identity_session_date": ir.get("session_date") if ir else None,
+                "identity_decision_time": ir.get("decision_time") if ir else None,
+                "identity_legacy_cluster_key": ir.get("legacy_cluster_key") if ir else None,
+            })
+        for sid in sorted(extra)[:lim]:
+            er=excursion_rows[sid]
+            out["excursion_not_requested_samples"].append({
+                "sample_id": sid,
+                "excursion_session_date": er.get("session_date"),
+                "excursion_decision_time": er.get("decision_time"),
+                "excursion_legacy_cluster_key": er.get("legacy_cluster_key"),
+                "samples": er.get("samples"),
+            })
+        return out
+    except Exception as exc:
+        out["state"] = "ERROR"
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        return out
+
 
 def get_sample_excursions(sample_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     """Return exact sample-scoped excursions. No legacy-key fallback is allowed."""
