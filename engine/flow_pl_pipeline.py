@@ -249,6 +249,14 @@ def run_flow_pl(
                 identity = (flow_pl_store.resolve_exact_sample_identity(
                     session_date=session, legacy_cluster_key=ckey_s,
                     decision_time=decision_time) if decision_time else None)
+                # APEX 69.10.23: persist the exact handoff result before any sample
+                # excursion write. Missing exact owners remain missing; this audit
+                # never searches for a substitute identity.
+                if decision_time:
+                    flow_pl_store.record_feature_pl_handoff_observation(
+                        session_date=session, legacy_cluster_key=ckey_s,
+                        decision_time=decision_time,
+                        exact_owner_sample_id=(identity or {}).get("sample_id"))
                 if identity:
                     cap = flow_pl_store.record_sample_excursion(
                         sample_id=identity["sample_id"], session_date=session,
