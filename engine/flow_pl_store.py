@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.22_CANONICAL_FEATURE_SAMPLE_EXCURSION_OWNERSHIP_CLOSURE"
+STORE_VERSION = "69.10.23_CANONICAL_FEATURE_TO_PL_OBSERVATION_OWNERSHIP_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -190,6 +190,23 @@ def init_db() -> bool:
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_fspl_state "
                       "ON flow_sample_pl_lifecycle(session_date, state)")
+            # APEX 69.10.23: durable read-only provenance of the exact feature ->
+            # genuine-P/L handoff.  A row records the P/L observation tuple and whether
+            # that exact tuple resolved a persisted feature owner.  It never selects,
+            # reconstructs, or substitutes an owner and never creates outcome evidence.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_feature_pl_handoff_audit (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       observed_at TEXT NOT NULL,
+                       session_date TEXT NOT NULL,
+                       legacy_cluster_key TEXT NOT NULL,
+                       decision_time TEXT NOT NULL,
+                       exact_owner_sample_id TEXT,
+                       exact_owner_found INTEGER NOT NULL DEFAULT 0
+                   )"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ffpha_session "
+                      "ON flow_feature_pl_handoff_audit(session_date)")
             # APEX 69.3: durable capture audit. This is observability only; it
             # never manufactures excursion evidence and never participates in
             # label selection.
@@ -449,6 +466,84 @@ def record_sample_pl_lifecycle(*, sample_id: str, session_date: str,
         return True
     except Exception:
         return False
+
+
+def record_feature_pl_handoff_observation(*, session_date: str, legacy_cluster_key: str,
+                                                  decision_time: str,
+                                                  exact_owner_sample_id: Optional[str]) -> bool:
+    """Persist one exact feature-to-P/L ownership resolution attempt.
+
+    APEX 69.10.23 observability only.  ``exact_owner_sample_id`` must come from the
+    existing exact tuple resolver.  This function performs no lookup, matching,
+    reconstruction, or evidence write of its own.
+    """
+    if not _DB_READY or not all((session_date, legacy_cluster_key, decision_time)):
+        return False
+    try:
+        with _LOCK, _conn() as c:
+            c.execute(
+                """INSERT INTO flow_feature_pl_handoff_audit
+                   (observed_at,session_date,legacy_cluster_key,decision_time,
+                    exact_owner_sample_id,exact_owner_found)
+                   VALUES (?,?,?,?,?,?)""",
+                (_now_iso(), session_date, legacy_cluster_key, decision_time,
+                 exact_owner_sample_id, 1 if exact_owner_sample_id else 0),
+            )
+            c.commit()
+        return True
+    except Exception:
+        return False
+
+
+def feature_pl_handoff_health() -> Dict[str, Any]:
+    """Summarize exact feature-owner resolution at genuine P/L observation time."""
+    out = {
+        "version": "69.10.23",
+        "identity_basis": "EXACT_PERSISTED_FEATURE_IDENTITY_TUPLE",
+        "pl_handoff_observations": 0,
+        "exact_feature_owner_found": 0,
+        "exact_feature_owner_missing": 0,
+        "exact_owner_resolution_pct": 0.0,
+        "writes_evidence": False,
+        "reconstructs_identity": False,
+        "fuzzy_matching": False,
+        "historical_backfill": False,
+        "changes_trade_decisions": False,
+        "execution_authority": False,
+        "by_direction": {},
+        "latest": None,
+    }
+    if not _DB_READY:
+        return out
+    try:
+        with _conn() as c:
+            row = c.execute(
+                """SELECT COUNT(*) n, COALESCE(SUM(exact_owner_found),0) found
+                   FROM flow_feature_pl_handoff_audit""").fetchone()
+            n, found = int(row["n"] or 0), int(row["found"] or 0)
+            out["pl_handoff_observations"] = n
+            out["exact_feature_owner_found"] = found
+            out["exact_feature_owner_missing"] = n - found
+            out["exact_owner_resolution_pct"] = round(found / n * 100.0, 2) if n else 0.0
+            rows = c.execute(
+                """SELECT legacy_cluster_key, exact_owner_found
+                   FROM flow_feature_pl_handoff_audit""").fetchall()
+            dirs = {}
+            for r in rows:
+                direction = str(r["legacy_cluster_key"] or "").rsplit("|", 1)[-1] or "UNKNOWN"
+                d = dirs.setdefault(direction, {"observations": 0, "owner_found": 0, "owner_missing": 0})
+                d["observations"] += 1
+                if int(r["exact_owner_found"] or 0): d["owner_found"] += 1
+                else: d["owner_missing"] += 1
+            out["by_direction"] = dirs
+            latest = c.execute(
+                """SELECT observed_at,session_date,legacy_cluster_key,decision_time,
+                          exact_owner_sample_id,exact_owner_found
+                   FROM flow_feature_pl_handoff_audit ORDER BY id DESC LIMIT 1""").fetchone()
+            if latest: out["latest"] = dict(latest)
+    except Exception as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
 
 
 def sample_pl_lifecycle_health() -> Dict[str, Any]:
@@ -1035,6 +1130,7 @@ def sample_excursion_health() -> Dict[str, Any]:
                 out["capture"]["canonical_counter_start_release"] = "69.10.5"
                 out["pl_excursion_linkage_lifecycle"] = sample_pl_lifecycle_health()
                 out["excursion_write_readback"] = excursion_write_readback_health()
+                out["feature_pl_handoff"] = feature_pl_handoff_health()
     except Exception as exc:  # pragma: no cover
         out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
     return out

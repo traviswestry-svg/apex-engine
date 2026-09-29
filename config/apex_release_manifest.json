@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.22",
-  "build_name": "Canonical Feature Sample Excursion Ownership Closure",
+  "apex_version": "69.10.23",
+  "build_name": "Canonical Feature-to-P/L Observation Ownership Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -602,15 +602,24 @@
     "canonical_pending_outcome_audit_writes_evidence": false,
     "canonical_pending_outcome_reconstructs_identity": false,
     "canonical_pending_outcome_fuzzy_matching": false,
-    "canonical_pending_outcome_synthetic_pl": false
+    "canonical_pending_outcome_synthetic_pl": false,
+    "canonical_feature_pl_handoff_audit": true,
+    "canonical_feature_pl_handoff_version": "69.10.23",
+    "canonical_feature_pl_handoff_exact_tuple_only": true,
+    "canonical_feature_pl_handoff_reconstructs_identity": false,
+    "canonical_feature_pl_handoff_fuzzy_matching": false,
+    "canonical_feature_pl_handoff_writes_evidence": false,
+    "canonical_feature_pl_handoff_historical_backfill": false,
+    "canonical_feature_pl_handoff_changes_trade_decisions": false,
+    "canonical_feature_pl_handoff_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.22",
-  "application_version": "69.10.22",
+  "semantic_version": "69.10.23",
+  "application_version": "69.10.23",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
