@@ -131,8 +131,8 @@ def _cluster_features(cl: Dict[str, Any], at: str) -> List[Feature]:
 def _capture_exact_persisted_sample(*, report: Dict[str, Any], sid: str,
                                     session_date: str, ticker: str,
                                     decision_time: str, legacy_cluster_key: str,
-                                    excursion: Dict[str, Any],
-                                    defer_excursion_capture: bool) -> None:
+                                    excursion: Dict[str, Any], origin_event_ids: Optional[List[str]] = None,
+                                    defer_excursion_capture: bool = False) -> None:
     """Publish lineage and capture only for one exact persisted feature sample.
 
     This is the 69.10.5 authority boundary. Candidate clusters, unsealed clusters,
@@ -154,7 +154,8 @@ def _capture_exact_persisted_sample(*, report: Dict[str, Any], sid: str,
 
     registered = flow_pl_store.register_sample_identity(
         sample_id=sid, session_date=session_date,
-        legacy_cluster_key=legacy_cluster_key, decision_time=decision_time)
+        legacy_cluster_key=legacy_cluster_key, decision_time=decision_time,
+        origin_event_ids=list(origin_event_ids or []))
     if not registered:
         report["identity_registration_failures"] += 1
         report["excursion_capture_errors"] += 1
@@ -279,6 +280,7 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                     report=report, sid=sid, session_date=session_date,
                     ticker=cl.get("ticker") or ticker, decision_time=decision_time,
                     legacy_cluster_key=ckey, excursion=xo,
+                    origin_event_ids=list(cl.get("member_event_ids") or []),
                     defer_excursion_capture=defer_excursion_capture)
                 continue
 
@@ -334,6 +336,7 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
                 report=report, sid=sid, session_date=session_date,
                 ticker=cl.get("ticker") or ticker, decision_time=decision_time,
                 legacy_cluster_key=ckey, excursion=xo,
+                origin_event_ids=list(cl.get("member_event_ids") or []),
                 defer_excursion_capture=defer_excursion_capture)
 
             if wrote:

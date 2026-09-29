@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.23",
-  "build_name": "Canonical Feature-to-P/L Observation Ownership Closure",
+  "apex_version": "69.10.24",
+  "build_name": "Persisted Feature Origin Identity Propagation Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
-  "database_schema_version": "6",
-  "released_at": "2026-09-24",
+  "database_schema_version": "7",
+  "released_at": "2026-09-29",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -611,15 +611,25 @@
     "canonical_feature_pl_handoff_writes_evidence": false,
     "canonical_feature_pl_handoff_historical_backfill": false,
     "canonical_feature_pl_handoff_changes_trade_decisions": false,
-    "canonical_feature_pl_handoff_changes_execution_authority": false
+    "canonical_feature_pl_handoff_changes_execution_authority": false,
+    "persisted_feature_origin_identity_propagation_closure": true,
+    "immutable_origin_provenance": true,
+    "origin_exact_registered_owner_required": true,
+    "origin_genuine_pl_required": true,
+    "origin_reconstructs_identity": false,
+    "origin_fuzzy_matching": false,
+    "origin_historical_backfill": false,
+    "origin_changes_trade_decisions": false,
+    "origin_changes_execution_authority": false,
+    "canonical_feature_origin_provenance_version": "69.10.24"
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.23",
-  "application_version": "69.10.23",
+  "semantic_version": "69.10.24",
+  "application_version": "69.10.24",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
