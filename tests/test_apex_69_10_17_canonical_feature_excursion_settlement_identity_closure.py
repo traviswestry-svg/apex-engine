@@ -9,8 +9,8 @@ from engine import feature_store_writer as writer
 
 def test_release_truth_69_10_17():
     m=json.load(open('config/apex_release_manifest.json'))
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.23'
-    assert m['build_name']=='Canonical Feature-to-P/L Observation Ownership Closure'
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.24'
+    assert m['build_name']=='Persisted Feature Origin Identity Propagation Closure'
 
 
 def test_flow_store_db_path_is_dynamic_after_import(monkeypatch, tmp_path):

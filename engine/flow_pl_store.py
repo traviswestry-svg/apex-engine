@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.23_CANONICAL_FEATURE_TO_PL_OBSERVATION_OWNERSHIP_CLOSURE"
+STORE_VERSION = "69.10.24_PERSISTED_FEATURE_ORIGIN_IDENTITY_PROPAGATION_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -207,6 +207,46 @@ def init_db() -> bool:
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_ffpha_session "
                       "ON flow_feature_pl_handoff_audit(session_date)")
+            # APEX 69.10.24: immutable transport of the exact persisted feature
+            # origin through later rebuilt runtime clusters. Event IDs are the
+            # identity of the originating market objects; no market attributes are
+            # used to reconstruct ownership.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_feature_origin_bindings (
+                       event_id TEXT PRIMARY KEY,
+                       sample_id TEXT NOT NULL,
+                       session_date TEXT NOT NULL,
+                       legacy_cluster_key TEXT NOT NULL,
+                       decision_time TEXT NOT NULL,
+                       bound_at TEXT NOT NULL
+                   )"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ffob_session "
+                      "ON flow_feature_origin_bindings(session_date, sample_id)")
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_feature_origin_pl_audit (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       observed_at TEXT NOT NULL,
+                       observation_session_date TEXT NOT NULL,
+                       observation_legacy_cluster_key TEXT NOT NULL,
+                       observation_decision_time TEXT NOT NULL,
+                       origin_sample_id TEXT,
+                       origin_session_date TEXT,
+                       origin_legacy_cluster_key TEXT,
+                       origin_decision_time TEXT,
+                       provenance_present INTEGER NOT NULL DEFAULT 0,
+                       owner_validated INTEGER NOT NULL DEFAULT 0,
+                       validation_failed INTEGER NOT NULL DEFAULT 0,
+                       direction_evolved INTEGER NOT NULL DEFAULT 0,
+                       uncertain_to_bullish INTEGER NOT NULL DEFAULT 0,
+                       uncertain_to_bearish INTEGER NOT NULL DEFAULT 0,
+                       excursion_written INTEGER NOT NULL DEFAULT 0,
+                       excursion_updated INTEGER NOT NULL DEFAULT 0,
+                       diagnostic_reason TEXT
+                   )"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ffopa_session "
+                      "ON flow_feature_origin_pl_audit(observation_session_date)")
             # APEX 69.3: durable capture audit. This is observability only; it
             # never manufactures excursion evidence and never participates in
             # label selection.
@@ -403,16 +443,16 @@ def get_excursions(event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluster_key: str,
-                             decision_time: str) -> bool:
-    """Register and verify the exact immutable feature identity.
+                             decision_time: str, origin_event_ids: Optional[List[str]] = None) -> bool:
+    """Register and verify the immutable feature identity and optional origin bindings.
 
-    ``INSERT OR IGNORE`` is retained for duplicate-safe replay, but success now
-    means the persisted row actually matches all four identity fields. A uniqueness
-    collision therefore fails closed instead of being reported as a successful
-    lineage publication.
+    APEX 69.10.24 makes identity publication + origin transport atomic inside the
+    canonical evidence store. Event bindings come only from the successfully
+    persisted feature's originating runtime object. Conflicts fail closed.
     """
     if not _DB_READY or not sample_id or not session_date or not legacy_cluster_key or not decision_time:
         return False
+    event_ids = [str(x) for x in (origin_event_ids or []) if x]
     try:
         with _LOCK, _conn() as c:
             c.execute(
@@ -423,16 +463,140 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
             )
             row = c.execute(
                 """SELECT session_date,legacy_cluster_key,decision_time,sample_id
-                   FROM flow_sample_identity_map WHERE sample_id=?""",
-                (sample_id,),
-            ).fetchone()
+                   FROM flow_sample_identity_map WHERE sample_id=?""", (sample_id,)).fetchone()
+            ok = bool(row and row["session_date"] == session_date
+                      and row["legacy_cluster_key"] == legacy_cluster_key
+                      and row["decision_time"] == decision_time
+                      and row["sample_id"] == sample_id)
+            if not ok:
+                c.rollback(); return False
+            now = _now_iso()
+            for event_id in event_ids:
+                c.execute(
+                    """INSERT OR IGNORE INTO flow_feature_origin_bindings
+                       (event_id,sample_id,session_date,legacy_cluster_key,decision_time,bound_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (event_id,sample_id,session_date,legacy_cluster_key,decision_time,now))
+                b = c.execute(
+                    """SELECT sample_id,session_date,legacy_cluster_key,decision_time
+                       FROM flow_feature_origin_bindings WHERE event_id=?""", (event_id,)).fetchone()
+                if not (b and b["sample_id"] == sample_id and b["session_date"] == session_date
+                        and b["legacy_cluster_key"] == legacy_cluster_key
+                        and b["decision_time"] == decision_time):
+                    c.rollback(); return False
             c.commit()
-        return bool(row and row["session_date"] == session_date
-                    and row["legacy_cluster_key"] == legacy_cluster_key
-                    and row["decision_time"] == decision_time
-                    and row["sample_id"] == sample_id)
+        return True
     except Exception:
         return False
+
+
+def resolve_feature_origin_provenance(*, event_ids: List[str]) -> Optional[Dict[str, Any]]:
+    """Resolve immutable origin only when every continuing event has one identical binding."""
+    ids = [str(x) for x in (event_ids or []) if x]
+    if not _DB_READY or not ids:
+        return None
+    try:
+        with _conn() as c:
+            q = ",".join("?" * len(ids))
+            rows = c.execute(
+                f"SELECT event_id,sample_id,session_date,legacy_cluster_key,decision_time "
+                f"FROM flow_feature_origin_bindings WHERE event_id IN ({q})", ids).fetchall()
+        if len(rows) != len(set(ids)):
+            return None
+        tuples = {(r["sample_id"], r["session_date"], r["legacy_cluster_key"], r["decision_time"]) for r in rows}
+        if len(tuples) != 1:
+            return None
+        sample_id, session_date, legacy_cluster_key, decision_time = next(iter(tuples))
+        return {"sample_id": sample_id, "session_date": session_date,
+                "legacy_cluster_key": legacy_cluster_key, "decision_time": decision_time}
+    except Exception:
+        return None
+
+
+def record_feature_origin_pl_observation(*, observation_session_date: str,
+        observation_legacy_cluster_key: str, observation_decision_time: str,
+        origin: Optional[Dict[str, Any]], owner_validated: bool,
+        diagnostic_reason: str, excursion_written: bool = False,
+        excursion_updated: bool = False) -> bool:
+    if not _DB_READY or not all((observation_session_date, observation_legacy_cluster_key, observation_decision_time)):
+        return False
+    od = str(observation_legacy_cluster_key).rsplit("|",1)[-1]
+    ok = origin or {}
+    rd = str(ok.get("legacy_cluster_key") or "").rsplit("|",1)[-1]
+    evolved = bool(origin and od != rd)
+    try:
+        with _LOCK, _conn() as c:
+            c.execute(
+                """INSERT INTO flow_feature_origin_pl_audit
+                   (observed_at,observation_session_date,observation_legacy_cluster_key,
+                    observation_decision_time,origin_sample_id,origin_session_date,
+                    origin_legacy_cluster_key,origin_decision_time,provenance_present,
+                    owner_validated,validation_failed,direction_evolved,uncertain_to_bullish,
+                    uncertain_to_bearish,excursion_written,excursion_updated,diagnostic_reason)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (_now_iso(),observation_session_date,observation_legacy_cluster_key,observation_decision_time,
+                 ok.get("sample_id"),ok.get("session_date"),ok.get("legacy_cluster_key"),ok.get("decision_time"),
+                 1 if origin else 0,1 if owner_validated else 0,1 if origin and not owner_validated else 0,
+                 1 if evolved else 0,1 if rd=="UNCERTAIN" and od=="BULLISH" else 0,
+                 1 if rd=="UNCERTAIN" and od=="BEARISH" else 0,1 if excursion_written else 0,
+                 1 if excursion_updated else 0,diagnostic_reason))
+            c.commit()
+        return True
+    except Exception:
+        return False
+
+
+def feature_origin_provenance_health(session_date: Optional[str] = None) -> Dict[str, Any]:
+    out = {"version":"69.10.24","identity_basis":"CANONICAL_FEATURE_SAMPLE_ID",
+           "pl_handoff_observations":0,"origin_provenance_present":0,"origin_provenance_missing":0,
+           "origin_owner_validated":0,"origin_owner_validation_failed":0,"origin_owned_pl_observations":0,
+           "origin_owned_excursion_writes":0,"origin_owned_excursion_updates":0,
+           "origin_direction_unchanged":0,"origin_direction_evolved":0,"origin_uncertain_to_bullish":0,
+           "origin_uncertain_to_bearish":0,"provenance_resolution_pct":0.0,"ownership_integrity_failures":0,
+           "writes_evidence":False,"reconstructs_identity":False,"fuzzy_matching":False,
+           "historical_backfill":False,"changes_trade_decisions":False,"execution_authority":False}
+    if not _DB_READY: return out
+    try:
+        where = " WHERE observation_session_date=?" if session_date else ""
+        args = (session_date,) if session_date else ()
+        with _conn() as c:
+            r=c.execute("SELECT COUNT(*) n,COALESCE(SUM(provenance_present),0) p,COALESCE(SUM(owner_validated),0) v,"
+                        "COALESCE(SUM(validation_failed),0) f,COALESCE(SUM(direction_evolved),0) de,"
+                        "COALESCE(SUM(uncertain_to_bullish),0) ub,COALESCE(SUM(uncertain_to_bearish),0) ur,"
+                        "COALESCE(SUM(excursion_written),0) ew,COALESCE(SUM(excursion_updated),0) eu "
+                        "FROM flow_feature_origin_pl_audit"+where,args).fetchone()
+        n,p,v,f,de,ub,ur,ew,eu=[int(r[k] or 0) for k in ("n","p","v","f","de","ub","ur","ew","eu")]
+        legacy = feature_pl_handoff_health()
+        out.update({"pl_handoff_observations":n,"origin_provenance_present":p,"origin_provenance_missing":n-p,
+                    "origin_owner_validated":v,"origin_owner_validation_failed":f,"origin_owned_pl_observations":v,
+                    "origin_owned_excursion_writes":ew,"origin_owned_excursion_updates":eu,
+                    "origin_direction_evolved":de,"origin_direction_unchanged":max(0,p-de),
+                    "origin_uncertain_to_bullish":ub,"origin_uncertain_to_bearish":ur,
+                    "fallback_exact_owner_found":int(legacy.get("exact_feature_owner_found") or 0),
+                    "fallback_exact_owner_missing":int(legacy.get("exact_feature_owner_missing") or 0),
+                    "provenance_resolution_pct":round(v/n*100.0,2) if n else 0.0,
+                    "ownership_integrity_failures":f})
+    except Exception as exc: out["error"]=f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def feature_origin_session_audit(session_date: str) -> Dict[str, Any]:
+    out = feature_origin_provenance_health(session_date)
+    out.update({"session_date":session_date,"persisted_feature_samples":0,"registered_feature_identities":0,
+                "origin_owned_excursions":0,"pending_samples_awaiting_genuine_pl":0,"labels_created":0})
+    if not _DB_READY: return out
+    try:
+        with _conn() as c:
+            out["persisted_feature_samples"] = int(c.execute("SELECT COUNT(*) n FROM flow_features WHERE session_date=?",(session_date,)).fetchone()["n"])
+            out["registered_feature_identities"] = int(c.execute("SELECT COUNT(*) n FROM flow_sample_identity_map WHERE session_date=?",(session_date,)).fetchone()["n"])
+            out["origin_owned_excursions"] = int(c.execute(
+                "SELECT COUNT(DISTINCT origin_sample_id) n FROM flow_feature_origin_pl_audit "
+                "WHERE observation_session_date=? AND owner_validated=1 AND "
+                "(excursion_written=1 OR excursion_updated=1)",(session_date,)).fetchone()["n"])
+            out["pending_samples_awaiting_genuine_pl"] = int(c.execute("SELECT COUNT(*) n FROM flow_sample_pl_lifecycle WHERE session_date=? AND state IN ('REGISTERED_AWAITING_REAL_PL','AWAITING_REAL_PL')",(session_date,)).fetchone()["n"])
+            out["labels_created"] = int(c.execute("SELECT COUNT(*) n FROM flow_labels WHERE session_date=?",(session_date,)).fetchone()["n"])
+    except Exception as exc: out["error"]=f"{type(exc).__name__}: {exc}"
+    return out
 
 
 def record_sample_pl_lifecycle(*, sample_id: str, session_date: str,
@@ -1131,6 +1295,7 @@ def sample_excursion_health() -> Dict[str, Any]:
                 out["pl_excursion_linkage_lifecycle"] = sample_pl_lifecycle_health()
                 out["excursion_write_readback"] = excursion_write_readback_health()
                 out["feature_pl_handoff"] = feature_pl_handoff_health()
+                out["feature_origin_provenance"] = feature_origin_provenance_health()
     except Exception as exc:  # pragma: no cover
         out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
     return out

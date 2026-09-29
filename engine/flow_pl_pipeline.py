@@ -240,39 +240,59 @@ def run_flow_pl(
                     ticker=priced.get("ticker"),
                     pl_dollars=priced.get("estimated_pl_dollars"),
                     cost_basis=priced.get("cost_basis_dollars"))
-                # APEX 69.10.16 — once the feature writer has registered this
-                # exact sealed cluster identity, later genuine P/L observations can
-                # widen its canonical sample excursion even if the first writer-side
-                # capture had no mark.  Resolve the persisted tuple; never rebuild a
-                # sample_id and never use the coarse-key "latest" fallback.
+                # APEX 69.10.24: ownership comes from immutable origin bindings
+                # published by the successful feature persistence/registration boundary.
+                # The current cluster tuple is observational and may evolve; it is never
+                # used to manufacture canonical ownership.
                 decision_time = f"{session}T{cl.get('end_time')}" if cl.get("end_time") else None
+                origin = flow_pl_store.resolve_feature_origin_provenance(
+                    event_ids=list(cl.get("member_event_ids") or []))
+                owner_validated = bool(origin and flow_pl_store.verify_sample_identity_owner(
+                    sample_id=origin.get("sample_id") or "",
+                    session_date=origin.get("session_date") or "",
+                    legacy_cluster_key=origin.get("legacy_cluster_key") or "",
+                    decision_time=origin.get("decision_time") or ""))
+
+                # Preserve 69.10.23 exact-current-tuple telemetry as a fallback
+                # diagnostic only. It never gains write authority.
                 identity = (flow_pl_store.resolve_exact_sample_identity(
                     session_date=session, legacy_cluster_key=ckey_s,
                     decision_time=decision_time) if decision_time else None)
-                # APEX 69.10.23: persist the exact handoff result before any sample
-                # excursion write. Missing exact owners remain missing; this audit
-                # never searches for a substitute identity.
                 if decision_time:
                     flow_pl_store.record_feature_pl_handoff_observation(
                         session_date=session, legacy_cluster_key=ckey_s,
                         decision_time=decision_time,
                         exact_owner_sample_id=(identity or {}).get("sample_id"))
-                if identity:
+
+                cap = None
+                reason = "ORIGIN_PROVENANCE_MISSING" if not origin else (
+                    "ORIGIN_OWNER_VALIDATED" if owner_validated else "ORIGIN_OWNER_VALIDATION_FAILED")
+                if origin and owner_validated:
                     cap = flow_pl_store.record_sample_excursion(
-                        sample_id=identity["sample_id"], session_date=session,
+                        sample_id=origin["sample_id"], session_date=origin["session_date"],
                         ticker=priced.get("ticker"),
                         pl_dollars=priced.get("estimated_pl_dollars"),
                         cost_basis=priced.get("cost_basis_dollars"),
-                        decision_time=decision_time, legacy_cluster_key=ckey_s,
+                        decision_time=origin["decision_time"],
+                        legacy_cluster_key=origin["legacy_cluster_key"],
                         require_registered_owner=True)
                     if cap:
                         flow_pl_store.record_sample_pl_lifecycle(
-                            sample_id=identity["sample_id"], session_date=session,
-                            legacy_cluster_key=ckey_s, decision_time=decision_time,
+                            sample_id=origin["sample_id"], session_date=origin["session_date"],
+                            legacy_cluster_key=origin["legacy_cluster_key"],
+                            decision_time=origin["decision_time"],
                             state=("PL_OBSERVED_EXCURSION_WRITTEN" if cap.get("first_sample")
                                    else "PL_OBSERVED_EXCURSION_UPDATED"),
-                            reason="LATER_EXACT_TUPLE_REAL_PL", pl_observed=True,
+                            reason="LATER_ORIGIN_PROVENANCE_REAL_PL", pl_observed=True,
                             excursion_written=True)
+                if decision_time:
+                    flow_pl_store.record_feature_origin_pl_observation(
+                        observation_session_date=session,
+                        observation_legacy_cluster_key=ckey_s,
+                        observation_decision_time=decision_time, origin=origin,
+                        owner_validated=owner_validated, diagnostic_reason=reason,
+                        excursion_written=bool(cap and cap.get("first_sample")),
+                        excursion_updated=bool(cap and not cap.get("first_sample")))
             priced["cluster_key_string"] = ckey_s
             # The Step 3 cluster view, kept alongside the P/L view. The feature
             # writer needs the CLUSTER (end_time, aggression, print counts);
