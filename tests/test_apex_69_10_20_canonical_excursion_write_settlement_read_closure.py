@@ -13,8 +13,8 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert d["apex_version"] == "69.10.24"
-    assert d["build_name"] == "Persisted Feature Origin Identity Propagation Closure"
+    assert d["apex_version"] == "69.10.25"
+    assert d["build_name"] == "Origin Provenance Transport Coverage Closure"
     g = d["guardrails"]
     assert g["excursion_write_readback_required"] is True
     assert g["excursion_write_readback_exact_sample_id_only"] is True

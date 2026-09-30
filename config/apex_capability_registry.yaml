@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.24
+apex_version: 69.10.25
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -886,6 +886,32 @@ capabilities:
       immutable_origin_provenance: true
       exact_registered_owner_required: true
       genuine_pl_required: true
+      fuzzy_matching: false
+      reconstructs_identity: false
+      latest_owner_substitution: false
+      synthetic_pl: false
+      synthetic_excursion: false
+      historical_backfill: false
+      changes_trade_decisions: false
+      changes_execution_authority: false
+
+
+  origin_provenance_transport_coverage_closure:
+    version: 69.10.25
+    state: ACTIVE_EVIDENCE_INTEGRITY
+    identity_basis: DIRECT_CONTINUING_EVENT_ANCESTRY_ONLY
+    description: "Preserve immutable feature origin ownership across rebuilt clusters when direct bound ancestor events remain present, while classifying every unresolved transport case and failing closed on conflicting bound origins."
+    production_effect: EVIDENCE_IDENTITY_CONTINUITY
+    decision_authority: none
+    execution_authority: none
+    guardrails:
+      full_exact_event_binding_authorized: true
+      partial_consistent_event_ancestry_authorized: true
+      conflicting_bound_origins_fail_closed: true
+      exact_registered_owner_required: true
+      genuine_pl_required: true
+      market_attribute_matching: false
+      timestamp_proximity_matching: false
       fuzzy_matching: false
       reconstructs_identity: false
       latest_owner_substitution: false
