@@ -20,8 +20,8 @@ def stores(monkeypatch, tmp_path):
 
 def test_release_truth_capability_and_guardrails():
     m = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.24"
-    assert m["build_name"] == "Persisted Feature Origin Identity Propagation Closure"
+    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.25"
+    assert m["build_name"] == "Origin Provenance Transport Coverage Closure"
     g = m["guardrails"]
     assert g["persisted_feature_origin_identity_propagation_closure"] is True
     assert g["immutable_origin_provenance"] is True
@@ -32,7 +32,7 @@ def test_release_truth_capability_and_guardrails():
     assert g["origin_historical_backfill"] is False
     registry = Path("config/apex_capability_registry.yaml").read_text()
     assert "persisted_feature_origin_identity_propagation_closure:" in registry
-    assert "version: 69.10.24" in registry
+    assert "version: 69.10.25" in registry
     assert "identity_basis: CANONICAL_FEATURE_SAMPLE_ID" in registry
 
 

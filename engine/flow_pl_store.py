@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.24_PERSISTED_FEATURE_ORIGIN_IDENTITY_PROPAGATION_CLOSURE"
+STORE_VERSION = "69.10.25_ORIGIN_PROVENANCE_TRANSPORT_COVERAGE_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -247,6 +247,28 @@ def init_db() -> bool:
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_ffopa_session "
                       "ON flow_feature_origin_pl_audit(observation_session_date)")
+            # APEX 69.10.25: reason-coded transport coverage audit. Ownership is
+            # resolved only from direct continuing event ancestry. Unbound new
+            # members may coexist with a bound ancestor; conflicting bound
+            # ancestors fail closed. No ticker/expiration/direction/time matching.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_feature_origin_transport_audit (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       observed_at TEXT NOT NULL,
+                       observation_session_date TEXT NOT NULL,
+                       observation_legacy_cluster_key TEXT NOT NULL,
+                       observation_decision_time TEXT NOT NULL,
+                       event_count INTEGER NOT NULL DEFAULT 0,
+                       bound_event_count INTEGER NOT NULL DEFAULT 0,
+                       unbound_event_count INTEGER NOT NULL DEFAULT 0,
+                       distinct_bound_origins INTEGER NOT NULL DEFAULT 0,
+                       transport_status TEXT NOT NULL,
+                       resolved_sample_id TEXT,
+                       owner_authorized INTEGER NOT NULL DEFAULT 0
+                   )"""
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ffota_session "
+                      "ON flow_feature_origin_transport_audit(observation_session_date)")
             # APEX 69.3: durable capture audit. This is observability only; it
             # never manufactures excursion evidence and never participates in
             # label selection.
@@ -490,27 +512,144 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
         return False
 
 
-def resolve_feature_origin_provenance(*, event_ids: List[str]) -> Optional[Dict[str, Any]]:
-    """Resolve immutable origin only when every continuing event has one identical binding."""
-    ids = [str(x) for x in (event_ids or []) if x]
-    if not _DB_READY or not ids:
-        return None
+def resolve_feature_origin_transport(*, event_ids: List[str]) -> Dict[str, Any]:
+    """Resolve provenance from direct event ancestry and explain every miss.
+
+    FULL_EXACT_BINDING requires every current member event to be bound to the
+    same persisted origin. PARTIAL_CONSISTENT_BINDING permits newly-added
+    unbound members only when at least one continuing member is directly bound
+    and every bound member names the identical immutable origin tuple. This is
+    deterministic ancestry transport, not matching on market attributes. Any
+    conflicting bound origins fail closed.
+    """
+    ids = list(dict.fromkeys(str(x) for x in (event_ids or []) if x))
+    out = {
+        "version": "69.10.25", "transport_status": "NO_EVENT_IDS",
+        "event_count": len(ids), "bound_event_count": 0,
+        "unbound_event_count": len(ids), "distinct_bound_origins": 0,
+        "owner_authorized": False, "origin": None,
+        "identity_basis": "DIRECT_EVENT_ANCESTRY",
+        "fuzzy_matching": False, "reconstructs_identity": False,
+        "uses_market_attributes": False, "latest_owner_substitution": False,
+    }
+    if not ids:
+        return out
+    if not _DB_READY:
+        out["transport_status"] = "STORE_NOT_READY"
+        return out
     try:
         with _conn() as c:
             q = ",".join("?" * len(ids))
             rows = c.execute(
                 f"SELECT event_id,sample_id,session_date,legacy_cluster_key,decision_time "
                 f"FROM flow_feature_origin_bindings WHERE event_id IN ({q})", ids).fetchall()
-        if len(rows) != len(set(ids)):
-            return None
-        tuples = {(r["sample_id"], r["session_date"], r["legacy_cluster_key"], r["decision_time"]) for r in rows}
+        out["bound_event_count"] = len(rows)
+        out["unbound_event_count"] = len(ids) - len(rows)
+        if not rows:
+            out["transport_status"] = "NO_BOUND_EVENTS"
+            return out
+        tuples = {(r["sample_id"], r["session_date"], r["legacy_cluster_key"], r["decision_time"])
+                  for r in rows}
+        out["distinct_bound_origins"] = len(tuples)
         if len(tuples) != 1:
-            return None
+            out["transport_status"] = "CONFLICTING_BOUND_ORIGINS"
+            return out
         sample_id, session_date, legacy_cluster_key, decision_time = next(iter(tuples))
-        return {"sample_id": sample_id, "session_date": session_date,
-                "legacy_cluster_key": legacy_cluster_key, "decision_time": decision_time}
+        origin = {"sample_id": sample_id, "session_date": session_date,
+                  "legacy_cluster_key": legacy_cluster_key, "decision_time": decision_time}
+        out["origin"] = origin
+        out["owner_authorized"] = True
+        out["transport_status"] = ("FULL_EXACT_BINDING" if len(rows) == len(ids)
+                                   else "PARTIAL_CONSISTENT_BINDING")
+        return out
+    except Exception as exc:
+        out["transport_status"] = "RESOLVER_ERROR"
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        return out
+
+
+def resolve_feature_origin_provenance(*, event_ids: List[str]) -> Optional[Dict[str, Any]]:
+    """Compatibility surface returning only an authorized deterministic origin."""
+    result = resolve_feature_origin_transport(event_ids=event_ids)
+    return result.get("origin") if result.get("owner_authorized") else None
+
+
+def record_feature_origin_transport_observation(*, observation_session_date: str,
+        observation_legacy_cluster_key: str, observation_decision_time: str,
+        transport: Dict[str, Any]) -> bool:
+    if not _DB_READY or not all((observation_session_date, observation_legacy_cluster_key,
+                                 observation_decision_time)):
+        return False
+    t = transport or {}
+    origin = t.get("origin") or {}
+    try:
+        with _LOCK, _conn() as c:
+            c.execute(
+                """INSERT INTO flow_feature_origin_transport_audit
+                   (observed_at,observation_session_date,observation_legacy_cluster_key,
+                    observation_decision_time,event_count,bound_event_count,unbound_event_count,
+                    distinct_bound_origins,transport_status,resolved_sample_id,owner_authorized)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (_now_iso(), observation_session_date, observation_legacy_cluster_key,
+                 observation_decision_time, int(t.get("event_count") or 0),
+                 int(t.get("bound_event_count") or 0), int(t.get("unbound_event_count") or 0),
+                 int(t.get("distinct_bound_origins") or 0),
+                 str(t.get("transport_status") or "UNKNOWN"), origin.get("sample_id"),
+                 1 if t.get("owner_authorized") else 0))
+            c.commit()
+        return True
     except Exception:
-        return None
+        return False
+
+
+def feature_origin_transport_coverage_health(session_date: Optional[str] = None) -> Dict[str, Any]:
+    out = {
+        "version":"69.10.25", "identity_basis":"DIRECT_EVENT_ANCESTRY",
+        "transport_observations":0, "full_exact_bindings":0,
+        "partial_consistent_bindings":0, "no_event_ids":0, "no_bound_events":0,
+        "conflicting_bound_origins":0, "store_not_ready":0, "resolver_errors":0,
+        "transport_owner_resolved":0, "transport_owner_missing":0,
+        "transport_resolution_pct":0.0, "observations_with_any_bound_event":0,
+        "bound_events":0, "unbound_events":0,
+        "owner_authority":"DIRECT_CONTINUING_EVENT_ANCESTRY_ONLY",
+        "writes_evidence":False, "reconstructs_identity":False, "fuzzy_matching":False,
+        "uses_market_attributes":False, "latest_owner_substitution":False,
+        "historical_backfill":False, "changes_trade_decisions":False,
+        "execution_authority":False}
+    if not _DB_READY:
+        return out
+    try:
+        where = " WHERE observation_session_date=?" if session_date else ""
+        args = (session_date,) if session_date else ()
+        with _conn() as c:
+            r = c.execute(
+                "SELECT COUNT(*) n,"
+                "COALESCE(SUM(CASE WHEN transport_status='FULL_EXACT_BINDING' THEN 1 ELSE 0 END),0) full_n,"
+                "COALESCE(SUM(CASE WHEN transport_status='PARTIAL_CONSISTENT_BINDING' THEN 1 ELSE 0 END),0) partial_n,"
+                "COALESCE(SUM(CASE WHEN transport_status='NO_EVENT_IDS' THEN 1 ELSE 0 END),0) noids,"
+                "COALESCE(SUM(CASE WHEN transport_status='NO_BOUND_EVENTS' THEN 1 ELSE 0 END),0) nobound,"
+                "COALESCE(SUM(CASE WHEN transport_status='CONFLICTING_BOUND_ORIGINS' THEN 1 ELSE 0 END),0) conflict,"
+                "COALESCE(SUM(CASE WHEN transport_status='STORE_NOT_READY' THEN 1 ELSE 0 END),0) notready,"
+                "COALESCE(SUM(CASE WHEN transport_status='RESOLVER_ERROR' THEN 1 ELSE 0 END),0) err,"
+                "COALESCE(SUM(owner_authorized),0) resolved,"
+                "COALESCE(SUM(CASE WHEN bound_event_count>0 THEN 1 ELSE 0 END),0) anybound,"
+                "COALESCE(SUM(bound_event_count),0) bound,"
+                "COALESCE(SUM(unbound_event_count),0) unbound "
+                "FROM flow_feature_origin_transport_audit" + where, args).fetchone()
+        vals = {k:int(r[k] or 0) for k in ("n","full_n","partial_n","noids","nobound","conflict","notready","err","resolved","anybound","bound","unbound")}
+        out.update({
+            "transport_observations":vals["n"], "full_exact_bindings":vals["full_n"],
+            "partial_consistent_bindings":vals["partial_n"], "no_event_ids":vals["noids"],
+            "no_bound_events":vals["nobound"], "conflicting_bound_origins":vals["conflict"],
+            "store_not_ready":vals["notready"], "resolver_errors":vals["err"],
+            "transport_owner_resolved":vals["resolved"],
+            "transport_owner_missing":max(0, vals["n"]-vals["resolved"]),
+            "transport_resolution_pct":round(vals["resolved"]/vals["n"]*100.0,2) if vals["n"] else 0.0,
+            "observations_with_any_bound_event":vals["anybound"],
+            "bound_events":vals["bound"], "unbound_events":vals["unbound"]})
+    except Exception as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
 
 
 def record_feature_origin_pl_observation(*, observation_session_date: str,
@@ -547,7 +686,7 @@ def record_feature_origin_pl_observation(*, observation_session_date: str,
 
 
 def feature_origin_provenance_health(session_date: Optional[str] = None) -> Dict[str, Any]:
-    out = {"version":"69.10.24","identity_basis":"CANONICAL_FEATURE_SAMPLE_ID",
+    out = {"version":"69.10.25","identity_basis":"CANONICAL_FEATURE_SAMPLE_ID",
            "pl_handoff_observations":0,"origin_provenance_present":0,"origin_provenance_missing":0,
            "origin_owner_validated":0,"origin_owner_validation_failed":0,"origin_owned_pl_observations":0,
            "origin_owned_excursion_writes":0,"origin_owned_excursion_updates":0,
@@ -583,7 +722,8 @@ def feature_origin_provenance_health(session_date: Optional[str] = None) -> Dict
 def feature_origin_session_audit(session_date: str) -> Dict[str, Any]:
     out = feature_origin_provenance_health(session_date)
     out.update({"session_date":session_date,"persisted_feature_samples":0,"registered_feature_identities":0,
-                "origin_owned_excursions":0,"pending_samples_awaiting_genuine_pl":0,"labels_created":0})
+                "origin_owned_excursions":0,"pending_samples_awaiting_genuine_pl":0,"labels_created":0,
+                "transport_coverage": feature_origin_transport_coverage_health(session_date)})
     if not _DB_READY: return out
     try:
         with _conn() as c:
@@ -1296,6 +1436,7 @@ def sample_excursion_health() -> Dict[str, Any]:
                 out["excursion_write_readback"] = excursion_write_readback_health()
                 out["feature_pl_handoff"] = feature_pl_handoff_health()
                 out["feature_origin_provenance"] = feature_origin_provenance_health()
+                out["origin_transport_coverage"] = feature_origin_transport_coverage_health()
     except Exception as exc:  # pragma: no cover
         out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
     return out

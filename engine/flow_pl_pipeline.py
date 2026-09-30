@@ -245,8 +245,13 @@ def run_flow_pl(
                 # The current cluster tuple is observational and may evolve; it is never
                 # used to manufacture canonical ownership.
                 decision_time = f"{session}T{cl.get('end_time')}" if cl.get("end_time") else None
-                origin = flow_pl_store.resolve_feature_origin_provenance(
+                # APEX 69.10.25: preserve deterministic event ancestry even when a
+                # rebuilt cluster gains new unbound members. A partial transport is
+                # authorized only when every bound member names the same immutable
+                # persisted origin. Conflicting bound origins fail closed.
+                transport = flow_pl_store.resolve_feature_origin_transport(
                     event_ids=list(cl.get("member_event_ids") or []))
+                origin = transport.get("origin") if transport.get("owner_authorized") else None
                 owner_validated = bool(origin and flow_pl_store.verify_sample_identity_owner(
                     sample_id=origin.get("sample_id") or "",
                     session_date=origin.get("session_date") or "",
@@ -265,8 +270,10 @@ def run_flow_pl(
                         exact_owner_sample_id=(identity or {}).get("sample_id"))
 
                 cap = None
-                reason = "ORIGIN_PROVENANCE_MISSING" if not origin else (
-                    "ORIGIN_OWNER_VALIDATED" if owner_validated else "ORIGIN_OWNER_VALIDATION_FAILED")
+                transport_status = str(transport.get("transport_status") or "UNKNOWN")
+                reason = (f"ORIGIN_TRANSPORT_{transport_status}" if not origin else
+                          ("ORIGIN_OWNER_VALIDATED" if owner_validated
+                           else "ORIGIN_OWNER_VALIDATION_FAILED"))
                 if origin and owner_validated:
                     cap = flow_pl_store.record_sample_excursion(
                         sample_id=origin["sample_id"], session_date=origin["session_date"],
@@ -286,6 +293,10 @@ def run_flow_pl(
                             reason="LATER_ORIGIN_PROVENANCE_REAL_PL", pl_observed=True,
                             excursion_written=True)
                 if decision_time:
+                    flow_pl_store.record_feature_origin_transport_observation(
+                        observation_session_date=session,
+                        observation_legacy_cluster_key=ckey_s,
+                        observation_decision_time=decision_time, transport=transport)
                     flow_pl_store.record_feature_origin_pl_observation(
                         observation_session_date=session,
                         observation_legacy_cluster_key=ckey_s,
