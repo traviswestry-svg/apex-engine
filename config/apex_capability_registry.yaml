@@ -942,19 +942,3 @@ capabilities:
       automatic_execution: false
       automatic_order_submission: false
 
-
-  durable_bound_origin_reobservation_closure:
-    version: 69.10.27
-    state: ACTIVE_EVIDENCE_INTEGRITY
-    identity_basis: CANONICAL_FEATURE_SAMPLE_ID_PLUS_BOUND_EVENT_ID
-    description: "Re-observe persisted feature origins from durable exact event bindings when the provider tape no longer carries the originating print."
-    production_effect: EVIDENCE_IDENTITY_CONTINUITY
-    decision_authority: none
-    execution_authority: none
-    guardrails:
-      exact_registered_owner_required: true
-      persisted_event_facts_only: true
-      genuine_live_chain_mark_required: true
-      fuzzy_matching: false
-      historical_backfill: false
-      synthetic_pl: false

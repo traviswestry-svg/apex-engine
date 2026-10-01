@@ -1,6 +1,6 @@
 {
   "apex_version": "69.10.27",
-  "build_name": "Durable Bound Origin Re-observation Closure",
+  "build_name": "Expected Range Reversal Timing Intelligence",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -643,14 +643,7 @@
     "reversal_timing_changes_trade_decisions": false,
     "reversal_timing_changes_execution_authority": false,
     "reversal_timing_automatic_order_submission": false,
-    "reversal_timing_version": "69.10.26",
-    "durable_bound_origin_reobservation": true,
-    "origin_reobservation_requires_exact_registered_owner": true,
-    "origin_reobservation_uses_persisted_event_facts_only": true,
-    "origin_reobservation_requires_genuine_live_chain_mark": true,
-    "origin_reobservation_fuzzy_matching": false,
-    "origin_reobservation_historical_backfill": false,
-    "origin_reobservation_changes_execution_authority": false
+    "reversal_timing_version": "69.10.26"
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
