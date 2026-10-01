@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.25
+apex_version: 69.10.26
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -920,3 +920,25 @@ capabilities:
       historical_backfill: false
       changes_trade_decisions: false
       changes_execution_authority: false
+
+  expected_range_reversal_timing_intelligence:
+    version: 69.10.26
+    state: ACTIVE_ADVISORY
+    description: "Treat the canonical Expected Session Range as a reversal search zone, add 10/20/30 percent extension bands, classify return-through-envelope rejection with existing flow/structure evidence, and expose genuine price-sample dwell timing plus option-horizon alignment."
+    canonical_modules: [engine.range_intelligence, engine.range_reversal_intelligence, engine.range_routes, templates.apex_os]
+    production_effect: ADVISORY_ONLY
+    decision_authority: none
+    execution_authority: none
+    outputs: [extension_bands, extension_state, reversal_evidence_score, edge_rejection_proxy, time_at_extreme, contract_horizon_advisory]
+    guardrails:
+      canonical_range_remains_source_of_truth: true
+      range_boundary_is_not_entry_signal: true
+      liquidity_sweep_is_proxy_not_claimed_fact: true
+      genuine_price_samples_only: true
+      price_sample_gap_cap_seconds: 300
+      no_synthetic_structure_confirmation: true
+      contract_horizon_is_advisory_only: true
+      changes_trade_decisions: false
+      automatic_execution: false
+      automatic_order_submission: false
+

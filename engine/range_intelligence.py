@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 
 from .canonical_persistence import connect as canonical_connect
 from .silent_degradation_observability import record_degradation
+from .range_reversal_intelligence import build_range_reversal_intelligence
 
 VERSION = "7.2_RANGE_INTELLIGENCE_ENGINE"
 _ET = ZoneInfo("America/New_York")
@@ -527,6 +528,10 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
         "stale_inputs": list(dict.fromkeys(stale_inputs)),
         "quality_flags": list(dict.fromkeys(flags)),
     }
+    # APEX 69.10.26: advisory-only range-extension / reversal timing context.
+    # This layer consumes the already-computed canonical range and existing
+    # structure/flow evidence. It cannot authorize trades or execution.
+    ri["reversal_timing_intelligence"] = build_range_reversal_intelligence(lr, ri)
     return _envelope(ticker, ri)
 
 def _envelope(ticker: str, ri: Dict[str, Any]) -> Dict[str, Any]:
