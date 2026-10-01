@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_release_truth_and_guardrails():
     m=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.26'
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.27'
     assert m['build_name']=='Expected Range Reversal Timing Intelligence'
     g=m['guardrails']
     assert g['automatic_trigger_pruning'] is False

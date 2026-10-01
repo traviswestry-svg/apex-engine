@@ -48,7 +48,7 @@ def _gamma(net_gex=100.0, *, source_snapshot_at="2026-09-18T13:30:00+00:00", sig
 
 def test_release_identity_and_capability_registry_are_691014():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.26"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.27"
     assert manifest["build_name"] == "Expected Range Reversal Timing Intelligence"
     assert manifest["database_schema_version"] == "8"
     g = manifest["guardrails"]
@@ -56,7 +56,7 @@ def test_release_identity_and_capability_registry_are_691014():
     assert g["gamma_latest_state_substitution_for_historical_decisions"] is False
     assert g["gamma_provenance_changes_execution_authority"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.26" in registry
+    assert "apex_version: 69.10.27" in registry
     assert "canonical_gamma_evidence_identity_decision_time_provenance:" in registry
 
 

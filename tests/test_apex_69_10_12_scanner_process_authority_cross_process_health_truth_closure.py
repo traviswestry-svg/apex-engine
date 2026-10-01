@@ -6,7 +6,7 @@ from engine.scanner_runtime_truth import resolve_scanner_runtime
 
 def test_release_truth_and_authority_guardrails():
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.26'
+    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.27'
     assert manifest['build_name'] == 'Expected Range Reversal Timing Intelligence'
     g = manifest['guardrails']
     assert g['scanner_fresh_heartbeat_is_cross_process_authority'] is True
@@ -17,7 +17,7 @@ def test_release_truth_and_authority_guardrails():
     assert g['scanner_authority_changes_trade_decisions'] is False
     assert g['scanner_authority_changes_execution_authority'] is False
     registry = Path('config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.26' in registry
+    assert 'apex_version: 69.10.27' in registry
     assert 'scanner_process_authority_cross_process_health_truth_closure:' in registry
 
 
