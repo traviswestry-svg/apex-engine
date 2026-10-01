@@ -232,6 +232,16 @@
     .ri-rz .rzr{font-weight:800}
     .ri-degraded{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);color:var(--amber);
       font-size:11px;font-weight:700;letter-spacing:.04em;padding:6px 10px;border-radius:var(--radius-sm);margin-bottom:8px}
+    .ri-rev-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+    .ri-rev-state{font-family:var(--mono);font-size:12px;font-weight:900;letter-spacing:.04em}
+    .ri-rev-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
+    .ri-rev-cell{background:rgba(15,23,42,.35);border:1px solid rgba(148,163,184,.12);border-radius:8px;padding:7px 8px;min-width:0}
+    .ri-rev-cell .v{font-family:var(--mono);font-size:14px;font-weight:800;color:var(--text);overflow-wrap:anywhere}
+    .ri-rev-cell .l{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:2px}
+    .ri-band-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+    .ri-band-col{font-size:11px;color:var(--muted)}
+    .ri-band-col strong{display:block;color:var(--text);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
+    @media(max-width:620px){.ri-rev-grid{grid-template-columns:1fr 1fr}.ri-band-row{grid-template-columns:1fr}}
   </style>
 
   <!-- APEX 7.5.7 Decision Intelligence — self-contained panel (isolated CSS/JS) -->
@@ -498,6 +508,25 @@
         <div class="ri-esr" id="riEsr">—</div>
         <div class="ri-zmeta" id="riEsrMeta"></div>
       </div>
+      <!-- APEX 69.10.26 · Expected-range extension & reversal timing -->
+      <div class="ri-section" id="riReversalSection">
+        <div class="ri-rev-head">
+          <div class="ri-sec-label" style="margin-bottom:0">Reversal Timing Intelligence</div>
+          <div class="ri-rev-state" id="riRevState">RANGE MONITOR</div>
+        </div>
+        <div class="ri-rev-grid">
+          <div class="ri-rev-cell"><div class="v" id="riRevSide">—</div><div class="l">Active edge</div></div>
+          <div class="ri-rev-cell"><div class="v" id="riRevExt">—</div><div class="l">Extension</div></div>
+          <div class="ri-rev-cell"><div class="v" id="riRevScore">—</div><div class="l">Evidence score</div></div>
+          <div class="ri-rev-cell"><div class="v" id="riRevDte">—</div><div class="l">Horizon advisory</div></div>
+        </div>
+        <div class="ri-band-row">
+          <div class="ri-band-col"><strong>Upper extensions</strong><span id="riUpperBands">—</span></div>
+          <div class="ri-band-col"><strong>Lower extensions</strong><span id="riLowerBands">—</span></div>
+        </div>
+        <div class="ri-zmeta" id="riRevTiming" style="margin-top:7px"></div>
+        <div class="ri-zmeta" id="riRevInterp" style="margin-top:4px"></div>
+      </div>
       <!-- center metrics -->
       <div class="ri-center ri-section">
         <div class="ri-metrics">
@@ -578,6 +607,22 @@
       document.getElementById('riEsr').textContent=(esr.low!=null?num(esr.low)+' – '+num(esr.high):'unavailable');
       var canon=ri.canonical||{};
       document.getElementById('riEsrMeta').textContent='mid '+num(esr.mid)+' · '+((esr.source||'').replace(/_/g,' ').toLowerCase()||'source n/a')+(canon.used?' · canonical':'');
+
+      // APEX 69.10.26 · range-extension and reversal timing intelligence
+      var rr=ri.reversal_timing_intelligence||{};
+      var rrLoc=rr.location||{}, rrEv=rr.reversal_evidence||{}, rrAdv=rr.contract_horizon_advisory||{}, rrBands=rr.extension_bands||{};
+      document.getElementById('riRevState').textContent=(rr.state||'UNAVAILABLE').replace(/_/g,' ');
+      document.getElementById('riRevSide').textContent=(rr.side||'NONE').replace(/_/g,' ');
+      var extPct=rrLoc.extension_percent;
+      document.getElementById('riRevExt').textContent=(extPct!=null&&extPct>0)?(extPct+'% / '+num(rrLoc.extension_points)+' pts'):(rrLoc.state||'inside').replace(/_/g,' ');
+      document.getElementById('riRevScore').textContent=(rrEv.normalized_score!=null)?(rrEv.normalized_score+'%'):'N/A';
+      document.getElementById('riRevDte').textContent=(rrAdv.preferred_dte!=null)?(rrAdv.preferred_dte+'DTE · Δ '+(rrAdv.delta_range||[]).join('–')):'—';
+      function bandsText(a){return (a&&a.length)?a.map(function(x){return '+'+x.percent+'% '+num(x.price);}).join(' · '):'—';}
+      document.getElementById('riUpperBands').textContent=bandsText(rrBands.upper);
+      document.getElementById('riLowerBands').textContent=(rrBands.lower&&rrBands.lower.length)?rrBands.lower.map(function(x){return '−'+x.percent+'% '+num(x.price);}).join(' · '):'—';
+      var tm=rr.timing||{};
+      document.getElementById('riRevTiming').textContent=tm.available?(tm.edge_touched?('First edge touch '+(tm.minutes_since_first_touch!=null?tm.minutes_since_first_touch+' min ago':'—')+' · observed extreme dwell '+(tm.observed_extreme_minutes||0)+' min'):'No expected-range edge touch recorded in RTH samples yet.'):'Timing: '+((tm.reason||tm.source||'unavailable').replace(/_/g,' ').toLowerCase());
+      document.getElementById('riRevInterp').textContent=rr.interpretation||'';
 
       // center metrics — envelope-relative, gated pre-RTH
       document.getElementById('riUp').textContent=pts(ri.upside_remaining_points);

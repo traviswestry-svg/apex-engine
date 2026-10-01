@@ -21,6 +21,7 @@ from .range_intelligence import (
     build_range_intelligence, capture_projection, history, scorecard,
     init_history, record_actuals,
 )
+from .range_reversal_intelligence import attach_price_history_timing
 
 
 def _call(fn: Optional[Callable], *args, default=None):
@@ -63,6 +64,8 @@ def register_range_routes(
             runtime = _call(runtime_provider, default=None)
             env = build_range_intelligence(lr, market_open=_market_open(), ticker=ticker,
                                            canonical=canonical, runtime=runtime)
+            # Attach read-only dwell-time evidence from canonical price samples.
+            env = attach_price_history_timing(env, ticker)
             ri = (env or {}).get("range_intelligence") or {}
             # Degraded gating: if this cycle can't project, preserve the last valid
             # projection and mark it stale rather than blanking or fabricating one.

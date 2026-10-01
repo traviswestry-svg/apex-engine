@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.25",
-  "build_name": "Origin Provenance Transport Coverage Closure",
+  "apex_version": "69.10.26",
+  "build_name": "Expected Range Reversal Timing Intelligence",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "8",
-  "released_at": "2026-09-30",
+  "released_at": "2026-10-01",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -628,15 +628,30 @@
     "origin_conflicting_bound_ancestors_fail_closed": true,
     "origin_transport_uses_market_attributes": false,
     "origin_transport_latest_owner_substitution": false,
-    "origin_transport_coverage_version": "69.10.25"
+    "origin_transport_coverage_version": "69.10.25",
+    "expected_range_reversal_timing_intelligence": true,
+    "expected_range_extension_bands_percent": [
+      10,
+      20,
+      30
+    ],
+    "range_boundary_is_not_entry_signal": true,
+    "reversal_timing_liquidity_sweep_proxy_only": true,
+    "reversal_timing_price_history_genuine_samples_only": true,
+    "reversal_timing_price_sample_gap_cap_seconds": 300,
+    "reversal_timing_contract_horizon_advisory_only": true,
+    "reversal_timing_changes_trade_decisions": false,
+    "reversal_timing_changes_execution_authority": false,
+    "reversal_timing_automatic_order_submission": false,
+    "reversal_timing_version": "69.10.26"
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.25",
-  "application_version": "69.10.25",
+  "semantic_version": "69.10.26",
+  "application_version": "69.10.26",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
