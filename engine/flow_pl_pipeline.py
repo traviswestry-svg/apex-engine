@@ -385,6 +385,94 @@ def sample_flow_pl(**kwargs) -> int:
     return int(res.get("samples_recorded") or 0)
 
 
+def reobserve_bound_feature_origins(*, session_date_value: str,
+        chain_fetcher: Optional[Callable[[str, str, str], Any]],
+        last_result_provider: Optional[Callable[[], Dict[str, Any]]] = None,
+        method: str = DEFAULT_MARK_METHOD) -> Dict[str, int]:
+    """Reprice exact persisted origins from durable event bindings.
+
+    This is APEX 69.10.27's post-persistence continuation path. It never searches
+    for an owner. The binding table supplies the canonical owner and the tracking
+    table supplies only facts previously observed for that exact event. Current
+    option-chain quotes provide the genuine later mark. Missing quotes fail closed.
+    """
+    report = {"candidates": 0, "samples_seen": 0, "samples_marked": 0,
+              "excursions_inserted": 0, "excursions_updated": 0,
+              "unmarkable": 0, "owner_validation_failed": 0, "errors": 0}
+    try:
+        rows = flow_pl_store.get_bound_origin_repricing_candidates(session_date_value)
+        report["candidates"] = len(rows)
+        if not rows or not chain_fetcher:
+            return report
+        spot = None
+        if last_result_provider:
+            lr = last_result_provider() or {}
+            ms = lr.get("market_state") or {}
+            try:
+                spot = float(ms.get("price")) if ms.get("price") else None
+            except (TypeError, ValueError):
+                spot = None
+        cache = ChainCache(chain_fetcher)
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(str(row["sample_id"]), []).append(row)
+        report["samples_seen"] = len(grouped)
+        for sample_id, members in grouped.items():
+            owner = members[0]
+            if not flow_pl_store.verify_sample_identity_owner(
+                    sample_id=sample_id, session_date=owner["session_date"],
+                    legacy_cluster_key=owner["legacy_cluster_key"],
+                    decision_time=owner["decision_time"]):
+                report["owner_validation_failed"] += 1
+                continue
+            pls: List[Dict[str, Any]] = []
+            for r in members:
+                contract = cache.contract(r.get("ticker") or "SPX", r.get("expiration") or "",
+                                          (r.get("contract_type") or "").upper(), r.get("strike"))
+                agg = "AGGRESSIVE_BUY" if r.get("position_side") == "LONG" else (
+                      "AGGRESSIVE_SELL" if r.get("position_side") == "SHORT" else "UNKNOWN")
+                qty = int(r.get("contracts") or 0)
+                entry = r.get("entry_mark")
+                mult = float(r.get("multiplier") or 100.0)
+                event = {"event_id": r.get("event_id"), "execution_aggression": agg,
+                         "observable_facts": {"ticker": r.get("ticker"),
+                         "time_et": r.get("entry_time_et"), "contract_type": r.get("contract_type"),
+                         "strike": r.get("strike"), "expiration": r.get("expiration"),
+                         "trade_price": entry, "contracts": qty,
+                         "premium": (float(entry) * qty * mult if entry is not None and qty else None)}}
+                pl = compute_event_pl(event, contract, method=method, spot=spot,
+                                      entry_spot=r.get("entry_spot"), entry_iv=r.get("entry_iv"),
+                                      t_years=years_to_expiry(r.get("expiration")))
+                if pl.get("markable") and pl.get("estimated_pl_dollars") is not None:
+                    pls.append(pl)
+            if not pls:
+                report["unmarkable"] += 1
+                continue
+            total_pl = round(sum(float(x["estimated_pl_dollars"]) for x in pls), 2)
+            cost = round(sum(float(x.get("entry_mark") or 0) * int(x.get("contracts") or 0) *
+                             float(x.get("multiplier") or 100.0) for x in pls), 2)
+            cap = flow_pl_store.record_sample_excursion(
+                sample_id=sample_id, session_date=owner["session_date"],
+                ticker=owner.get("ticker") or "SPX", pl_dollars=total_pl, cost_basis=cost,
+                decision_time=owner["decision_time"],
+                legacy_cluster_key=owner["legacy_cluster_key"], require_registered_owner=True)
+            if not cap:
+                report["errors"] += 1
+                continue
+            report["samples_marked"] += 1
+            first = bool(cap.get("first_sample"))
+            report["excursions_inserted" if first else "excursions_updated"] += 1
+            flow_pl_store.record_sample_pl_lifecycle(
+                sample_id=sample_id, session_date=owner["session_date"],
+                legacy_cluster_key=owner["legacy_cluster_key"], decision_time=owner["decision_time"],
+                state=("PL_OBSERVED_EXCURSION_WRITTEN" if first else "PL_OBSERVED_EXCURSION_UPDATED"),
+                reason="DURABLE_BOUND_ORIGIN_REAL_PL", pl_observed=True, excursion_written=True)
+        return report
+    except Exception:
+        report["errors"] += 1
+        return report
+
+
 def capture_persisted_feature_excursions(targets: List[Dict[str, Any]]) -> Dict[str, int]:
     """Capture real live P/L marks for canonical feature identities after persistence.
 

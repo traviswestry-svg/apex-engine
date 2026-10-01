@@ -789,11 +789,13 @@ try:
     from engine.flow_pl_pipeline import (
         run_flow_pl as _flow_pl_run,
         capture_persisted_feature_excursions as _flow_pl_capture_persisted,
+        reobserve_bound_feature_origins as _flow_pl_reobserve_bound_origins,
     )
     FLOW_PL_SAMPLER_AVAILABLE = True
 except Exception as _fpls_err:
     _flow_pl_run = None  # type: ignore[assignment]
     _flow_pl_capture_persisted = None  # type: ignore[assignment]
+    _flow_pl_reobserve_bound_origins = None  # type: ignore[assignment]
     FLOW_PL_SAMPLER_AVAILABLE = False
     print(f"APEX Flow P/L sampler unavailable (non-fatal): {_fpls_err}", flush=True)
 
@@ -835,6 +837,11 @@ _FLOW_LEARNING_RUNTIME = {
     "capture_updated": 0,
     "capture_missing_pl": 0,
     "capture_errors": 0,
+    "origin_reobservation_candidates": 0,
+    "origin_reobservation_samples_marked": 0,
+    "origin_reobservation_inserted": 0,
+    "origin_reobservation_updated": 0,
+    "origin_reobservation_errors": 0,
     "last_cycle_at": None,
     "last_pipeline_at": None,
     "last_writer_at": None,
@@ -4714,6 +4721,20 @@ def scanner_loop() -> None:
                     _FLOW_LEARNING_RUNTIME["capture_updated"] += int(_rep.get("excursions_updated") or 0)
                     _FLOW_LEARNING_RUNTIME["capture_missing_pl"] += int(_rep.get("excursion_missing_pl") or 0)
                     _FLOW_LEARNING_RUNTIME["capture_errors"] += int(_rep.get("excursion_capture_errors") or 0)
+
+                    # APEX 69.10.27: now that this cycle's sealed features have
+                    # persisted and atomically bound their exact origin event IDs,
+                    # re-observe all durable bound origins from current genuine
+                    # chain marks. This does not search for or reconstruct owners.
+                    _ro = _flow_pl_reobserve_bound_origins(
+                        session_date_value=_sess,
+                        chain_fetcher=globals()["_FLOW_PL_SAMPLE_ARGS"].get("chain_fetcher"),
+                        last_result_provider=globals()["_FLOW_PL_SAMPLE_ARGS"].get("last_result_provider"))
+                    _FLOW_LEARNING_RUNTIME["origin_reobservation_candidates"] += int(_ro.get("candidates") or 0)
+                    _FLOW_LEARNING_RUNTIME["origin_reobservation_samples_marked"] += int(_ro.get("samples_marked") or 0)
+                    _FLOW_LEARNING_RUNTIME["origin_reobservation_inserted"] += int(_ro.get("excursions_inserted") or 0)
+                    _FLOW_LEARNING_RUNTIME["origin_reobservation_updated"] += int(_ro.get("excursions_updated") or 0)
+                    _FLOW_LEARNING_RUNTIME["origin_reobservation_errors"] += int(_ro.get("errors") or 0)
                     if _rep.get("canonical_lookup_missing"):
                         _writer_state = "CANONICAL_FEATURE_LOOKUP_MISSING"
                     elif _rep.get("identity_registration_failures"):

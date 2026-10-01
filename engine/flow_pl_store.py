@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.25_ORIGIN_PROVENANCE_TRANSPORT_COVERAGE_CLOSURE"
+STORE_VERSION = "69.10.27_DURABLE_BOUND_ORIGIN_REOBSERVATION_CLOSURE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -510,6 +510,38 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
         return True
     except Exception:
         return False
+
+
+def get_bound_origin_repricing_candidates(session_date: str) -> List[Dict[str, Any]]:
+    """Return durable, exact origin-bound events eligible for genuine re-observation.
+
+    APEX 69.10.27 closes the source-window gap: once a persisted feature has
+    atomically bound its originating event IDs, later repricing does not require
+    those historical prints to remain in the provider's current tape window.
+    Ownership comes only from ``flow_feature_origin_bindings`` and event facts
+    come only from the previously observed ``flow_pl_tracking`` row.
+    """
+    if not _DB_READY or not session_date:
+        return []
+    try:
+        with _conn() as c:
+            rows = c.execute(
+                """SELECT b.event_id,b.sample_id,b.session_date,b.legacy_cluster_key,
+                          b.decision_time,t.ticker,t.contract_type,t.strike,t.expiration,
+                          t.position_side,t.contracts,t.multiplier,t.entry_time_et,
+                          t.entry_mark,t.entry_spot,t.entry_iv
+                   FROM flow_feature_origin_bindings b
+                   JOIN flow_pl_tracking t ON t.event_id=b.event_id
+                   WHERE b.session_date=?
+                   ORDER BY b.sample_id,b.event_id""", (session_date,)).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as exc:
+        record_degradation(
+            component="flow_pl_store", operation="get_bound_origin_repricing_candidates",
+            exc=exc, fallback="NO_DURABLE_ORIGIN_REPRICING",
+            decision_authority_suppressed=False, source=__name__,
+            context={"db_path": _db_path(), "session_date": session_date})
+        return []
 
 
 def resolve_feature_origin_transport(*, event_ids: List[str]) -> Dict[str, Any]:
