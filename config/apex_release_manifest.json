@@ -643,7 +643,9 @@
     "reversal_timing_changes_trade_decisions": false,
     "reversal_timing_changes_execution_authority": false,
     "reversal_timing_automatic_order_submission": false,
-    "reversal_timing_version": "69.10.26"
+    "reversal_timing_version": "69.10.26",
+    "durable_bound_origin_reobservation": true,
+    "origin_reobservation_requires_exact_registered_owner": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
