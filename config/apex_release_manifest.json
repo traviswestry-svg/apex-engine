@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.28",
-  "build_name": "Canonical Forecast Decision-Time Provenance",
+  "apex_version": "69.10.29",
+  "build_name": "Unified Structural Map & Reversal Path Orchestration",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -652,15 +652,24 @@
     "legacy_forecast_auto_promotion": false,
     "evening_forecast_nearest_time_matching": false,
     "evening_forecast_reconstruction": false,
-    "evening_forecast_cache_fallback": false
+    "evening_forecast_cache_fallback": false,
+    "unified_structural_map_reversal_path_orchestration": true,
+    "structural_map_existing_levels_only": true,
+    "structural_map_regime_pivot_is_existing_canonical_level": true,
+    "structural_map_reaction_zones_are_search_zones": true,
+    "structural_map_new_probability_inference": false,
+    "structural_map_changes_trade_decisions": false,
+    "structural_map_changes_execution_authority": false,
+    "structural_map_automatic_order_submission": false,
+    "structural_map_version": "69.10.29"
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.28",
-  "application_version": "69.10.28",
+  "semantic_version": "69.10.29",
+  "application_version": "69.10.29",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
