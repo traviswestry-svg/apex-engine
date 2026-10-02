@@ -12108,10 +12108,6 @@ def api_evening_recap():
             session_date = candidate.isoformat()
         morning = get_morning_snapshot(session_date)
         if not morning:
-            # Same-process compatibility for a brief generated before APEX 49
-            # persistence was deployed.
-            morning = _MORNING_BRIEF_CACHE.get(session_date)
-        if not morning:
             return jsonify({
                 "ok": False,
                 "status": "MORNING_BRIEF_REQUIRED",

@@ -12,8 +12,8 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_handoff_guardrails():
     d = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert d["apex_version"] == d["semantic_version"] == d["application_version"] == "69.10.27"
-    assert d["build_name"] == "Expected Range Reversal Timing Intelligence"
+    assert d["apex_version"] == d["semantic_version"] == d["application_version"] == "69.10.28"
+    assert d["build_name"] == "Canonical Forecast Decision-Time Provenance"
     g = d["guardrails"]
     assert g["canonical_feature_pl_handoff_audit"] is True
     assert g["canonical_feature_pl_handoff_exact_tuple_only"] is True

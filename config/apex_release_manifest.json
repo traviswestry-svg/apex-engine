@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.27",
-  "build_name": "Expected Range Reversal Timing Intelligence",
+  "apex_version": "69.10.28",
+  "build_name": "Canonical Forecast Decision-Time Provenance",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "8",
-  "released_at": "2026-10-01",
+  "released_at": "2026-10-02",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -645,15 +645,22 @@
     "reversal_timing_automatic_order_submission": false,
     "reversal_timing_version": "69.10.26",
     "durable_bound_origin_reobservation": true,
-    "origin_reobservation_requires_exact_registered_owner": true
+    "origin_reobservation_requires_exact_registered_owner": true,
+    "canonical_forecast_decision_time_provenance": true,
+    "canonical_forecast_exact_identity_required_for_evening_grading": true,
+    "canonical_forecast_snapshot_hash_required": true,
+    "legacy_forecast_auto_promotion": false,
+    "evening_forecast_nearest_time_matching": false,
+    "evening_forecast_reconstruction": false,
+    "evening_forecast_cache_fallback": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.27",
-  "application_version": "69.10.27",
+  "semantic_version": "69.10.28",
+  "application_version": "69.10.28",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

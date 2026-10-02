@@ -44,3 +44,22 @@ def init_evening_archive_db(db_path: str) -> None:
         CREATE INDEX IF NOT EXISTS idx_apex49_recap_generated ON apex49_evening_recaps(generated_at);
         CREATE INDEX IF NOT EXISTS idx_apex49_morning_revision_date ON apex49_morning_revisions(session_date, generated_at);
         """)
+        # 69.10.28 additive migration. Existing historical rows remain legacy/unverified;
+        # they are never retroactively assigned canonical identity.
+        cols = {r[1] for r in c.execute("PRAGMA table_info(apex49_morning_snapshots)").fetchall()}
+        for name, decl in (
+            ("forecast_id", "TEXT"),
+            ("snapshot_hash", "TEXT"),
+            ("canonical_components_json", "TEXT"),
+        ):
+            if name not in cols:
+                c.execute(f"ALTER TABLE apex49_morning_snapshots ADD COLUMN {name} {decl}")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_apex49_forecast_id ON apex49_morning_snapshots(forecast_id) WHERE forecast_id IS NOT NULL")
+        c.executescript("""
+        CREATE TRIGGER IF NOT EXISTS trg_apex49_canonical_forecast_immutable
+        BEFORE UPDATE ON apex49_morning_snapshots
+        WHEN OLD.forecast_id IS NOT NULL
+        BEGIN
+          SELECT RAISE(ABORT, 'canonical forecast snapshots are immutable');
+        END;
+        """)
