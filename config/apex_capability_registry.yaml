@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.28
+apex_version: 69.10.29
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -954,3 +954,25 @@ capabilities:
     execution_authority: none
     production_effect: EVIDENCE_INTEGRITY_ONLY
     guardrails: [first_eligible_forecast_only, post_open_promotion_blocked, immutable_official_snapshot, exact_forecast_id, canonical_component_hash, legacy_rows_unverified, no_legacy_auto_promotion, no_nearest_time_matching, no_free_text_reconstruction, no_evening_recomputation, no_cache_fallback, fail_closed_on_integrity_mismatch, no_trade_calls, no_direction_change, no_position_sizing_change, no_execution_authority]
+
+
+  unified_structural_map_reversal_path_orchestration:
+    version: 69.10.29
+    state: ACTIVE_ADVISORY
+    description: "Orchestrate existing APEX range, regime-level, reversal-timing, magnet, and path evidence into one structural map without inventing levels or probabilities."
+    canonical_modules: [engine.range_intelligence, engine.range_reversal_intelligence, engine.structural_map_orchestration, engine.range_routes]
+    production_effect: ADVISORY_ORCHESTRATION_ONLY
+    decision_authority: none
+    execution_authority: none
+    outputs: [regime_pivot, upper_reaction_zone, lower_reaction_zone, destination_magnets, session_path_scenarios, reversal_path]
+    guardrails:
+      uses_existing_levels_only: true
+      regime_pivot_must_be_existing_level: true
+      expected_range_boundary_is_not_entry_signal: true
+      extension_zones_are_search_zones: true
+      creates_new_probabilities: false
+      preserves_ltpe_evidence_only_policy: true
+      changes_trade_decisions: false
+      changes_execution_authority: false
+      automatic_execution: false
+      automatic_order_submission: false

@@ -403,6 +403,11 @@ def attach_price_history_timing(envelope: Dict[str, Any], ticker: str = "SPX",
             conn.close()
         rr["timing"] = timing_from_samples((dict(r) for r in rows), low=float(lo), high=float(hi))
         ri["reversal_timing_intelligence"] = rr
+        try:
+            from .structural_map_orchestration import refresh_unified_structural_map
+            ri = refresh_unified_structural_map(ri)
+        except Exception:
+            pass
         envelope["range_intelligence"] = ri
         return envelope
     except Exception as exc:
