@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.27
+apex_version: 69.10.28
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -942,3 +942,15 @@ capabilities:
       automatic_execution: false
       automatic_order_submission: false
 
+
+  canonical_forecast_decision_time_provenance:
+    canonical_module: engine.evening_recap
+    deployed_modules: [engine.evening_recap, engine.evening_archive_schema, app]
+    status: canonical_identity_enforced
+    version: "69.10.28"
+    inputs: [first_eligible_preopen_morning_forecast, structured_forecast_components, decision_time_generated_at]
+    outputs: [canonical_forecast_id, immutable_snapshot_hash, canonical_component_snapshot, exact_evening_grading_identity]
+    decision_authority: none
+    execution_authority: none
+    production_effect: EVIDENCE_INTEGRITY_ONLY
+    guardrails: [first_eligible_forecast_only, post_open_promotion_blocked, immutable_official_snapshot, exact_forecast_id, canonical_component_hash, legacy_rows_unverified, no_legacy_auto_promotion, no_nearest_time_matching, no_free_text_reconstruction, no_evening_recomputation, no_cache_fallback, fail_closed_on_integrity_mismatch, no_trade_calls, no_direction_change, no_position_sizing_change, no_execution_authority]

@@ -24,13 +24,13 @@ def _ri(low=7613.03, high=7690.05, price=7651.54, session_high=7680.0, session_l
 
 def test_release_truth_and_capability_registration():
     manifest = json.loads((ROOT / "config" / "apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.27"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.28"
     g = manifest["guardrails"]
     assert g["expected_range_reversal_timing_intelligence"] is True
     assert g["range_boundary_is_not_entry_signal"] is True
     assert g["reversal_timing_changes_execution_authority"] is False
     registry = (ROOT / "config" / "apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.27" in registry
+    assert "apex_version: 69.10.28" in registry
     assert "expected_range_reversal_timing_intelligence" in registry
 
 

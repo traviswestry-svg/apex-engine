@@ -10,6 +10,7 @@ from .canonical_persistence import connect as canonical_connect
 
 import datetime as dt
 import json
+import hashlib
 import os
 import re
 import sqlite3
@@ -23,7 +24,7 @@ try:
 except Exception:  # pragma: no cover
     ET = dt.timezone(dt.timedelta(hours=-5))
 
-VERSION = "69.10.3_MORNING_FORECAST_EVENING_VALIDATION_INTEGRITY"
+VERSION = "69.10.28_CANONICAL_FORECAST_DECISION_TIME_PROVENANCE"
 DB_PATH = persistent_sqlite_path("APEX_GOVERNANCE_DB", "apex_governance.db")
 FEED_REQUIRED = "[FEED REQUIRED]"
 REGIMES = ("EVENT DRIVEN", "MEAN REVERSION", "HIGH VOLATILITY", "LOW VOLATILITY", "BALANCED AUCTION", "COMPRESSION", "EXPANSION", "TREND")
@@ -54,6 +55,64 @@ def _num(v: Any) -> Optional[float]:
         return x if x == x else None
     except Exception:
         return None
+
+
+
+def _sha256_json(value: Any) -> str:
+    return hashlib.sha256(_json(value).encode("utf-8")).hexdigest()
+
+
+def _canonical_forecast_components(payload: dict, ticker: str, session_date: str, generated_at: str) -> dict:
+    """Freeze only decision-time forecast authority; never derive missing fields later."""
+    structured = payload.get("structured") or {}
+    expected_move = structured.get("expected_move") or {}
+    identity = payload.get("forecast_identity") or {}
+    context = payload.get("session_context") or {}
+    return {
+        "ticker": ticker,
+        "session_date": session_date,
+        "generated_at": generated_at,
+        "source_session_date": payload.get("source_session_date") or identity.get("source_session_date"),
+        "brief_mode": context.get("brief_mode") or identity.get("brief_mode"),
+        "reference_spot": structured.get("spot"),
+        "expected_move": {
+            "one_sigma": expected_move.get("one_sigma"),
+            "lower": expected_move.get("lower"),
+            "upper": expected_move.get("upper"),
+        },
+        "forecast_regime": structured.get("forecast_regime"),
+        "forecast_regime_source": structured.get("forecast_regime_source"),
+        "levels": structured.get("levels") or [],
+        "directional_thesis": structured.get("directional_thesis"),
+        "confidence": structured.get("confidence"),
+    }
+
+
+def _canonical_forecast_identity(payload: dict, ticker: str, session_date: str, generated_at: str) -> tuple[str, str, dict]:
+    components = _canonical_forecast_components(payload, ticker, session_date, generated_at)
+    snapshot_hash = _sha256_json(components)
+    forecast_id = "fcst_" + hashlib.sha256(
+        f"{ticker}|{session_date}|{generated_at}|{snapshot_hash}".encode("utf-8")
+    ).hexdigest()[:32]
+    return forecast_id, snapshot_hash, components
+
+
+def verify_canonical_forecast(morning: dict, session_date: str, ticker: str = "SPX") -> dict:
+    provenance = morning.get("canonical_forecast_provenance") or {}
+    forecast_id = str(provenance.get("forecast_id") or "")
+    stored_hash = str(provenance.get("snapshot_hash") or "")
+    generated_at = str(provenance.get("generated_at") or morning.get("generated_at") or "")
+    if not forecast_id or not stored_hash:
+        return {"ok": False, "status": "CANONICAL_FORECAST_PROVENANCE_REQUIRED", "reason": "LEGACY_OR_UNVERIFIED_FORECAST"}
+    if str(provenance.get("session_date") or "") != session_date or str(provenance.get("ticker") or "").upper() != ticker.upper():
+        return {"ok": False, "status": "CANONICAL_FORECAST_IDENTITY_MISMATCH", "reason": "SESSION_OR_TICKER_MISMATCH", "forecast_id": forecast_id}
+    _, computed_hash, components = _canonical_forecast_identity(morning, ticker, session_date, generated_at)
+    if computed_hash != stored_hash:
+        return {"ok": False, "status": "CANONICAL_FORECAST_INTEGRITY_FAILURE", "reason": "SNAPSHOT_HASH_MISMATCH", "forecast_id": forecast_id}
+    expected_id = "fcst_" + hashlib.sha256(f"{ticker}|{session_date}|{generated_at}|{stored_hash}".encode("utf-8")).hexdigest()[:32]
+    if expected_id != forecast_id:
+        return {"ok": False, "status": "CANONICAL_FORECAST_INTEGRITY_FAILURE", "reason": "FORECAST_ID_MISMATCH", "forecast_id": forecast_id}
+    return {"ok": True, "forecast_id": forecast_id, "snapshot_hash": stored_hash, "components": components}
 
 
 def init_db() -> None:
@@ -99,7 +158,7 @@ def _official_forecast_eligibility(payload: dict) -> tuple[bool, str, str]:
 
 
 def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
-    """Archive every brief revision; preserve only eligible pre-outcome forecasts as official."""
+    """Archive revisions and canonically bind the first eligible pre-outcome forecast."""
     init_db()
     eligible, reason, sdate = _official_forecast_eligibility(payload)
     generated_at = str(payload.get("generated_at") or _now_et().isoformat())
@@ -108,17 +167,29 @@ def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
         "eligible_for_official": eligible, "reason": reason,
         "canonical_session_date": sdate, "version": VERSION,
     }
-    body = _json(stored)
     with canonical_connect(DB_PATH, timeout=10) as c:
         existing = c.execute(
-            "SELECT generated_at FROM apex49_morning_snapshots WHERE session_date=?",
+            "SELECT generated_at,forecast_id,snapshot_hash FROM apex49_morning_snapshots WHERE session_date=?",
             (sdate,),
         ).fetchone() if sdate else None
         is_official = bool(eligible and existing is None)
+        forecast_id = snapshot_hash = None
+        components = None
+        if is_official:
+            forecast_id, snapshot_hash, components = _canonical_forecast_identity(stored, ticker, sdate, generated_at)
+            stored["canonical_forecast_provenance"] = {
+                "forecast_id": forecast_id, "snapshot_hash": snapshot_hash,
+                "session_date": sdate, "ticker": ticker, "generated_at": generated_at,
+                "identity_method": "EXACT_DECISION_TIME_CANONICAL_COMPONENT_HASH",
+                "immutable": True, "version": VERSION,
+            }
+        body = _json(stored)
         if is_official:
             c.execute(
-                "INSERT INTO apex49_morning_snapshots VALUES(?,?,?,?,?)",
-                (sdate, generated_at, ticker, body, VERSION),
+                """INSERT INTO apex49_morning_snapshots
+                   (session_date,generated_at,ticker,payload_json,version,forecast_id,snapshot_hash,canonical_components_json)
+                   VALUES(?,?,?,?,?,?,?,?)""",
+                (sdate, generated_at, ticker, body, VERSION, forecast_id, snapshot_hash, _json(components)),
             )
         c.execute(
             """INSERT INTO apex49_morning_revisions
@@ -131,18 +202,21 @@ def save_morning_snapshot(payload: dict, ticker: str = "SPX") -> dict:
             (sdate or "UNKNOWN",),
         ).fetchone()[0]
         official_generated_at = generated_at if is_official else (existing[0] if existing else None)
+        if not is_official and existing:
+            forecast_id, snapshot_hash = existing[1], existing[2]
     return {
         "session_date": sdate, "archived": True, "is_official": is_official,
         "eligible_for_official": eligible, "eligibility_reason": reason,
         "official_generated_at": official_generated_at, "revision_count": int(revision_count),
-        "version": VERSION,
+        "forecast_id": forecast_id, "snapshot_hash": snapshot_hash,
+        "canonical_provenance": bool(forecast_id and snapshot_hash), "version": VERSION,
     }
 
 def morning_archive_status(session_date: str) -> dict:
     init_db()
     with canonical_connect(DB_PATH, timeout=10) as c:
         official = c.execute(
-            "SELECT generated_at,ticker,version FROM apex49_morning_snapshots WHERE session_date=?",
+            "SELECT generated_at,ticker,version,forecast_id,snapshot_hash FROM apex49_morning_snapshots WHERE session_date=?",
             (session_date,),
         ).fetchone()
         count = c.execute(
@@ -156,6 +230,8 @@ def morning_archive_status(session_date: str) -> dict:
         "official_generated_at": official[0] if official else None,
         "ticker": official[1] if official else None,
         "archive_version": official[2] if official else None,
+        "forecast_id": official[3] if official else None, "snapshot_hash": official[4] if official else None,
+        "canonical_provenance": bool(official and official[3] and official[4]),
         "revision_count": int(count),
         "version": VERSION,
     }
@@ -380,9 +456,13 @@ def _call_narrative(evidence: dict, api_key: str, model: str) -> tuple[str, Opti
 
 
 def generate_evening_recap(*, morning: dict, intraday_bars: Iterable[dict], session_date: str, ticker: str = "SPX", force: bool = False, api_key: Optional[str] = None, model: Optional[str] = None) -> dict:
+    provenance = verify_canonical_forecast(morning, session_date, ticker)
+    if not provenance.get("ok"):
+        return {"ok": False, "ticker": ticker, "session_date": session_date, "generated_at": _now_et().isoformat(),
+                "status": provenance.get("status"), "provenance": provenance, "score": None, "grade": "N/A", "version": VERSION}
     if not force:
         cached = get_cached_recap(session_date)
-        if cached:
+        if cached and cached.get("forecast_id") == provenance["forecast_id"] and cached.get("forecast_snapshot_hash") == provenance["snapshot_hash"]:
             return {**cached, "cached": True}
     comparison = build_comparison(morning, intraday_bars, session_date)
     deterministic = render_deterministic_markdown(session_date, comparison)
@@ -395,7 +475,9 @@ def generate_evening_recap(*, morning: dict, intraday_bars: Iterable[dict], sess
         "ok": True, "ticker": ticker, "session_date": session_date, "generated_at": _now_et().isoformat(),
         "cached": False, "has_narrative": bool(narrative), "narrative_error": error,
         "score": comparison["score"], "grade": comparison["grade"], "markdown": markdown,
-        "comparison": comparison, "version": VERSION,
+        "comparison": comparison, "forecast_id": provenance["forecast_id"],
+        "forecast_snapshot_hash": provenance["snapshot_hash"],
+        "forecast_provenance_verified": True, "version": VERSION,
     }
     init_db()
     with canonical_connect(DB_PATH, timeout=10) as c:
