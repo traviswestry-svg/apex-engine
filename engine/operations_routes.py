@@ -341,6 +341,48 @@ def _evidence_pipeline_check() -> Dict[str, Any]:
         return _check("FAIL", "Evidence pipeline trace failed", error=str(exc))
 
 
+
+def _readiness_checks(app, *, market_open: bool) -> Dict[str, Dict[str, Any]]:
+    """Bounded-cost checks for the frequently-polled Morning Readiness surface.
+
+    Full operational diagnostics remain available at /api/system/checks.  The
+    readiness UI must not execute nested Flask requests or heavyweight history
+    traces on every poll.
+    """
+    try:
+        from .release_manifest import manifest
+        expected = str(manifest().get("apex_version") or "")
+        observed = str(APP_VERSION or "")
+        version_check = _check(
+            "PASS" if expected and observed == expected else "WARN",
+            "Runtime version matches canonical release manifest" if expected and observed == expected
+            else "Runtime version could not be reconciled to canonical release manifest",
+            expected=expected, observed=observed, probe_mode="DIRECT_MANIFEST_NO_NESTED_HTTP",
+        )
+    except Exception as exc:
+        version_check = _check("WARN", "Canonical version check unavailable", error=str(exc))
+
+    recommendation = (
+        _recommendation_ledger_check()
+        if market_open
+        else _check("BLOCKED", "Recommendation ledger awaits the live executable session",
+                    policy="CLOSED_SESSION_NO_LEDGER_QUERY")
+    )
+    return {
+        "application": _check("PASS", "Flask application is responding", version=VERSION,
+                              route_count=len(list(app.url_map.iter_rules()))),
+        "database": _database_check(),
+        "data_freshness": _route_group_check(app, "Market-data health", ["/api/market_health", "/api/market_status"]),
+        "providers": _providers_check(),
+        "recommendation_ledger": recommendation,
+        "execution": _route_group_check(app, "Execution", ["/api/broker/etrade/status", "/api/trade/spx/preview-entry"]),
+        "clock": _clock_check(),
+        "version_consistency": version_check,
+        "alerts": _check("PASS" if bool(os.getenv("TELEGRAM_BOT_TOKEN")) else "DISABLED",
+                         "Alert transport configured" if os.getenv("TELEGRAM_BOT_TOKEN") else "Telegram alert transport is not configured"),
+        "scheduler": _route_group_check(app, "Scheduler visibility", ["/api/system/metrics"]),
+    }
+
 def _all_checks(app) -> Dict[str, Dict[str, Any]]:
     checks: Dict[str, Dict[str, Any]] = {
         "application": _check("PASS", "Flask application is responding", version=VERSION,

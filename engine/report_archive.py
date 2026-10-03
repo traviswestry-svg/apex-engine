@@ -44,7 +44,12 @@ def archive_readiness(payload: dict) -> dict:
     session_date = _today(payload)
     captured_at = dt.datetime.now(dt.timezone.utc).isoformat()
     body = _json(payload)
-    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    # generated_at changes on every UI poll but does not represent a readiness
+    # state transition. Exclude it from revision identity while preserving the
+    # complete payload in the archived JSON.
+    identity_payload = dict(payload)
+    identity_payload.pop("generated_at", None)
+    digest = hashlib.sha256(_json(identity_payload).encode("utf-8")).hexdigest()
     with canonical_connect(DB_PATH, timeout=10) as c:
         count = c.execute("SELECT COUNT(*) FROM apex5071_readiness_archive WHERE session_date=?", (session_date,)).fetchone()[0]
         official = count == 0
