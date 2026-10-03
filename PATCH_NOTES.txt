@@ -1,0 +1,28 @@
+APEX 69.10.29 — Structural Map Resilience Patch
+
+Scope: narrow resilience closure; version remains 69.10.29.
+
+Changes:
+1. engine/structural_map_orchestration.py
+   - Ignore malformed/non-Mapping entries in upper/lower extension bands.
+   - Ignore malformed/non-Mapping intermediate target entries.
+   - Ignore malformed/non-Mapping strike magnet entries.
+2. engine/range_intelligence.py
+   - Contain structural-map exceptions at the presentation-only integration boundary.
+   - Preserve the canonical range-intelligence envelope with a fail-closed UNAVAILABLE structural-map payload.
+   - Does not grant trade/execution authority.
+3. tests/test_apex_69_10_29_unified_structural_map_reversal_path_orchestration.py
+   - Adds malformed optional evidence regression coverage.
+   - Adds integration-boundary guard assertions.
+
+Validation:
+- Python compile: PASS.
+- Focused 69.10.29 + 69.10.26 suites: 16 passed.
+
+Unchanged:
+- No database migration.
+- No evidence identity changes.
+- No synthetic evidence.
+- No fuzzy matching.
+- No learning/settlement changes.
+- No trade decision or execution authority changes.

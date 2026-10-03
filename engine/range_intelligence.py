@@ -31,7 +31,10 @@ from zoneinfo import ZoneInfo
 from .canonical_persistence import connect as canonical_connect
 from .silent_degradation_observability import record_degradation
 from .range_reversal_intelligence import build_range_reversal_intelligence
-from .structural_map_orchestration import build_unified_structural_map
+from .structural_map_orchestration import (
+    VERSION as STRUCTURAL_MAP_VERSION,
+    build_unified_structural_map,
+)
 
 VERSION = "7.2_RANGE_INTELLIGENCE_ENGINE"
 _ET = ZoneInfo("America/New_York")
@@ -534,7 +537,23 @@ def build_range_intelligence(last_result: Dict[str, Any], *, market_open: bool,
     # structure/flow evidence. It cannot authorize trades or execution.
     ri["reversal_timing_intelligence"] = build_range_reversal_intelligence(lr, ri)
     # APEX 69.10.29: consolidate existing levels/evidence into one operator map.
-    ri["unified_structural_map"] = build_unified_structural_map(lr, ri)
+    # Structural-map orchestration is presentation-only. Fail closed locally so a
+    # malformed optional sub-structure cannot blank the canonical range envelope.
+    try:
+        ri["unified_structural_map"] = build_unified_structural_map(lr, ri)
+    except Exception:
+        ri["unified_structural_map"] = {
+            "available": False,
+            "version": STRUCTURAL_MAP_VERSION,
+            "state": "UNAVAILABLE",
+            "quality_flags": ["STRUCTURAL_MAP_EXCEPTION"],
+            "governance": {
+                "orchestration_only": True,
+                "changes_trade_decisions": False,
+                "execution_authority": False,
+                "automatic_order_submission": False,
+            },
+        }
     return _envelope(ticker, ri)
 
 def _envelope(ticker: str, ri: Dict[str, Any]) -> Dict[str, Any]:

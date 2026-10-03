@@ -113,8 +113,14 @@ def _reaction_zones(ri: Mapping[str, Any]) -> Dict[str, Any]:
     lo, hi = _f(esr.get("low")), _f(esr.get("high"))
     if lo is None or hi is None:
         return {"available": False, "upper": None, "lower": None}
-    upper_ext = [x for x in (bands.get("upper") or []) if _f(x.get("price")) is not None]
-    lower_ext = [x for x in (bands.get("lower") or []) if _f(x.get("price")) is not None]
+    upper_ext = [
+        x for x in (bands.get("upper") or [])
+        if isinstance(x, Mapping) and _f(x.get("price")) is not None
+    ]
+    lower_ext = [
+        x for x in (bands.get("lower") or [])
+        if isinstance(x, Mapping) and _f(x.get("price")) is not None
+    ]
     upper_high = max([hi] + [float(x["price"]) for x in upper_ext])
     lower_low = min([lo] + [float(x["price"]) for x in lower_ext])
     existing = ri.get("immediate_reaction_zones") if isinstance(ri.get("immediate_reaction_zones"), list) else []
@@ -163,6 +169,8 @@ def _destination_magnets(last: Mapping[str, Any], ri: Mapping[str, Any]) -> Dict
         if p is not None:
             rows.append({"label": label, "price": p, "kind": kind, "base_rank": rank, "source": "CANONICAL_CONTEXT"})
     for item in ri.get("intermediate_targets") or []:
+        if not isinstance(item, Mapping):
+            continue
         p = _f(item.get("price"))
         if p is not None:
             rows.append({"label": item.get("label") or item.get("kind") or "Intermediate level", "price": p,
@@ -170,6 +178,8 @@ def _destination_magnets(last: Mapping[str, Any], ri: Mapping[str, Any]) -> Dict
     mags = last.get("strike_magnets") or {}
     mag_rows = mags.get("magnets") if isinstance(mags, Mapping) else mags if isinstance(mags, list) else []
     for m in mag_rows or []:
+        if not isinstance(m, Mapping):
+            continue
         p = _f(m.get("strike"))
         if p is not None:
             rows.append({"label": f"Strike magnet {m.get('type') or ''}".strip(), "price": p,

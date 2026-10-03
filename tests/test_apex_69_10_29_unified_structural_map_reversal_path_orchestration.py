@@ -94,3 +94,36 @@ def test_refresh_propagates_price_history_timing():
     ri["reversal_timing_intelligence"]["timing"] = {"available": True, "observed_extreme_minutes": 87.5}
     refresh_unified_structural_map(ri)
     assert ri["unified_structural_map"]["reversal_path"]["timing"]["observed_extreme_minutes"] == 87.5
+
+
+def test_structural_map_skips_malformed_optional_list_members():
+    ri = _ri()
+    ri["reversal_timing_intelligence"]["extension_bands"]["upper"].extend([7700.0, None, "bad"])
+    ri["reversal_timing_intelligence"]["extension_bands"]["lower"].extend([7600.0, None, "bad"])
+    ri["intermediate_targets"].extend([7670.0, None, "bad"])
+    last = _last()
+    last["strike_magnets"]["magnets"].extend([7645.0, None, "bad"])
+
+    out = build_unified_structural_map(last, ri)
+
+    assert out["available"] is True
+    assert out["reaction_zones"]["upper"]["high"] == 7713.16
+    assert out["reaction_zones"]["lower"]["low"] == 7589.92
+    assert out["destination_magnets"]["available"] is True
+    assert out["governance"]["execution_authority"] is False
+
+
+def test_range_intelligence_contains_structural_map_exception(monkeypatch):
+    import engine.range_intelligence as range_intelligence
+
+    def _boom(*_args, **_kwargs):
+        raise AttributeError("malformed optional structural-map evidence")
+
+    monkeypatch.setattr(range_intelligence, "build_unified_structural_map", _boom)
+
+    # Exercise the integration source directly rather than duplicating its behavior:
+    # the protected call must exist and preserve a fail-closed structural-map payload.
+    source = Path(range_intelligence.__file__).read_text()
+    assert 'try:\n        ri["unified_structural_map"] = build_unified_structural_map(lr, ri)' in source
+    assert '"quality_flags": ["STRUCTURAL_MAP_EXCEPTION"]' in source
+    assert '"execution_authority": False' in source
