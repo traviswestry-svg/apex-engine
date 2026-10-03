@@ -5,7 +5,7 @@ from typing import Any, Callable, Mapping
 import threading
 from flask import jsonify, render_template
 from .institutional_execution_os import VERSION, build_execution_snapshot, build_morning_readiness
-from .operations_routes import _all_checks
+from .operations_routes import _readiness_checks
 
 
 def register_execution_os_routes(
@@ -90,7 +90,6 @@ def register_execution_os_routes(
     def readiness_payload():
         result = current()
         execution = build_execution_snapshot(result)
-        checks = _all_checks(app)
         market_status = result.get('market_status') if isinstance(result.get('market_status'), Mapping) else {}
         session = current_session()
         # Prefer the canonical session detector for the open/closed decision so
@@ -102,6 +101,9 @@ def register_execution_os_routes(
             session_market_open = session.upper() == 'MARKET_OPEN'
         else:
             session_market_open = bool(result.get('market_open', market_status.get('is_open', False)))
+        # Keep the 30-second UI poll bounded. Full diagnostics remain on
+        # /api/system/checks; readiness uses only the checks required by its score.
+        checks = _readiness_checks(app, market_open=session_market_open)
         risk_cfg = current_risk_config()
         risk_config_ready = bool(risk_cfg.get('configured')) if 'configured' in risk_cfg else bool(risk_cfg)
         return build_morning_readiness(
@@ -113,6 +115,30 @@ def register_execution_os_routes(
             risk_config_ready=risk_config_ready,
         )
 
+    _archive_lock = threading.Lock()
+
+    def _archive_readiness_async(payload: Mapping[str, Any]) -> bool:
+        # A dashboard GET must never wait on SQLite archive contention. Preserve
+        # the archive in a single background writer and skip duplicate overlap.
+        if not _archive_lock.acquire(blocking=False):
+            return False
+        snapshot = dict(payload)
+
+        def _write():
+            try:
+                from .report_archive import archive_readiness
+                archive_readiness(snapshot)
+            except Exception as exc:
+                record_degradation(component="execution_os", operation="archive_readiness",
+                                   exc=exc, fallback="READINESS_ARCHIVE_DEFERRED",
+                                   decision_authority_suppressed=True,
+                                   source="engine/execution_os_routes.py")
+            finally:
+                _archive_lock.release()
+
+        threading.Thread(target=_write, name="apex-readiness-archive", daemon=True).start()
+        return True
+
     @app.get('/api/readiness')
     @app.get('/api/readiness/details')
     @app.get('/api/readiness/checks')
@@ -120,11 +146,13 @@ def register_execution_os_routes(
     @app.get('/api/readiness/report')
     def readiness():
         payload = readiness_payload()
-        try:
-            from .report_archive import archive_readiness
-            payload['report_archive'] = archive_readiness(payload)
-        except Exception as exc:
-            payload['report_archive'] = {'archived': False, 'error': f'{type(exc).__name__}: {exc}'}
+        scheduled = _archive_readiness_async(payload)
+        payload['report_archive'] = {
+            'archived': False,
+            'scheduled': scheduled,
+            'non_blocking': True,
+            'state': 'ARCHIVE_SCHEDULED' if scheduled else 'ARCHIVE_WRITER_BUSY',
+        }
         return jsonify(payload)
 
     @app.get('/api/readiness/history')
