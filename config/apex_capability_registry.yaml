@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.30
+apex_version: 69.10.31
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -993,6 +993,29 @@ capabilities:
       explicit_blockers_not_inferred: true
       contributors_not_claimed_as_causal: true
       opportunity_clustering_analytical_only: true
+      changes_trade_decisions: false
+      changes_thresholds: false
+      changes_learning_eligibility: false
+      feeds_calibration_automatically: false
+      automatic_promotion: false
+      automatic_execution: false
+      automatic_order_submission: false
+
+
+  counterfactual_cluster_discrimination_intelligence:
+    version: 69.10.31
+    state: ACTIVE_ADVISORY
+    description: "Compare missed-opportunity and protective-abstention clusters with identical analytical deduplication using decision-time features only."
+    canonical_modules: [engine.abstention_causality, engine.counterfactual_cluster_discrimination, engine.counterfactual_cluster_discrimination_routes]
+    production_effect: OBSERVATIONAL_ANALYTICS_ONLY
+    decision_authority: none
+    execution_authority: none
+    outputs: [protective_clusters, missed_clusters, base_rate_adjusted_discrimination, excursion_semantics_validation]
+    api_routes: [/api/effectiveness/counterfactual-cluster-discrimination, /api/effectiveness/counterfactual-clusters]
+    guardrails:
+      decision_time_features_only_for_discrimination: true
+      outcome_excursions_excluded_from_discriminators: true
+      cluster_deduplication_analytical_only: true
       changes_trade_decisions: false
       changes_thresholds: false
       changes_learning_eligibility: false
