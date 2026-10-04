@@ -20,8 +20,8 @@ def stores(monkeypatch, tmp_path):
 
 def test_release_truth_capability_and_guardrails():
     m = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.33"
-    assert m["build_name"] == "Open Discovery Counterfactual Discrimination & Shadow Eligibility"
+    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.34"
+    assert m["build_name"] == "Open Discovery Shadow Candidate Forward Validation & Structural Evidence Capture"
     g = m["guardrails"]
     assert g["persisted_feature_origin_identity_propagation_closure"] is True
     assert g["immutable_origin_provenance"] is True

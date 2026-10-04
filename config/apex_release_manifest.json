@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.33",
-  "build_name": "Open Discovery Counterfactual Discrimination & Shadow Eligibility",
+  "apex_version": "69.10.34",
+  "build_name": "Open Discovery Shadow Candidate Forward Validation & Structural Evidence Capture",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -673,8 +673,8 @@
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.33",
-  "application_version": "69.10.33",
+  "semantic_version": "69.10.34",
+  "application_version": "69.10.34",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

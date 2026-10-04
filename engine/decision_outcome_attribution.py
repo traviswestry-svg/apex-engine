@@ -146,7 +146,15 @@ def _insert_context(conn: sqlite3.Connection, decision_id: str, observed_at: str
 def capture_context(conn: sqlite3.Connection, decision_id: str, observed_at: str, snapshot: Mapping[str, Any]) -> bool:
     """Freeze attribution context at decision time.  Idempotent and non-authoritative."""
     ensure_schema(conn)
-    return _insert_context(conn, decision_id, observed_at, snapshot)
+    inserted = _insert_context(conn, decision_id, observed_at, snapshot)
+    # APEX 69.10.34: prospective, immutable OPEN_DISCOVERY structural evidence capture.
+    # Failure is isolated so research telemetry can never break canonical decision persistence.
+    try:
+        from .open_discovery_forward_validation import capture_forward
+        capture_forward(conn, decision_id, observed_at, snapshot)
+    except Exception:
+        pass
+    return inserted
 
 
 def _explicit_entry_quality(snapshot: Mapping[str, Any]) -> Optional[str]:
