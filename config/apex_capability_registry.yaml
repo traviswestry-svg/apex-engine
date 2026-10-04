@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.32
+apex_version: 69.10.33
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -1026,7 +1026,7 @@ capabilities:
 
 
   canonical_excursion_session_phase_attribution:
-    version: 69.10.32
+    version: 69.10.33
     state: ACTIVE_ADVISORY
     description: "Immutable entry-anchored excursion projection plus session-phase attribution over counterfactual clusters."
     canonical_modules: [engine.session_phase_excursion_attribution, engine.session_phase_excursion_attribution_routes]
