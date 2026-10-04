@@ -27,7 +27,7 @@ def _evidence_db(path: Path) -> None:
 def test_release_truth_and_capacity_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.33"
-    assert manifest["build_name"] == "Session Calendar Integrity Closure"
+    assert manifest["build_name"] == "Open Discovery Counterfactual Discrimination & Shadow Eligibility"
     g = manifest["guardrails"]
     assert g["storage_capacity_policy_canonical"] is True
     assert g["storage_capacity_warn_free_pct_default"] == 25.0

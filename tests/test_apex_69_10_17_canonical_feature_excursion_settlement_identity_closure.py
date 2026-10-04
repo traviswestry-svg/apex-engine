@@ -10,7 +10,7 @@ from engine import feature_store_writer as writer
 def test_release_truth_69_10_17():
     m=json.load(open('config/apex_release_manifest.json'))
     assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.33'
-    assert m['build_name']=='Session Calendar Integrity Closure'
+    assert m['build_name']=='Open Discovery Counterfactual Discrimination & Shadow Eligibility'
 
 
 def test_flow_store_db_path_is_dynamic_after_import(monkeypatch, tmp_path):
