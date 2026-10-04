@@ -211,6 +211,15 @@ except Exception as _ac691030_err:
     register_abstention_causality_routes = None
     print(f"Abstention Causality 69.10.30 unavailable: {_ac691030_err}", flush=True)
 
+# APEX 69.10.31 — Counterfactual Cluster Discrimination Intelligence
+try:
+    from engine.counterfactual_cluster_discrimination_routes import register_counterfactual_cluster_discrimination_routes
+    COUNTERFACTUAL_CLUSTER_DISCRIMINATION_69_10_31_AVAILABLE = True
+except Exception as _ccd691031_err:
+    COUNTERFACTUAL_CLUSTER_DISCRIMINATION_69_10_31_AVAILABLE = False
+    register_counterfactual_cluster_discrimination_routes = None
+    print(f"Counterfactual Cluster Discrimination 69.10.31 unavailable: {_ccd691031_err}", flush=True)
+
 # APEX 68.9.0 — Market Microstructure Calibration & Decision-Evidence Promotion Governance
 try:
     from engine.market_microstructure_routes import register_market_microstructure_routes
@@ -14226,6 +14235,10 @@ try:
     if ABSTENTION_CAUSALITY_69_10_30_AVAILABLE and register_abstention_causality_routes is not None:
         register_abstention_causality_routes(app)
         print("APEX 69.10.30 Abstention Causality routes registered.", flush=True)
+
+    if COUNTERFACTUAL_CLUSTER_DISCRIMINATION_69_10_31_AVAILABLE and register_counterfactual_cluster_discrimination_routes is not None:
+        register_counterfactual_cluster_discrimination_routes(app)
+        print("APEX 69.10.31 Counterfactual Cluster Discrimination routes registered.", flush=True)
 
     if DECISION_OUTCOME_ATTRIBUTION_68_6_AVAILABLE and register_decision_outcome_attribution_routes is not None:
         register_decision_outcome_attribution_routes(app)

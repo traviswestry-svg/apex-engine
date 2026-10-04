@@ -23,8 +23,8 @@ def _ms(hh, mm):
 
 def test_release_truth_691028():
     m=json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.30"
-    assert m["build_name"] == "Canonical Abstention Causality & Opportunity Recovery Intelligence"
+    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.31"
+    assert m["build_name"] == "Counterfactual Cluster Discrimination Intelligence"
     assert m["guardrails"]["canonical_forecast_exact_identity_required_for_evening_grading"] is True
     assert m["guardrails"]["evening_forecast_reconstruction"] is False
 

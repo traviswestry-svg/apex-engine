@@ -16,8 +16,8 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d=json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert d['apex_version']=='69.10.30'
-    assert d['build_name']=='Canonical Abstention Causality & Opportunity Recovery Intelligence'
+    assert d['apex_version']=='69.10.31'
+    assert d['build_name']=='Counterfactual Cluster Discrimination Intelligence'
     assert d['guardrails']['sample_pl_reconstruction_allowed'] is False
     assert d['guardrails']['synthetic_excursion_allowed'] is False
     assert d['guardrails']['fuzzy_sample_recovery_allowed'] is False
