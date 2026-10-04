@@ -13,8 +13,8 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert d["apex_version"] == "69.10.32"
-    assert d["build_name"] == "Canonical Excursion Semantics & Session-Phase Attribution Closure"
+    assert d["apex_version"] == "69.10.32.1"
+    assert d["build_name"] == "Session Calendar Integrity Closure"
     g = d["guardrails"]
     assert g["excursion_write_readback_required"] is True
     assert g["excursion_write_readback_exact_sample_id_only"] is True

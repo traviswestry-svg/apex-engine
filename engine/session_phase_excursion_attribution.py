@@ -10,26 +10,18 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict
-from zoneinfo import ZoneInfo
 
 from .abstention_causality import _rows, _dt
 from .decision_outcome_attribution import DEFAULT_DB, _availability
 from .counterfactual_cluster_discrimination import clusters as discrimination_clusters
+from .canonical_market_calendar import classify as classify_market_session
 
-VERSION = "69.10.32"
-SCHEMA_VERSION = "apex.canonical_excursion_session_phase.v1"
-TZ = ZoneInfo("America/New_York")
+VERSION = "69.10.32.1"
+SCHEMA_VERSION = "apex.canonical_excursion_session_phase.v1.1"
 
 
 def session_phase(value: str) -> str:
-    d = _dt(value).astimezone(TZ)
-    m = d.hour * 60 + d.minute
-    if m < 570: return "PREMARKET"
-    if m < 600: return "OPEN_DISCOVERY"
-    if m < 660: return "MORNING_DEVELOPMENT"
-    if m < 690: return "LATE_MORNING"
-    if m < 780: return "MIDDAY"
-    return "AFTERNOON"
+    return str(classify_market_session(value)["session_phase"])
 
 
 def canonical_excursion(mfe: Any, mae: Any) -> Dict[str, Any]:
@@ -73,26 +65,34 @@ def _excursion_audit(rows: list[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _phase_attribution(cs: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+def _phase_attribution(cs: list[Dict[str, Any]]) -> tuple[list[Dict[str, Any]], Dict[str, Any]]:
     bins = defaultdict(lambda: {"missed_clusters": 0, "protective_clusters": 0})
+    excluded = defaultdict(int)
+    eligible = []
     for c in cs:
-        phase = session_phase(str(c["anchor_at"]))
+        cal = classify_market_session(str(c["anchor_at"]))
+        if not cal["rth_eligible"]:
+            excluded[cal["session_phase"]] += 1
+            continue
+        eligible.append((c, cal))
+        phase = cal["session_phase"]
         if c.get("classification") == "MISSED_OPPORTUNITY": bins[phase]["missed_clusters"] += 1
         elif c.get("classification") == "PROTECTIVE_ABSTENTION": bins[phase]["protective_clusters"] += 1
     total = sum(v["missed_clusters"] + v["protective_clusters"] for v in bins.values())
     total_m = sum(v["missed_clusters"] for v in bins.values())
     baseline = total_m / total if total else 0.0
-    order = ["PREMARKET","OPEN_DISCOVERY","MORNING_DEVELOPMENT","LATE_MORNING","MIDDAY","AFTERNOON"]
+    order = ["OPEN_DISCOVERY","MORNING_DEVELOPMENT","LATE_MORNING","MIDDAY","AFTERNOON"]
     out=[]
     for phase in order:
-        b=bins[phase]; n=b["missed_clusters"]+b["protective_clusters"]
-        rate=b["missed_clusters"]/n if n else 0.0
-        out.append({"session_phase":phase, **b, "clusters":n,
-                    "missed_rate_pct":round(rate*100,2) if n else None,
+        b=bins[phase]; n=b["missed_clusters"]+b["protective_clusters"]; rate=b["missed_clusters"]/n if n else 0.0
+        out.append({"session_phase":phase, **b, "clusters":n, "missed_rate_pct":round(rate*100,2) if n else None,
                     "baseline_missed_rate_pct":round(baseline*100,2) if total else None,
                     "relative_risk_vs_baseline":round(rate/baseline,3) if n and baseline else None,
                     "risk_difference_pct_points":round((rate-baseline)*100,2) if n and total else None})
-    return out
+    audit={"all_clusters":len(cs),"rth_eligible_clusters":total,"excluded_clusters":len(cs)-total,
+           "excluded_by_session_state":dict(sorted(excluded.items())),
+           "rth_denominator_excludes_closed_premarket_postmarket":True}
+    return out,audit
 
 
 def summary(path: str|Path=DEFAULT_DB) -> Dict[str, Any]:
@@ -100,11 +100,12 @@ def summary(path: str|Path=DEFAULT_DB) -> Dict[str, Any]:
     base={"ok":not av.get("degraded",False),"version":VERSION,"schema_version":SCHEMA_VERSION,**av,"execution_authority":False}
     if av.get("status") != "READY": return {**base,"excursion_semantics":{},"session_phase_attribution":[]}
     rows=_rows(path); cs=discrimination_clusters(path)
+    phase_attr, calendar_audit = _phase_attribution(cs)
     return {**base,"status":"READY","excursion_semantics":_excursion_audit(rows),
-            "session_phase_attribution":_phase_attribution(cs),
-            "session_phase_rule":{"timezone":"America/New_York","PREMARKET":"before 09:30","OPEN_DISCOVERY":"09:30-10:00","MORNING_DEVELOPMENT":"10:00-11:00","LATE_MORNING":"11:00-11:30","MIDDAY":"11:30-13:00","AFTERNOON":"13:00+"},
+            "session_phase_attribution":phase_attr,"session_calendar_integrity":calendar_audit,
+            "session_phase_rule":{"timezone":"America/New_York","MARKET_CLOSED":"weekend/full-day holiday/unsupported calendar year","PREMARKET":"valid trading day before 09:30","OPEN_DISCOVERY":"09:30-10:00","MORNING_DEVELOPMENT":"10:00-11:00","LATE_MORNING":"11:00-11:30","MIDDAY":"11:30-13:00","AFTERNOON":"13:00-16:00","POSTMARKET":"valid trading day after 16:00"},
             "governance":{"observational_only":True,"historical_evidence_immutable":True,"projection_is_read_only":True,
-                "session_phase_is_attribution_context_only":True,"excursions_are_post_outcome_only":True,
+                "session_phase_is_attribution_context_only":True,"canonical_session_calendar_required":True,"closed_session_clusters_excluded_from_rth_denominator":True,"excursions_are_post_outcome_only":True,
                 "changes_trade_decisions":False,"changes_thresholds":False,"changes_learning_eligibility":False,
                 "feeds_calibration_automatically":False,"automatic_promotion":False,"changes_execution_authority":False,
                 "human_review_required_for_policy_change":True}}
@@ -117,6 +118,6 @@ def excursion_detail(path: str|Path=DEFAULT_DB, limit:int=500) -> Dict[str,Any]:
     for r in reversed(_rows(path)):
         x=canonical_excursion(r.get("mfe"),r.get("mae"))
         items.append({"decision_id":r.get("decision_id"),"captured_at":r.get("captured_at"),"ticker":r.get("ticker"),
-                      "direction":r.get("direction"),"session_phase":session_phase(str(r.get("captured_at"))),**x})
+                      "direction":r.get("direction"),**classify_market_session(str(r.get("captured_at"))),**x})
         if len(items)>=max(1,min(int(limit),2000)): break
     return {"ok":True,"version":VERSION,"schema_version":SCHEMA_VERSION,**av,"items":items,"execution_authority":False}
