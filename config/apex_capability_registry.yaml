@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.32.1
+apex_version: 69.10.33
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -1040,6 +1040,30 @@ capabilities:
       excursion_projection_read_only: true
       excursions_post_outcome_only: true
       session_phase_attribution_only: true
+      changes_trade_decisions: false
+      changes_thresholds: false
+      changes_learning_eligibility: false
+      feeds_calibration_automatically: false
+      automatic_promotion: false
+      automatic_execution: false
+      automatic_order_submission: false
+
+  open_discovery_counterfactual_discrimination_shadow_eligibility:
+    version: 69.10.33
+    state: ACTIVE_ADVISORY
+    description: "RTH 09:30-10:00 ET missed-vs-protective discrimination using frozen decision-time evidence and chronological session-date holdout."
+    canonical_modules: [engine.open_discovery_shadow_eligibility, engine.open_discovery_shadow_eligibility_routes]
+    production_effect: OBSERVATIONAL_ANALYTICS_ONLY
+    decision_authority: none
+    execution_authority: none
+    outputs: [open_discovery_population, chronological_holdout_discrimination, shadow_eligible_candidates]
+    api_routes: [/api/effectiveness/open-discovery-discrimination, /api/effectiveness/open-discovery-clusters]
+    guardrails:
+      canonical_no_trade_unchanged: true
+      decision_time_features_only: true
+      outcome_excursions_excluded: true
+      chronological_session_date_holdout_required: true
+      structural_fields_not_reconstructed: true
       changes_trade_decisions: false
       changes_thresholds: false
       changes_learning_eligibility: false

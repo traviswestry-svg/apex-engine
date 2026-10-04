@@ -220,6 +220,15 @@ except Exception as _ccd691031_err:
     register_counterfactual_cluster_discrimination_routes = None
     print(f"Counterfactual Cluster Discrimination 69.10.31 unavailable: {_ccd691031_err}", flush=True)
 
+# APEX 69.10.33 — Open Discovery Counterfactual Discrimination & Shadow Eligibility
+try:
+    from engine.open_discovery_shadow_eligibility_routes import register_open_discovery_shadow_eligibility_routes
+    OPEN_DISCOVERY_SHADOW_ELIGIBILITY_69_10_33_AVAILABLE = True
+except Exception as _odse691033_err:
+    OPEN_DISCOVERY_SHADOW_ELIGIBILITY_69_10_33_AVAILABLE = False
+    register_open_discovery_shadow_eligibility_routes = None
+    print(f"Open Discovery Shadow Eligibility 69.10.33 unavailable: {_odse691033_err}", flush=True)
+
 # APEX 69.10.32 — Canonical Excursion Semantics & Session-Phase Attribution Closure
 try:
     from engine.session_phase_excursion_attribution_routes import register_session_phase_excursion_attribution_routes
@@ -14248,6 +14257,10 @@ try:
     if COUNTERFACTUAL_CLUSTER_DISCRIMINATION_69_10_31_AVAILABLE and register_counterfactual_cluster_discrimination_routes is not None:
         register_counterfactual_cluster_discrimination_routes(app)
         print("APEX 69.10.31 Counterfactual Cluster Discrimination routes registered.", flush=True)
+
+    if OPEN_DISCOVERY_SHADOW_ELIGIBILITY_69_10_33_AVAILABLE and register_open_discovery_shadow_eligibility_routes is not None:
+        register_open_discovery_shadow_eligibility_routes(app)
+        print("APEX 69.10.33 Open Discovery Shadow Eligibility routes registered.", flush=True)
 
     if SESSION_PHASE_EXCURSION_ATTRIBUTION_69_10_32_AVAILABLE and register_session_phase_excursion_attribution_routes is not None:
         register_session_phase_excursion_attribution_routes(app)

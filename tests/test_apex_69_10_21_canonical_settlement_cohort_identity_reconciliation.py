@@ -13,8 +13,8 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert d["apex_version"] == "69.10.32.1"
-    assert d["build_name"] == "Session Calendar Integrity Closure"
+    assert d["apex_version"] == "69.10.33"
+    assert d["build_name"] == "Open Discovery Counterfactual Discrimination & Shadow Eligibility"
     g = d["guardrails"]
     assert g["canonical_settlement_cohort_exact_sample_id_only"] is True
     assert g["canonical_settlement_cohort_writes_evidence"] is False
