@@ -48,7 +48,7 @@ def _gamma(net_gex=100.0, *, source_snapshot_at="2026-09-18T13:30:00+00:00", sig
 
 def test_release_identity_and_capability_registry_are_691014():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.32.1"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.33"
     assert manifest["build_name"] == "Session Calendar Integrity Closure"
     assert manifest["database_schema_version"] == "8"
     g = manifest["guardrails"]

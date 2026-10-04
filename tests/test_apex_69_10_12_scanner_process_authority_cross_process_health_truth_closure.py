@@ -6,7 +6,7 @@ from engine.scanner_runtime_truth import resolve_scanner_runtime
 
 def test_release_truth_and_authority_guardrails():
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.32.1'
+    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.33'
     assert manifest['build_name'] == 'Session Calendar Integrity Closure'
     g = manifest['guardrails']
     assert g['scanner_fresh_heartbeat_is_cross_process_authority'] is True

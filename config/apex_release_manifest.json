@@ -1,5 +1,5 @@
 {
-  "apex_version": "69.10.32.1",
+  "apex_version": "69.10.33",
   "build_name": "Session Calendar Integrity Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
@@ -673,8 +673,8 @@
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.32.1",
-  "application_version": "69.10.32.1",
+  "semantic_version": "69.10.33",
+  "application_version": "69.10.33",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

@@ -52,7 +52,7 @@ def test_summary_preserves_evidence_and_attributes_both_classes(tmp_path):
 def test_release_metadata_ratchets_to_691032():
     root=Path(__file__).resolve().parents[1]
     m=json.loads((root/'config/apex_release_manifest.json').read_text())
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.32.1'
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.33'
     assert m['build_name']=='Session Calendar Integrity Closure'
     registry=(root/'config/apex_capability_registry.yaml').read_text()
     assert 'apex_version: 69.10.32' in registry

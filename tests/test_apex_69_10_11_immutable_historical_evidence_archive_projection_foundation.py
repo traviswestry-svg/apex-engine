@@ -65,7 +65,7 @@ def _fetch_trigger_row(path: Path, trigger_id: str) -> dict:
 
 def test_release_truth_and_archive_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.32.1"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.33"
     assert manifest["build_name"] == "Session Calendar Integrity Closure"
     g = manifest["guardrails"]
     assert g["historical_payload_archive_foundation"] is True

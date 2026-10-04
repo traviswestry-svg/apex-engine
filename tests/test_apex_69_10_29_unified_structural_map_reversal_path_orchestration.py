@@ -43,7 +43,7 @@ def _last():
 def test_release_manifest_and_registry_ratchet():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.32.1"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.33"
     assert manifest["build_name"] == "Session Calendar Integrity Closure"
     registry = (root / "config/apex_capability_registry.yaml").read_text()
     assert "apex_version: 69.10.32" in registry

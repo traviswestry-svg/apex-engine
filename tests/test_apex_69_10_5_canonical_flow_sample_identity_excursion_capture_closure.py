@@ -65,7 +65,7 @@ def _cluster(*, end_time="10:31:11", pl=125.0, direction="BULLISH"):
 
 def test_release_truth_and_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.32.1"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.33"
     assert manifest["build_name"] == "Session Calendar Integrity Closure"
     g = manifest["guardrails"]
     assert g["flow_source_stage_canonical_excursion_capture_allowed"] is False
