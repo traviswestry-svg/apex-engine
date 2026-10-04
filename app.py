@@ -229,6 +229,15 @@ except Exception as _odse691033_err:
     register_open_discovery_shadow_eligibility_routes = None
     print(f"Open Discovery Shadow Eligibility 69.10.33 unavailable: {_odse691033_err}", flush=True)
 
+# APEX 69.10.34 — Open Discovery Shadow Candidate Forward Validation & Structural Evidence Capture
+try:
+    from engine.open_discovery_forward_validation_routes import register_open_discovery_forward_validation_routes
+    OPEN_DISCOVERY_FORWARD_VALIDATION_69_10_34_AVAILABLE = True
+except Exception as _odfv691034_err:
+    OPEN_DISCOVERY_FORWARD_VALIDATION_69_10_34_AVAILABLE = False
+    register_open_discovery_forward_validation_routes = None
+    print(f"Open Discovery Forward Validation 69.10.34 unavailable: {_odfv691034_err}", flush=True)
+
 # APEX 69.10.32 — Canonical Excursion Semantics & Session-Phase Attribution Closure
 try:
     from engine.session_phase_excursion_attribution_routes import register_session_phase_excursion_attribution_routes
@@ -14261,6 +14270,10 @@ try:
     if OPEN_DISCOVERY_SHADOW_ELIGIBILITY_69_10_33_AVAILABLE and register_open_discovery_shadow_eligibility_routes is not None:
         register_open_discovery_shadow_eligibility_routes(app)
         print("APEX 69.10.33 Open Discovery Shadow Eligibility routes registered.", flush=True)
+
+    if OPEN_DISCOVERY_FORWARD_VALIDATION_69_10_34_AVAILABLE and register_open_discovery_forward_validation_routes is not None:
+        register_open_discovery_forward_validation_routes(app)
+        print("APEX 69.10.34 Open Discovery Forward Validation routes registered.", flush=True)
 
     if SESSION_PHASE_EXCURSION_ATTRIBUTION_69_10_32_AVAILABLE and register_session_phase_excursion_attribution_routes is not None:
         register_session_phase_excursion_attribution_routes(app)
