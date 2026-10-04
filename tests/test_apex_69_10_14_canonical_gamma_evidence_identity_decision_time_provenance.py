@@ -56,7 +56,7 @@ def test_release_identity_and_capability_registry_are_691014():
     assert g["gamma_latest_state_substitution_for_historical_decisions"] is False
     assert g["gamma_provenance_changes_execution_authority"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.32" in registry
+    assert "apex_version: 69.10.33" in registry
     assert "canonical_gamma_evidence_identity_decision_time_provenance:" in registry
 
 

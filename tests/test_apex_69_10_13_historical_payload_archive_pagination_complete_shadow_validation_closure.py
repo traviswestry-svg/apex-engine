@@ -21,7 +21,7 @@ def test_release_identity_and_registry_alignment():
     assert g['historical_payload_archive_batch_max_rows'] == 500
     assert g['historical_payload_shadow_validation_paginated'] is True
     registry = (ROOT/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.32' in registry
+    assert 'apex_version: 69.10.33' in registry
     assert 'historical_payload_archive_pagination_complete_shadow_validation_closure:' in registry
 
 

@@ -74,7 +74,7 @@ def test_release_truth_and_archive_guardrails():
     assert g["historical_payload_production_read_redirect_enabled"] is False
     assert g["historical_payload_mass_compaction_enabled"] is False
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.32" in registry
+    assert "apex_version: 69.10.33" in registry
     assert "immutable_historical_evidence_archive_projection_foundation:" in registry
 
 

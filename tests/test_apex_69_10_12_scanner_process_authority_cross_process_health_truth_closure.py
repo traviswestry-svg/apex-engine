@@ -17,7 +17,7 @@ def test_release_truth_and_authority_guardrails():
     assert g['scanner_authority_changes_trade_decisions'] is False
     assert g['scanner_authority_changes_execution_authority'] is False
     registry = Path('config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.32' in registry
+    assert 'apex_version: 69.10.33' in registry
     assert 'scanner_process_authority_cross_process_health_truth_closure:' in registry
 
 

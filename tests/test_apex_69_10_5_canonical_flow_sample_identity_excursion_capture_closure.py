@@ -76,7 +76,7 @@ def test_release_truth_and_guardrails():
     assert g["storage_capacity_automatic_cleanup"] is False
 
     registry = Path("config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.32" in registry
+    assert "apex_version: 69.10.33" in registry
     assert 'version: "69.10.5"' in registry
     assert "source_stage_capture_forbidden" in registry
     assert "pre_persistence_skips_not_capture_failures" in registry

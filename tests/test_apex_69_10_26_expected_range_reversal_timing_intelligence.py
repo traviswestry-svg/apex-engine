@@ -30,7 +30,7 @@ def test_release_truth_and_capability_registration():
     assert g["range_boundary_is_not_entry_signal"] is True
     assert g["reversal_timing_changes_execution_authority"] is False
     registry = (ROOT / "config" / "apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.32" in registry
+    assert "apex_version: 69.10.33" in registry
     assert "expected_range_reversal_timing_intelligence" in registry
 
 

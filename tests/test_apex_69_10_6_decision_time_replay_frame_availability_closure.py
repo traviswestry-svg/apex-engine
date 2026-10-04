@@ -25,7 +25,7 @@ def test_release_truth_and_replay_guardrails():
     assert g["replay_frame_availability_changes_execution_authority"] is False
 
     registry = Path("config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.32" in registry
+    assert "apex_version: 69.10.33" in registry
     assert "decision_time_replay_frame_availability_closure:" in registry
     assert "no_future_frame_join" in registry
     assert "no_staleness_relaxation" in registry

@@ -39,7 +39,7 @@ def test_release_truth_and_capacity_guardrails():
 
 def test_capability_registry_is_aligned_and_operations_only():
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.32" in registry
+    assert "apex_version: 69.10.33" in registry
     assert "governed_storage_retention:" in registry
     assert 'version: "69.10.8"' in registry
     assert "engine.storage_capacity_policy" in registry

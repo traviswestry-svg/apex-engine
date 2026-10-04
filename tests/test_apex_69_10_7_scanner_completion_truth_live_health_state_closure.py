@@ -21,7 +21,7 @@ def test_release_truth_and_scanner_completion_guardrails():
     assert g['scanner_health_changes_execution_authority'] is False
 
     registry = Path('config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.32' in registry
+    assert 'apex_version: 69.10.33' in registry
     assert 'scanner_completion_truth_live_health_state_closure:' in registry
     assert 'heartbeat_does_not_equal_full_scan_completion' in registry
     assert 'stale_threshold_unchanged' in registry
