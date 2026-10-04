@@ -15,8 +15,8 @@ def _init(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d=json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert d['apex_version']=='69.10.29'
-    assert d['build_name']=='Unified Structural Map & Reversal Path Orchestration'
+    assert d['apex_version']=='69.10.30'
+    assert d['build_name']=='Canonical Abstention Causality & Opportunity Recovery Intelligence'
     assert d['guardrails']['canonical_identity_join_reconstructs_identity'] is False
     assert d['guardrails']['canonical_identity_join_writes_evidence'] is False
 

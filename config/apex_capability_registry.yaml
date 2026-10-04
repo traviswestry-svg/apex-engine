@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.29
+apex_version: 69.10.30
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -974,5 +974,29 @@ capabilities:
       preserves_ltpe_evidence_only_policy: true
       changes_trade_decisions: false
       changes_execution_authority: false
+      automatic_execution: false
+      automatic_order_submission: false
+
+
+  canonical_abstention_causality_opportunity_recovery_intelligence:
+    version: 69.10.30
+    state: ACTIVE_ADVISORY
+    description: "Collapse mirrored abstention evidence into canonical causal families and analytically cluster repeated missed-opportunity observations without changing policy."
+    canonical_modules: [engine.decision_outcome_attribution, engine.abstention_causality, engine.abstention_causality_routes]
+    production_effect: OBSERVATIONAL_ANALYTICS_ONLY
+    decision_authority: none
+    execution_authority: none
+    outputs: [canonical_abstention_families, explicit_blocker_separation, contributor_effectiveness, missed_opportunity_clusters]
+    api_routes: [/api/effectiveness/abstention-causality, /api/effectiveness/abstention-causality/decisions, /api/effectiveness/opportunity-clusters]
+    guardrails:
+      frozen_decision_time_evidence_only: true
+      explicit_blockers_not_inferred: true
+      contributors_not_claimed_as_causal: true
+      opportunity_clustering_analytical_only: true
+      changes_trade_decisions: false
+      changes_thresholds: false
+      changes_learning_eligibility: false
+      feeds_calibration_automatically: false
+      automatic_promotion: false
       automatic_execution: false
       automatic_order_submission: false

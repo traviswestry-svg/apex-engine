@@ -202,6 +202,15 @@ except Exception as _doa686_err:
     register_decision_outcome_attribution_routes = None
     print(f"Decision Outcome Attribution 68.6 unavailable: {_doa686_err}", flush=True)
 
+# APEX 69.10.30 — Canonical Abstention Causality & Opportunity Recovery Intelligence
+try:
+    from engine.abstention_causality_routes import register_abstention_causality_routes
+    ABSTENTION_CAUSALITY_69_10_30_AVAILABLE = True
+except Exception as _ac691030_err:
+    ABSTENTION_CAUSALITY_69_10_30_AVAILABLE = False
+    register_abstention_causality_routes = None
+    print(f"Abstention Causality 69.10.30 unavailable: {_ac691030_err}", flush=True)
+
 # APEX 68.9.0 — Market Microstructure Calibration & Decision-Evidence Promotion Governance
 try:
     from engine.market_microstructure_routes import register_market_microstructure_routes
@@ -14213,6 +14222,10 @@ try:
                 f"({type(_to_init_exc).__name__}: {_to_init_exc}).",
                 flush=True,
             )
+
+    if ABSTENTION_CAUSALITY_69_10_30_AVAILABLE and register_abstention_causality_routes is not None:
+        register_abstention_causality_routes(app)
+        print("APEX 69.10.30 Abstention Causality routes registered.", flush=True)
 
     if DECISION_OUTCOME_ATTRIBUTION_68_6_AVAILABLE and register_decision_outcome_attribution_routes is not None:
         register_decision_outcome_attribution_routes(app)
