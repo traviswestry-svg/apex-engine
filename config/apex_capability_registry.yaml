@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.31
+apex_version: 69.10.32
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -1016,6 +1016,30 @@ capabilities:
       decision_time_features_only_for_discrimination: true
       outcome_excursions_excluded_from_discriminators: true
       cluster_deduplication_analytical_only: true
+      changes_trade_decisions: false
+      changes_thresholds: false
+      changes_learning_eligibility: false
+      feeds_calibration_automatically: false
+      automatic_promotion: false
+      automatic_execution: false
+      automatic_order_submission: false
+
+
+  canonical_excursion_session_phase_attribution:
+    version: 69.10.32
+    state: ACTIVE_ADVISORY
+    description: "Immutable entry-anchored excursion projection plus session-phase attribution over counterfactual clusters."
+    canonical_modules: [engine.session_phase_excursion_attribution, engine.session_phase_excursion_attribution_routes]
+    production_effect: OBSERVATIONAL_ANALYTICS_ONLY
+    decision_authority: none
+    execution_authority: none
+    outputs: [canonical_excursion_semantics, excursion_provenance_audit, session_phase_attribution]
+    api_routes: [/api/effectiveness/canonical-excursion-session-phase, /api/effectiveness/canonical-excursions]
+    guardrails:
+      historical_evidence_immutable: true
+      excursion_projection_read_only: true
+      excursions_post_outcome_only: true
+      session_phase_attribution_only: true
       changes_trade_decisions: false
       changes_thresholds: false
       changes_learning_eligibility: false
