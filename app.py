@@ -220,6 +220,15 @@ except Exception as _ccd691031_err:
     register_counterfactual_cluster_discrimination_routes = None
     print(f"Counterfactual Cluster Discrimination 69.10.31 unavailable: {_ccd691031_err}", flush=True)
 
+# APEX 69.10.32 — Canonical Excursion Semantics & Session-Phase Attribution Closure
+try:
+    from engine.session_phase_excursion_attribution_routes import register_session_phase_excursion_attribution_routes
+    SESSION_PHASE_EXCURSION_ATTRIBUTION_69_10_32_AVAILABLE = True
+except Exception as _sea691032_err:
+    SESSION_PHASE_EXCURSION_ATTRIBUTION_69_10_32_AVAILABLE = False
+    register_session_phase_excursion_attribution_routes = None
+    print(f"Canonical Excursion / Session Phase 69.10.32 unavailable: {_sea691032_err}", flush=True)
+
 # APEX 68.9.0 — Market Microstructure Calibration & Decision-Evidence Promotion Governance
 try:
     from engine.market_microstructure_routes import register_market_microstructure_routes
@@ -14239,6 +14248,10 @@ try:
     if COUNTERFACTUAL_CLUSTER_DISCRIMINATION_69_10_31_AVAILABLE and register_counterfactual_cluster_discrimination_routes is not None:
         register_counterfactual_cluster_discrimination_routes(app)
         print("APEX 69.10.31 Counterfactual Cluster Discrimination routes registered.", flush=True)
+
+    if SESSION_PHASE_EXCURSION_ATTRIBUTION_69_10_32_AVAILABLE and register_session_phase_excursion_attribution_routes is not None:
+        register_session_phase_excursion_attribution_routes(app)
+        print("APEX 69.10.32 Canonical Excursion / Session Phase routes registered.", flush=True)
 
     if DECISION_OUTCOME_ATTRIBUTION_68_6_AVAILABLE and register_decision_outcome_attribution_routes is not None:
         register_decision_outcome_attribution_routes(app)
