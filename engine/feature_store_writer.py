@@ -485,6 +485,12 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         report["canonical_settlement_cohort_reconciliation"] = (
             flow_pl_store.reconcile_settlement_excursion_cohort(
                 sample_ids, session_date=session_date, sample_limit=10))
+        # APEX 69.10.35: pre-write exact identity partition. This is the
+        # authoritative diagnostic for the settlement identity path. It is
+        # intentionally computed before any label write and is exact-ID only.
+        report["canonical_settlement_identity_alignment"] = (
+            flow_pl_store.settlement_identity_alignment_diagnostic(
+                sample_ids, session_date=session_date, sample_limit=10))
         # APEX 69.10.22: pending means unlabelled, not necessarily broken.
         # Classify exact pending IDs by whether genuine P/L was ever observed and
         # whether the persisted identity/excursion ownership contract is intact.
@@ -492,38 +498,25 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
             flow_pl_store.audit_pending_sample_outcome_eligibility(
                 sample_ids, session_date=session_date, sample_limit=10))
 
-        # Evidence-backed compatibility only: a legacy coarse key may be used
-        # when exactly ONE pending feature vector maps to that key for the
-        # session. Multiple vectors sharing the key are ambiguous and are never
-        # guessed or backfilled. This preserves old singleton tests/data without
-        # reintroducing the collision that 69.1 closes.
+        # APEX 69.10.35: legacy/coarse-key settlement recovery is disabled.
+        # A label may be written only when the exact requested canonical feature
+        # sample ID owns the persisted excursion. No singleton legacy fallback.
         legacy_key_by_sid = {}
         legacy_counts = {}
-        for v in vectors:
-            f = v.get("features") or {}
-            key = (f"{v.get('ticker')}|{f.get('cluster_option_type')}|"
-                   f"{f.get('cluster_expiration')}|"
-                   f"{f.get('cluster_directional_interpretation')}")
-            legacy_key_by_sid[v.get("sample_id")] = key
-            legacy_counts[key] = legacy_counts.get(key, 0) + 1
-        singleton_legacy_keys = [k for k, n in legacy_counts.items() if n == 1]
-        legacy_exc = flow_pl_store.get_cluster_excursions(singleton_legacy_keys, session_date)
-        report["legacy_singleton_candidates"] = len(singleton_legacy_keys)
-        report["legacy_singleton_rows_found"] = len(legacy_exc or {})
-        report["ambiguous_legacy_vectors"] = sum(n for n in legacy_counts.values() if n > 1)
-        report["excursion_rows_found"] = int(report.get("canonical_excursion_rows_found") or 0) + int(report.get("legacy_singleton_rows_found") or 0)
+        legacy_exc = {}
+        report["legacy_singleton_candidates"] = 0
+        report["legacy_singleton_rows_found"] = 0
+        report["ambiguous_legacy_vectors"] = 0
+        report["legacy_singleton_label_recovery_enabled"] = False
+        report["excursion_rows_found"] = int(report.get("canonical_excursion_rows_found") or 0)
 
         settled_at = f"{session_date}T16:00:00"
         for v in vectors:
             sid = v.get("sample_id")
             e = (exc or {}).get(sid)
-            if not e:
-                lk = legacy_key_by_sid.get(sid)
-                if lk and legacy_counts.get(lk) == 1:
-                    e = (legacy_exc or {}).get(lk)
-                    if e:
-                        report["legacy_singleton_recoveries"] = int(report.get("legacy_singleton_recoveries") or 0) + 1
-        
+            # 69.10.35 invariant: settlement may label only the exact canonical
+            # feature sample ID that owns this excursion. There is no alternate
+            # owner lookup or cross-sample borrowing path.
             if not e:
                 report["missing_excursion_row"] += 1
                 report["no_excursion"] += 1

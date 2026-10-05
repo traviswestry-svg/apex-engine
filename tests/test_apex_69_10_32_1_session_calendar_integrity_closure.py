@@ -33,5 +33,5 @@ def test_rth_attribution_excludes_closed_pre_and_post():
 
 def test_release_metadata_6910321():
     root=Path(__file__).resolve().parents[1]; m=json.loads((root/'config/apex_release_manifest.json').read_text())
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.34'
-    assert m['build_name']=='Open Discovery Shadow Candidate Forward Validation & Structural Evidence Capture'
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.35'
+    assert m['build_name']=='Canonical Settlement Cohort Identity Alignment'
