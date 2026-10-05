@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.34
+apex_version: 69.10.35
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -1095,3 +1095,27 @@ capabilities:
       automatic_promotion: false
       automatic_execution: false
       automatic_order_submission: false
+
+
+  canonical_settlement_cohort_identity_alignment:
+    version: 69.10.35
+    state: ACTIVE_FAIL_CLOSED
+    description: "Exact canonical feature-sample settlement identity alignment and pre-write provenance partition."
+    canonical_modules: [engine.feature_store_writer, engine.flow_pl_store]
+    production_effect: SETTLEMENT_IDENTITY_GUARDRAIL_AND_OBSERVABILITY
+    decision_authority: none
+    execution_authority: none
+    outputs: [exact_identity_partition, identity_fork_stage, prewrite_settlement_provenance]
+    guardrails:
+      exact_feature_sample_id_only: true
+      exact_excursion_owner_required: true
+      legacy_singleton_recovery: false
+      fuzzy_matching: false
+      nearest_time_matching: false
+      reconstructed_identity: false
+      historical_backfill: false
+      synthetic_mfe_pl: false
+      cross_sample_excursion_borrowing: false
+      changes_learning_eligibility: false
+      changes_trade_decisions: false
+      changes_execution_authority: false

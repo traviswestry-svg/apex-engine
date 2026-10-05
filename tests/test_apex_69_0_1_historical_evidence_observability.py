@@ -60,8 +60,8 @@ def test_settle_labels_reports_missing_mfe_separately(monkeypatch):
             "cluster_directional_interpretation": "BULLISH",
         },
     })
-    monkeypatch.setattr(W.flow_pl_store, "get_cluster_excursions", lambda keys, session_date: {
-        keys[0]: {"mfe_dollars": None, "mae_dollars": -10.0, "cost_basis": 100.0}
+    monkeypatch.setattr(W.flow_pl_store, "get_sample_excursions", lambda sample_ids: {
+        sample_ids[0]: {"mfe_dollars": None, "mae_dollars": -10.0, "cost_basis": 100.0}
     })
     out = W.settle_labels(session_date="2026-08-21")
     assert out["excursion_rows_found"] == 1

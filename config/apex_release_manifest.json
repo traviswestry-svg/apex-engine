@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.34",
-  "build_name": "Open Discovery Shadow Candidate Forward Validation & Structural Evidence Capture",
+  "apex_version": "69.10.35",
+  "build_name": "Canonical Settlement Cohort Identity Alignment",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "8",
-  "released_at": "2026-10-04",
+  "released_at": "2026-10-05",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -666,15 +666,26 @@
     "abstention_causality_changes_trade_decisions": false,
     "abstention_causality_changes_execution_authority": false,
     "abstention_causality_automatic_promotion": false,
-    "opportunity_cluster_deduplication_analytical_only": true
+    "opportunity_cluster_deduplication_analytical_only": true,
+    "canonical_settlement_identity_alignment_closure": true,
+    "canonical_settlement_identity_alignment_version": "69.10.35",
+    "settlement_exact_excursion_owner_required": true,
+    "settlement_legacy_singleton_recovery_allowed": false,
+    "settlement_nearest_time_matching_allowed": false,
+    "settlement_cross_sample_excursion_borrowing_allowed": false,
+    "settlement_synthetic_mfe_pl_allowed": false,
+    "settlement_historical_identity_backfill_allowed": false,
+    "settlement_identity_alignment_changes_learning_eligibility": false,
+    "settlement_identity_alignment_changes_trade_decisions": false,
+    "settlement_identity_alignment_changes_execution_authority": false
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.34",
-  "application_version": "69.10.34",
+  "semantic_version": "69.10.35",
+  "application_version": "69.10.35",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

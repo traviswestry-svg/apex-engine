@@ -1408,6 +1408,146 @@ def reconcile_settlement_excursion_cohort(sample_ids: List[str], *, session_date
         return out
 
 
+
+def settlement_identity_alignment_diagnostic(sample_ids: List[str], *, session_date: str,
+                                             sample_limit: int = 10) -> Dict[str, Any]:
+    """APEX 69.10.35 exact settlement-cohort identity diagnostic.
+
+    Partitions the settlement/feature population and canonical excursion population
+    into four mutually exclusive sets using *only* exact canonical feature sample
+    IDs.  This function is read-only: it never reconstructs an identity, performs a
+    nearest-time/market-attribute join, backfills evidence, or changes eligibility.
+    """
+    requested = sorted({str(x) for x in (sample_ids or []) if x})
+    day = str(session_date or "")[:10]
+    out: Dict[str, Any] = {
+        "version": "69.10.35",
+        "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+        "session_date": day,
+        "invariant": (
+            "settlement.requested_sample_id == feature.feature_sample_id == "
+            "lifecycle.sample_id == excursion.sample_id"
+        ),
+        "sets": {
+            "REQUESTED_AND_EXCURSION": {"count": 0, "samples": []},
+            "REQUESTED_NO_EXCURSION": {"count": 0, "samples": []},
+            "EXCURSION_NOT_REQUESTED": {"count": 0, "samples": []},
+            "FEATURE_ONLY_UNREGISTERED": {"count": 0, "samples": []},
+        },
+        "identity_fork_stages": {
+            "NONE": 0,
+            "FEATURE_TO_LIFECYCLE": 0,
+            "LIFECYCLE_TO_EXCURSION": 0,
+            "EXCURSION_TO_SETTLEMENT": 0,
+        },
+        "writes_evidence": False,
+        "reconstructs_identity": False,
+        "fuzzy_matching": False,
+        "nearest_time_matching": False,
+        "historical_backfill": False,
+        "synthetic_excursion": False,
+        "synthetic_pl": False,
+        "cross_sample_borrowing": False,
+    }
+    if not _DB_READY:
+        out["state"] = "FLOW_PL_STORE_NOT_READY"
+        return out
+    try:
+        identities: Dict[str, Dict[str, Any]] = {}
+        lifecycle: Dict[str, Dict[str, Any]] = {}
+        excursions: Dict[str, Dict[str, Any]] = {}
+        origin_counts: Dict[str, int] = {}
+        with _conn() as c:
+            for r in c.execute(
+                "SELECT sample_id,session_date,legacy_cluster_key,decision_time,samples,first_seen,last_seen "
+                "FROM flow_sample_excursions WHERE session_date=?", (day,)):
+                excursions[str(r["sample_id"])] = dict(r)
+            if requested:
+                for i in range(0, len(requested), 400):
+                    chunk = requested[i:i + 400]
+                    q = ",".join("?" * len(chunk))
+                    for r in c.execute(
+                        f"SELECT sample_id,session_date,legacy_cluster_key,decision_time,registered_at "
+                        f"FROM flow_sample_identity_map WHERE sample_id IN ({q})", chunk):
+                        identities[str(r["sample_id"])] = dict(r)
+                    for r in c.execute(
+                        f"SELECT sample_id,session_date,legacy_cluster_key,decision_time,state,reason," 
+                        f"pl_observations,excursion_writes,last_observed_at FROM flow_sample_pl_lifecycle "
+                        f"WHERE sample_id IN ({q})", chunk):
+                        lifecycle[str(r["sample_id"])] = dict(r)
+                    for r in c.execute(
+                        f"SELECT sample_id,COUNT(*) AS n FROM flow_feature_origin_bindings "
+                        f"WHERE sample_id IN ({q}) GROUP BY sample_id", chunk):
+                        origin_counts[str(r["sample_id"])] = int(r["n"] or 0)
+
+        req, ex, reg = set(requested), set(excursions), set(identities)
+        requested_and_excursion = req & ex
+        feature_only_unregistered = req - reg
+        requested_no_excursion = (req & reg) - ex
+        excursion_not_requested = ex - req
+
+        partitions = {
+            "REQUESTED_AND_EXCURSION": requested_and_excursion,
+            "REQUESTED_NO_EXCURSION": requested_no_excursion,
+            "EXCURSION_NOT_REQUESTED": excursion_not_requested,
+            "FEATURE_ONLY_UNREGISTERED": feature_only_unregistered,
+        }
+        for name, ids in partitions.items():
+            out["sets"][name]["count"] = len(ids)
+
+        # A feature that never registered forks before lifecycle ownership exists.
+        out["identity_fork_stages"]["FEATURE_TO_LIFECYCLE"] = len(feature_only_unregistered)
+        # Registered requested features without an exact excursion fork on the
+        # lifecycle -> excursion handoff (or are legitimately awaiting genuine P/L).
+        out["identity_fork_stages"]["LIFECYCLE_TO_EXCURSION"] = len(requested_no_excursion)
+        # Excursion owners absent from the settlement request expose selector drift.
+        out["identity_fork_stages"]["EXCURSION_TO_SETTLEMENT"] = len(excursion_not_requested)
+        out["identity_fork_stages"]["NONE"] = len(requested_and_excursion)
+
+        lim = max(0, int(sample_limit))
+        def prov(sid: str, classification: str) -> Dict[str, Any]:
+            ir, lr, er = identities.get(sid), lifecycle.get(sid), excursions.get(sid)
+            return {
+                "sample_id": sid,
+                "classification": classification,
+                "feature_origin": "SETTLEMENT_PENDING_FEATURE" if sid in req else None,
+                "lifecycle_registered": bool(ir),
+                "identity_session_date": ir.get("session_date") if ir else None,
+                "identity_decision_time": ir.get("decision_time") if ir else None,
+                "identity_legacy_cluster_key": ir.get("legacy_cluster_key") if ir else None,
+                "lifecycle_state": lr.get("state") if lr else None,
+                "lifecycle_reason": lr.get("reason") if lr else None,
+                "pl_observations": int(lr.get("pl_observations") or 0) if lr else 0,
+                "excursion_writes": int(lr.get("excursion_writes") or 0) if lr else 0,
+                "origin_event_bindings": int(origin_counts.get(sid, 0)),
+                "excursion_present": bool(er),
+                "excursion_owner_sample_id": sid if er else None,
+                "excursion_session_date": er.get("session_date") if er else None,
+                "excursion_decision_time": er.get("decision_time") if er else None,
+                "settlement_requested": sid in req,
+                "settlement_requested_sample_id": sid if sid in req else None,
+                "exact_identity_match": bool(sid in req and er),
+            }
+        for name, ids in partitions.items():
+            out["sets"][name]["samples"] = [prov(sid, name) for sid in sorted(ids)[:lim]]
+
+        out["settlement_requested_ids"] = len(req)
+        out["excursion_session_ids"] = len(ex)
+        out["exact_requested_excursion_overlap"] = len(requested_and_excursion)
+        out["exact_requested_excursion_overlap_pct"] = (
+            round(len(requested_and_excursion) / len(req) * 100.0, 4) if req else 0.0)
+        out["partition_complete"] = (
+            len(requested_and_excursion) + len(requested_no_excursion) +
+            len(feature_only_unregistered) == len(req)
+        )
+        out["state"] = "EXACT_IDENTITY_ALIGNED" if req and req <= ex else (
+            "NO_SETTLEMENT_REQUESTS" if not req else "EXACT_IDENTITY_DIVERGENCE")
+        return out
+    except Exception as exc:
+        out["state"] = "ERROR"
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        return out
+
 def get_sample_excursions(sample_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     """Return exact sample-scoped excursions. No legacy-key fallback is allowed."""
     if not _DB_READY or not sample_ids:

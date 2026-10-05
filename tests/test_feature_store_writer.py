@@ -250,15 +250,24 @@ def _seed(stores_ignored=None):
                     session_date=SESSION, now_et_seconds=_now("10:35"))
 
 
+
+
+def _record_exact_sample_pl(pl, cost):
+    sid = D.unlabelled_samples(SESSION)[0]
+    v = D.get_features(sid)
+    f = v.get("features") or {}
+    key = (f"{v.get('ticker')}|{f.get('cluster_option_type')}|"
+           f"{f.get('cluster_expiration')}|{f.get('cluster_directional_interpretation')}")
+    return S.record_sample_excursion(
+        sample_id=sid, session_date=SESSION, ticker="SPX",
+        pl_dollars=pl, cost_basis=cost, decision_time=v.get("decision_time"),
+        legacy_cluster_key=key, require_registered_owner=True)
+
 def test_settle_labels_writes_from_cluster_excursions(stores):
     _seed()
-    key = f"SPX|CALL|{_future_exp()}|BULLISH"
-    S.record_cluster_observation(cluster_key=key, session_date=SESSION, ticker="SPX",
-                                 pl_dollars=100_000.0, cost_basis=1_819_250.0)
-    S.record_cluster_observation(cluster_key=key, session_date=SESSION, ticker="SPX",
-                                 pl_dollars=2_500_000.0, cost_basis=1_819_250.0)
-    S.record_cluster_observation(cluster_key=key, session_date=SESSION, ticker="SPX",
-                                 pl_dollars=-1_000_000.0, cost_basis=1_819_250.0)
+    _record_exact_sample_pl(100_000.0, 1_819_250.0)
+    _record_exact_sample_pl(2_500_000.0, 1_819_250.0)
+    _record_exact_sample_pl(-1_000_000.0, 1_819_250.0)
     r = W.settle_labels(session_date=SESSION)
     assert r["labelled"] == 1
     pairs = D.load_training_pairs(train_sessions=[SESSION], eval_sessions=["2099-01-01"])
@@ -271,9 +280,7 @@ def test_settle_labels_writes_from_cluster_excursions(stores):
 
 def test_label_basis_names_the_thresholds_as_apex_defined(stores):
     _seed()
-    S.record_cluster_observation(cluster_key=f"SPX|CALL|{_future_exp()}|BULLISH",
-                                 session_date=SESSION, ticker="SPX",
-                                 pl_dollars=100.0, cost_basis=1000.0)
+    _record_exact_sample_pl(100.0, 1000.0)
     W.settle_labels(session_date=SESSION)
     import sqlite3
     c = sqlite3.connect(D._DB_PATH); c.row_factory = sqlite3.Row
@@ -292,9 +299,7 @@ def test_sample_without_excursions_is_not_labelled(stores):
 
 def test_settle_is_idempotent(stores):
     _seed()
-    S.record_cluster_observation(cluster_key=f"SPX|CALL|{_future_exp()}|BULLISH",
-                                 session_date=SESSION, ticker="SPX",
-                                 pl_dollars=100.0, cost_basis=1000.0)
+    _record_exact_sample_pl(100.0, 1000.0)
     W.settle_labels(session_date=SESSION)
     r2 = W.settle_labels(session_date=SESSION)
     assert r2["labelled"] == 0          # nothing unlabelled remains
@@ -302,9 +307,7 @@ def test_settle_is_idempotent(stores):
 
 def test_labels_settle_at_session_close(stores):
     _seed()
-    S.record_cluster_observation(cluster_key=f"SPX|CALL|{_future_exp()}|BULLISH",
-                                 session_date=SESSION, ticker="SPX",
-                                 pl_dollars=100.0, cost_basis=1000.0)
+    _record_exact_sample_pl(100.0, 1000.0)
     W.settle_labels(session_date=SESSION)
     pairs = D.load_training_pairs(train_sessions=[SESSION], eval_sessions=["2099-01-01"])
     assert pairs["train"][0]["settled_at"] == f"{SESSION}T16:00:00"
