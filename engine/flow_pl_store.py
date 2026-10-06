@@ -52,7 +52,7 @@ def active_db_path() -> str:
 _LOCK = threading.Lock()
 _DB_READY = False
 
-STORE_VERSION = "69.10.27_DURABLE_BOUND_ORIGIN_REOBSERVATION_CLOSURE"
+STORE_VERSION = "69.10.36_CANONICAL_FEATURE_LIFECYCLE_EXCURSION_OWNERSHIP_CONVERGENCE"
 
 
 def _conn() -> sqlite3.Connection:
@@ -223,6 +223,30 @@ def init_db() -> bool:
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_ffob_session "
                       "ON flow_feature_origin_bindings(session_date, sample_id)")
+            # APEX 69.10.36: persist the observable contract facts that belong to
+            # each event at the same post-persistence boundary that binds the event
+            # to its canonical feature sample.  Re-observation must not depend on
+            # flow_pl_tracking having obtained an initial mark before the feature
+            # sealed.  Ownership remains the exact immutable sample_id; these facts
+            # are repricing inputs only and never select or reconstruct an owner.
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS flow_feature_origin_event_facts (
+                       event_id TEXT PRIMARY KEY,
+                       sample_id TEXT NOT NULL,
+                       session_date TEXT NOT NULL,
+                       ticker TEXT,
+                       contract_type TEXT,
+                       strike REAL,
+                       expiration TEXT,
+                       position_side TEXT,
+                       contracts INTEGER,
+                       multiplier REAL,
+                       entry_time_et TEXT,
+                       entry_mark REAL,
+                       captured_at TEXT NOT NULL
+                   )""")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_ffoef_session "
+                      "ON flow_feature_origin_event_facts(session_date, sample_id)")
             c.execute(
                 """CREATE TABLE IF NOT EXISTS flow_feature_origin_pl_audit (
                        id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -465,7 +489,8 @@ def get_excursions(event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
 
 
 def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluster_key: str,
-                             decision_time: str, origin_event_ids: Optional[List[str]] = None) -> bool:
+                             decision_time: str, origin_event_ids: Optional[List[str]] = None,
+                             origin_event_facts: Optional[List[Dict[str, Any]]] = None) -> bool:
     """Register and verify the immutable feature identity and optional origin bindings.
 
     APEX 69.10.24 makes identity publication + origin transport atomic inside the
@@ -475,6 +500,8 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
     if not _DB_READY or not sample_id or not session_date or not legacy_cluster_key or not decision_time:
         return False
     event_ids = [str(x) for x in (origin_event_ids or []) if x]
+    facts_by_event = {str(x.get("event_id")): dict(x) for x in (origin_event_facts or [])
+                      if isinstance(x, dict) and x.get("event_id")}
     try:
         with _LOCK, _conn() as c:
             c.execute(
@@ -506,6 +533,22 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
                         and b["legacy_cluster_key"] == legacy_cluster_key
                         and b["decision_time"] == decision_time):
                     c.rollback(); return False
+                f = facts_by_event.get(event_id)
+                if f:
+                    c.execute(
+                        """INSERT OR IGNORE INTO flow_feature_origin_event_facts
+                           (event_id,sample_id,session_date,ticker,contract_type,strike,expiration,
+                            position_side,contracts,multiplier,entry_time_et,entry_mark,captured_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (event_id,sample_id,session_date,f.get("ticker"),f.get("contract_type"),
+                         f.get("strike"),f.get("expiration"),f.get("position_side"),
+                         f.get("contracts"),f.get("multiplier"),f.get("entry_time_et"),
+                         f.get("entry_mark"),now))
+                    fr = c.execute(
+                        "SELECT sample_id,session_date FROM flow_feature_origin_event_facts WHERE event_id=?",
+                        (event_id,)).fetchone()
+                    if not (fr and fr["sample_id"] == sample_id and fr["session_date"] == session_date):
+                        c.rollback(); return False
             c.commit()
         return True
     except Exception:
@@ -513,13 +556,13 @@ def register_sample_identity(*, sample_id: str, session_date: str, legacy_cluste
 
 
 def get_bound_origin_repricing_candidates(session_date: str) -> List[Dict[str, Any]]:
-    """Return durable, exact origin-bound events eligible for genuine re-observation.
+    """Return exact origin-bound events eligible for observational re-pricing.
 
-    APEX 69.10.27 closes the source-window gap: once a persisted feature has
-    atomically bound its originating event IDs, later repricing does not require
-    those historical prints to remain in the provider's current tape window.
-    Ownership comes only from ``flow_feature_origin_bindings`` and event facts
-    come only from the previously observed ``flow_pl_tracking`` row.
+    APEX 69.10.36 converges lifecycle ownership before settlement.  Contract facts
+    captured atomically with the canonical origin binding are authoritative for
+    ownership-preserving re-observation; ``flow_pl_tracking`` is only a compatible
+    fallback for pre-69.10.36 bindings.  No market attribute is used to choose an
+    owner and no sample identity is reconstructed.
     """
     if not _DB_READY or not session_date:
         return []
@@ -527,12 +570,23 @@ def get_bound_origin_repricing_candidates(session_date: str) -> List[Dict[str, A
         with _conn() as c:
             rows = c.execute(
                 """SELECT b.event_id,b.sample_id,b.session_date,b.legacy_cluster_key,
-                          b.decision_time,t.ticker,t.contract_type,t.strike,t.expiration,
-                          t.position_side,t.contracts,t.multiplier,t.entry_time_et,
-                          t.entry_mark,t.entry_spot,t.entry_iv
+                          b.decision_time,
+                          COALESCE(f.ticker,t.ticker) ticker,
+                          COALESCE(f.contract_type,t.contract_type) contract_type,
+                          COALESCE(f.strike,t.strike) strike,
+                          COALESCE(f.expiration,t.expiration) expiration,
+                          COALESCE(f.position_side,t.position_side) position_side,
+                          COALESCE(f.contracts,t.contracts) contracts,
+                          COALESCE(f.multiplier,t.multiplier) multiplier,
+                          COALESCE(f.entry_time_et,t.entry_time_et) entry_time_et,
+                          COALESCE(f.entry_mark,t.entry_mark) entry_mark,
+                          t.entry_spot,t.entry_iv,
+                          CASE WHEN f.event_id IS NOT NULL THEN 'CANONICAL_ORIGIN_FACTS'
+                               ELSE 'LEGACY_TRACKING_FACTS' END facts_source
                    FROM flow_feature_origin_bindings b
-                   JOIN flow_pl_tracking t ON t.event_id=b.event_id
-                   WHERE b.session_date=?
+                   LEFT JOIN flow_feature_origin_event_facts f ON f.event_id=b.event_id
+                   LEFT JOIN flow_pl_tracking t ON t.event_id=b.event_id
+                   WHERE b.session_date=? AND (f.event_id IS NOT NULL OR t.event_id IS NOT NULL)
                    ORDER BY b.sample_id,b.event_id""", (session_date,)).fetchall()
         return [dict(r) for r in rows]
     except Exception as exc:
@@ -542,6 +596,49 @@ def get_bound_origin_repricing_candidates(session_date: str) -> List[Dict[str, A
             decision_authority_suppressed=False, source=__name__,
             context={"db_path": _db_path(), "session_date": session_date})
         return []
+
+
+def feature_lifecycle_excursion_convergence_health(session_date: Optional[str] = None) -> Dict[str, Any]:
+    """Read-only 69.10.36 proof that registered features own repricing facts/excursions."""
+    out = {
+        "version": "69.10.36", "identity_basis": "CANONICAL_FEATURE_SAMPLE_ID",
+        "registered_samples": 0, "samples_with_origin_bindings": 0,
+        "samples_with_durable_origin_facts": 0, "samples_with_exact_excursion": 0,
+        "registered_without_origin_bindings": 0, "bound_without_durable_facts": 0,
+        "registered_without_exact_excursion": 0, "converged_samples": 0,
+        "convergence_pct": 0.0, "fuzzy_matching": False,
+        "nearest_time_matching": False, "reconstructs_identity": False,
+        "historical_backfill": False, "synthetic_excursion": False,
+        "cross_sample_borrowing": False, "writes_evidence": False,
+        "changes_trade_decisions": False, "execution_authority": False,
+    }
+    if not _DB_READY:
+        return out
+    try:
+        where = " WHERE i.session_date=?" if session_date else ""
+        args = (session_date,) if session_date else ()
+        with _conn() as c:
+            r = c.execute(
+                """SELECT COUNT(*) registered,
+                   COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM flow_feature_origin_bindings b WHERE b.sample_id=i.sample_id) THEN 1 ELSE 0 END),0) bound,
+                   COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM flow_feature_origin_event_facts f WHERE f.sample_id=i.sample_id) THEN 1 ELSE 0 END),0) facts,
+                   COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM flow_sample_excursions e WHERE e.sample_id=i.sample_id) THEN 1 ELSE 0 END),0) exc,
+                   COALESCE(SUM(CASE WHEN EXISTS(SELECT 1 FROM flow_feature_origin_event_facts f WHERE f.sample_id=i.sample_id)
+                                      AND EXISTS(SELECT 1 FROM flow_sample_excursions e WHERE e.sample_id=i.sample_id) THEN 1 ELSE 0 END),0) converged
+                   FROM flow_sample_identity_map i""" + where, args).fetchone()
+        registered, bound, facts, exc, converged = [int(r[k] or 0) for k in ("registered","bound","facts","exc","converged")]
+        out.update({
+            "registered_samples": registered, "samples_with_origin_bindings": bound,
+            "samples_with_durable_origin_facts": facts, "samples_with_exact_excursion": exc,
+            "registered_without_origin_bindings": max(0, registered-bound),
+            "bound_without_durable_facts": max(0, bound-facts),
+            "registered_without_exact_excursion": max(0, registered-exc),
+            "converged_samples": converged,
+            "convergence_pct": round(converged/registered*100.0, 2) if registered else 0.0,
+        })
+    except Exception as exc:
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
 
 
 def resolve_feature_origin_transport(*, event_ids: List[str]) -> Dict[str, Any]:
@@ -1609,6 +1706,7 @@ def sample_excursion_health() -> Dict[str, Any]:
                 out["feature_pl_handoff"] = feature_pl_handoff_health()
                 out["feature_origin_provenance"] = feature_origin_provenance_health()
                 out["origin_transport_coverage"] = feature_origin_transport_coverage_health()
+                out["feature_lifecycle_excursion_convergence"] = feature_lifecycle_excursion_convergence_health()
     except Exception as exc:  # pragma: no cover
         out.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
     return out

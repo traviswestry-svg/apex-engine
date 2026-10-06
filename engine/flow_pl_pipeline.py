@@ -312,6 +312,17 @@ def run_flow_pl(
             # descriptive stats are P/L outputs.
             src = dict(cl)
             src["cluster_key_string"] = ckey_s
+            # APEX 69.10.36: carry observable origin-event contract facts across
+            # the persistence boundary even when the event was not markable on
+            # this source pass.  These facts never select an owner; after feature
+            # persistence they are stored under the exact canonical sample binding
+            # so later chain marks can update that same sample's excursion.
+            src["_origin_event_facts"] = [
+                {k: m.get(k) for k in ("event_id", "ticker", "contract_type", "strike",
+                                       "expiration", "position_side", "contracts",
+                                       "multiplier", "entry_time_et", "entry_mark")}
+                for m in members if m.get("event_id")
+            ]
             # Private writer handoff, never a model feature. The feature writer
             # records this aggregate P/L under the immutable sample_id only once
             # the cluster is sealed.
