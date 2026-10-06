@@ -56,7 +56,9 @@ def test_canonical_sample_excursion_settles_exact_sample(monkeypatch):
     out = W.settle_labels(session_date='2026-08-24')
     assert out['canonical_excursion_rows_found'] == 1
     assert out['labelled'] == 1
-    assert out['ambiguous_legacy_vectors'] == 2
+    assert out['legacy_singleton_label_recovery_enabled'] is False
+    identity_sets = out['canonical_settlement_identity_alignment']['sets']
+    assert identity_sets['REQUESTED_AND_EXCURSION']['count'] == 1
     assert out['missing_excursion_row'] == 1
     assert D.get_label('sample-A') is not None
     assert D.get_label('sample-B') is None
