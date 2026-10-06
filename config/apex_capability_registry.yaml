@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.35
+apex_version: 69.10.36
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -1026,7 +1026,7 @@ capabilities:
 
 
   canonical_excursion_session_phase_attribution:
-    version: 69.10.32.1
+    version: 69.10.33
     state: ACTIVE_ADVISORY
     description: "Immutable entry-anchored excursion projection plus session-phase attribution over counterfactual clusters."
     canonical_modules: [engine.session_phase_excursion_attribution, engine.session_phase_excursion_attribution_routes]
@@ -1115,6 +1115,30 @@ capabilities:
       reconstructed_identity: false
       historical_backfill: false
       synthetic_mfe_pl: false
+      cross_sample_excursion_borrowing: false
+      changes_learning_eligibility: false
+      changes_trade_decisions: false
+      changes_execution_authority: false
+
+
+  canonical_feature_lifecycle_excursion_ownership_convergence:
+    version: 69.10.36
+    state: ACTIVE_FAIL_CLOSED
+    description: "Canonical feature lifecycle and excursion ownership converge before settlement selection."
+    canonical_modules: [engine.feature_store_writer, engine.flow_pl_pipeline, engine.flow_pl_store]
+    production_effect: OBSERVATIONAL_EVIDENCE_OWNERSHIP_CONVERGENCE
+    decision_authority: none
+    execution_authority: none
+    outputs: [durable_origin_event_facts, exact_owner_reobservation, lifecycle_excursion_convergence_health]
+    guardrails:
+      exact_feature_sample_id_only: true
+      origin_facts_do_not_select_owner: true
+      fuzzy_matching: false
+      nearest_time_matching: false
+      reconstructed_identity: false
+      historical_backfill: false
+      synthetic_excursion: false
+      synthetic_pl: false
       cross_sample_excursion_borrowing: false
       changes_learning_eligibility: false
       changes_trade_decisions: false
