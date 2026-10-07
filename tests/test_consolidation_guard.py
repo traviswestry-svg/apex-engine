@@ -78,6 +78,17 @@ def _imports_of(path: Path, mods) -> set:
                 base = ".".join(path.relative_to(ROOT).with_suffix("").parts[:-node.level])
                 for a in node.names:
                     out.add(f"{base}.{a.name}")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "importlib"
+            and node.func.attr == "import_module"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ):
+            out.add(node.args[0].value)
     return {i for i in out if i in mods}
 
 
@@ -151,3 +162,9 @@ def test_no_dead_engine_modules():
         f"wire them into the runtime or add to TEST_ONLY_ALLOWLIST with a "
         f"manifest entry explaining why."
     )
+
+
+def test_literal_dynamic_imports_are_runtime_edges():
+    mods = _modules()
+    service = ROOT / "engine" / "evening_recap_service.py"
+    assert "engine.evening_recap" in _imports_of(service, mods)

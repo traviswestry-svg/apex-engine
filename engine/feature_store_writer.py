@@ -505,12 +505,23 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
         # APEX 69.10.35: legacy/coarse-key settlement recovery is disabled.
         # A label may be written only when the exact requested canonical feature
         # sample ID owns the persisted excursion. No singleton legacy fallback.
-        legacy_key_by_sid = {}
         legacy_counts = {}
-        legacy_exc = {}
+        for v in vectors:
+            sid = v.get("sample_id")
+            features = v.get("features") or {}
+            legacy_parts = (
+                v.get("ticker") or ticker,
+                features.get("cluster_option_type"),
+                features.get("cluster_expiration"),
+                features.get("cluster_directional_interpretation"),
+            )
+            if sid and sid not in (exc or {}) and all(legacy_parts):
+                legacy_key = "|".join(str(part) for part in legacy_parts)
+                legacy_counts[legacy_key] = legacy_counts.get(legacy_key, 0) + 1
         report["legacy_singleton_candidates"] = 0
         report["legacy_singleton_rows_found"] = 0
-        report["ambiguous_legacy_vectors"] = 0
+        report["ambiguous_legacy_vectors"] = sum(
+            count for count in legacy_counts.values() if count > 1)
         report["legacy_singleton_label_recovery_enabled"] = False
         report["excursion_rows_found"] = int(report.get("canonical_excursion_rows_found") or 0)
 

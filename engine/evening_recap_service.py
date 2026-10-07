@@ -9,11 +9,21 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-VERSION = "69.3.3"
+VERSION = "69.10.36.1"
 
 
 def _impl():
     return importlib.import_module("engine.evening_recap")
+
+
+def save_morning_snapshot(payload: dict, ticker: str = "SPX"):
+    """Persist a Morning Brief through the import-safe recap boundary."""
+    return _impl().save_morning_snapshot(payload, ticker=ticker)
+
+
+def morning_history(limit: Any = 60):
+    """Read Morning Brief archive history through the import-safe boundary."""
+    return _impl().morning_history(limit)
 
 
 def get_morning_snapshot(session_date: str):
