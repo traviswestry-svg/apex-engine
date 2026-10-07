@@ -515,7 +515,7 @@ def settle_labels(*, session_date: str, ticker: str = "SPX") -> Dict[str, Any]:
                 features.get("cluster_expiration"),
                 features.get("cluster_directional_interpretation"),
             )
-            if sid and all(legacy_parts):
+            if sid and sid not in (exc or {}) and all(legacy_parts):
                 legacy_key = "|".join(str(part) for part in legacy_parts)
                 legacy_counts[legacy_key] = legacy_counts.get(legacy_key, 0) + 1
         report["legacy_singleton_candidates"] = 0
