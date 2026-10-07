@@ -11983,7 +11983,7 @@ def api_morning_brief():
 
         archive_started = time.perf_counter()
         try:
-            from engine.evening_recap import save_morning_snapshot
+            from engine.evening_recap_service import save_morning_snapshot
             payload["forecast_archive"] = save_morning_snapshot(payload, ticker=ticker)
         except Exception as recap_store_exc:
             payload["forecast_archive"] = {
@@ -12096,7 +12096,7 @@ def api_data_quality():
 def api_morning_brief_history():
     """Review index for immutable Morning Brief forecasts."""
     try:
-        from engine.evening_recap import morning_history
+        from engine.evening_recap_service import morning_history
         return jsonify(morning_history(request.args.get("limit", 60)))
     except Exception as exc:
         return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}", "version": VERSION}), 500
@@ -12181,7 +12181,11 @@ def api_evening_recap():
     except ValueError as exc:
         return jsonify({"ok": False, "error": f"invalid date: {exc}", "version": VERSION}), 400
     except Exception as exc:
-        print(f"[APEX49] evening recap failed: {type(exc).__name__}: {exc}", flush=True)
+        # Preserve the complete traceback in production logs.  APEX 69.10.36.1
+        # keeps route imports behind evening_recap_service so concurrent Morning
+        # Brief / Evening Recap requests cannot directly initialize the heavy
+        # implementation module from two Flask route paths.
+        app.logger.exception("[APEX49] evening recap failed")
         return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}", "version": VERSION}), 500
 
 
