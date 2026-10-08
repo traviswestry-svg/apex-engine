@@ -800,6 +800,9 @@ def generate_morning_brief(
     result["structured"]["forecast_regime_source"] = _regime["source"]
     result["structured"]["forecast_regime_vote_counts"] = _regime["vote_counts"]
     result["structured"]["forecast_regime_confidence"] = _regime["confidence"]
+    # APEX 69.10.37: freeze additive decision-time diagnostics with the forecast.
+    from .forecast_provenance_diagnostics import capture as _capture_forecast_diagnostics
+    result["structured"]["forecast_provenance_diagnostics"] = _capture_forecast_diagnostics(dkl, _regime)
     result["forecast_identity"] = {
         "target_session_date": target_date,
         "source_session_date": source_date,
