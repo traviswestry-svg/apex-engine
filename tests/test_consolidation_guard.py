@@ -78,6 +78,18 @@ def _imports_of(path: Path, mods) -> set:
                 base = ".".join(path.relative_to(ROOT).with_suffix("").parts[:-node.level])
                 for a in node.names:
                     out.add(f"{base}.{a.name}")
+    # Literal importlib imports are runtime edges, even when a lightweight
+    # service delays loading a heavy implementation to avoid circular imports.
+    # Only accept statically declared module names; dynamic strings remain
+    # unresolvable and are not treated as reachability evidence.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        fn = node.func
+        is_importlib = (isinstance(fn, ast.Attribute) and fn.attr == "import_module"
+                        and isinstance(fn.value, ast.Name) and fn.value.id == "importlib")
+        if is_importlib and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            out.add(node.args[0].value)
     return {i for i in out if i in mods}
 
 
