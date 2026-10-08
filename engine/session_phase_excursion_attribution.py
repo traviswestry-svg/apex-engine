@@ -16,7 +16,7 @@ from .decision_outcome_attribution import DEFAULT_DB, _availability
 from .counterfactual_cluster_discrimination import clusters as discrimination_clusters
 from .canonical_market_calendar import classify as classify_market_session
 
-VERSION = "69.10.32.1"
+VERSION = "69.10.33"
 SCHEMA_VERSION = "apex.canonical_excursion_session_phase.v1.1"
 
 
