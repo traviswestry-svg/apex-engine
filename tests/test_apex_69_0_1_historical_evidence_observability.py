@@ -25,6 +25,8 @@ def test_lifecycle_route_prefers_fresh_scanner_heartbeat_runtime():
 def test_settle_labels_reports_missing_excursion_reason(monkeypatch):
     monkeypatch.setattr(W.feature_store_db, "is_ready", lambda: True)
     monkeypatch.setattr(W.flow_pl_store, "is_ready", lambda: True)
+    monkeypatch.setattr(W.feature_store_db, "active_db_path", lambda: "/tmp/apex-test-exact.db")
+    monkeypatch.setattr(W.flow_pl_store, "active_db_path", lambda: "/tmp/apex-test-exact.db")
     monkeypatch.setattr(W.feature_store_db, "unlabelled_samples", lambda session_date: ["sample-1"])
     monkeypatch.setattr(W.feature_store_db, "get_features", lambda sid: {
         "sample_id": sid,
@@ -36,7 +38,7 @@ def test_settle_labels_reports_missing_excursion_reason(monkeypatch):
             "cluster_directional_interpretation": "BULLISH",
         },
     })
-    monkeypatch.setattr(W.flow_pl_store, "get_cluster_excursions", lambda keys, session_date: {})
+    monkeypatch.setattr(W.flow_pl_store, "get_sample_excursions", lambda sample_ids: {})
     out = W.settle_labels(session_date="2026-08-21")
     assert out["pending"] == 1
     assert out["vectors_loaded"] == 1
@@ -49,6 +51,8 @@ def test_settle_labels_reports_missing_excursion_reason(monkeypatch):
 def test_settle_labels_reports_missing_mfe_separately(monkeypatch):
     monkeypatch.setattr(W.feature_store_db, "is_ready", lambda: True)
     monkeypatch.setattr(W.flow_pl_store, "is_ready", lambda: True)
+    monkeypatch.setattr(W.feature_store_db, "active_db_path", lambda: "/tmp/apex-test-exact.db")
+    monkeypatch.setattr(W.flow_pl_store, "active_db_path", lambda: "/tmp/apex-test-exact.db")
     monkeypatch.setattr(W.feature_store_db, "unlabelled_samples", lambda session_date: ["sample-1"])
     monkeypatch.setattr(W.feature_store_db, "get_features", lambda sid: {
         "sample_id": sid,

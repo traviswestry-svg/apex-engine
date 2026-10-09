@@ -14,8 +14,8 @@ def _use_db(tmp_path):
 
 def test_release_truth_and_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "69.10.36"
-    assert manifest["build_name"] == "Canonical Feature Lifecycle & Excursion Ownership Convergence"
+    assert manifest["apex_version"] == "69.10.37"
+    assert manifest["build_name"] == "Forecast Diagnostics Production Promotion & Persistence Closure"
     g = manifest["guardrails"]
     assert g["origin_event_facts_persisted_at_canonical_binding"] is True
     assert g["excursion_owner_must_equal_registered_feature_sample"] is True

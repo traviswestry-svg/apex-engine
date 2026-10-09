@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.36",
-  "build_name": "Canonical Feature Lifecycle & Excursion Ownership Convergence",
+  "apex_version": "69.10.37",
+  "build_name": "Forecast Diagnostics Production Promotion & Persistence Closure",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "8",
-  "released_at": "2026-10-06",
+  "released_at": "2026-10-09",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -682,15 +682,20 @@
     "canonical_feature_lifecycle_excursion_ownership_convergence_version": "69.10.36",
     "origin_event_facts_persisted_at_canonical_binding": true,
     "excursion_owner_must_equal_registered_feature_sample": true,
-    "settlement_fuzzy_matching_allowed": false
+    "settlement_fuzzy_matching_allowed": false,
+    "forecast_provenance_diagnostics_observational_only": true,
+    "forecast_diagnostics_frozen_at_decision_time": true,
+    "forecast_diagnostics_no_historical_backfill": true,
+    "forecast_diagnostics_no_scoring_change": true,
+    "forecast_diagnostics_no_execution_authority": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.36",
-  "application_version": "69.10.36",
+  "semantic_version": "69.10.37",
+  "application_version": "69.10.37",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,
