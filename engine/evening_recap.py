@@ -219,13 +219,35 @@ def morning_archive_status(session_date: str) -> dict:
             "SELECT generated_at,ticker,version,forecast_id,snapshot_hash FROM apex49_morning_snapshots WHERE session_date=?",
             (session_date,),
         ).fetchone()
+        diagnostic_row = c.execute(
+            "SELECT payload_json FROM apex49_morning_snapshots WHERE session_date=?",
+            (session_date,),
+        ).fetchone()
         count = c.execute(
             "SELECT COUNT(*) FROM apex49_morning_revisions WHERE session_date=?",
             (session_date,),
         ).fetchone()[0]
+    frozen = _load(diagnostic_row[0]) if diagnostic_row else {}
+    diagnostic = (frozen.get("structured") or {}).get("forecast_provenance_diagnostics")
+    diagnostic_valid = (
+        isinstance(diagnostic, dict)
+        and diagnostic.get("schema_version") == "69.10.37"
+        and diagnostic.get("capture_stage") == "MORNING_DETERMINISTIC_PRE_OUTCOME"
+        and diagnostic.get("authority") == "DIAGNOSTIC_ONLY_NO_FORECAST_OR_EXECUTION_CHANGE"
+    )
     return {
         "ok": True,
         "session_date": session_date,
+        "diagnostic_persistence": {
+            "state": ("NOT_ARCHIVED" if not official else
+                      "PERSISTED_VERIFIED" if diagnostic_valid else
+                      "PERSISTED_UNVERIFIED" if diagnostic is not None else
+                      "LEGACY_MISSING_NO_BACKFILL"),
+            "schema_version": diagnostic.get("schema_version") if isinstance(diagnostic, dict) else None,
+            "frozen_pre_outcome": bool(diagnostic_valid),
+            "source": "OFFICIAL_CANONICAL_MORNING_SNAPSHOT_ONLY",
+            "historical_backfill": False,
+        },
         "archived": bool(official),
         "official_generated_at": official[0] if official else None,
         "ticker": official[1] if official else None,

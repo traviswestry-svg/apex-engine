@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.36
+apex_version: 69.10.37
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -1143,3 +1143,17 @@ capabilities:
       changes_learning_eligibility: false
       changes_trade_decisions: false
       changes_execution_authority: false
+
+  forecast_diagnostics_production_promotion_persistence_closure:
+    version: 69.10.37
+    state: ACTIVE_OBSERVATIONAL
+    canonical_modules: [engine.morning_brief, engine.forecast_provenance_diagnostics, engine.evening_recap]
+    production_effect: IMMUTABLE_PRE_OUTCOME_DIAGNOSTIC_CAPTURE_AND_READBACK
+    decision_authority: none
+    execution_authority: none
+    outputs: [forecast_provenance_diagnostics, diagnostic_persistence_status]
+    guardrails:
+      existing_official_forecast_immutable: true
+      historical_diagnostic_backfill: false
+      no_forecast_or_grading_changes: true
+      no_execution_authority: true

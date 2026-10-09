@@ -55,5 +55,5 @@ def test_release_metadata_ratchets_to_691032():
     assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.36'
     assert m['build_name']=='Canonical Feature Lifecycle & Excursion Ownership Convergence'
     registry=(root/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.36' in registry
+    assert 'apex_version: 69.10.37' in registry
     assert 'canonical_excursion_session_phase_attribution:' in registry

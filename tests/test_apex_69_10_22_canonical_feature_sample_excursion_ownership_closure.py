@@ -12,7 +12,7 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert d["apex_version"] == d["semantic_version"] == d["application_version"] == "69.10.36"
+    assert d["apex_version"] == d["semantic_version"] == d["application_version"] == "69.10.37"
     assert d["build_name"] == "Canonical Feature Lifecycle & Excursion Ownership Convergence"
     g = d["guardrails"]
     assert g["canonical_feature_sample_excursion_ownership_required"] is True

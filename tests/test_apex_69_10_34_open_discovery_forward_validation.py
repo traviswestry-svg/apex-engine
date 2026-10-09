@@ -29,5 +29,5 @@ def test_release_metadata_69_10_34():
     m=json.load(open('config/apex_release_manifest.json'))
     assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.36'
     reg=open('config/apex_capability_registry.yaml').read()
-    assert 'apex_version: 69.10.36' in reg
+    assert 'apex_version: 69.10.37' in reg
     assert 'open_discovery_shadow_candidate_forward_validation:' in reg

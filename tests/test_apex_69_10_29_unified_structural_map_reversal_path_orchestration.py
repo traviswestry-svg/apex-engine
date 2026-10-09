@@ -43,10 +43,10 @@ def _last():
 def test_release_manifest_and_registry_ratchet():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.36"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.37"
     assert manifest["build_name"] == "Canonical Feature Lifecycle & Excursion Ownership Convergence"
     registry = (root / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.36" in registry
+    assert "apex_version: 69.10.37" in registry
     assert "unified_structural_map_reversal_path_orchestration" in registry
 
 
