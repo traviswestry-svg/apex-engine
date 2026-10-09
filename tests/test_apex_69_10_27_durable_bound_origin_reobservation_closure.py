@@ -30,7 +30,7 @@ def _seed():
 def test_release_truth():
     m=json.loads(Path("config/apex_release_manifest.json").read_text())
     assert m["apex_version"] == "69.10.37"
-    assert m["build_name"] == "Canonical Feature Lifecycle & Excursion Ownership Convergence"
+    assert m["build_name"] == "Forecast Diagnostics Production Promotion & Persistence Closure"
     assert m["guardrails"]["durable_bound_origin_reobservation"] is True
     assert m["guardrails"]["origin_reobservation_requires_exact_registered_owner"] is True
 

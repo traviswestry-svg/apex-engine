@@ -11,7 +11,7 @@ from engine.feature_store import frames_from_replay, resolve_frame_at_or_before
 def test_release_truth_and_replay_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
     assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.37"
-    assert manifest["build_name"] == "Canonical Feature Lifecycle & Excursion Ownership Convergence"
+    assert manifest["build_name"] == "Forecast Diagnostics Production Promotion & Persistence Closure"
     g = manifest["guardrails"]
     assert g["spx_learning_replay_frame_producer_enabled"] is True
     assert g["spx_learning_replay_reuses_live_active_level_provider_inputs"] is True
