@@ -145,7 +145,10 @@ def canonical_identity_basis(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
     """
     provider_observation_id = _canonical_text(snapshot.get("provider_observation_id"))
     provider_source_timestamp = _canonical_text(snapshot.get("provider_source_timestamp"))
+    model_material = {key: _canonical_text(snapshot.get(key)) for key in (
+        "model_id", "model_version", "calculation_method", "gamma_unit") if _canonical_text(snapshot.get(key))}
     return {
+        **({"declared_model_metadata": model_material} if model_material else {}),
         "schema_version": IDENTITY_SCHEMA_VERSION,
         "ticker": str(snapshot.get("ticker") or "SPX").upper(),
         "source": str(snapshot.get("source") or "UNKNOWN").upper(),
@@ -276,6 +279,13 @@ def snapshot_from_gamma(
         "source_timestamp_provenance": compat_basis,
         "source": str(source or "UNKNOWN").upper(),
         "provider_observation_id": provider_observation_id or gamma.get("provider_observation_id"),
+        "model_id": gamma.get("model_id"),
+        "model_version": gamma.get("model_version"),
+        "calculation_method": gamma.get("calculation_method"),
+        "gamma_unit": gamma.get("gamma_unit"),
+        "flip_calculation_valid": gamma.get("flip_calculation_valid"),
+        "underlying_spot": _f(gamma.get("underlying_spot")) if gamma.get("spot_synchronized_with_gamma") is True else None,
+        "spot_synchronized_with_gamma": gamma.get("spot_synchronized_with_gamma") is True,
         "path_version": gp.get("path_version"),
         "level_version": gp.get("level_version"),
         "gamma_regime": gp.get("current_regime") or gamma.get("gex_status"),
@@ -294,6 +304,7 @@ def snapshot_from_gamma(
         "provenance_class": str(provenance_class or "UNKNOWN").upper(),
         "replay_backfill_status": str(replay_backfill_status or "NONE").upper(),
     }
+    snap["gamma_model_integrity"] = gamma_model_integrity(snap)
     snap["canonical_gamma_snapshot_id"] = canonical_gamma_snapshot_id(snap)
     snap["identity_schema_version"] = IDENTITY_SCHEMA_VERSION
     return snap
@@ -358,9 +369,100 @@ def _prior(path: str, ticker: str, observed: dt.datetime, minutes: int) -> Optio
     return dict(r) if r else None
 
 
+def gamma_model_integrity(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
+    """Fail-closed metadata assessment; UNKNOWN is never interpreted as valid."""
+    required = ("model_id", "model_version", "calculation_method", "gamma_unit")
+    missing = [key for key in required if not str(snapshot.get(key) or "").strip()]
+    flip = _f(snapshot.get("gamma_flip"))
+    flip_valid = flip is not None and flip > 0 and snapshot.get("flip_calculation_valid") is True
+    return {
+        "model_comparability_state": "UNKNOWN" if missing else "DECLARED",
+        "missing_model_fields": missing,
+        "level_validity_state": "VALID" if flip_valid else "UNVERIFIED",
+        "flip_calculation_valid": flip_valid,
+        "execution_authority": False, "behavioral_authority": False,
+    }
+
+
+def gamma_models_comparable(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    fields = ("source", "model_id", "model_version", "calculation_method", "gamma_unit")
+    return all(str(left.get(k) or "").strip() and
+               str(left.get(k)) == str(right.get(k)) for k in fields)
+
+
+def regime_stability(current: Mapping[str, Any], history: list[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Observed price-versus-flip churn, never a directional forecast.
+
+    No price is fabricated from gamma; absent synchronized spot/flip or continuity
+    produces UNAVAILABLE rather than a misleading zero-crossing measurement.
+    """
+    result = {"status": "UNAVAILABLE", "gamma_flip_crossings_5m": None,
+              "gamma_flip_crossings_15m": None, "gamma_flip_crossings_30m": None,
+              "time_above_flip_seconds": None, "time_below_flip_seconds": None,
+              "current_regime_duration_seconds": None, "average_regime_duration_seconds": None,
+              "regime_churn_state": "UNKNOWN", "observations_used": 0,
+              "execution_authority": False, "behavioral_authority": False}
+    now = _parse(current.get("observed_at"))
+    if now is None:
+        return result
+    rows = [*history, current]
+    points = []
+    for row in rows:
+        t = _parse(row.get("observed_at"))
+        spot, flip = _f(row.get("underlying_spot")), _f(row.get("gamma_flip"))
+        if t is None or t > now or (now - t).total_seconds() > 1800 or spot is None or flip is None or flip <= 0 or not row.get("spot_synchronized_with_gamma"):
+            continue
+        if _session_date(t) != _session_date(now):
+            continue
+        if not gamma_models_comparable(row, current):
+            continue
+        if str(row.get("continuity_state") or "").upper() in {"GAPPED", "BACKFILLED", "OUT_OF_ORDER"} or str(row.get("provenance_class") or "LIVE_OBSERVED").upper() != "LIVE_OBSERVED":
+            return result
+        points.append((t, 1 if spot > flip else -1 if spot < flip else 0))
+    points.sort(key=lambda x: x[0])
+    if len(points) < 2 or points[-1][0] != now or any(v == 0 for _, v in points) or any(a[0] == b[0] for a,b in zip(points,points[1:])):
+        return result
+    cadence = _env_seconds(str(current.get("source") or "UNKNOWN"), "EXPECTED_CADENCE_SECONDS", 60)
+    if any((b[0]-a[0]).total_seconds() > max(180, cadence*2.5) for a,b in zip(points,points[1:])):
+        return result
+    counts = {}
+    for mins in (5,15,30):
+        subset = [(t,v) for t,v in points if (now-t).total_seconds() <= mins*60]
+        counts[mins] = (sum(a[1] != b[1] for a,b in zip(subset,subset[1:]))
+                        if len(subset)>=2 and (now-subset[0][0]).total_seconds() >= mins*60-max(90,cadence*1.5) else None)
+    above = below = 0.0
+    durations = []
+    segment_start = points[0][0]
+    for (t,v),(next_t,next_v) in zip(points,points[1:]):
+        seconds = (next_t-t).total_seconds()
+        if v > 0: above += seconds
+        else: below += seconds
+        if v != next_v:
+            durations.append((next_t-segment_start).total_seconds())
+            segment_start = next_t
+    durations.append((now-segment_start).total_seconds())
+    c15 = counts[15]
+    return {**result, "status": "AVAILABLE", "gamma_flip_crossings_5m": counts[5],
+            "gamma_flip_crossings_15m": c15, "gamma_flip_crossings_30m": counts[30],
+            "time_above_flip_seconds": above, "time_below_flip_seconds": below,
+            "current_regime_duration_seconds": durations[-1],
+            "average_regime_duration_seconds": round(sum(durations)/len(durations), 3),
+            "regime_churn_state": "OBSERVED_CHURN" if c15 is not None and c15 >= 3 else "LOW_OBSERVED_CHURN" if c15 is not None else "UNKNOWN",
+            "observations_used": len(points)}
+
+
 def _delta(cur: Mapping[str, Any], prev: Optional[Mapping[str, Any]], key: str, observed: dt.datetime, minutes: int) -> Optional[float]:
     if not prev:
         return None
+    if key in {"net_gex", "gamma_flip", "capacity_ratio"}:
+        model_fields = ("model_id", "model_version", "calculation_method", "gamma_unit")
+        has_model_declaration = any(
+            str(snapshot.get(field) or "").strip()
+            for snapshot in (cur, prev)
+            for field in model_fields
+        )
+        if has_model_declaration and not gamma_models_comparable(cur, prev):
+            return None
     pt = _parse(prev.get("observed_at")); a, b = _f(cur.get(key)), _f(prev.get(key))
     if pt is None or a is None or b is None:
         return None
@@ -645,9 +747,27 @@ def observe_gamma_transition(
         replay_backfill_status=replay_backfill_status,
     )
     transition = compute_transition(snap, db_path=path)
+    try:
+        with connect(path, timeout=10) as c:
+            c.row_factory = sqlite3.Row
+            rows = c.execute(
+                "SELECT * FROM gamma_observational_snapshots WHERE ticker=? AND observed_at<? "
+                "AND observed_at>=? AND canonical_gamma_snapshot_id IS NOT NULL "
+                "ORDER BY observed_at DESC LIMIT 120",
+                (snap["ticker"], snap["observed_at"],
+                 (_parse(snap["observed_at"]) - dt.timedelta(minutes=30)).isoformat()),
+            ).fetchall()
+        prior_history = [_row_to_snapshot(dict(row)) for row in rows]
+    except Exception:
+        prior_history = []
+    transition["gamma_model_integrity"] = snap["gamma_model_integrity"]
+    transition["gamma_model_comparison_policy"] = "EXACT_DECLARED_MODEL_SOURCE_METHOD_UNIT_ONLY"
+    transition["gamma_structural_level_validation"] = "UNVERIFIED_UNLESS_PROVIDER_VALIDATED"
+    transition["regime_stability"] = regime_stability(snap, prior_history)
     continuity = _continuity_for_new(path, snap)
     freshness = freshness_for_snapshot(snap, reference_at=snap.get("received_at"), market_state=market_state)
     snap.update(continuity)
+    snap["gamma_regime_stability_observation"] = transition.get("regime_stability")
     snap.update({
         "freshness_state": freshness.get("freshness_state"),
         "snapshot_age_seconds": freshness.get("snapshot_age_seconds"),
