@@ -27,6 +27,7 @@ os.environ["RUN_SCANNER_ON_IMPORT"] = "false"
 os.environ["APEX_SCANNER_PROCESS"] = "true"
 
 from engine.operational_runtime import write_scanner_heartbeat  # noqa: E402
+from engine.runtime_memory_attribution import snapshot as _memory_snapshot, append_bounded as _memory_append  # noqa: E402
 from engine.pre23_hardening import acquire_scanner_lease  # noqa: E402
 from engine.silent_degradation_observability import record_degradation  # noqa: E402
 
@@ -77,6 +78,19 @@ from engine import flow_pl_store as _flow_pl_store  # noqa: E402
 from engine import feature_store_db as _feature_store_db  # noqa: E402
 from engine.tick_momentum_feed import poll_futures_trades as _poll_futures_trades  # noqa: E402
 from engine.tick_momentum_store import TickMomentumStore as _TickMomentumStore  # noqa: E402
+
+def _memory_checkpoint(stage: str) -> None:
+    """Fail-open bounded stage attribution; never changes scanner execution."""
+    if os.getenv("APEX_MEMORY_STAGE_ENABLED", "true").lower() != "true":
+        return
+    try:
+        _memory_append(
+            os.getenv("APEX_MEMORY_STAGE_PATH", "/data/apex_runtime_memory_stages.jsonl"),
+            _memory_snapshot(scanner_pid=os.getpid(), stage=stage),
+        )
+    except (OSError, ValueError) as exc:
+        print(f"[APEX MEMORY] checkpoint unavailable ({stage}): {type(exc).__name__}", flush=True)
+
 
 _RUNNING = True
 _HLCE_PROVIDER_CACHE: Dict[str, Any] = {"at": 0.0, "snapshot": {}}
@@ -337,8 +351,10 @@ def main() -> int:
         "bootstrap_source": os.getenv("APEX_SCANNER_BOOTSTRAP_SOURCE", "start_render"),
         "scanner_lease": _PROCESS_LEASE,
     })
+    _memory_checkpoint("SCANNER_BOOTSTRAP_BEFORE_START")
     _ensure_flow_learning_stores()
     apex_app.start_background_scanner()
+    _memory_checkpoint("SCANNER_BOOTSTRAP_AFTER_START")
     try:
         _ensure_hlce_running()
         if _LIVE_LEVEL_PUBLISHER is not None:
@@ -351,6 +367,7 @@ def main() -> int:
         return 2
 
     while _RUNNING:
+        _memory_checkpoint("HEARTBEAT_CYCLE_START")
         try:
             _ensure_hlce_running()
         except Exception as exc:
@@ -383,6 +400,8 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
+        _memory_checkpoint("EVIDENCE_GRADE_COMPLETE")
+
         # APEX 69.0.2 — explicit scanner-owned settlement cadence. The first
         # loop performs an immediate recovery pass; later loops are bounded by
         # APEX_FLOW_SETTLEMENT_SECONDS. No label is fabricated when persisted
@@ -396,6 +415,8 @@ def main() -> int:
                 fallback="CONTINUE_SCANNER_WITHOUT_FLOW_LABEL_SETTLEMENT",
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
+
+        _memory_checkpoint("SETTLEMENT_PASS_COMPLETE")
 
         # APEX 69.5.2 — scanner-owned production ES transaction feed diagnostics. This uses
         # the individual futures trades endpoint only; aggregate bars are never
@@ -413,6 +434,7 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
+        _memory_checkpoint("TICK_FEED_PASS_COMPLETE")
         service = get_hlce_service()
         db = service.status().get("database") or {}
         write_scanner_heartbeat({
@@ -443,6 +465,7 @@ def main() -> int:
             "flow_excursion_capture": _flow_pl_store.sample_excursion_health(),
             "tick_momentum_feed": dict(_TICK_MOMENTUM_RUNTIME),
         })
+        _memory_checkpoint("HEARTBEAT_CYCLE_COMPLETE")
         time.sleep(max(5, int(os.getenv("APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS", "15"))))
     if _LIVE_LEVEL_PUBLISHER is not None:
         _LIVE_LEVEL_PUBLISHER.stop()

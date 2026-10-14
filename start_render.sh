@@ -12,10 +12,20 @@ SCANNER_PID=$!
 gunicorn wsgi:app --bind "0.0.0.0:${PORT}" --workers 1 --threads 4 --timeout 120 &
 WEB_PID=$!
 
+# APEX runtime memory closure: optional low-overhead /proc+cgroup sidecar.
+# No scan or trading authority; failure must never prevent normal startup.
+MEMORY_PID=""
+if [[ "${APEX_MEMORY_MONITOR_ENABLED:-true}" == "true" ]]; then
+  python -m engine.runtime_memory_attribution --scanner-pid "$SCANNER_PID" --web-pid "$WEB_PID" &
+  MEMORY_PID=$!
+fi
+
 cleanup() {
+  if [[ -n "$MEMORY_PID" ]]; then kill -TERM "$MEMORY_PID" 2>/dev/null || true; fi
   kill -TERM "$SCANNER_PID" "$WEB_PID" 2>/dev/null || true
   wait "$SCANNER_PID" 2>/dev/null || true
   wait "$WEB_PID" 2>/dev/null || true
+  if [[ -n "$MEMORY_PID" ]]; then wait "$MEMORY_PID" 2>/dev/null || true; fi
 }
 trap cleanup EXIT INT TERM
 
