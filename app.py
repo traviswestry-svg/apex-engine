@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from flask import Flask, jsonify, render_template, request, redirect, g, has_request_context
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.scanner_runtime_truth import resolve_scanner_runtime
+from engine.runtime_memory_pressure import memory_pressure_status
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
@@ -7471,6 +7472,7 @@ def health():
                     for k, v in s_sources.items()},
         "source_health": _source_observability(s_sources, generated_at),
         "storage": storage_status(),
+        "memory_pressure": memory_pressure_status(),
         "scanner_process": (
             {"available": False, "state": "NOT_EXPECTED", "error": None,
              "detail": "Heartbeat is not required while the scanner is scheduled idle."}
