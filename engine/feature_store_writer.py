@@ -637,6 +637,11 @@ def settle_pending_labels(*, before_session_date: Optional[str] = None, ticker: 
         "writer_version": WRITER_VERSION,
         "observability_version": "69.3.0",
     }
+    # 69.10.38 candidate: independent, read-only database-wide reconciliation.
+    # Never changes settlement eligibility, writes labels, or synthesizes P/L.
+    from .canonical_settlement_eligibility_38 import audit as audit_settlement_eligibility
+    report["canonical_settlement_eligibility_38"] = audit_settlement_eligibility(
+        feature_store_db.active_db_path())
     if not feature_store_db.is_ready():
         report["state"] = "FEATURE_STORE_NOT_READY"
         return report
