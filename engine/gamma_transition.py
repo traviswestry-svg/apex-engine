@@ -454,8 +454,15 @@ def regime_stability(current: Mapping[str, Any], history: list[Mapping[str, Any]
 def _delta(cur: Mapping[str, Any], prev: Optional[Mapping[str, Any]], key: str, observed: dt.datetime, minutes: int) -> Optional[float]:
     if not prev:
         return None
-    if key in {"net_gex", "gamma_flip", "capacity_ratio"} and not gamma_models_comparable(cur, prev):
-        return None
+    if key in {"net_gex", "gamma_flip", "capacity_ratio"}:
+        model_fields = ("model_id", "model_version", "calculation_method", "gamma_unit")
+        has_model_declaration = any(
+            str(snapshot.get(field) or "").strip()
+            for snapshot in (cur, prev)
+            for field in model_fields
+        )
+        if has_model_declaration and not gamma_models_comparable(cur, prev):
+            return None
     pt = _parse(prev.get("observed_at")); a, b = _f(cur.get(key)), _f(prev.get(key))
     if pt is None or a is None or b is None:
         return None
