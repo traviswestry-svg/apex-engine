@@ -4065,6 +4065,9 @@ def log_apex_signal(ticker, result, session_state):
             conn.close()
 
 
+from engine.signal_integrity_guard import evaluate_signal_thresholds, finite_number
+
+
 def update_open_signals(ticker, price, session_state):
     """Sample price for every OPEN signal on this ticker: update MFE/MAE and resolve
     WIN / LOSS / EXPIRED. Sampled resolution — if a target and the stop are both crossed
@@ -4081,34 +4084,32 @@ def update_open_signals(ticker, price, session_state):
                 "SELECT * FROM apex_signals WHERE ticker=? AND status='OPEN'", (ticker,)
             ).fetchall()
             for row in rows:
-                entry = row["entry_price"]; stop = row["stop"]
-                t1 = row["target1"]; t2 = row["target2"]
-                risk = row["risk_points"] or abs((entry or 0) - (stop or 0)) or 1.0
+                entry = finite_number(row["entry_price"])
+                stop = finite_number(row["stop"])
+                t1 = finite_number(row["target1"])
+                t2 = finite_number(row["target2"])
+                raw_risk = finite_number(row["risk_points"])
+                risk = raw_risk if raw_risk is not None and raw_risk > 0 else (
+                    abs(entry - stop) if entry is not None and stop is not None and entry != stop else 1.0
+                )
                 is_call = row["direction"] == "CALL"
-
-                fav = (price - entry) if (is_call and price is not None) else (entry - price) if price is not None else None
-                mfe = row["mfe"] or 0.0
-                mae = row["mae"] or 0.0
+                fav = ((price - entry) if is_call else (entry - price)) if price is not None and entry is not None else None
+                mfe = finite_number(row["mfe"]) or 0.0
+                mae = finite_number(row["mae"]) or 0.0
                 if fav is not None:
                     if fav > mfe: mfe = fav
                     if -fav > mae: mae = -fav
 
                 status, exit_price, exit_reason = "OPEN", None, None
-                if price is not None:
-                    if is_call:
-                        hit_stop = price <= stop
-                        hit_t2   = t2 is not None and price >= t2
-                        hit_t1   = price >= t1
-                    else:
-                        hit_stop = price >= stop
-                        hit_t2   = t2 is not None and price <= t2
-                        hit_t1   = price <= t1
-                    if hit_stop:
-                        status, exit_price, exit_reason = "LOSS", stop, "STOP"
-                    elif hit_t2:
-                        status, exit_price, exit_reason = "WIN", t2, "T2"
-                    elif hit_t1:
-                        status, exit_price, exit_reason = "WIN", t1, "T1"
+                reason, level, missing = evaluate_signal_thresholds(
+                    price, row["direction"], stop, t1, t2
+                )
+                if missing:
+                    print(f"[APEX SIGNAL INTEGRITY] ticker={ticker} signal_id={row['id']} "
+                          f"missing={','.join(missing)} threshold_resolution=ABSTAIN", flush=True)
+                if reason and entry is not None:
+                    status = "LOSS" if reason == "STOP" else "WIN"
+                    exit_price, exit_reason = level, reason
 
                 try:
                     opened = dt.datetime.fromisoformat(row["created_at"])
@@ -4130,6 +4131,13 @@ def update_open_signals(ticker, price, session_state):
                     )
                 else:
                     ex = exit_price if exit_price is not None else (price if price is not None else entry)
+                    if ex is None or entry is None:
+                        # Do not manufacture an outcome from absent prices.
+                        conn.execute(
+                            "UPDATE apex_signals SET mfe=?, mae=?, mfe_r=?, mae_r=?, updated_at=? WHERE id=?",
+                            (mfe, mae, mfe / risk, mae / risk, now.isoformat(), row["id"]),
+                        )
+                        continue
                     signed = (ex - entry) if is_call else (entry - ex)
                     conn.execute(
                         "UPDATE apex_signals SET status=?, mfe=?, mae=?, mfe_r=?, mae_r=?, "
@@ -4502,11 +4510,6 @@ def maybe_alert(idea: Dict[str, Any]) -> None:
 
 
 def run_scan_once(force: bool = False) -> bool:
-    # Advisory-only scan event trace; no scheduling or lock behavior changed.
-    from engine.paired_runtime_diagnostics import new_cycle_id, scan_event, begin_stage, end_stage
-    _coverage_id = new_cycle_id("scan")
-    _scan_memory_start = begin_stage(_coverage_id, "FULL_SCAN")
-    scan_event(_coverage_id, "ATTEMPT", details={"force":bool(force)})
     _attempt_at = dt.datetime.now(dt.timezone.utc).isoformat()
     with STATE_LOCK:
         _SCAN_COMPLETION_RUNTIME["scan_attempts"] += 1
@@ -4517,8 +4520,6 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_lock_skip_at"] = _attempt_at
             _SCAN_COMPLETION_RUNTIME["last_result"] = "LOCK_BUSY"
             STATE["last_scan_status"] = "Scan scheduler lock busy; duplicate request skipped."
-        scan_event(_coverage_id, "SKIPPED", reason="LOCK_BUSY")
-        end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome="LOCK_BUSY")
         return False
     scan_start = time.monotonic()
     with STATE_LOCK:
@@ -4589,7 +4590,6 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure"] = None
             _SCAN_COMPLETION_RUNTIME["last_result"] = "COMPLETED"
         print(status, flush=True)
-        scan_event(_coverage_id, "COMPLETED", details={"duration_seconds":duration})
         return True
     except Exception as e:
         with STATE_LOCK:
@@ -4601,10 +4601,8 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure"] = f"{type(e).__name__}: {e}"
             _SCAN_COMPLETION_RUNTIME["last_result"] = "FAILED"
         print(f"Fatal scan error: {e}", flush=True)
-        scan_event(_coverage_id, "FAILED", reason=type(e).__name__)
         return False
     finally:
-        end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome=str(_SCAN_COMPLETION_RUNTIME.get("last_result")))
         SCAN_LOCK.release()
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["last_lock_released_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -4618,13 +4616,6 @@ def scanner_loop() -> None:
     last_resolution_date: Optional[dt.date] = None
     time.sleep(2)
     while True:
-        # Distinguishes full-scan scheduler iterations from scanner-owned
-        # evidence/settlement heartbeat cycles. No new scan is triggered.
-        try:
-            from engine.paired_runtime_diagnostics import scan_event, new_cycle_id
-            scan_event(new_cycle_id("scheduler"), "SCHEDULER_ITERATION", details={"session":session_status()})
-        except (OSError, ValueError) as exc:
-            print(f"[APEX DIAGNOSTICS] scheduler trace unavailable: {type(exc).__name__}", flush=True)
         with STATE_LOCK:
             STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         try:
@@ -7771,6 +7762,8 @@ def api_institutional_os():
             # Volume profile must also be bounded. A Future timeout cannot kill
             # an already-running task, so detach the daemon executor immediately;
             # provider-level HTTP timeouts remain the final containment boundary.
+            import time as _apex_vp_time
+            vp_started = _apex_vp_time.monotonic()
             vp_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="apex-os-vp")
             vp_future = vp_pool.submit(_volume_profile_bundle, ticker=ticker, days=1, multiplier=5)
             try:
@@ -7782,6 +7775,10 @@ def api_institutional_os():
                 volume_bundle = {}
                 timed_out.append("volume_profile")
             finally:
+                vp_elapsed_ms = round((_apex_vp_time.monotonic() - vp_started) * 1000, 1)
+                print(f"[IOS] volume_profile duration_ms={vp_elapsed_ms} "
+                      f"timed_out={'volume_profile' in timed_out} ticker={ticker}", flush=True)
+                # A timed-out running thread cannot be killed by Future.cancel().
                 vp_pool.shutdown(wait=False, cancel_futures=True)
 
             # Run nine-engine pipeline
