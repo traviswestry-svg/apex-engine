@@ -68,7 +68,7 @@ def _insert_gamma(path, when, net, flip=6500, z=.5, zo=.6, w=.8, durability="MED
         c.execute("""INSERT INTO gamma_observational_snapshots
         (ticker,observed_at,source_timestamp,source,path_version,net_gex,gamma_flip,zero_dte_share,zero_one_dte_share,weekly_gamma_share,durability,capacity_ratio,snapshot_json)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", ("SPX",when,when,"TEST",pv,net,flip,z,zo,w,durability,None,
-        '{"model_id":"M","model_version":"1","calculation_method":"CHAIN","gamma_unit":"USD_PER_1PCT"}')); c.commit()
+        json.dumps({"model_id":"M","model_version":"1","calculation_method":"CHAIN","gamma_unit":"USD_PER_1PCT"}))); c.commit()
 
 
 def _current(net, when="2026-09-01T10:00:00+00:00", **kw):

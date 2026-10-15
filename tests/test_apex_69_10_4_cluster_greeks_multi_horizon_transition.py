@@ -62,7 +62,7 @@ def _insert(path, when, net, *, capacity=10.0):
         (ticker,observed_at,source_timestamp,source,path_version,net_gex,gamma_flip,zero_dte_share,zero_one_dte_share,weekly_gamma_share,durability,capacity_ratio,snapshot_json)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         ("SPX", when, when, "TEST", "p", net, 6500, .4, .5, .7, "MEDIUM", capacity,
-         '{"model_id":"M","model_version":"1","calculation_method":"CHAIN","gamma_unit":"USD_PER_1PCT"}'))
+         json.dumps({"model_id":"M","model_version":"1","calculation_method":"CHAIN","gamma_unit":"USD_PER_1PCT"})))
         c.commit()
 
 
