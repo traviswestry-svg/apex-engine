@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, wait
 from flask import Flask, jsonify, render_template, request, redirect, g, has_request_context
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.scanner_runtime_truth import resolve_scanner_runtime
+from engine.runtime_memory_pressure import memory_pressure_status
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
@@ -4501,6 +4502,11 @@ def maybe_alert(idea: Dict[str, Any]) -> None:
 
 
 def run_scan_once(force: bool = False) -> bool:
+    # Advisory-only scan event trace; no scheduling or lock behavior changed.
+    from engine.paired_runtime_diagnostics import new_cycle_id, scan_event, begin_stage, end_stage
+    _coverage_id = new_cycle_id("scan")
+    _scan_memory_start = begin_stage(_coverage_id, "FULL_SCAN")
+    scan_event(_coverage_id, "ATTEMPT", details={"force":bool(force)})
     _attempt_at = dt.datetime.now(dt.timezone.utc).isoformat()
     with STATE_LOCK:
         _SCAN_COMPLETION_RUNTIME["scan_attempts"] += 1
@@ -4511,6 +4517,8 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_lock_skip_at"] = _attempt_at
             _SCAN_COMPLETION_RUNTIME["last_result"] = "LOCK_BUSY"
             STATE["last_scan_status"] = "Scan scheduler lock busy; duplicate request skipped."
+        scan_event(_coverage_id, "SKIPPED", reason="LOCK_BUSY")
+        end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome="LOCK_BUSY")
         return False
     scan_start = time.monotonic()
     with STATE_LOCK:
@@ -4581,6 +4589,7 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure"] = None
             _SCAN_COMPLETION_RUNTIME["last_result"] = "COMPLETED"
         print(status, flush=True)
+        scan_event(_coverage_id, "COMPLETED", details={"duration_seconds":duration})
         return True
     except Exception as e:
         with STATE_LOCK:
@@ -4592,8 +4601,10 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure"] = f"{type(e).__name__}: {e}"
             _SCAN_COMPLETION_RUNTIME["last_result"] = "FAILED"
         print(f"Fatal scan error: {e}", flush=True)
+        scan_event(_coverage_id, "FAILED", reason=type(e).__name__)
         return False
     finally:
+        end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome=str(_SCAN_COMPLETION_RUNTIME.get("last_result")))
         SCAN_LOCK.release()
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["last_lock_released_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -4607,6 +4618,13 @@ def scanner_loop() -> None:
     last_resolution_date: Optional[dt.date] = None
     time.sleep(2)
     while True:
+        # Distinguishes full-scan scheduler iterations from scanner-owned
+        # evidence/settlement heartbeat cycles. No new scan is triggered.
+        try:
+            from engine.paired_runtime_diagnostics import scan_event, new_cycle_id
+            scan_event(new_cycle_id("scheduler"), "SCHEDULER_ITERATION", details={"session":session_status()})
+        except (OSError, ValueError) as exc:
+            print(f"[APEX DIAGNOSTICS] scheduler trace unavailable: {type(exc).__name__}", flush=True)
         with STATE_LOCK:
             STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         try:
@@ -7471,6 +7489,7 @@ def health():
                     for k, v in s_sources.items()},
         "source_health": _source_observability(s_sources, generated_at),
         "storage": storage_status(),
+        "memory_pressure": memory_pressure_status(),
         "scanner_process": (
             {"available": False, "state": "NOT_EXPECTED", "error": None,
              "detail": "Heartbeat is not required while the scanner is scheduled idle."}
