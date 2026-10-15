@@ -67,11 +67,13 @@ def _insert_gamma(path, when, net, flip=6500, z=.5, zo=.6, w=.8, durability="MED
     with connect(str(path), timeout=10) as c:
         c.execute("""INSERT INTO gamma_observational_snapshots
         (ticker,observed_at,source_timestamp,source,path_version,net_gex,gamma_flip,zero_dte_share,zero_one_dte_share,weekly_gamma_share,durability,capacity_ratio,snapshot_json)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", ("SPX",when,when,"TEST",pv,net,flip,z,zo,w,durability,None,"{}")); c.commit()
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", ("SPX",when,when,"TEST",pv,net,flip,z,zo,w,durability,None,
+        json.dumps({"model_id":"test-model","model_version":"1","calculation_method":"test-method","gamma_unit":"test-unit"}))); c.commit()
 
 
 def _current(net, when="2026-09-01T10:00:00+00:00", **kw):
-    d={"ticker":"SPX","observed_at":when,"net_gex":net,"gamma_flip":kw.get("flip",6500),"zero_dte_share":kw.get("z",.5),
+    d={"ticker":"SPX","source":"TEST","model_id":"test-model","model_version":"1","calculation_method":"test-method","gamma_unit":"test-unit",
+       "observed_at":when,"net_gex":net,"gamma_flip":kw.get("flip",6500),"zero_dte_share":kw.get("z",.5),
        "zero_one_dte_share":kw.get("zo",.6),"weekly_gamma_share":kw.get("w",.8),"durability":kw.get("durability","MEDIUM"),"path_version":kw.get("pv","p4")}
     return d
 
