@@ -250,6 +250,15 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_GAMMA_QUANTDATA_EXPOSURE_BY_STRIKE_GAP_SECONDS','category':'APPLICATION','classification':'OPTIONAL','required_when':None,'default':'180','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'QuantData Exposure By Strike elapsed seconds between observations that marks the sequence GAPPED.','safety_critical':False,'used_in_code':True},
 ])
 
+# APEX runtime memory and scanner diagnostics output configuration.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_MEMORY_CGROUP_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/sys/fs/cgroup','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cgroup v2 directory used for runtime memory attribution.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_PAIR_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_runtime_memory_pairs.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Output path for bounded paired runtime-memory diagnostics.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_SAMPLE_SECONDS','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Interval in seconds between runtime memory telemetry samples.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_TELEMETRY_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_runtime_memory.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Output path for runtime memory telemetry.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCAN_COVERAGE_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Output path for bounded scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
+])
+
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
 def _utcnow() -> str: return datetime.now(timezone.utc).isoformat()
