@@ -81,6 +81,8 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_DISK_CRITICAL_FREE_PCT','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Free disk percentage that triggers a critical state.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_LOCAL_DATA_DIR','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'.','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Writable local fallback when a persistent mount is unavailable.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_SCANNER_HEARTBEAT_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/scanner_heartbeat.json','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cross-process scanner heartbeat file.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_PAIR_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_runtime_memory_pairs.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'JSONL output path for paired runtime memory diagnostics.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCAN_COVERAGE_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'JSONL output path for scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
 ])
 
 # Access-control layer (engine/auth.py) + registry drift closure: every env var
@@ -253,10 +255,8 @@ _REGISTRY_DATA.extend([
 # APEX runtime memory and scanner diagnostics output configuration.
 _REGISTRY_DATA.extend([
  {'name':'APEX_MEMORY_CGROUP_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/sys/fs/cgroup','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cgroup v2 directory used for runtime memory attribution.','safety_critical':False,'used_in_code':True},
- {'name':'APEX_MEMORY_PAIR_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_runtime_memory_pairs.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Output path for bounded paired runtime-memory diagnostics.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_MEMORY_SAMPLE_SECONDS','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Interval in seconds between runtime memory telemetry samples.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_MEMORY_TELEMETRY_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_runtime_memory.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Output path for runtime memory telemetry.','safety_critical':False,'used_in_code':True},
- {'name':'APEX_SCAN_COVERAGE_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Output path for bounded scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
 ])
 
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
