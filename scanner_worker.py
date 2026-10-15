@@ -28,6 +28,7 @@ os.environ["APEX_SCANNER_PROCESS"] = "true"
 
 from engine.operational_runtime import write_scanner_heartbeat  # noqa: E402
 from engine.runtime_memory_attribution import snapshot as _memory_snapshot, append_bounded as _memory_append  # noqa: E402
+from engine.paired_runtime_diagnostics import new_cycle_id as _new_cycle_id, begin_stage as _begin_stage, end_stage as _end_stage  # noqa: E402
 from engine.pre23_hardening import acquire_scanner_lease  # noqa: E402
 from engine.silent_degradation_observability import record_degradation  # noqa: E402
 
@@ -367,6 +368,8 @@ def main() -> int:
         return 2
 
     while _RUNNING:
+        _cycle_id = _new_cycle_id("heartbeat")
+        _cycle_start = _begin_stage(_cycle_id, "HEARTBEAT_CYCLE")
         _memory_checkpoint("HEARTBEAT_CYCLE_START")
         try:
             _ensure_hlce_running()
@@ -374,6 +377,7 @@ def main() -> int:
             print(f"[HLCE] collector recovery failed: {exc}", flush=True)
             return 3
 
+        _evidence_grade_start = _begin_stage(_cycle_id, "EVIDENCE_GRADE")
         # APEX 69.0.1 — feed the canonical decision evidence ledger from the same
         # real SPX observation source already trusted by HLCE. No proxy/synthetic
         # price is permitted. Grade matured rows on a bounded cadence.
@@ -400,8 +404,10 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
+        _end_stage(_cycle_id, "EVIDENCE_GRADE", _evidence_grade_start)
         _memory_checkpoint("EVIDENCE_GRADE_COMPLETE")
 
+        _settlement_pass_start = _begin_stage(_cycle_id, "SETTLEMENT_PASS")
         # APEX 69.0.2 — explicit scanner-owned settlement cadence. The first
         # loop performs an immediate recovery pass; later loops are bounded by
         # APEX_FLOW_SETTLEMENT_SECONDS. No label is fabricated when persisted
@@ -416,8 +422,10 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
+        _end_stage(_cycle_id, "SETTLEMENT_PASS", _settlement_pass_start)
         _memory_checkpoint("SETTLEMENT_PASS_COMPLETE")
 
+        _tick_feed_pass_start = _begin_stage(_cycle_id, "TICK_FEED_PASS")
         # APEX 69.5.2 — scanner-owned production ES transaction feed diagnostics. This uses
         # the individual futures trades endpoint only; aggregate bars are never
         # converted into tick evidence. The call is observational and fail-soft.
@@ -434,6 +442,7 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
+        _end_stage(_cycle_id, "TICK_FEED_PASS", _tick_feed_pass_start)
         _memory_checkpoint("TICK_FEED_PASS_COMPLETE")
         service = get_hlce_service()
         db = service.status().get("database") or {}
@@ -466,6 +475,7 @@ def main() -> int:
             "tick_momentum_feed": dict(_TICK_MOMENTUM_RUNTIME),
         })
         _memory_checkpoint("HEARTBEAT_CYCLE_COMPLETE")
+        _end_stage(_cycle_id, "HEARTBEAT_CYCLE", _cycle_start)
         time.sleep(max(5, int(os.getenv("APEX_SCANNER_PROCESS_HEARTBEAT_SECONDS", "15"))))
     if _LIVE_LEVEL_PUBLISHER is not None:
         _LIVE_LEVEL_PUBLISHER.stop()
