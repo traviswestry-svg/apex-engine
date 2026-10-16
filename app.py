@@ -4510,6 +4510,16 @@ def maybe_alert(idea: Dict[str, Any]) -> None:
 
 
 def run_scan_once(force: bool = False) -> bool:
+    # Diagnostic-only: failures in telemetry must never prevent a market scan.
+    _coverage_id = None
+    _scan_memory_start = None
+    try:
+        from engine.paired_runtime_diagnostics import new_cycle_id, scan_event, begin_stage
+        _coverage_id = new_cycle_id("scan")
+        _scan_memory_start = begin_stage(_coverage_id, "FULL_SCAN")
+        scan_event(_coverage_id, "ATTEMPT", details={"force": bool(force)})
+    except Exception as _diagnostic_exc:
+        print(f"[APEX DIAGNOSTICS] scan trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
     _attempt_at = dt.datetime.now(dt.timezone.utc).isoformat()
     with STATE_LOCK:
         _SCAN_COMPLETION_RUNTIME["scan_attempts"] += 1
@@ -4520,6 +4530,14 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_lock_skip_at"] = _attempt_at
             _SCAN_COMPLETION_RUNTIME["last_result"] = "LOCK_BUSY"
             STATE["last_scan_status"] = "Scan scheduler lock busy; duplicate request skipped."
+        if _coverage_id is not None:
+            try:
+                from engine.paired_runtime_diagnostics import scan_event, end_stage
+                scan_event(_coverage_id, "SKIPPED", reason="LOCK_BUSY")
+                if _scan_memory_start is not None:
+                    end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome="LOCK_BUSY")
+            except Exception as _diagnostic_exc:
+                print(f"[APEX DIAGNOSTICS] lock trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
         return False
     scan_start = time.monotonic()
     with STATE_LOCK:
@@ -4590,6 +4608,12 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure"] = None
             _SCAN_COMPLETION_RUNTIME["last_result"] = "COMPLETED"
         print(status, flush=True)
+        if _coverage_id is not None:
+            try:
+                from engine.paired_runtime_diagnostics import scan_event
+                scan_event(_coverage_id, "COMPLETED", details={"duration_seconds": duration})
+            except Exception as _diagnostic_exc:
+                print(f"[APEX DIAGNOSTICS] completion trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
         return True
     except Exception as e:
         with STATE_LOCK:
@@ -4601,8 +4625,20 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure"] = f"{type(e).__name__}: {e}"
             _SCAN_COMPLETION_RUNTIME["last_result"] = "FAILED"
         print(f"Fatal scan error: {e}", flush=True)
+        if _coverage_id is not None:
+            try:
+                from engine.paired_runtime_diagnostics import scan_event
+                scan_event(_coverage_id, "FAILED", reason=type(e).__name__)
+            except Exception as _diagnostic_exc:
+                print(f"[APEX DIAGNOSTICS] failure trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
         return False
     finally:
+        if _coverage_id is not None and _scan_memory_start is not None:
+            try:
+                from engine.paired_runtime_diagnostics import end_stage
+                end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome=str(_SCAN_COMPLETION_RUNTIME.get("last_result")))
+            except Exception as _diagnostic_exc:
+                print(f"[APEX DIAGNOSTICS] memory trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
         SCAN_LOCK.release()
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["last_lock_released_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -4616,6 +4652,12 @@ def scanner_loop() -> None:
     last_resolution_date: Optional[dt.date] = None
     time.sleep(2)
     while True:
+        # Scanner scheduler cadence is independent of background evidence heartbeat.
+        try:
+            from engine.paired_runtime_diagnostics import new_cycle_id, scan_event
+            scan_event(new_cycle_id("scheduler"), "SCHEDULER_ITERATION", details={"session": session_status()})
+        except Exception as _diagnostic_exc:
+            print(f"[APEX DIAGNOSTICS] scheduler trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
         with STATE_LOCK:
             STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         try:
