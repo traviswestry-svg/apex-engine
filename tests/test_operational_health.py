@@ -29,6 +29,13 @@ def test_health_exposes_release_and_runtime_metadata(monkeypatch):
     assert body["process_uptime_seconds"] >= 0
 
 
+def test_health_includes_memory_pressure(monkeypatch):
+    pressure = {"severity": "NORMAL", "read_only": True}
+    monkeypatch.setattr(apex_app, "memory_pressure_status", lambda: pressure)
+    body = apex_app.app.test_client().get("/health").get_json()
+    assert body["memory_pressure"] == pressure
+
+
 def test_source_health_does_not_invent_latency():
     observed = apex_app._source_observability(
         {
