@@ -1,11 +1,15 @@
-# APEX Runtime Memory Cache Attribution — Conditional Candidate
+# APEX Scanner Scheduler Continuity & Full-Scan Freshness Closure
 
-Source: apex-engine-main(20261016-140942).zip. Changed files only.
+Baseline: October 16 2026 repository, canonical release 69.10.37. Changed files only.
 
-Adds `inactive_file_bytes`, `noninactive_bytes`, and `noninactive_pct` to existing cgroup telemetry. Preserves raw `usage_pct`, WARN/CRITICAL thresholds, OOM event detection, scan cadence, trading behavior, and release metadata (69.10.37).
+## Root cause
+Default SCAN_INTERVAL_SECONDS=300 while HEALTH_STALE_AFTER_S=180; additionally post-scan work occurs before the interval sleep. This guarantees a stale period for otherwise successful cycles.
 
-The adjusted figure subtracts Linux cgroup v2 `inactive_file` from `memory.current` and is **diagnostic only**, not a guarantee of available memory. Missing memory.stat yields null adjusted fields. The console warning includes both raw and adjusted context.
+## Fix
+Calculate next sleep as min(configured interval, max(0, stale threshold - age since last completion - 20-second margin)). Record scheduler iteration, post-cycle time, planned sleep and freshness budget exhaustion. Preserve exclusive scan lock, advisory-only status, and unchanged health stale threshold. No synthetic scan completion and no concurrent scans.
 
-Validated locally: 9 focused tests passed, Python compilation passed. Full CI and production behavior not validated; run GitHub Actions and monitor Render after applying.
+## Caveat
+This cannot guarantee a new scan finishes within the freshness window if scans themselves or post-scan work take too long. Monitor `last_post_scan_duration_seconds`, `last_scheduler_sleep_seconds`, `freshness_budget_exhausted_cycles`, and completed-scan age. Increased scan frequency may increase API and compute usage. Production validation is required.
 
-No changes to settlement eligibility or missing P/L logic: `AWAITING_REAL_PL` is already used by the writer when genuine P/L is absent.
+## Validation
+Focused tests and syntax checks; full CI must run in GitHub Actions. No release bump.

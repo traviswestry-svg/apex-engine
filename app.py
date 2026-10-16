@@ -1875,6 +1875,11 @@ _SCAN_COMPLETION_RUNTIME: Dict[str, Any] = {
     "scan_failures": 0,
     "scan_lock_skips": 0,
     "scheduler_lock_retries": 0,
+    "last_scheduler_iteration_at": None,
+    "last_post_scan_completed_at": None,
+    "last_post_scan_duration_seconds": None,
+    "last_scheduler_sleep_seconds": None,
+    "freshness_budget_exhausted_cycles": 0,
     "last_attempt_at": None,
     "last_completed_at": None,
     "last_failure_at": None,
@@ -4658,8 +4663,10 @@ def scanner_loop() -> None:
             scan_event(new_cycle_id("scheduler"), "SCHEDULER_ITERATION", details={"session": session_status()})
         except Exception as _diagnostic_exc:
             print(f"[APEX DIAGNOSTICS] scheduler trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
+        _scheduler_cycle_start = time.monotonic()
         with STATE_LOCK:
             STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            _SCAN_COMPLETION_RUNTIME["last_scheduler_iteration_at"] = STATE["scanner_heartbeat_at"]
         try:
             _scan_ran = run_scan_once()
             # APEX 69.10.7: a transient duplicate/lock collision must not cost a
@@ -4893,7 +4900,27 @@ def scanner_loop() -> None:
                               flush=True)
             except Exception as e:
                 print(f"feature label settle error (recovered): {e}", flush=True)
-        time.sleep(SCAN_INTERVAL_SECONDS)
+        # APEX scanner continuity: configured 300s sleeps must not silently
+        # exceed a 180s full-scan freshness policy. Account for post-scan work;
+        # never overlap scans or bypass SCAN_LOCK. A long post-scan stage can
+        # still exhaust freshness, and remains explicitly observable.
+        from engine.scanner_cadence_closure import next_scan_sleep
+        _post_scan_elapsed = round(time.monotonic() - _scheduler_cycle_start, 2)
+        with STATE_LOCK:
+            _last_complete = _SCAN_COMPLETION_RUNTIME.get("last_completed_at")
+        _age = _iso_age_seconds(_last_complete, dt.datetime.now(dt.timezone.utc))
+        _age = max(0.0, _age) if _age is not None else _post_scan_elapsed
+        _stale = float(os.getenv("HEALTH_STALE_AFTER_S", "180"))
+        _sleep = next_scan_sleep(SCAN_INTERVAL_SECONDS, _stale, _age)
+        with STATE_LOCK:
+            _SCAN_COMPLETION_RUNTIME["last_post_scan_completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            _SCAN_COMPLETION_RUNTIME["last_post_scan_duration_seconds"] = _post_scan_elapsed
+            _SCAN_COMPLETION_RUNTIME["last_scheduler_sleep_seconds"] = _sleep
+            if _age >= _stale:
+                _SCAN_COMPLETION_RUNTIME["freshness_budget_exhausted_cycles"] += 1
+        if _age >= _stale:
+            print(f"[APEX SCANNER] freshness budget exhausted: age={_age:.1f}s post_cycle={_post_scan_elapsed}s", flush=True)
+        time.sleep(_sleep)
 
 
 def start_background_scanner() -> None:
