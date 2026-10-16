@@ -1875,11 +1875,6 @@ _SCAN_COMPLETION_RUNTIME: Dict[str, Any] = {
     "scan_failures": 0,
     "scan_lock_skips": 0,
     "scheduler_lock_retries": 0,
-    "last_scheduler_iteration_at": None,
-    "last_post_scan_completed_at": None,
-    "last_post_scan_duration_seconds": None,
-    "last_scheduler_sleep_seconds": None,
-    "freshness_budget_exhausted_cycles": 0,
     "last_attempt_at": None,
     "last_completed_at": None,
     "last_failure_at": None,
@@ -1889,6 +1884,11 @@ _SCAN_COMPLETION_RUNTIME: Dict[str, Any] = {
     "last_lock_released_at": None,
     "last_duration_seconds": None,
     "last_result": "NOT_RUN",
+    "last_scheduler_iteration_at": None,
+    "last_post_scan_completed_at": None,
+    "last_post_scan_duration_seconds": None,
+    "last_scheduler_sleep_seconds": None,
+    "freshness_budget_exhausted_cycles": 0,
 }
 
 def scanner_completion_runtime_status() -> Dict[str, Any]:
@@ -4514,6 +4514,14 @@ def maybe_alert(idea: Dict[str, Any]) -> None:
             SENT_ALERTS.discard(key)
 
 
+def _record_scanner_coverage(event: str, **kwargs) -> None:
+    try:
+        from engine.scanner_coverage_authority import record
+        record(event, **kwargs)
+    except Exception:
+        pass  # Observability must never change scanning outcomes.
+
+
 def run_scan_once(force: bool = False) -> bool:
     # Diagnostic-only: failures in telemetry must never prevent a market scan.
     _coverage_id = None
@@ -4529,6 +4537,7 @@ def run_scan_once(force: bool = False) -> bool:
     with STATE_LOCK:
         _SCAN_COMPLETION_RUNTIME["scan_attempts"] += 1
         _SCAN_COMPLETION_RUNTIME["last_attempt_at"] = _attempt_at
+    _record_scanner_coverage("ATTEMPT", occurred_at=_attempt_at)
     if not SCAN_LOCK.acquire(blocking=False):
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["scan_lock_skips"] += 1
@@ -4543,6 +4552,7 @@ def run_scan_once(force: bool = False) -> bool:
                     end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome="LOCK_BUSY")
             except Exception as _diagnostic_exc:
                 print(f"[APEX DIAGNOSTICS] lock trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
+        _record_scanner_coverage("LOCK_BUSY", occurred_at=_attempt_at)
         return False
     scan_start = time.monotonic()
     with STATE_LOCK:
@@ -4612,6 +4622,7 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_duration_seconds"] = duration
             _SCAN_COMPLETION_RUNTIME["last_failure"] = None
             _SCAN_COMPLETION_RUNTIME["last_result"] = "COMPLETED"
+        _record_scanner_coverage("COMPLETED", duration=duration)
         print(status, flush=True)
         if _coverage_id is not None:
             try:
@@ -4629,6 +4640,7 @@ def run_scan_once(force: bool = False) -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             _SCAN_COMPLETION_RUNTIME["last_failure"] = f"{type(e).__name__}: {e}"
             _SCAN_COMPLETION_RUNTIME["last_result"] = "FAILED"
+        _record_scanner_coverage("FAILED", reason=type(e).__name__)
         print(f"Fatal scan error: {e}", flush=True)
         if _coverage_id is not None:
             try:
@@ -4657,16 +4669,17 @@ def scanner_loop() -> None:
     last_resolution_date: Optional[dt.date] = None
     time.sleep(2)
     while True:
+        _scheduler_cycle_start = time.monotonic()
+        with STATE_LOCK:
+            _SCAN_COMPLETION_RUNTIME["last_scheduler_iteration_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         # Scanner scheduler cadence is independent of background evidence heartbeat.
         try:
             from engine.paired_runtime_diagnostics import new_cycle_id, scan_event
             scan_event(new_cycle_id("scheduler"), "SCHEDULER_ITERATION", details={"session": session_status()})
         except Exception as _diagnostic_exc:
             print(f"[APEX DIAGNOSTICS] scheduler trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
-        _scheduler_cycle_start = time.monotonic()
         with STATE_LOCK:
             STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-            _SCAN_COMPLETION_RUNTIME["last_scheduler_iteration_at"] = STATE["scanner_heartbeat_at"]
         try:
             _scan_ran = run_scan_once()
             # APEX 69.10.7: a transient duplicate/lock collision must not cost a
@@ -7471,6 +7484,14 @@ def _effective_scanner_runtime(generated_dt=None):
         stale_after_seconds=float(os.getenv("APEX_SCANNER_HEARTBEAT_STALE_SECONDS", "45")),
     )
 
+def _read_scanner_coverage_status():
+    try:
+        from engine.scanner_coverage_authority import read_coverage
+        return read_coverage()
+    except Exception as exc:
+        return {"available": False, "reason": type(exc).__name__}
+
+
 @app.route("/health")
 def health():
     generated_dt = dt.datetime.now(dt.timezone.utc)
@@ -7534,6 +7555,7 @@ def health():
         "scanner_process_phase": _scanner_runtime.get("process_phase"),
         "scanner_process_pid": _scanner_runtime.get("process_pid"),
         "scan_completion_runtime": _process_completion if _process_authoritative else scanner_completion_runtime_status(),
+        "scanner_coverage": _read_scanner_coverage_status(),
         "scanner_thread_alive": scanner_thread_alive,
         "scanner_heartbeat_at": scanner_heartbeat_at,
         "scanner_heartbeat_age_seconds": heartbeat_age,
