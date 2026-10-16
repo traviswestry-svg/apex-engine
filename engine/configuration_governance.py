@@ -238,6 +238,17 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_SCANNER_LOCK_RETRY_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'5','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded backoff delay in seconds before one retry after scanner lock contention.','safety_critical':False,'used_in_code':True},
 ])
 
+# APEX scanner coverage journal configuration.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_SCANNER_COVERAGE_DB','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scanner_coverage.db','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Path to the persisted scanner coverage journal database.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCANNER_PROCESS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Marks a process as the scanner for scanner-only coverage recording.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_CGROUP_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/sys/fs/cgroup','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Path to the cgroup v2 memory metrics used for runtime attribution.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_SAMPLE_SECONDS','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Sampling interval in seconds for runtime memory telemetry.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_TELEMETRY_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_runtime_memory.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Path to the bounded runtime memory telemetry output.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_PAIR_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_runtime_memory_pairs.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Path to the bounded paired memory diagnostics output.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCAN_COVERAGE_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Path to the bounded scanner coverage diagnostics output.','safety_critical':False,'used_in_code':True},
+])
+
 # APEX 69.10.14 — canonical gamma evidence freshness/continuity governance.
 _REGISTRY_DATA.extend([
  {'name':'APEX_GAMMA_FRESH_SECONDS','category':'APPLICATION','classification':'OPTIONAL','required_when':None,'default':'120','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Generic maximum gamma observation age in seconds classified as FRESH when a provider-specific override is not configured.','safety_critical':False,'used_in_code':True},
