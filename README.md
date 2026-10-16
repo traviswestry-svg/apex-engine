@@ -1,28 +1,23 @@
-# APEX Combined Runtime Stability & Signal Integrity — Candidate
+# APEX Canonical Settlement Eligibility & Pending Evidence Classification — Completion Candidate
 
-## Authoritative baseline
-`apex-engine-main(20261016-114804).zip`, reported release `69.10.37`.
+Source baseline: `apex-engine-main(20261016-123417).zip` (69.10.37). Changed-files-only package.
 
-## Merge audit
-The October 16 baseline **already includes** the signal-integrity guard, volume-profile timing diagnostics, scanner-worker memory pairs, and paired diagnostic module/tests. The older independent candidate ZIPs each contain an `app.py` from different states; replacing the current `app.py` with either candidate would regress the other changes. This build retains the baseline `app.py` and merges **only the missing full-scan and scheduler event hooks**.
+## Overlap audit
+The source ALREADY includes `engine/canonical_settlement_eligibility_38.py`, its `settle_pending_labels()` integration in `engine/feature_store_writer.py`, and focused tests. This candidate **does not overwrite the existing integration** or create another settlement writer.
 
-## Changed files
-- `app.py` — diagnostic-only full-scan ATTEMPT/COMPLETED/FAILED/SKIPPED, paired FULL_SCAN memory measurements, and scheduler iterations. Existing signal guards and volume-profile timing preserved.
-- `tests/test_combined_runtime_signal_integration.py` — regression checks for both integrations, no loss of guards or timing.
+## Additions
+- Read-only, mutually exclusive pending evidence partition: `EXCURSION_PRESENT_UNLABELLED`, `NO_EXCURSION_LIFECYCLE_PRESENT`, and `NO_EXCURSION_NO_LIFECYCLE`.
+- Explicit partition integrity checks for labelled/unlabelled, pending, and excursion populations; returns `INTEGRITY_MISMATCH` rather than silently reporting READY if partitions disagree.
+- Regression tests verifying partition coverage, no synthetic label writes, and no database creation when an audit path is absent.
+- Existing exact canonical sample-ID joins, bounded examples, observational-only semantics, and all existing label-write logic remain unchanged.
 
-## Already present in baseline; deliberately NOT overwritten
-- `engine/signal_integrity_guard.py`
-- `engine/paired_runtime_diagnostics.py`
-- `scanner_worker.py`
-- `tests/test_signal_integrity_guard.py`
-- `tests/test_paired_runtime_diagnostics.py`
+## Verification performed
+`python -m pytest -q tests/test_apex_69_10_38_settlement_eligibility.py tests/test_apex_69_10_35_canonical_settlement_cohort_identity_alignment.py tests/test_apex_69_10_21_canonical_settlement_cohort_identity_reconciliation.py` -> 10 passed.
+`python -m compileall -q engine/canonical_settlement_eligibility_38.py` -> passed.
+Local full pytest collection -> blocked by missing runtime dependency `flask` (68 collection errors). **Not a CI pass.** Run GitHub Actions full CI with requirements installed before promoting.
 
-## Read-only Render telemetry
-- `/data/apex_runtime_memory_pairs.jsonl`
-- `/data/apex_scan_coverage.jsonl`
-
-## Validation and release conditions
-Run focused tests, consolidation guard, and full CI against the integrated repository. Staging/production must verify full-session scanner coverage, absence of signal type errors, volume-profile latency, and cgroup OOM/pressure counters. No version bump or authority promotion is included. Existing production is not modified by this ZIP.
+## Deployment and release
+This is a candidate patch only, no DB migrations, no env vars, no new routes, no trading authority, no release bump. Current manifest remains 69.10.37. Competing 69.10.38 scope must be reconciled before assigning a production version. Verify production counts, output performance, and source DB accessibility on Render. Existing `settle_pending_labels()` invokes the audit once per call.
 
 ## Apply
-Extract the ZIP at the **repository root**. It contains only changed files; review `app.py` diff first. Apply only if the checkout matches the October 16 baseline; otherwise merge/re-audit instead of overwriting `app.py`.
+Copy these two paths into the same relative locations in the current repository, review the diff, run CI, and deploy only after approval.
