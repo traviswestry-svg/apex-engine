@@ -1,19 +1,28 @@
-# APEX Signal Integrity & Runtime Resilience — candidate patch
+# APEX Combined Runtime Stability & Signal Integrity — Candidate
 
-Source baseline: uploaded `apex-engine-main.zip` (October 14 repository snapshot).
+## Authoritative baseline
+`apex-engine-main(20261016-114804).zip`, reported release `69.10.37`.
+
+## Merge audit
+The October 16 baseline **already includes** the signal-integrity guard, volume-profile timing diagnostics, scanner-worker memory pairs, and paired diagnostic module/tests. The older independent candidate ZIPs each contain an `app.py` from different states; replacing the current `app.py` with either candidate would regress the other changes. This build retains the baseline `app.py` and merges **only the missing full-scan and scheduler event hooks**.
 
 ## Changed files
-- `app.py`: guard missing/nonfinite stop, target, entry, and price values during OPEN signal updates; record abstentions rather than allowing float/None comparisons; log institutional volume-profile wall-clock duration and timeout status.
-- `engine/signal_integrity_guard.py`: pure numeric validation and direction-aware stop/target classifier.
-- `tests/test_signal_integrity_guard.py`: focused regression tests.
+- `app.py` — diagnostic-only full-scan ATTEMPT/COMPLETED/FAILED/SKIPPED, paired FULL_SCAN memory measurements, and scheduler iterations. Existing signal guards and volume-profile timing preserved.
+- `tests/test_combined_runtime_signal_integration.py` — regression checks for both integrations, no loss of guards or timing.
 
-## Validation
-- `python -m pytest -q tests/test_signal_integrity_guard.py` — 4 passed.
-- `python -m py_compile app.py engine/signal_integrity_guard.py` — passed.
-- Full repository CI, Render production validation, and load/timeout profiling **not run**.
+## Already present in baseline; deliberately NOT overwritten
+- `engine/signal_integrity_guard.py`
+- `engine/paired_runtime_diagnostics.py`
+- `scanner_worker.py`
+- `tests/test_signal_integrity_guard.py`
+- `tests/test_paired_runtime_diagnostics.py`
 
-## Boundaries
-- No release version bump, database migration, broker execution, scheduler or settlement change.
-- A timed-out volume-profile Future may continue running in its executor thread; this patch **instruments** but does not solve background thread accumulation or root-cause the 3-second timeout.
-- Existing EXPIRED session/hold policy remains unchanged when a valid entry and exit price exist. Missing prices do not create synthetic outcomes.
-- Apply to development branch and run full CI before production promotion.
+## Read-only Render telemetry
+- `/data/apex_runtime_memory_pairs.jsonl`
+- `/data/apex_scan_coverage.jsonl`
+
+## Validation and release conditions
+Run focused tests, consolidation guard, and full CI against the integrated repository. Staging/production must verify full-session scanner coverage, absence of signal type errors, volume-profile latency, and cgroup OOM/pressure counters. No version bump or authority promotion is included. Existing production is not modified by this ZIP.
+
+## Apply
+Extract the ZIP at the **repository root**. It contains only changed files; review `app.py` diff first. Apply only if the checkout matches the October 16 baseline; otherwise merge/re-audit instead of overwriting `app.py`.
