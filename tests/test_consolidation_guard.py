@@ -163,3 +163,9 @@ def test_no_dead_engine_modules():
         f"wire them into the runtime or add to TEST_ONLY_ALLOWLIST with a "
         f"manifest entry explaining why."
     )
+
+
+def test_literal_dynamic_imports_are_runtime_edges():
+    mods = _modules()
+    service = ROOT / "engine" / "evening_recap_service.py"
+    assert "engine.evening_recap" in _imports_of(service, mods)
