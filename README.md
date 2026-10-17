@@ -1,15 +1,15 @@
-# APEX Scanner Scheduler Continuity & Full-Scan Freshness Closure
+# APEX Post-Scan Deadline Protection — candidate
 
-Baseline: October 16 2026 repository, canonical release 69.10.37. Changed files only.
+Changed-files-only patch, based on the October 16 repository plus the prior cross-process scanner coverage candidate. Keeps release `69.10.37`, broker execution disabled, and existing scanner coverage journal.
 
-## Root cause
-Default SCAN_INTERVAL_SECONDS=300 while HEALTH_STALE_AFTER_S=180; additionally post-scan work occurs before the interval sleep. This guarantees a stale period for otherwise successful cycles.
+## Scope
+- Measure post-scan work starting after `run_scan_once()` returns; previous `last_post_scan_duration_seconds` incorrectly included full scan time.
+- Report separate `last_scheduler_cycle_duration_seconds` and post-scan `auxiliary`, `flow_learning`, `legacy_settlement` stage timings.
+- Defer optional flow sampling/feature writing when the configured freshness window has less than 45 seconds remaining. Defer legacy scanner-owned settlement on the same condition (the separate canonical settlement scheduler is untouched).
+- Preserve serial execution and canonical evidence ownership; no new threads, overlapping SQLite writers, synthetic labels, or broker authority.
+- Continue existing adaptive sleep and persistent scanner coverage.
 
-## Fix
-Calculate next sleep as min(configured interval, max(0, stale threshold - age since last completion - 20-second margin)). Record scheduler iteration, post-cycle time, planned sleep and freshness budget exhaustion. Preserve exclusive scan lock, advisory-only status, and unchanged health stale threshold. No synthetic scan completion and no concurrent scans.
+## Limits and validation
+This is **cooperative stage-boundary isolation**, not hard preemption: in-flight API/DB calls cannot be interrupted. The auxiliary phase (IOS, tracking, signal evaluator, premium grading) remains synchronous and may still exceed the freshness window. Flow work can also exceed the deadline after it starts. Production timing must determine whether deeper workload separation is warranted. No full-repository CI or live Render test performed.
 
-## Caveat
-This cannot guarantee a new scan finishes within the freshness window if scans themselves or post-scan work take too long. Monitor `last_post_scan_duration_seconds`, `last_scheduler_sleep_seconds`, `freshness_budget_exhausted_cycles`, and completed-scan age. Increased scan frequency may increase API and compute usage. Production validation is required.
-
-## Validation
-Focused tests and syntax checks; full CI must run in GitHub Actions. No release bump.
+Run `python -m pytest -q tests/test_post_scan_deadline_protection.py tests/test_scanner_coverage_authority.py tests/test_scanner_cadence_continuity_closure.py`.
