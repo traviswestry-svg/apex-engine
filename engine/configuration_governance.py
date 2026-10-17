@@ -240,6 +240,11 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_SCANNER_LOCK_RETRY_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'5','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded backoff delay in seconds before one retry after scanner lock contention.','safety_critical':False,'used_in_code':True},
 ])
 
+# APEX post-scan scheduler deadline control.
+_REGISTRY_DATA.extend([
+ {'name':'APEX_POST_SCAN_RESERVE_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'45','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Seconds reserved for the post-scan scheduler deadline before optional work is deferred.','safety_critical':False,'used_in_code':True},
+])
+
 # APEX scanner coverage journal configuration.
 _REGISTRY_DATA.extend([
  {'name':'APEX_SCANNER_COVERAGE_DB','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scanner_coverage.db','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Path to the persisted scanner coverage journal database.','safety_critical':False,'used_in_code':True},
