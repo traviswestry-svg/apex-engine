@@ -1889,6 +1889,11 @@ _SCAN_COMPLETION_RUNTIME: Dict[str, Any] = {
     "last_post_scan_duration_seconds": None,
     "last_scheduler_sleep_seconds": None,
     "freshness_budget_exhausted_cycles": 0,
+    "last_scheduler_cycle_duration_seconds": None,
+    "last_post_scan_phase_durations_seconds": {},
+    "post_scan_deferred_flow_cycles": 0,
+    "post_scan_deferred_settlement_cycles": 0,
+    "post_scan_deadline_seconds": None,
 }
 
 def scanner_completion_runtime_status() -> Dict[str, Any]:
@@ -4703,6 +4708,17 @@ def scanner_loop() -> None:
                 STATE["last_scan_status"] = "Scanner hit an unexpected error; will retry next cycle."
                 STATE["scan_in_progress"] = False
             print(f"Scanner loop exception (recovered, thread continues): {e}", flush=True)
+        # Post-scan work remains serial to preserve SQLite/feature identity safety.
+        # Deadline gates isolate expensive optional work without unsafe background
+        # threads. Timing begins AFTER the scan, not at scheduler iteration start.
+        from engine.post_scan_deadline import deadline_seconds, should_defer, safe_positive_seconds
+        _post_scan_start = time.monotonic()
+        _post_scan_phases = {}
+        _phase_start = time.monotonic()
+        _deadline = safe_positive_seconds(os.getenv("HEALTH_STALE_AFTER_S", "180"), 180.0)
+        _reserve = safe_positive_seconds(os.getenv("APEX_POST_SCAN_RESERVE_SECONDS", "45"), 45.0)
+        with STATE_LOCK:
+            _SCAN_COMPLETION_RUNTIME["post_scan_deadline_seconds"] = _deadline
         # APEX 7.6.0: refresh the institutional bus headlessly so premium and
         # directional alerts fire even when no dashboard is polling. Reuses the
         # exact /api/institutional_os composition (no duplicate pipeline); the
@@ -4749,6 +4765,8 @@ def scanner_loop() -> None:
                     print(f"premium_strategy: graded {_pg} recommendation(s).", flush=True)
             except Exception as e:
                 print(f"premium grade error (recovered): {e}", flush=True)
+        _post_scan_phases["auxiliary"] = round(time.monotonic() - _phase_start, 3)
+        _phase_start = time.monotonic()
         # APEX 9 Step 4.1 / 5a.1 + 69.10.2 source-cluster closure: sample theoretical
         # flow P/L and persist sealed-cluster features from one canonical pipeline run. The feature writer itself remains the canonical post-persistence excursion owner.
         # Every cycle publishes an explicit state so zero capture attempts can be
@@ -4756,7 +4774,11 @@ def scanner_loop() -> None:
         _FLOW_LEARNING_RUNTIME["cycles"] += 1
         _FLOW_LEARNING_RUNTIME["last_cycle_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         _flow_session = session_status()
-        if not SAMPLE_FLOW_PL_IN_SCANNER:
+        if should_defer(time.monotonic() - _post_scan_start, _deadline, _reserve):
+            _FLOW_LEARNING_RUNTIME.update({"last_state": "DEFERRED_SCANNER_DEADLINE", "last_skip_reason": "SCAN_FRESHNESS_PRIORITY"})
+            with STATE_LOCK:
+                _SCAN_COMPLETION_RUNTIME["post_scan_deferred_flow_cycles"] += 1
+        elif not SAMPLE_FLOW_PL_IN_SCANNER:
             _FLOW_LEARNING_RUNTIME.update({"last_state": "DISABLED", "last_skip_reason": "SAMPLE_FLOW_PL_IN_SCANNER_FALSE"})
         elif not FLOW_PL_SAMPLER_AVAILABLE or _flow_pl_run is None:
             _FLOW_LEARNING_RUNTIME.update({"last_state": "UNAVAILABLE", "last_skip_reason": "FLOW_PL_PIPELINE_UNAVAILABLE"})
@@ -4883,9 +4905,12 @@ def scanner_loop() -> None:
                 })
                 print(f"flow P/L sample error (recovered): {e}", flush=True)
 
+        _post_scan_phases["flow_learning"] = round(time.monotonic() - _phase_start, 3)
+        _phase_start = time.monotonic()
         # APEX 9 Step 5a.1: settle labels once the cash session has closed. Labels
         # are measured to session close, so this runs after it — never before.
-        if (WRITE_FEATURES_IN_SCANNER and FEATURE_WRITER_AVAILABLE
+        if (not should_defer(time.monotonic() - _post_scan_start, _deadline, _reserve)
+                and WRITE_FEATURES_IN_SCANNER and FEATURE_WRITER_AVAILABLE
                 and _fs_writer is not None
                 and str(os.getenv("APEX_FLOW_SETTLEMENT_SCHEDULER_ENABLED", "true")).lower()
                     not in {"1", "true", "yes", "on"}):
@@ -4913,21 +4938,32 @@ def scanner_loop() -> None:
                               flush=True)
             except Exception as e:
                 print(f"feature label settle error (recovered): {e}", flush=True)
+        _post_scan_phases["legacy_settlement"] = round(time.monotonic() - _phase_start, 3)
+        if (WRITE_FEATURES_IN_SCANNER and FEATURE_WRITER_AVAILABLE
+                and _fs_writer is not None
+                and str(os.getenv("APEX_FLOW_SETTLEMENT_SCHEDULER_ENABLED", "true")).lower()
+                    not in {"1", "true", "yes", "on"}
+                and should_defer(time.monotonic() - _post_scan_start, _deadline, _reserve)):
+            with STATE_LOCK:
+                _SCAN_COMPLETION_RUNTIME["post_scan_deferred_settlement_cycles"] += 1
         # APEX scanner continuity: configured 300s sleeps must not silently
         # exceed a 180s full-scan freshness policy. Account for post-scan work;
         # never overlap scans or bypass SCAN_LOCK. A long post-scan stage can
         # still exhaust freshness, and remains explicitly observable.
         from engine.scanner_cadence_closure import next_scan_sleep
-        _post_scan_elapsed = round(time.monotonic() - _scheduler_cycle_start, 2)
+        _post_scan_elapsed = round(time.monotonic() - _post_scan_start, 2)
+        _cycle_elapsed = round(time.monotonic() - _scheduler_cycle_start, 2)
         with STATE_LOCK:
             _last_complete = _SCAN_COMPLETION_RUNTIME.get("last_completed_at")
         _age = _iso_age_seconds(_last_complete, dt.datetime.now(dt.timezone.utc))
         _age = max(0.0, _age) if _age is not None else _post_scan_elapsed
-        _stale = float(os.getenv("HEALTH_STALE_AFTER_S", "180"))
+        _stale = _deadline
         _sleep = next_scan_sleep(SCAN_INTERVAL_SECONDS, _stale, _age)
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["last_post_scan_completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             _SCAN_COMPLETION_RUNTIME["last_post_scan_duration_seconds"] = _post_scan_elapsed
+            _SCAN_COMPLETION_RUNTIME["last_scheduler_cycle_duration_seconds"] = _cycle_elapsed
+            _SCAN_COMPLETION_RUNTIME["last_post_scan_phase_durations_seconds"] = _post_scan_phases
             _SCAN_COMPLETION_RUNTIME["last_scheduler_sleep_seconds"] = _sleep
             if _age >= _stale:
                 _SCAN_COMPLETION_RUNTIME["freshness_budget_exhausted_cycles"] += 1
