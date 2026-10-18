@@ -4527,7 +4527,16 @@ def _record_scanner_coverage(event: str, **kwargs) -> None:
         pass  # Observability must never change scanning outcomes.
 
 
-def run_scan_once(force: bool = False) -> bool:
+def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
+    # Central entry-point gate applies to scheduled and HTTP-triggered scans.
+    # force bypasses cadence/normal scan selection, never market-session safety.
+    from engine.scanner_entrypoint_policy import scan_session_allowed
+    _entry_session = session_status()
+    if not scan_session_allowed(_entry_session):
+        with STATE_LOCK:
+            STATE["last_scan_status"] = f"SCAN_SESSION_BLOCKED: {_entry_session} ({source})"
+            _SCAN_COMPLETION_RUNTIME["last_result"] = "SESSION_BLOCKED"
+        return False
     # Diagnostic-only: failures in telemetry must never prevent a market scan.
     _coverage_id = None
     _scan_memory_start = None
@@ -4535,7 +4544,7 @@ def run_scan_once(force: bool = False) -> bool:
         from engine.paired_runtime_diagnostics import new_cycle_id, scan_event, begin_stage
         _coverage_id = new_cycle_id("scan")
         _scan_memory_start = begin_stage(_coverage_id, "FULL_SCAN")
-        scan_event(_coverage_id, "ATTEMPT", details={"force": bool(force)})
+        scan_event(_coverage_id, "ATTEMPT", details={"force": bool(force), "source": str(source), "session": _entry_session})
     except Exception as _diagnostic_exc:
         print(f"[APEX DIAGNOSTICS] scan trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
     _attempt_at = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -4674,20 +4683,6 @@ def scanner_loop() -> None:
     last_resolution_date: Optional[dt.date] = None
     time.sleep(2)
     while True:
-        # Canonical session gate BEFORE run_scan_once(): no full-scan attempt,
-        # API fetch, or scanner-owned post-scan work in CLOSED sessions.
-        # Sunday evening OVERNIGHT remains eligible for ES by existing policy.
-        from engine.scanner_session_gate_audit import full_scan_allowed
-        _current_session = session_status()
-        if not full_scan_allowed(_current_session):
-            with STATE_LOCK:
-                STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
-                STATE["last_scan_status"] = "Scanner session gated: " + _current_session
-                _SCAN_COMPLETION_RUNTIME["last_session_gate_state"] = _current_session
-            time.sleep(max(30, min(300, SCAN_INTERVAL_SECONDS)))
-            continue
-        with STATE_LOCK:
-            _SCAN_COMPLETION_RUNTIME["last_session_gate_state"] = "ALLOWED"
         _scheduler_cycle_start = time.monotonic()
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["last_scheduler_iteration_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
@@ -4700,7 +4695,7 @@ def scanner_loop() -> None:
         with STATE_LOCK:
             STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         try:
-            _scan_ran = run_scan_once()
+            _scan_ran = run_scan_once(source="SCHEDULER")
             # APEX 69.10.7: a transient duplicate/lock collision must not cost a
             # full scanner cadence. Retry once after a short bounded wait. This
             # never bypasses the lock and therefore cannot create concurrent scans.
@@ -4709,7 +4704,7 @@ def scanner_loop() -> None:
                 time.sleep(_retry_s)
                 with STATE_LOCK:
                     _SCAN_COMPLETION_RUNTIME["scheduler_lock_retries"] += 1
-                run_scan_once()
+                run_scan_once(source="SCHEDULER_LOCK_RETRY")
         except Exception as e:
             # run_scan_once() already catches its own exceptions internally. This is a
             # last-resort backstop: if something still slips through (or raises outside
@@ -7141,9 +7136,15 @@ def api_scanner_ideas():
 
 @app.route("/api/run", methods=["GET", "POST"])
 def api_run():
-    ran = run_scan_once(force=True)
+    from engine.scanner_entrypoint_policy import scan_session_allowed
+    _session = session_status()
+    if not scan_session_allowed(_session):
+        return jsonify({"ok": False, "status": "SESSION_BLOCKED", "session": _session,
+                        "source": "API_RUN", "message": "Full scans are disabled during CLOSED sessions."}), 409
+    ran = run_scan_once(force=True, source="API_RUN")
     with STATE_LOCK:
-        return jsonify({"ok": ran, "status": STATE.get("last_scan_status"), "ideas": len(STATE.get("ideas", []))})
+        return jsonify({"ok": ran, "status": STATE.get("last_scan_status"),
+                        "source": "API_RUN", "ideas": len(STATE.get("ideas", []))})
 
 
 @app.route("/api/backtest_stats")
@@ -12571,6 +12572,9 @@ FLOW_TAPE_DEFAULT_TICKERS = ["SPY", "QQQ", "SPX", "NVDA", "TSLA"]
 FLOW_TAPE_DEFAULT_MIN_PREMIUM = 250_000
 
 
+from engine.scanner_entrypoint_policy import quantdata_consolidated_size
+
+
 def _fetch_flow_tape_rows(tickers: List[str], size_per_ticker: int = 50) -> List[dict]:
     """Fetch raw QuantData consolidated order-flow rows for a list of tickers."""
     if not QUANTDATA_API_KEY or not ORDER_FLOW_ENABLED:
@@ -12583,7 +12587,7 @@ def _fetch_flow_tape_rows(tickers: List[str], size_per_ticker: int = 50) -> List
         qd_ticker = "SPX" if ticker.upper() in {"SPXW", "$SPX", "I:SPX"} else ticker.upper()
         payload = {
             "filter": {"ticker": qd_ticker},
-            "size": size_per_ticker,
+            "size": quantdata_consolidated_size(size_per_ticker),
             "sort": {"field": "tradeTime", "direction": "DESCENDING"},
         }
         data = safe_post_json(
@@ -13061,7 +13065,7 @@ def api_flow_tape():
         tickers = list(FLOW_TAPE_DEFAULT_TICKERS)
     min_premium = float(request.args.get("min_premium", str(FLOW_TAPE_DEFAULT_MIN_PREMIUM)))
     size = int(request.args.get("size", "50"))
-    size = max(10, min(size, 200))
+    size = quantdata_consolidated_size(size)
 
     if not FLOW_TAPE_AVAILABLE or build_flow_tape is None:
         return jsonify({
