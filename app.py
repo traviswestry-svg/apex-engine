@@ -4674,6 +4674,20 @@ def scanner_loop() -> None:
     last_resolution_date: Optional[dt.date] = None
     time.sleep(2)
     while True:
+        # Canonical session gate BEFORE run_scan_once(): no full-scan attempt,
+        # API fetch, or scanner-owned post-scan work in CLOSED sessions.
+        # Sunday evening OVERNIGHT remains eligible for ES by existing policy.
+        from engine.scanner_session_gate_audit import full_scan_allowed
+        _current_session = session_status()
+        if not full_scan_allowed(_current_session):
+            with STATE_LOCK:
+                STATE["scanner_heartbeat_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+                STATE["last_scan_status"] = "Scanner session gated: " + _current_session
+                _SCAN_COMPLETION_RUNTIME["last_session_gate_state"] = _current_session
+            time.sleep(max(30, min(300, SCAN_INTERVAL_SECONDS)))
+            continue
+        with STATE_LOCK:
+            _SCAN_COMPLETION_RUNTIME["last_session_gate_state"] = "ALLOWED"
         _scheduler_cycle_start = time.monotonic()
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["last_scheduler_iteration_at"] = dt.datetime.now(dt.timezone.utc).isoformat()

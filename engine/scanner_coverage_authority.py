@@ -53,7 +53,16 @@ def read_coverage(session_date=None):
             last = conn.execute('SELECT occurred_at, event, duration, boot_id, pid FROM scanner_events WHERE session_date=? ORDER BY occurred_at DESC, rowid DESC LIMIT 1', (session_date,)).fetchone()
             boots = conn.execute('SELECT COUNT(DISTINCT boot_id) FROM scanner_events WHERE session_date=?', (session_date,)).fetchone()[0]
         counts = {event: count for event, count, _ in rows}
-        return {'available': True, 'schema': SCHEMA, 'session_date': session_date,
+        from engine.scanner_session_gate_audit import classify_unresolved
+        now = dt.datetime.now(dt.timezone.utc)
+        last_age = None
+        if last:
+            last_time = dt.datetime.fromisoformat(last[0].replace('Z', '+00:00'))
+            last_age = max(0.0, (now - last_time).total_seconds())
+        unresolved = classify_unresolved(counts.get('ATTEMPT', 0),
+            counts.get('COMPLETED', 0), counts.get('FAILED', 0),
+            counts.get('LOCK_BUSY', 0), last[1] if last else None, last_age)
+        return {'available': True, 'unresolved_attempts': unresolved, 'schema': SCHEMA, 'session_date': session_date,
                 'attempts': counts.get('ATTEMPT', 0), 'completed': counts.get('COMPLETED', 0),
                 'failures': counts.get('FAILED', 0), 'lock_skips': counts.get('LOCK_BUSY', 0),
                 'boot_instances': boots, 'last_event': ({'at': last[0], 'event': last[1],
