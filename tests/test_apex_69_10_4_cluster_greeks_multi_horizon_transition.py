@@ -61,7 +61,8 @@ def _insert(path, when, net, *, capacity=10.0):
         c.execute("""INSERT INTO gamma_observational_snapshots
         (ticker,observed_at,source_timestamp,source,path_version,net_gex,gamma_flip,zero_dte_share,zero_one_dte_share,weekly_gamma_share,durability,capacity_ratio,snapshot_json)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        ("SPX", when, when, "TEST", "p", net, 6500, .4, .5, .7, "MEDIUM", capacity, "{}"))
+        ("SPX", when, when, "TEST", "p", net, 6500, .4, .5, .7, "MEDIUM", capacity,
+         json.dumps({"model_id":"test-model","model_version":"1","calculation_method":"test","gamma_unit":"GEX"})))
         c.commit()
 
 
@@ -72,7 +73,9 @@ def test_normalized_gamma_transition_uses_prior_structure_and_exposes_1m(tmp_pat
     _insert(db, "2026-09-11T09:45:00+00:00", 100, capacity=10)
     _insert(db, "2026-09-11T09:55:00+00:00", 120, capacity=12)
     _insert(db, "2026-09-11T09:59:00+00:00", 140, capacity=14)
-    cur = {"ticker":"SPX","observed_at":"2026-09-11T10:00:00+00:00","net_gex":150,
+    cur = {"ticker":"SPX","source":"TEST","model_id":"test-model","model_version":"1",
+           "calculation_method":"test","gamma_unit":"GEX",
+           "observed_at":"2026-09-11T10:00:00+00:00","net_gex":150,
            "gamma_flip":6510,"zero_dte_share":.45,"zero_one_dte_share":.55,
            "weekly_gamma_share":.72,"durability":"HIGH","path_version":"p2","capacity_ratio":15}
     out = compute_transition(cur, db_path=str(db))
