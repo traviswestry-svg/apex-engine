@@ -27,11 +27,7 @@ def test_no_candidate_for_actionable_decision():
 
 def test_release_metadata_69_10_34():
     m=json.load(open('config/apex_release_manifest.json'))
-<<<<<<< HEAD
-    assert m['apex_version']==m['semantic_version']==m['application_version']
-=======
     assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.37'
->>>>>>> origin/main
     reg=open('config/apex_capability_registry.yaml').read()
     assert 'apex_version: 69.10.37' in reg
     assert 'open_discovery_shadow_candidate_forward_validation:' in reg

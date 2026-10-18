@@ -66,11 +66,7 @@ def _fetch_trigger_row(path: Path, trigger_id: str) -> dict:
 def test_release_truth_and_archive_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.37"
-<<<<<<< HEAD
-    assert manifest["build_name"]
-=======
     assert manifest["build_name"] == "Forecast Diagnostics Production Promotion & Persistence Closure"
->>>>>>> origin/main
     g = manifest["guardrails"]
     assert g["historical_payload_archive_foundation"] is True
     assert g["historical_payload_archive_additive_only"] is True
