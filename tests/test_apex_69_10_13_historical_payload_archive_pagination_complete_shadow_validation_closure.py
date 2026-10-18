@@ -15,7 +15,11 @@ def _trigger_db(path: Path, n: int = 12):
 def test_release_identity_and_registry_alignment():
     m = json.loads((ROOT/'config/apex_release_manifest.json').read_text())
     assert m['apex_version'] == m['semantic_version'] == m['application_version'] == '69.10.37'
+<<<<<<< HEAD
     assert m['build_name']
+=======
+    assert m['build_name'] == 'Forecast Diagnostics Production Promotion & Persistence Closure'
+>>>>>>> origin/main
     g = m['guardrails']
     assert g['historical_payload_archive_resumable_batches'] is True
     assert g['historical_payload_archive_batch_max_rows'] == 500
