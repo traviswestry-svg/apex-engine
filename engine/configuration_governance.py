@@ -300,6 +300,22 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_SCAN_COVERAGE_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Output path for bounded scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
 ])
 
+_REGISTRY_DATA.extend([
+ {'name':'APEX_FLOW_LEARNING_STARVATION_WARN_CYCLES','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'5','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Number of consecutive scanner-deadline deferrals before flow-learning starvation is flagged.','safety_critical':False,'used_in_code':True},
+])
+
+_REGISTRY_DATA.extend([
+ {'name':'APEX_FLOW_LEARNING_ESTIMATE_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'120','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Estimated duration of a scanner flow-learning pass in seconds.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_CGROUP_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/sys/fs/cgroup','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cgroup v2 directory used for runtime memory attribution.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_PAIR_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_runtime_memory_pairs.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded JSONL output for paired runtime memory diagnostics.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_SAMPLE_SECONDS','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'15','expected_type':'integer','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Interval between runtime memory attribution samples.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_MEMORY_TELEMETRY_PATH','category':'HEALTH','classification':'OPTIONAL','default':'/data/apex_runtime_memory.jsonl','required_when':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded JSONL output for runtime memory attribution.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_POST_SCAN_RESERVE_SECONDS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'45','expected_type':'number','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Time reserved after scanning for scanner learning work.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCANNER_COVERAGE_DB','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scanner_coverage.db','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite path for scanner coverage authority.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCANNER_PROCESS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Marks the dedicated scanner process to prevent recursive startup.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_SCAN_COVERAGE_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded JSONL output for paired scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
+])
+
 REGISTRY = {row['name']: VariableDefinition(**row) for row in _REGISTRY_DATA}
 
 def _utcnow() -> str: return datetime.now(timezone.utc).isoformat()

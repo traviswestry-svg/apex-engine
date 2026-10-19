@@ -859,6 +859,10 @@ FLOW_PL_SAMPLE_SESSIONS = {
 _FLOW_LEARNING_RUNTIME = {
     "version": "69.10.6",
     "cycles": 0,
+    "consecutive_deadline_deferrals": 0,
+    "learning_starvation_warning": False,
+    "last_learning_budget_seconds": None,
+    "last_learning_estimate_seconds": None,
     "live_session_cycles": 0,
     "pipeline_runs": 0,
     "source_clusters": 0,
@@ -4791,21 +4795,39 @@ def scanner_loop() -> None:
             _expected_scan = _SCAN_COMPLETION_RUNTIME.get("last_duration_seconds")
         _expected_scan = safe_positive(_expected_scan, 90.0)
         _flow_estimate = safe_positive(os.getenv("APEX_FLOW_LEARNING_ESTIMATE_SECONDS", "120"), 120.0)
-        _flow_budget = deadline_plan(_deadline,
-            time.monotonic() - _scheduler_cycle_start, _expected_scan,
-            margin_seconds=_reserve, optional_work_estimate_seconds=_flow_estimate)
-        if not _flow_budget.allow_optional_work:
-            _FLOW_LEARNING_RUNTIME.update({"last_state": "DEFERRED_SCANNER_DEADLINE", "last_skip_reason": "SCAN_FRESHNESS_PRIORITY"})
-            with STATE_LOCK:
-                _SCAN_COMPLETION_RUNTIME["post_scan_deferred_flow_cycles"] += 1
-        elif not SAMPLE_FLOW_PL_IN_SCANNER:
-            _FLOW_LEARNING_RUNTIME.update({"last_state": "DISABLED", "last_skip_reason": "SAMPLE_FLOW_PL_IN_SCANNER_FALSE"})
-        elif not FLOW_PL_SAMPLER_AVAILABLE or _flow_pl_run is None:
-            _FLOW_LEARNING_RUNTIME.update({"last_state": "UNAVAILABLE", "last_skip_reason": "FLOW_PL_PIPELINE_UNAVAILABLE"})
-        elif not globals().get("_FLOW_PL_SAMPLE_ARGS"):
-            _FLOW_LEARNING_RUNTIME.update({"last_state": "UNAVAILABLE", "last_skip_reason": "FLOW_PL_SAMPLE_ARGS_UNWIRED"})
-        elif _flow_session not in FLOW_PL_SAMPLE_SESSIONS:
-            _FLOW_LEARNING_RUNTIME.update({"last_state": "SESSION_GATED", "last_skip_reason": _flow_session})
+        from engine.scanner_learning_continuity import assess_learning
+        _learning_admission = assess_learning(
+            enabled=SAMPLE_FLOW_PL_IN_SCANNER,
+            available=FLOW_PL_SAMPLER_AVAILABLE and _flow_pl_run is not None,
+            wired=bool(globals().get("_FLOW_PL_SAMPLE_ARGS")),
+            session_allowed=_flow_session in FLOW_PL_SAMPLE_SESSIONS,
+            stale_seconds=_deadline,
+            elapsed_seconds=time.monotonic() - _scheduler_cycle_start,
+            next_scan_seconds=_expected_scan,
+            reserve_seconds=_reserve,
+            estimated_work_seconds=_flow_estimate,
+            consecutive_deferrals=_FLOW_LEARNING_RUNTIME.get("consecutive_deadline_deferrals", 0),
+            warning_threshold=safe_positive(os.getenv("APEX_FLOW_LEARNING_STARVATION_WARN_CYCLES", "5"), 5),
+        )
+        _FLOW_LEARNING_RUNTIME.update({
+            "consecutive_deadline_deferrals": _learning_admission.consecutive_deferrals,
+            "learning_starvation_warning": _learning_admission.starvation_warning,
+            "last_learning_budget_seconds": round(_learning_admission.remaining_budget_seconds, 3),
+            "last_learning_estimate_seconds": _learning_admission.estimate_seconds,
+        })
+        if not _learning_admission.admitted:
+            _FLOW_LEARNING_RUNTIME.update({
+                "last_state": _learning_admission.state,
+                "last_skip_reason": (
+                    "SCAN_FRESHNESS_PRIORITY" if _learning_admission.state == "DEFERRED_SCANNER_DEADLINE"
+                    else _learning_admission.state
+                ),
+            })
+            if _learning_admission.state == "DEFERRED_SCANNER_DEADLINE":
+                with STATE_LOCK:
+                    _SCAN_COMPLETION_RUNTIME["post_scan_deferred_flow_cycles"] += 1
+                if _learning_admission.starvation_warning and _learning_admission.consecutive_deferrals == 5:
+                    print("[APEX FLOW LEARNING] deadline starvation detected; no unsafe override permitted", flush=True)
         else:
             _FLOW_LEARNING_RUNTIME["live_session_cycles"] += 1
             try:
