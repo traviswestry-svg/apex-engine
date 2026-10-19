@@ -54,8 +54,8 @@ def test_app_health_uses_effective_cross_process_state_by_construction():
     src = (ROOT / "app.py").read_text()
     assert "from engine.scanner_runtime_truth import resolve_scanner_runtime" in src
     assert 'scanner_started=bool(_scanner_runtime.get("effective_started"))' in src
-    assert '"scanner_started": bool(_scanner_runtime.get("effective_started"))' in src
-    assert '"scanner_state_source": _scanner_runtime.get("source")' in src
+    assert '"scanner_started": bool(_scanner_runtime.get("effective_started") or _journal_recent)' in src
+    assert '"scanner_state_source": ("PERSISTED_COMPLETION_JOURNAL" if _journal_recent' in src
     assert '_scanner_runtime.get("process_last_scan_at") if _process_authoritative else None' in src
     assert 'else _scanner_runtime.get("heartbeat")' in src
 

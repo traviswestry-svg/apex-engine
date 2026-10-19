@@ -88,6 +88,6 @@ def test_health_consumes_process_authority_for_completion_and_in_progress_state(
     src = Path('app.py').read_text()
     assert '_scanner_runtime.get("authority") == "SCANNER_PROCESS"' in src
     assert 's_inprog = bool(_scanner_runtime.get("process_scan_in_progress")) if _process_authoritative else _local_inprog' in src
-    assert '"scanner_state_authority": _scanner_runtime.get("authority")' in src
+    assert '"scanner_state_authority": ("RECENT_COMPLETION_ONLY" if _journal_recent' in src
     assert '"scanner_process_phase": _scanner_runtime.get("process_phase")' in src
     assert '"scanner_process_pid": _scanner_runtime.get("process_pid")' in src
