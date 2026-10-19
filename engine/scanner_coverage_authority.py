@@ -51,6 +51,7 @@ def read_coverage(session_date=None):
         with sqlite3.connect(f'file:{path}?mode=ro', uri=True, timeout=0.25) as conn:
             rows = conn.execute('SELECT event, COUNT(*), MAX(occurred_at) FROM scanner_events WHERE session_date=? GROUP BY event', (session_date,)).fetchall()
             last = conn.execute('SELECT occurred_at, event, duration, boot_id, pid FROM scanner_events WHERE session_date=? ORDER BY occurred_at DESC, rowid DESC LIMIT 1', (session_date,)).fetchone()
+            completed_last = conn.execute("SELECT occurred_at, event, duration, boot_id, pid FROM scanner_events WHERE session_date=? AND event='COMPLETED' ORDER BY occurred_at DESC, rowid DESC LIMIT 1", (session_date,)).fetchone()
             boots = conn.execute('SELECT COUNT(DISTINCT boot_id) FROM scanner_events WHERE session_date=?', (session_date,)).fetchone()[0]
         counts = {event: count for event, count, _ in rows}
         from engine.scanner_session_gate_audit import classify_unresolved
@@ -67,6 +68,7 @@ def read_coverage(session_date=None):
                 'failures': counts.get('FAILED', 0), 'lock_skips': counts.get('LOCK_BUSY', 0),
                 'boot_instances': boots, 'last_event': ({'at': last[0], 'event': last[1],
                 'duration_seconds': last[2], 'boot_id': last[3], 'pid': last[4]} if last else None),
+                'last_completed_event': ({'at': completed_last[0], 'event': completed_last[1], 'duration_seconds': completed_last[2], 'boot_id': completed_last[3], 'pid': completed_last[4]} if completed_last else None),
                 'authority': 'PERSISTED_SCANNER_EVENTS', 'execution_authority': False,
                 'decision_authority': False}
     except (OSError, sqlite3.Error, ValueError, TypeError) as exc:

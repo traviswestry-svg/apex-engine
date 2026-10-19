@@ -4783,7 +4783,17 @@ def scanner_loop() -> None:
         _FLOW_LEARNING_RUNTIME["cycles"] += 1
         _FLOW_LEARNING_RUNTIME["last_cycle_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
         _flow_session = session_status()
-        if should_defer(time.monotonic() - _post_scan_start, _deadline, _reserve):
+        # Reserve the next full scan's measured runtime and a conservative
+        # optional-flow estimate BEFORE starting a non-preemptible DB workload.
+        from engine.scanner_freshness_deadline import deadline_plan, safe_positive
+        with STATE_LOCK:
+            _expected_scan = _SCAN_COMPLETION_RUNTIME.get("last_duration_seconds")
+        _expected_scan = safe_positive(_expected_scan, 90.0)
+        _flow_estimate = safe_positive(os.getenv("APEX_FLOW_LEARNING_ESTIMATE_SECONDS", "120"), 120.0)
+        _flow_budget = deadline_plan(_deadline,
+            time.monotonic() - _scheduler_cycle_start, _expected_scan,
+            margin_seconds=_reserve, optional_work_estimate_seconds=_flow_estimate)
+        if not _flow_budget.allow_optional_work:
             _FLOW_LEARNING_RUNTIME.update({"last_state": "DEFERRED_SCANNER_DEADLINE", "last_skip_reason": "SCAN_FRESHNESS_PRIORITY"})
             with STATE_LOCK:
                 _SCAN_COMPLETION_RUNTIME["post_scan_deferred_flow_cycles"] += 1
@@ -4959,7 +4969,7 @@ def scanner_loop() -> None:
         # exceed a 180s full-scan freshness policy. Account for post-scan work;
         # never overlap scans or bypass SCAN_LOCK. A long post-scan stage can
         # still exhaust freshness, and remains explicitly observable.
-        from engine.scanner_cadence_closure import next_scan_sleep
+        from engine.scanner_freshness_deadline import deadline_plan, safe_positive
         _post_scan_elapsed = round(time.monotonic() - _post_scan_start, 2)
         _cycle_elapsed = round(time.monotonic() - _scheduler_cycle_start, 2)
         with STATE_LOCK:
@@ -4967,7 +4977,11 @@ def scanner_loop() -> None:
         _age = _iso_age_seconds(_last_complete, dt.datetime.now(dt.timezone.utc))
         _age = max(0.0, _age) if _age is not None else _post_scan_elapsed
         _stale = _deadline
-        _sleep = next_scan_sleep(SCAN_INTERVAL_SECONDS, _stale, _age)
+        with STATE_LOCK:
+            _expected_scan = _SCAN_COMPLETION_RUNTIME.get("last_duration_seconds")
+        _plan = deadline_plan(_stale, _age, safe_positive(_expected_scan, 90.0),
+                              margin_seconds=_reserve)
+        _sleep = min(max(0.0, float(SCAN_INTERVAL_SECONDS)), _plan.sleep_seconds)
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["last_post_scan_completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             _SCAN_COMPLETION_RUNTIME["last_post_scan_duration_seconds"] = _post_scan_elapsed
@@ -7548,13 +7562,27 @@ def health():
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
+    _coverage = _read_scanner_coverage_status()
+    # The journal proves a completed scan, not a living thread. It may supply
+    # completion freshness when a separate scanner's heartbeat has gone stale.
+    _journal_last = _coverage.get("last_completed_event") or {}
+    _journal_completed = _coverage.get("available") and _journal_last.get("event") == "COMPLETED"
+    _journal_age = _iso_age_seconds(_journal_last.get("at"), generated_dt) if _journal_completed else None
+    _journal_recent = (_journal_age is not None and 0 <= _journal_age <=
+                       float(os.getenv("HEALTH_STALE_AFTER_S", "180")))
     _process_completion = dict(_scanner_runtime.get("process_scan_completion") or {})
     _process_authoritative = _scanner_runtime.get("authority") == "SCANNER_PROCESS" and bool(_scanner_runtime.get("heartbeat_fresh"))
     with STATE_LOCK:
         _local_scan_at = SCANNER_STATE.get("updated_at") or STATE.get("updated_at")
         _local_duration = SCANNER_STATE.get("last_scan_duration_seconds") or STATE.get("last_scan_duration_seconds")
-        scan_updated_at = (_scanner_runtime.get("process_last_scan_at") if _process_authoritative else None) or _local_scan_at
-        s_duration = (_scanner_runtime.get("process_last_scan_duration_seconds") if _process_authoritative else None) or _local_duration
+        _process_at = _scanner_runtime.get("process_last_scan_at") if _process_authoritative else None
+        _journal_at = _journal_last.get("at") if _journal_completed else None
+        _candidate_times = [(_process_at, _scanner_runtime.get("process_last_scan_duration_seconds")),
+                            (_journal_at, _journal_last.get("duration_seconds")),
+                            (_local_scan_at, _local_duration)]
+        _candidate_times = [(ts, dur) for ts, dur in _candidate_times if _iso_age_seconds(ts, generated_dt) is not None]
+        scan_updated_at, s_duration = (min(_candidate_times, key=lambda x: _iso_age_seconds(x[0], generated_dt))
+                                       if _candidate_times else (None, None))
         s_sources = SCANNER_STATE.get("data_sources") or STATE.get("data_sources") or {}
         s_session = session_status()
         _local_inprog = bool(SCANNER_STATE.get("scan_in_progress") or STATE.get("scan_in_progress"))
@@ -7568,7 +7596,7 @@ def health():
         _hstate = _resolve_health_state(
             session=s_session, scan_in_progress=s_inprog,
             updated_at=scan_updated_at, last_scan_duration=s_duration,
-            scanner_started=bool(_scanner_runtime.get("effective_started")),
+            scanner_started=bool(_scanner_runtime.get("effective_started") or _journal_recent),
             scanner_heartbeat_fresh=bool(_scanner_runtime.get("heartbeat_fresh")),
             scan_completion_runtime=_process_completion,
         )
@@ -7600,9 +7628,9 @@ def health():
         "health_age_seconds": scan_age if scan_age is not None else 0.0,
         "process_started_at": APP_PROCESS_STARTED_AT,
         "process_uptime_seconds": _iso_age_seconds(APP_PROCESS_STARTED_AT, generated_dt),
-        "scanner_started": bool(_scanner_runtime.get("effective_started")),
-        "scanner_state_source": _scanner_runtime.get("source"),
-        "scanner_state_authority": _scanner_runtime.get("authority"),
+        "scanner_started": bool(_scanner_runtime.get("effective_started") or _journal_recent),
+        "scanner_state_source": ("PERSISTED_COMPLETION_JOURNAL" if _journal_recent and not _process_authoritative else _scanner_runtime.get("source")),
+        "scanner_state_authority": ("RECENT_COMPLETION_ONLY" if _journal_recent and not _process_authoritative else _scanner_runtime.get("authority")),
         "scanner_process_phase": _scanner_runtime.get("process_phase"),
         "scanner_process_pid": _scanner_runtime.get("process_pid"),
         "scan_completion_runtime": _process_completion if _process_authoritative else scanner_completion_runtime_status(),

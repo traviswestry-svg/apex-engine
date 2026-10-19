@@ -7,7 +7,7 @@ from engine.scanner_runtime_truth import resolve_scanner_runtime
 def test_release_truth_and_authority_guardrails():
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
     assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.37'
-    assert manifest['build_name'] == 'Canonical Feature Lifecycle & Excursion Ownership Convergence'
+    assert manifest['build_name'] == 'Forecast Diagnostics Production Promotion & Persistence Closure'
     g = manifest['guardrails']
     assert g['scanner_fresh_heartbeat_is_cross_process_authority'] is True
     assert g['scanner_process_false_state_overridden_by_web_local_true'] is False
@@ -88,6 +88,6 @@ def test_health_consumes_process_authority_for_completion_and_in_progress_state(
     src = Path('app.py').read_text()
     assert '_scanner_runtime.get("authority") == "SCANNER_PROCESS"' in src
     assert 's_inprog = bool(_scanner_runtime.get("process_scan_in_progress")) if _process_authoritative else _local_inprog' in src
-    assert '"scanner_state_authority": _scanner_runtime.get("authority")' in src
+    assert '"scanner_state_authority": ("RECENT_COMPLETION_ONLY" if _journal_recent' in src
     assert '"scanner_process_phase": _scanner_runtime.get("process_phase")' in src
     assert '"scanner_process_pid": _scanner_runtime.get("process_pid")' in src
