@@ -65,10 +65,10 @@ def test_flow_surprise_context_is_immutable_first_write_wins(tmp_path, monkeypat
 
 def _insert_gamma(path, when, net, flip=6500, z=.5, zo=.6, w=.8, durability="MEDIUM", pv="p"):
     with connect(str(path), timeout=10) as c:
-        c.execute("""INSERT INTO gamma_observational_snapshots
-        (ticker,observed_at,source_timestamp,source,path_version,net_gex,gamma_flip,zero_dte_share,zero_one_dte_share,weekly_gamma_share,durability,capacity_ratio,snapshot_json)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", ("SPX",when,when,"TEST",pv,net,flip,z,zo,w,durability,None,
-        json.dumps({"model_id":"test-model","model_version":"1","calculation_method":"TEST","gamma_unit":"USD"}))); c.commit()
+       c.execute("""INSERT INTO gamma_observational_snapshots
+       (ticker,observed_at,source_timestamp,source,path_version,net_gex,gamma_flip,zero_dte_share,zero_one_dte_share,weekly_gamma_share,durability,capacity_ratio,snapshot_json)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", ("SPX",when,when,"TEST",pv,net,flip,z,zo,w,durability,None,
+       json.dumps({"model_id":"test-model","model_version":"1","calculation_method":"TEST","gamma_unit":"USD"}))); c.commit()
 
 
 def _current(net, when="2026-09-01T10:00:00+00:00", **kw):

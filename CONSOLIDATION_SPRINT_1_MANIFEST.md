@@ -110,6 +110,12 @@ FROZEN_MAX 48 → 39. Test files renamed to unversioned names (8) plus 2 rescued
 ## Validation
 Full suite 1,518 passed / 0 failed.
 
+## Test-only module allowance
+- `engine/scanner_freshness_deadline.py` remains a pure, test-covered planning
+  policy with no execution authority; scanner runtime continues to use the
+  existing cadence and post-scan deadline modules. Keep it allowlisted only
+  while it remains intentionally test-only.
+
 ---
 
 # Consolidation Sprint 4 — Learning Family (executed 2026-07-26)
