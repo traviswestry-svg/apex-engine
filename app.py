@@ -4785,6 +4785,7 @@ def scanner_loop() -> None:
         _flow_session = session_status()
         # Reserve the next full scan's measured runtime and a conservative
         # optional-flow estimate BEFORE starting a non-preemptible DB workload.
+        from engine.scanner_cadence_closure import next_scan_sleep
         from engine.scanner_freshness_deadline import deadline_plan, safe_positive
         with STATE_LOCK:
             _expected_scan = _SCAN_COMPLETION_RUNTIME.get("last_duration_seconds")
@@ -4981,7 +4982,8 @@ def scanner_loop() -> None:
             _expected_scan = _SCAN_COMPLETION_RUNTIME.get("last_duration_seconds")
         _plan = deadline_plan(_stale, _age, safe_positive(_expected_scan, 90.0),
                               margin_seconds=_reserve)
-        _sleep = min(max(0.0, float(SCAN_INTERVAL_SECONDS)), _plan.sleep_seconds)
+        _sleep = min(max(0.0, float(SCAN_INTERVAL_SECONDS)), _plan.sleep_seconds,
+                     next_scan_sleep(SCAN_INTERVAL_SECONDS, _stale, _age, _reserve))
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["last_post_scan_completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             _SCAN_COMPLETION_RUNTIME["last_post_scan_duration_seconds"] = _post_scan_elapsed
