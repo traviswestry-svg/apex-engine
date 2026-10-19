@@ -7,7 +7,7 @@ from engine.scanner_runtime_truth import resolve_scanner_runtime
 def test_release_truth_and_scanner_completion_guardrails():
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
     assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.37'
-    assert manifest['build_name'] == 'Canonical Feature Lifecycle & Excursion Ownership Convergence'
+    assert manifest['build_name'] == 'Forecast Diagnostics Production Promotion & Persistence Closure'
     g = manifest['guardrails']
     assert g['scanner_completion_truth_separates_heartbeat_from_full_scan'] is True
     assert g['scanner_background_activity_substitutes_for_full_scan'] is False
