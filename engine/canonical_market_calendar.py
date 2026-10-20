@@ -1,4 +1,4 @@
-"""APEX 69.10.32.1 — canonical historical US equity/options session calendar.
+"""APEX 69.10.33 — canonical historical US equity/options session calendar.
 
 Read-only calendar authority for attribution. It classifies an arbitrary timestamp
 using America/New_York, full-day closure dates already governed by APEX, and RTH
@@ -9,7 +9,7 @@ import datetime as dt
 from typing import Any, Dict
 from zoneinfo import ZoneInfo
 
-VERSION = "69.10.32.1"
+VERSION = "69.10.33"
 TZ = ZoneInfo("America/New_York")
 FULL_DAY_CLOSURES = frozenset({
     "2026-01-01","2026-01-19","2026-02-16","2026-04-03","2026-05-25","2026-06-19","2026-07-03","2026-09-07","2026-11-26","2026-12-25",

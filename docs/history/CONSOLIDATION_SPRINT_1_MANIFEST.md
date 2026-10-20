@@ -142,3 +142,9 @@ FROZEN_MAX 39 → 37.
 
 ## Validation
 Full suite 1,518 passed / 0 failed.
+
+## Later test-only allowance (2026-10-20)
+- `engine.flow_learning_checkpoint` remains test-only while its checkpoint
+  foundation awaits integration with the scanner and pipeline. Its tests cover
+  persistence and compare-and-swap behavior; it is not runtime execution
+  authority.
