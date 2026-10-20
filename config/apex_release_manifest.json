@@ -1,12 +1,12 @@
 {
-  "apex_version": "69.10.37",
-  "build_name": "Forecast Diagnostics Production Promotion & Persistence Closure",
+  "apex_version": "69.10.39",
+  "build_name": "TradersPost Paper Execution & Forward Performance Validation",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
   "canonical_release_source": "config/apex_release_manifest.json",
   "database_schema_version": "8",
-  "released_at": "2026-10-09",
+  "released_at": "2026-10-20",
   "guardrails": {
     "universal_trigger_observatory": true,
     "captures_all_genuine_trade_triggers": true,
@@ -687,15 +687,17 @@
     "forecast_diagnostics_frozen_at_decision_time": true,
     "forecast_diagnostics_no_historical_backfill": true,
     "forecast_diagnostics_no_scoring_change": true,
-    "forecast_diagnostics_no_execution_authority": true
+    "forecast_diagnostics_no_execution_authority": true,
+    "paper_gateway_operator_approval_required": true,
+    "paper_gateway_default_disabled": true
   },
   "legacy_identity": {
     "application_version": "25.1.1_DECISION_QUALITY",
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.37",
-  "application_version": "69.10.37",
+  "semantic_version": "69.10.39",
+  "application_version": "69.10.39",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

@@ -11,6 +11,7 @@ Every JSON response uses the shared envelope:
 from __future__ import annotations
 
 import datetime as dt
+import os
 import time
 from typing import Any, Callable, Dict, Optional
 
@@ -94,6 +95,28 @@ def register_trade_routes(
             return expected_path_provider() if expected_path_provider else None
         except Exception:
             return None
+
+    # APEX 69.10.39 — segregated paper webhook, no broker adapter mutation.
+    @app.route("/api/paper/traderspost/status")
+    def _tp_paper_status():
+        return jsonify({"ok": True, "mode": os.getenv("APEX_TRADERSPOST_MODE", "disabled"),
+                        "send_enabled": os.getenv("APEX_TRADERSPOST_SEND_ENABLED", "false").lower() == "true",
+                        "live_etrade_order_routing_enabled": os.getenv("APEX_LIVE_ORDER_ROUTING_ENABLED", "false").lower() == "true",
+                        "fill_confirmation_supported": False})
+
+    @app.route("/api/paper/traderspost/dispatch", methods=["POST"])
+    def _tp_paper_dispatch():
+        # Separate operator token; never reuse the webhook URL as an auth token.
+        import secrets
+        configured = os.getenv("APEX_TRADERSPOST_OPERATOR_TOKEN", "")
+        supplied = request.headers.get("X-APEX-Paper-Token", "")
+        if len(configured) < 24 or not secrets.compare_digest(configured, supplied):
+            return jsonify({"ok": False, "error": "unauthorized"}), 403
+        from engine.execution.traderspost_paper import dispatch
+        try:
+            return jsonify({"ok": True, **dispatch(request.get_json(silent=True) or {})})
+        except (ValueError, OSError) as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
 
     # ── broker status / accounts ─────────────────────────────────────────
     @app.route("/api/broker/etrade/status")
@@ -315,6 +338,8 @@ def register_trade_routes(
 
     @app.route("/api/trade/spx/place-entry", methods=["POST"])
     def _place_entry():
+        if os.getenv("APEX_LIVE_ORDER_ROUTING_ENABLED", "false").lower() != "true":
+            return jsonify(envelope(False, errors=["Live E*TRADE order routing disabled; paper gateway is separate."])), 403
         body = request.get_json(silent=True) or {}
         if not body.get("confirmed") and guard.RiskLimits.from_env().require_confirmation:
             return jsonify(envelope(False, errors=["Confirmation required (confirmed=true)."]))
@@ -410,6 +435,8 @@ def register_trade_routes(
 
     @app.route("/api/trade/spx/place-strategy", methods=["POST"])
     def _place_strategy():
+        if os.getenv("APEX_LIVE_ORDER_ROUTING_ENABLED", "false").lower() != "true":
+            return jsonify(envelope(False, errors=["Live E*TRADE order routing disabled; paper gateway is separate."])), 403
         body = request.get_json(silent=True) or {}
         if not body.get("confirmed"):
             return jsonify(envelope(False, errors=["Explicit human confirmation is required."]))
@@ -482,6 +509,8 @@ def register_trade_routes(
 
     @app.route("/api/trade/spx/place-change", methods=["POST"])
     def _place_change():
+        if os.getenv("APEX_LIVE_ORDER_ROUTING_ENABLED", "false").lower() != "true":
+            return jsonify(envelope(False, errors=["Live E*TRADE order routing disabled; paper gateway is separate."])), 403
         body = request.get_json(silent=True) or {}
         if not body.get("confirmed") and guard.RiskLimits.from_env().require_confirmation:
             return jsonify(envelope(False, errors=["Confirmation required (confirmed=true)."]))
@@ -507,6 +536,8 @@ def register_trade_routes(
 
     @app.route("/api/trade/spx/cancel-order", methods=["POST"])
     def _cancel_order():
+        if os.getenv("APEX_LIVE_ORDER_ROUTING_ENABLED", "false").lower() != "true":
+            return jsonify(envelope(False, errors=["Live E*TRADE order routing disabled; paper gateway is separate."])), 403
         body = request.get_json(silent=True) or {}
         order_id = body.get("order_id")
         if not order_id:
@@ -519,6 +550,8 @@ def register_trade_routes(
 
     @app.route("/api/trade/spx/flatten", methods=["POST"])
     def _flatten():
+        if os.getenv("APEX_LIVE_ORDER_ROUTING_ENABLED", "false").lower() != "true":
+            return jsonify(envelope(False, errors=["Live E*TRADE order routing disabled; paper gateway is separate."])), 403
         body = request.get_json(silent=True) or {}
         if not body.get("confirmed") and guard.RiskLimits.from_env().require_confirmation:
             return jsonify(envelope(False, errors=["Confirmation required to flatten (confirmed=true)."]))
