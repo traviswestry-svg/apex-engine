@@ -38,6 +38,7 @@ RUNTIME_ROOTS = ["app", "wsgi", "scanner_worker", "signal_evaluator",
 # consolidation manifest.
 TEST_ONLY_ALLOWLIST = {
     "engine.canonical_decision",
+    "engine.flow_learning_checkpoint",
 }
 
 _VERSION_SUFFIX = re.compile(r"_v\d")
