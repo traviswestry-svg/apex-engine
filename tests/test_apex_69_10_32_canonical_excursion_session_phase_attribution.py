@@ -52,8 +52,13 @@ def test_summary_preserves_evidence_and_attributes_both_classes(tmp_path):
 def test_release_metadata_ratchets_to_691032():
     root=Path(__file__).resolve().parents[1]
     m=json.loads((root/'config/apex_release_manifest.json').read_text())
+<<<<<<< Updated upstream
     assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.37'
     assert m['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
+=======
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.39'
+    assert m['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
+>>>>>>> Stashed changes
     registry=(root/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.37' in registry
+    assert 'apex_version: 69.10.39' in registry
     assert 'canonical_excursion_session_phase_attribution:' in registry

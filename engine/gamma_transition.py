@@ -366,7 +366,11 @@ def _prior(path: str, ticker: str, observed: dt.datetime, minutes: int) -> Optio
             "WHERE ticker=? AND observed_at<=? ORDER BY observed_at DESC LIMIT 1",
             (ticker, target.isoformat()),
         ).fetchone()
+<<<<<<< Updated upstream
     return _row_to_snapshot(dict(r)) if r else None
+=======
+    return _row_to_snapshot(r) if r else None
+>>>>>>> Stashed changes
 
 
 def gamma_model_integrity(snapshot: Mapping[str, Any]) -> Dict[str, Any]:

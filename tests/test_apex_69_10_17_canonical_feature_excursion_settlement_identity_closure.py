@@ -9,8 +9,13 @@ from engine import feature_store_writer as writer
 
 def test_release_truth_69_10_17():
     m=json.load(open('config/apex_release_manifest.json'))
+<<<<<<< Updated upstream
     assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.37'
     assert m['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
+=======
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.39'
+    assert m['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
+>>>>>>> Stashed changes
 
 
 def test_flow_store_db_path_is_dynamic_after_import(monkeypatch, tmp_path):
