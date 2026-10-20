@@ -4,13 +4,8 @@ from pathlib import Path
 
 def test_release_truth_and_guardrails():
     m=json.loads(Path('config/apex_release_manifest.json').read_text())
-<<<<<<< Updated upstream
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.37'
-    assert m['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
-=======
     assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.39'
     assert m['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
->>>>>>> Stashed changes
     g=m['guardrails']
     assert g['settlement_exact_excursion_owner_required'] is True
     assert g['settlement_legacy_singleton_recovery_allowed'] is False
