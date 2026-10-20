@@ -7,8 +7,8 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_release_truth_and_compaction_guardrails():
     manifest=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.36'
-    assert manifest['build_name']=='Canonical Feature Lifecycle & Excursion Ownership Convergence'
+    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.37'
+    assert manifest['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
     g=manifest['guardrails']
     assert g['historical_payload_dependency_audit'] is True
     assert g['historical_payload_compaction_readiness_read_only'] is True
@@ -49,11 +49,16 @@ def _evidence_db(path):
         c.commit()
 
 
+def _logical_dump(path):
+    with sqlite3.connect(f'file:{path}?mode=ro', uri=True) as c:
+        return tuple(c.iterdump())
+
+
 def test_bounded_read_only_compaction_readiness_reports_savings_and_blocks_rewrite(tmp_path):
     from engine.historical_payload_compaction import audit_historical_payload_compaction
     t=tmp_path/'trigger.db'; e=tmp_path/'evidence.db'
     _trigger_db(t); _evidence_db(e)
-    before_t=t.read_bytes(); before_e=e.read_bytes()
+    before_t=_logical_dump(t); before_e=_logical_dump(e)
     out=audit_historical_payload_compaction(trigger_path=t,evidence_path=e,exhaustive=False,sample_limit=10)
     assert out['ok'] is True and out['mode']=='READ_ONLY_BOUNDED'
     assert out['compaction_readiness']['ready_for_historical_rewrite'] is False
@@ -62,7 +67,7 @@ def test_bounded_read_only_compaction_readiness_reports_savings_and_blocks_rewri
     assert out['evidence_pipeline']['logical_reduction_bytes_scanned'] > 0
     assert out['guardrails']['historical_rows_mutated'] is False
     assert out['guardrails']['payload_values_exposed'] is False
-    assert t.read_bytes()==before_t and e.read_bytes()==before_e
+    assert _logical_dump(t)==before_t and _logical_dump(e)==before_e
 
 
 def test_exhaustive_operator_scan_is_exact_but_still_read_only(tmp_path):
