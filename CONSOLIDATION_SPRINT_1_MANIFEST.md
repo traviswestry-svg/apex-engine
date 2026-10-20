@@ -23,7 +23,8 @@ Duplicate test (byte-identical to tests/ copy; never collected — testpaths=["t
 ## Kept deliberately
 Test-only modules (no runtime path, but tests exercise them — candidates for a
 later sprint, not deletions): engine/canonical_decision.py,
-engine/outcome_grader.py, engine/trade_director_decision_quality.py
+engine.flow_learning_checkpoint.py (staged checkpoint store; no batch writer
+integrated yet), engine.outcome_grader.py, engine/trade_director_decision_quality.py
 
 ## Guard added
 tests/test_consolidation_guard.py
