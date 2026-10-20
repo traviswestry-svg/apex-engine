@@ -110,11 +110,15 @@ FROZEN_MAX 48 → 39. Test files renamed to unversioned names (8) plus 2 rescued
 ## Validation
 Full suite 1,518 passed / 0 failed.
 
-## Test-only module allowance
+## Test-only module allowances
 - `engine/scanner_freshness_deadline.py` remains a pure, test-covered planning
   policy with no execution authority; scanner runtime continues to use the
   existing cadence and post-scan deadline modules. Keep it allowlisted only
   while it remains intentionally test-only.
+- `engine.flow_learning_checkpoint` remains test-only while its checkpoint
+  foundation awaits integration with the scanner and pipeline. Its tests cover
+  persistence and compare-and-swap behavior; it is not runtime execution
+  authority.
 
 ---
 
