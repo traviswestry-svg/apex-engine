@@ -4552,10 +4552,11 @@ def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
     except Exception as _diagnostic_exc:
         print(f"[APEX DIAGNOSTICS] scan trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
     _attempt_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    _journal_attempt_id = __import__("uuid").uuid4().hex
     with STATE_LOCK:
         _SCAN_COMPLETION_RUNTIME["scan_attempts"] += 1
         _SCAN_COMPLETION_RUNTIME["last_attempt_at"] = _attempt_at
-    _record_scanner_coverage("ATTEMPT", occurred_at=_attempt_at)
+    _record_scanner_coverage("ATTEMPT", occurred_at=_attempt_at, attempt_id=_journal_attempt_id)
     if not SCAN_LOCK.acquire(blocking=False):
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["scan_lock_skips"] += 1
@@ -4570,7 +4571,7 @@ def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
                     end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome="LOCK_BUSY")
             except Exception as _diagnostic_exc:
                 print(f"[APEX DIAGNOSTICS] lock trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
-        _record_scanner_coverage("LOCK_BUSY", occurred_at=_attempt_at)
+        _record_scanner_coverage("LOCK_BUSY", occurred_at=_attempt_at, attempt_id=_journal_attempt_id)
         return False
     scan_start = time.monotonic()
     with STATE_LOCK:
@@ -4640,7 +4641,7 @@ def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
             _SCAN_COMPLETION_RUNTIME["last_duration_seconds"] = duration
             _SCAN_COMPLETION_RUNTIME["last_failure"] = None
             _SCAN_COMPLETION_RUNTIME["last_result"] = "COMPLETED"
-        _record_scanner_coverage("COMPLETED", duration=duration)
+        _record_scanner_coverage("COMPLETED", duration=duration, attempt_id=_journal_attempt_id)
         print(status, flush=True)
         if _coverage_id is not None:
             try:
@@ -4658,7 +4659,7 @@ def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             _SCAN_COMPLETION_RUNTIME["last_failure"] = f"{type(e).__name__}: {e}"
             _SCAN_COMPLETION_RUNTIME["last_result"] = "FAILED"
-        _record_scanner_coverage("FAILED", reason=type(e).__name__)
+        _record_scanner_coverage("FAILED", reason=type(e).__name__, attempt_id=_journal_attempt_id)
         print(f"Fatal scan error: {e}", flush=True)
         if _coverage_id is not None:
             try:
