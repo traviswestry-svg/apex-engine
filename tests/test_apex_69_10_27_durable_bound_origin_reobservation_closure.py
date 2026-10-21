@@ -29,8 +29,8 @@ def _seed():
 
 def test_release_truth():
     m=json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert m["apex_version"] == "69.10.40"
-    assert m["build_name"] == "Paper Execution Authority & Reconciliation Foundation"
+    assert m["apex_version"] == "69.10.41"
+    assert m["build_name"] == "Canonical Paper Decision Binding & Durable Ledger Activation"
     assert m["guardrails"]["durable_bound_origin_reobservation"] is True
     assert m["guardrails"]["origin_reobservation_requires_exact_registered_owner"] is True
 

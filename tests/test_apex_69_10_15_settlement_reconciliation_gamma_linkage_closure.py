@@ -5,7 +5,7 @@ from pathlib import Path
 def test_release_metadata_ratchet():
     root=Path(__file__).resolve().parents[1]
     m=json.loads((root/'config/apex_release_manifest.json').read_text())
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.40'
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.41'
     assert m['database_schema_version']=='8'
     assert m['guardrails']['durable_settlement_reconciliation'] is True
     assert m['guardrails']['gamma_linkage_historical_reconstruction'] is False
