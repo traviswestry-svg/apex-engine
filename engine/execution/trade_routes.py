@@ -123,6 +123,24 @@ def register_trade_routes(
             "send_enabled": os.getenv("APEX_TRADERSPOST_SEND_ENABLED", "false").lower() == "true",
         }), 200
 
+    @app.route("/api/paper/traderspost/readiness", methods=["GET"])
+    def _tp_paper_readiness():
+        if not _tp_paper_authorized():
+            return jsonify({"ok": False, "authorized": False}), 403
+        from engine.execution.traderspost_paper import readiness
+        return jsonify(readiness()), 200
+
+    @app.route("/api/paper/traderspost/connectivity-test", methods=["POST"])
+    def _tp_paper_connectivity_test():
+        if not _tp_paper_authorized():
+            return jsonify({"ok": False, "authorized": False}), 403
+        from engine.execution.traderspost_paper import connectivity_test
+        try:
+            result = connectivity_test()
+            return jsonify(result), 200 if result["ok"] else 502
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+
     @app.route("/api/paper/traderspost/dispatch", methods=["POST"])
     def _tp_paper_dispatch():
         # Same operator-token enforcement as the read-only probe.

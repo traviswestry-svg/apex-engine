@@ -14,6 +14,7 @@ import os
 import sqlite3
 import urllib.parse
 import urllib.request
+import urllib.error
 from zoneinfo import ZoneInfo
 
 VERSION = '69.10.39'
@@ -192,3 +193,74 @@ def grade(signal_id, *, db_path=None, fee_per_contract=Decimal('0.00')):
             'model': 'long_option_entry_ask_exit_bid', 'entry_debit': float(debit),
             'exit_credit': float(credit), 'estimated_net_pnl': float(credit - debit - fees),
             'fees': float(fees), 'quote_sources': [entry[5], exit_[5]]}
+
+
+# APEX 69.10.39 paper integration diagnostic patch.
+# This probe is deliberately separate from dispatch(), creates no paper_signal rows,
+# and hardcodes the documented TradersPost test flag. It cannot be converted to
+# an order request through caller-controlled fields.
+def readiness():
+    """Read-only, redacted deployment readiness report (not approval to trade)."""
+    url = os.getenv('APEX_TRADERSPOST_WEBHOOK_URL', '')
+    parsed = urllib.parse.urlparse(url)
+    webhook_valid = (parsed.scheme == 'https'
+                     and parsed.hostname == 'webhooks.traderspost.io'
+                     and parsed.port is None
+                     and len(parsed.path.split('/')) == 5
+                     and parsed.path.startswith('/trading/webhook/')
+                     and all(parsed.path.split('/')[3:]))
+    flags = {
+        'paper_mode': os.getenv('APEX_TRADERSPOST_MODE', 'disabled') == 'paper',
+        'paper_account_attested': os.getenv('APEX_TRADERSPOST_PAPER_CONFIRMED', 'false').lower() == 'true',
+        'webhook_configured': webhook_valid,
+        'operator_token_configured': len(os.getenv('APEX_TRADERSPOST_OPERATOR_TOKEN', '')) >= 24,
+        'live_order_routing_disabled': os.getenv('APEX_LIVE_ORDER_ROUTING_ENABLED', 'false').lower() != 'true',
+        'send_enabled': os.getenv('APEX_TRADERSPOST_SEND_ENABLED', 'false').lower() == 'true',
+    }
+    blockers = [k for k,v in flags.items() if not v]
+    blockers.extend(['canonical_decision_authority_not_server_verified',
+                     'broker_fill_confirmation_unavailable',
+                     'position_exit_reconciliation_unverified',
+                     'daily_realized_loss_limit_not_enforced'])
+    return {'ok': True, 'mode': 'paper' if flags['paper_mode'] else 'disabled',
+            'configuration': flags, 'ready_for_unattended_orders': False,
+            'blockers': blockers, 'credentials_exposed': False,
+            'test_signal_creates_orders': False}
+
+
+def connectivity_test(*, sender=None):
+    """Send ONLY a fixed TradersPost no-order test signal; never dispatch().
+
+    Not market-hours gated because the destination explicitly receives test=True.
+    A successful HTTP response is transport acceptance, not a fill or order.
+    """
+    info = readiness()
+    flags = info['configuration']
+    required = ('paper_mode', 'paper_account_attested', 'webhook_configured',
+                'operator_token_configured', 'live_order_routing_disabled')
+    if not all(flags[k] for k in required):
+        raise ValueError('paper test gateway configuration not ready')
+    if not flags['send_enabled']:
+        raise ValueError('webhook sends disabled')
+    url = os.environ['APEX_TRADERSPOST_WEBHOOK_URL']
+    payload = {'ticker': 'SPX', 'action': 'buy', 'test': True,
+               'message': 'APEX 69.10.39 no-order connectivity probe',
+               'extras': {'apex_probe': True, 'paper_only': True}}
+    req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'),
+                                 headers={'Content-Type': 'application/json'}, method='POST')
+    try:
+        if sender is None:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                status_code = int(response.status)
+        else:
+            status_code, _body = sender(req)
+            status_code = int(status_code)
+    except urllib.error.HTTPError as exc:
+        status_code = int(exc.code)
+    except Exception:
+        return {'ok': False, 'status': 'DELIVERY_UNKNOWN', 'orders_created': False,
+                'fill_confirmed': False, 'test': True}
+    return {'ok': 200 <= status_code < 300,
+            'status': 'TEST_WEBHOOK_ACCEPTED' if 200 <= status_code < 300 else 'TEST_WEBHOOK_REJECTED',
+            'http_status': status_code, 'orders_created': False,
+            'fill_confirmed': False, 'test': True}
