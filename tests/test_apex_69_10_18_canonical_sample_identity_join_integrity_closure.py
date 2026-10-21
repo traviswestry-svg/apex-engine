@@ -15,13 +15,8 @@ def _init(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d=json.loads(Path('config/apex_release_manifest.json').read_text())
-<<<<<<< Updated upstream
-    assert d['apex_version']=='69.10.37'
-    assert d['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
-=======
-    assert d['apex_version']=='69.10.39'
-    assert d['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
->>>>>>> Stashed changes
+    assert d['apex_version']=='69.10.40'
+    assert d['build_name']=='Paper Execution Authority & Reconciliation Foundation'
     assert d['guardrails']['canonical_identity_join_reconstructs_identity'] is False
     assert d['guardrails']['canonical_identity_join_writes_evidence'] is False
 

@@ -7,20 +7,15 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_release_truth_and_compaction_guardrails():
     manifest=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-<<<<<<< Updated upstream
-    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.37'
-    assert manifest['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
-=======
-    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.39'
-    assert manifest['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
->>>>>>> Stashed changes
+    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.40'
+    assert manifest['build_name']=='Paper Execution Authority & Reconciliation Foundation'
     g=manifest['guardrails']
     assert g['historical_payload_dependency_audit'] is True
     assert g['historical_payload_compaction_readiness_read_only'] is True
     assert g['historical_payload_rewrite_enabled'] is False
     assert g['historical_payload_archival_sidecar_required_before_lossy_rewrite'] is True
     registry=(ROOT/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.39' in registry
+    assert 'apex_version: 69.10.40' in registry
     assert 'historical_evidence_payload_dependency_compaction_readiness:' in registry
 
 

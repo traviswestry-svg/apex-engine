@@ -138,8 +138,8 @@ def register_trade_routes(
         try:
             result = connectivity_test()
             return jsonify(result), 200 if result["ok"] else 502
-        except ValueError as exc:
-            return jsonify({"ok": False, "error": str(exc)}), 400
+        except ValueError:
+            return jsonify({"ok": False, "error": "invalid connectivity test request"}), 400
 
     # APEX paper Control Panel: read-only, protected by engine.auth's existing
     # application-wide browser-session/API-key authentication. No operator token

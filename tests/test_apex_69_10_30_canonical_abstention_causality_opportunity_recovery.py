@@ -71,13 +71,8 @@ def test_summary_is_observational_and_separates_explicit_from_contributor(tmp_pa
 def test_release_metadata_ratchets_to_691031():
     root=Path(__file__).resolve().parents[1]
     m=json.loads((root/'config/apex_release_manifest.json').read_text())
-<<<<<<< Updated upstream
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.37'
-    assert m['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
-=======
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.39'
-    assert m['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
->>>>>>> Stashed changes
+    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.40'
+    assert m['build_name']=='Paper Execution Authority & Reconciliation Foundation'
     registry=(root/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.39' in registry
+    assert 'apex_version: 69.10.40' in registry
     assert 'canonical_abstention_causality_opportunity_recovery_intelligence:' in registry
