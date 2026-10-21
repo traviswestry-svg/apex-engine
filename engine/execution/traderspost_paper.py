@@ -119,6 +119,10 @@ def dispatch(d, *, db_path=None, sender=None, clock=None):
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme != 'https' or parsed.hostname != 'webhooks.traderspost.io' or not parsed.path.startswith('/trading/webhook/') or len(parsed.path.split('/')) != 5:
         raise ValueError('invalid TradersPost webhook URL')
+    # 69.10.40: caller-provided governance assertions do not prove server authority.
+    # No trusted canonical decision adapter or confirmed paper broker adapter is
+    # wired yet. Prevent ALL real order-like dispatch until both are available.
+    raise ValueError('PAPER_EXECUTION_AUTHORITY_NOT_VERIFIED_69_10_40')
     payload = make_signal(d, clock=clock)
     signal_id = d['signal_id']
     with connect(db_path) as db:
@@ -291,7 +295,9 @@ def panel_summary(*, db_path=None, limit=25):
             ledger_state = 'AVAILABLE'
         except (sqlite3.Error, OSError, ValueError):
             ledger_state = 'UNAVAILABLE'
-    return dict(ok=True, mode=info['mode'], configuration=info['configuration'],
+    from engine.execution.paper_execution_foundation import snapshot
+    foundation = snapshot(db_path=db_path)
+    return dict(ok=True, mode=info['mode'], configuration=info['configuration'], foundation=foundation,
                 blockers=info['blockers'],
                 ready_for_unattended_orders=False,
                 fill_confirmation_supported=False,

@@ -22,21 +22,18 @@ def test_fail_closed(monkeypatch,tmp_path):
     monkeypatch.delenv('APEX_TRADERSPOST_MODE',raising=False)
     with pytest.raises(ValueError):tp.dispatch(BASE,db_path=tmp_path/'paper.db',clock=CLOCK)
 
-def test_duplicate_and_independent_grading(monkeypatch,tmp_path):
+def test_legacy_dispatch_blocked_but_independent_quote_grader_retained(monkeypatch,tmp_path):
     monkeypatch.setenv('APEX_TRADERSPOST_MODE','paper')
     monkeypatch.setenv('APEX_TRADERSPOST_PAPER_CONFIRMED','true')
     monkeypatch.setenv('APEX_TRADERSPOST_SEND_ENABLED','true')
     monkeypatch.setenv('APEX_TRADERSPOST_WEBHOOK_URL','https://webhooks.traderspost.io/trading/webhook/uuid/password')
     db=tmp_path/'paper.db'
-    calls=[]
-    def sender(req):
-        calls.append(req)
-        return 200,b'ok'
-    result=tp.dispatch(BASE,db_path=db,sender=sender,clock=CLOCK)
-    assert result['status']=='WEBHOOK_ACCEPTED_UNCONFIRMED' and result['fill_confirmed'] is False
-    assert tp.dispatch(BASE,db_path=db,sender=sender,clock=CLOCK)['status']=='DUPLICATE_SUPPRESSED'
-    assert len(calls)==1
-    assert tp.grade(BASE['signal_id'],db_path=db)['status']=='PENDING_INDEPENDENT_QUOTES'
+    with pytest.raises(ValueError,match='AUTHORITY_NOT_VERIFIED'):
+        tp.dispatch(BASE,db_path=db,sender=lambda r: (_ for _ in ()).throw(AssertionError('sent')),clock=CLOCK)
+    # A legacy observational signal can still receive quote-only model grading.
+    with tp.connect(db) as connection:
+        connection.execute('INSERT INTO paper_signals(signal_id,created_at,status,payload_json,decision_id) VALUES(?,?,?,?,?)',
+             (BASE['signal_id'],CLOCK.isoformat(),'OBSERVATION_ONLY','{}',BASE['decision_id']))
     tp.record_quote(BASE['signal_id'],'entry',observed_at='2026-10-20T14:00:00Z',bid=3.8,ask=4,quantity=2,source='polygon',db_path=db)
     tp.record_quote(BASE['signal_id'],'exit',observed_at='2026-10-20T14:03:00Z',bid=5,ask=5.2,quantity=2,source='polygon',db_path=db)
     outcome=tp.grade(BASE['signal_id'],db_path=db,fee_per_contract=Decimal('0.65'))
@@ -48,14 +45,12 @@ def test_live_conflict_rejected(monkeypatch,tmp_path):
         tp.dispatch(BASE,db_path=tmp_path/'a.db',clock=CLOCK)
 
 
-def test_daily_entry_cap(monkeypatch,tmp_path):
+def test_legacy_dispatch_refuses_all_unverified_entries(monkeypatch,tmp_path):
     monkeypatch.delenv('APEX_LIVE_ORDER_ROUTING_ENABLED',raising=False)
     monkeypatch.setenv('APEX_TRADERSPOST_MODE','paper')
     monkeypatch.setenv('APEX_TRADERSPOST_PAPER_CONFIRMED','true')
     monkeypatch.setenv('APEX_TRADERSPOST_SEND_ENABLED','true')
     monkeypatch.setenv('APEX_TRADERSPOST_WEBHOOK_URL','https://webhooks.traderspost.io/trading/webhook/uuid/password')
-    db=tmp_path/'a.db'
-    for i in range(3):
-        assert tp.dispatch({**BASE,'signal_id':f'sample-order-{i:04}'},db_path=db,sender=lambda r:(200,b'ok'),clock=CLOCK)['status']=='WEBHOOK_ACCEPTED_UNCONFIRMED'
-    with pytest.raises(ValueError,match='daily maximum'):
-        tp.dispatch({**BASE,'signal_id':'sample-order-4'},db_path=db,sender=lambda r:(200,b'ok'),clock=CLOCK)
+    for i in range(4):
+        with pytest.raises(ValueError,match='AUTHORITY_NOT_VERIFIED'):
+            tp.dispatch({**BASE,'signal_id':f'sample-order-{i:04}'},db_path=tmp_path/'a.db',sender=lambda r: (_ for _ in ()).throw(AssertionError('sent')),clock=CLOCK)

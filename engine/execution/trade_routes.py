@@ -155,6 +155,15 @@ def register_trade_routes(
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    @app.route("/api/paper/traderspost/foundation", methods=["GET"])
+    def _tp_paper_foundation():
+        # Session/API authentication is applied by the existing APEX global guard.
+        # No operator token is needed for redacted read-only readiness.
+        from engine.execution.paper_execution_foundation import snapshot
+        response = jsonify(snapshot())
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.route("/api/paper/traderspost/dispatch", methods=["POST"])
     def _tp_paper_dispatch():
         # Same operator-token enforcement as the read-only probe.
