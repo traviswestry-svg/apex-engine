@@ -264,3 +264,37 @@ def connectivity_test(*, sender=None):
             'status': 'TEST_WEBHOOK_ACCEPTED' if 200 <= status_code < 300 else 'TEST_WEBHOOK_REJECTED',
             'http_status': status_code, 'orders_created': False,
             'fill_confirmed': False, 'test': True}
+
+
+def panel_summary(*, db_path=None, limit=25):
+    """Sanitized read-only panel snapshot; no operator token or webhook contents.
+
+    Missing ledger is reported as unavailable, never created as a side effect.
+    A webhook receipt never establishes an execution or fill.
+    """
+    from pathlib import Path
+    info = readiness()
+    ledger = Path(str(db_path or database_path()))
+    recent = []
+    ledger_state = 'NOT_INITIALIZED'
+    if ledger.is_file():
+        try:
+            with sqlite3.connect(f'file:{ledger}?mode=ro', uri=True, timeout=2) as db:
+                rows = db.execute(
+                    'SELECT signal_id, created_at, status, response_code, error_code '
+                    'FROM paper_signals ORDER BY created_at DESC LIMIT ?',
+                    (min(50, max(1, int(limit))),)
+                ).fetchall()
+            recent = [dict(signal_id=str(row[0]), created_at=row[1], status=row[2],
+                           http_status=row[3], error_code=row[4], fill_confirmed=False)
+                      for row in rows]
+            ledger_state = 'AVAILABLE'
+        except (sqlite3.Error, OSError, ValueError):
+            ledger_state = 'UNAVAILABLE'
+    return dict(ok=True, mode=info['mode'], configuration=info['configuration'],
+                blockers=info['blockers'],
+                ready_for_unattended_orders=False,
+                fill_confirmation_supported=False,
+                ledger_state=ledger_state, recent_signals=recent,
+                credentials_exposed=False,
+                paper_performance_state='UNVERIFIED_NO_BROKER_FILL_RECONCILIATION')
