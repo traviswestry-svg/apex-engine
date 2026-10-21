@@ -33,6 +33,7 @@ def test_release_truth_and_capability():
     m = json.loads(Path("config/apex_release_manifest.json").read_text())
     assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.39"
     assert m["build_name"] == "TradersPost Paper Execution & Forward Performance Validation"
+
     assert m["database_schema_version"] == "8"
     g = m["guardrails"]
     assert g["origin_provenance_transport_coverage_closure"] is True
