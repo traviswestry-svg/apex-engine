@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import secrets
 import time
 from typing import Any, Callable, Dict, Optional
 
@@ -104,13 +105,28 @@ def register_trade_routes(
                         "live_etrade_order_routing_enabled": os.getenv("APEX_LIVE_ORDER_ROUTING_ENABLED", "false").lower() == "true",
                         "fill_confirmation_supported": False})
 
-    @app.route("/api/paper/traderspost/dispatch", methods=["POST"])
-    def _tp_paper_dispatch():
-        # Separate operator token; never reuse the webhook URL as an auth token.
-        import secrets
+    def _tp_paper_authorized() -> bool:
+        """One shared operator authentication check for paper-only routes."""
         configured = os.getenv("APEX_TRADERSPOST_OPERATOR_TOKEN", "")
         supplied = request.headers.get("X-APEX-Paper-Token", "")
-        if len(configured) < 24 or not secrets.compare_digest(configured, supplied):
+        return len(configured) >= 24 and secrets.compare_digest(configured, supplied)
+
+    @app.route("/api/paper/traderspost/auth-check", methods=["GET"])
+    def _tp_paper_auth_check():
+        """Read-only operator-token probe; never transmits an order or a secret."""
+        if not _tp_paper_authorized():
+            return jsonify({"ok": False, "authorized": False}), 403
+        return jsonify({
+            "ok": True,
+            "authorized": True,
+            "mode": os.getenv("APEX_TRADERSPOST_MODE", "disabled"),
+            "send_enabled": os.getenv("APEX_TRADERSPOST_SEND_ENABLED", "false").lower() == "true",
+        }), 200
+
+    @app.route("/api/paper/traderspost/dispatch", methods=["POST"])
+    def _tp_paper_dispatch():
+        # Same operator-token enforcement as the read-only probe.
+        if not _tp_paper_authorized():
             return jsonify({"ok": False, "error": "unauthorized"}), 403
         from engine.execution.traderspost_paper import dispatch
         try:
