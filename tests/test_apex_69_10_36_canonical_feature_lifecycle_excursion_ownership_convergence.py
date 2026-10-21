@@ -14,8 +14,8 @@ def _use_db(tmp_path):
 
 def test_release_truth_and_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == "69.10.39"
-    assert manifest["build_name"] == "TradersPost Paper Execution & Forward Performance Validation"
+    assert manifest["apex_version"] == "69.10.40"
+    assert manifest["build_name"] == "Paper Execution Authority & Reconciliation Foundation"
     g = manifest["guardrails"]
     assert g["origin_event_facts_persisted_at_canonical_binding"] is True
     assert g["excursion_owner_must_equal_registered_feature_sample"] is True
