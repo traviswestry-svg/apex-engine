@@ -45,7 +45,6 @@ def test_release_manifest_and_registry_ratchet():
     manifest = json.loads((root / "config/apex_release_manifest.json").read_text())
     assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.39"
     assert manifest["build_name"] == "TradersPost Paper Execution & Forward Performance Validation"
-
     registry = (root / "config/apex_capability_registry.yaml").read_text()
     assert "apex_version: 69.10.39" in registry
     assert "unified_structural_map_reversal_path_orchestration" in registry

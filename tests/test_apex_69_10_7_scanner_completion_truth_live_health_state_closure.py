@@ -8,7 +8,6 @@ def test_release_truth_and_scanner_completion_guardrails():
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
     assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.39'
     assert manifest['build_name'] == 'TradersPost Paper Execution & Forward Performance Validation'
-
     g = manifest['guardrails']
     assert g['scanner_completion_truth_separates_heartbeat_from_full_scan'] is True
     assert g['scanner_background_activity_substitutes_for_full_scan'] is False

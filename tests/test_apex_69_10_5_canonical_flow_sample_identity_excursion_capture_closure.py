@@ -67,7 +67,6 @@ def test_release_truth_and_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
     assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.39"
     assert manifest["build_name"] == "TradersPost Paper Execution & Forward Performance Validation"
-
     g = manifest["guardrails"]
     assert g["flow_source_stage_canonical_excursion_capture_allowed"] is False
     assert g["flow_source_stage_missing_feature_counts_as_capture_failure"] is False

@@ -141,6 +141,20 @@ def register_trade_routes(
         except ValueError:
             return jsonify({"ok": False, "error": "invalid connectivity test request"}), 400
 
+    # APEX paper Control Panel: read-only, protected by engine.auth's existing
+    # application-wide browser-session/API-key authentication. No operator token
+    # is required for read-only data, and no trading endpoint is exposed here.
+    @app.route("/apex_os/traderspost", methods=["GET"])
+    def _tp_paper_control_panel():
+        return render_template("traderspost_paper_panel.html")
+
+    @app.route("/api/paper/traderspost/panel-summary", methods=["GET"])
+    def _tp_paper_panel_summary():
+        from engine.execution.traderspost_paper import panel_summary
+        response = jsonify(panel_summary())
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.route("/api/paper/traderspost/dispatch", methods=["POST"])
     def _tp_paper_dispatch():
         # Same operator-token enforcement as the read-only probe.

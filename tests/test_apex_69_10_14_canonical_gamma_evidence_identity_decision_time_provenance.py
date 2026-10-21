@@ -50,7 +50,6 @@ def test_release_identity_and_capability_registry_are_691014():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
     assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.39"
     assert manifest["build_name"] == "TradersPost Paper Execution & Forward Performance Validation"
-
     assert manifest["database_schema_version"] == "8"
     g = manifest["guardrails"]
     assert g["canonical_gamma_snapshot_identity"] is True

@@ -54,7 +54,6 @@ def test_release_metadata_ratchets_to_691032():
     m=json.loads((root/'config/apex_release_manifest.json').read_text())
     assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.39'
     assert m['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
-
     registry=(root/'config/apex_capability_registry.yaml').read_text()
     assert 'apex_version: 69.10.39' in registry
     assert 'canonical_excursion_session_phase_attribution:' in registry

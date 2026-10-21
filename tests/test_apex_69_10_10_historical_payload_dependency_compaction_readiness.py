@@ -9,7 +9,6 @@ def test_release_truth_and_compaction_guardrails():
     manifest=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
     assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.39'
     assert manifest['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
-
     g=manifest['guardrails']
     assert g['historical_payload_dependency_audit'] is True
     assert g['historical_payload_compaction_readiness_read_only'] is True
