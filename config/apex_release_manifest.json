@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.40",
-  "build_name": "Paper Execution Authority & Reconciliation Foundation",
+  "apex_version": "69.10.41",
+  "build_name": "Canonical Paper Decision Binding & Durable Ledger Activation",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",

@@ -164,6 +164,21 @@ def register_trade_routes(
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    @app.route("/api/paper/traderspost/ledger-health", methods=["GET"])
+    def _tp_paper_ledger_health():
+        # Existing global session/API authentication applies; no write operations.
+        from engine.execution.paper_execution_foundation import snapshot
+        data = snapshot()
+        response = jsonify({"ok": data.get("ok", False),
+                            "ledger_state": data.get("ledger_state"),
+                            "records": data.get("records", 0),
+                            "unresolved": data.get("unresolved", 0),
+                            "ready_for_unattended_orders": False,
+                            "canonical_binding_operational": False,
+                            "broker_reconciliation_operational": False})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.route("/api/paper/traderspost/dispatch", methods=["POST"])
     def _tp_paper_dispatch():
         # Same operator-token enforcement as the read-only probe.

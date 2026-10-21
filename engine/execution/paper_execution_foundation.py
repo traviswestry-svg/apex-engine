@@ -1,4 +1,4 @@
-"""APEX 69.10.40: durable, fail-closed paper execution authority foundation.
+"""APEX 69.10.41: durable, fail-closed paper execution authority foundation.
 
 This is an evidence/authority boundary, NOT a TradersPost broker fill adapter.
 No callable in this module sends orders or infers fills from HTTP receipts.
@@ -14,7 +14,7 @@ import os
 import sqlite3
 
 ET = ZoneInfo("America/New_York")
-VERSION = "69.10.40"
+VERSION = "69.10.41"
 REQUIRED_STATES = ("DECISION_OBSERVED", "APPROVED", "SUBMITTED_UNCONFIRMED", "DELIVERY_UNKNOWN",
                    "BROKER_ACKNOWLEDGED", "FILL_VERIFIED", "EXIT_VERIFIED", "RECONCILED_CLOSED", "REJECTED")
 
@@ -25,6 +25,7 @@ def _connect(path=None):
     db = sqlite3.connect(_db_path(path), timeout=10)
     db.execute("PRAGMA busy_timeout=10000")
     db.execute("PRAGMA foreign_keys=ON")
+    db.execute("PRAGMA journal_mode=WAL")
     db.execute("""CREATE TABLE IF NOT EXISTS paper_lifecycle (
       id TEXT PRIMARY KEY, decision_id TEXT NOT NULL, state TEXT NOT NULL,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL, contract_json TEXT NOT NULL,
@@ -40,6 +41,63 @@ def _connect(path=None):
        ON paper_lifecycle(execution_source,entry_fill_id) WHERE entry_fill_id IS NOT NULL""")
     db.commit()
     return db
+
+def initialize_ledger(*, db_path=None):
+    """Explicitly create the ledger on persistent storage; NEVER authorize trading.
+
+    No HTTP mutation route exposes this initializer. Invoke from controlled service
+    startup/migration after ensuring /data is a mounted persistent disk.
+    """
+    path = Path(_db_path(db_path))
+    if not path.parent.is_dir():
+        raise RuntimeError("PAPER_LEDGER_PARENT_MISSING")
+    with _connect(str(path)) as db:
+        db.execute("PRAGMA integrity_check")
+        check = db.execute("PRAGMA integrity_check").fetchone()[0]
+        if check != "ok":
+            raise RuntimeError("PAPER_LEDGER_INTEGRITY_FAILURE")
+        db.execute("CREATE TABLE IF NOT EXISTS paper_decision_bindings (lifecycle_id TEXT PRIMARY KEY, canonical_decision_id TEXT NOT NULL, source_record_id TEXT NOT NULL, source_digest TEXT NOT NULL, bound_at TEXT NOT NULL, FOREIGN KEY(lifecycle_id) REFERENCES paper_lifecycle(id))")
+        db.commit()
+    return {"ok": True, "ledger_state": "AVAILABLE", "db_exists": path.is_file(), "dispatch_authorized": False}
+
+
+def bind_canonical_observation(identifier, decision_id, contract, *, trusted_reader, observed_at, db_path=None):
+    """Read exact, persisted server-owned evidence using a server-injected reader.
+
+    No request route accepts a reader, origin, or approval assertion. This binds
+    identity ONLY; it is deliberately not authorization to place an order.
+    `trusted_reader` must return the persisted record with exact decision ID,
+    contract, source record ID, and an origin from the canonical evidence store.
+    """
+    if not callable(trusted_reader):
+        raise ValueError("TRUSTED_READER_REQUIRED")
+    source = trusted_reader(decision_id)
+    if not isinstance(source, dict) or source.get("decision_id") != decision_id:
+        raise ValueError("CANONICAL_DECISION_NOT_FOUND")
+    if not source.get("record_id") or source.get("origin") not in ("canonical_decision_store", "canonical_scanner_persistence"):
+        raise ValueError("INVALID_CANONICAL_ORIGIN")
+    if not isinstance(source.get("contract"), dict) or source["contract"] != contract:
+        raise ValueError("CANONICAL_CONTRACT_MISMATCH")
+    if not source.get("persisted", False):
+        raise ValueError("UNPERSISTED_DECISION")
+    at = _timestamp(observed_at)
+    source_payload = {"decision_id":decision_id,"record_id":source["record_id"],"origin":source["origin"],"contract":contract}
+    digest = hashlib.sha256(json.dumps(source_payload,sort_keys=True,separators=(",", ":")).encode()).hexdigest()
+    initialize_ledger(db_path=db_path)
+    # Observation and provenance binding are atomic. Duplicate IDs fail closed.
+    with _connect(db_path) as db:
+        db.execute("BEGIN IMMEDIATE")
+        payload=json.dumps(contract,sort_keys=True,separators=(",", ":"))
+        try:
+            db.execute("INSERT INTO paper_lifecycle(id,decision_id,state,created_at,updated_at,contract_json,decision_origin) VALUES(?,?,?,?,?,?,?)",
+                (identifier,decision_id,"DECISION_OBSERVED",at,at,payload,source["origin"]))
+            db.execute("INSERT INTO paper_decision_bindings(lifecycle_id,canonical_decision_id,source_record_id,source_digest,bound_at) VALUES(?,?,?,?,?)",
+                (identifier,decision_id,str(source["record_id"]),digest,at))
+            db.execute("INSERT INTO paper_lifecycle_events(lifecycle_id,at,from_state,to_state,evidence_origin,evidence_digest) VALUES(?,?,?,?,?,?)",
+                (identifier,at,None,"DECISION_OBSERVED",source["origin"],digest))
+        except sqlite3.IntegrityError:
+            raise ValueError("duplicate lifecycle identity") from None
+    return {"id":identifier,"state":"DECISION_OBSERVED","canonical_bound":True,"dispatch_authorized":False}
 
 def _timestamp(value):
     at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
