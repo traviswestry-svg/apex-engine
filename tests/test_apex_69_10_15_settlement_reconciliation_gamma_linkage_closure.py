@@ -46,6 +46,7 @@ def test_release_scoped_gamma_linkage_does_not_reconstruct(tmp_path):
         c.execute("INSERT INTO decisions(decision_id,observed_at,ticker,learning_eligible,snapshot_json,canonical_gamma_snapshot_id) VALUES(?,?,?,?,?,?)",('legacy','2026-09-17T13:30:00Z','SPX',1,json.dumps({'apex_release_version':'69.10.14'}),None))
         c.execute("INSERT INTO decisions(decision_id,observed_at,ticker,learning_eligible,snapshot_json,canonical_gamma_snapshot_id) VALUES(?,?,?,?,?,?)",('new-linked','2026-09-21T13:30:00Z','SPX',1,json.dumps({'apex_release_version':current_release}),'g1'))
         c.execute("INSERT INTO decisions(decision_id,observed_at,ticker,learning_eligible,snapshot_json,canonical_gamma_snapshot_id) VALUES(?,?,?,?,?,?)",('new-missing','2026-09-21T13:31:00Z','SPX',1,json.dumps({'apex_release_version':current_release}),None))
+
     r=ep.readiness(db)['gamma_release_linkage']['current_release']
     assert r['decisions']==2 and r['gamma_linked']==1 and r['gamma_missing']==1
     assert r['legacy_rows_reconstructed']==0

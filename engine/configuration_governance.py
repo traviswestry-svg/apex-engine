@@ -316,6 +316,7 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_SCAN_COVERAGE_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded JSONL output for paired scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
 ])
 
+
 # APEX runtime memory and scanner diagnostics output configuration.
 _REGISTRY_DATA.extend([
  {'name':'APEX_MEMORY_CGROUP_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/sys/fs/cgroup','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Cgroup v2 directory used for runtime memory attribution.','safety_critical':False,'used_in_code':True},

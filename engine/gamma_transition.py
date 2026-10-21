@@ -369,6 +369,7 @@ def _prior(path: str, ticker: str, observed: dt.datetime, minutes: int) -> Optio
     return _row_to_snapshot(r) if r else None
 
 
+
 def gamma_model_integrity(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
     """Fail-closed metadata assessment; UNKNOWN is never interpreted as valid."""
     required = ("model_id", "model_version", "calculation_method", "gamma_unit")
