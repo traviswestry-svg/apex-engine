@@ -20,13 +20,9 @@ def stores(monkeypatch, tmp_path):
 
 def test_release_truth_capability_and_guardrails():
     m = json.loads(Path("config/apex_release_manifest.json").read_text())
-<<<<<<< Updated upstream
-    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.37"
-    assert m["build_name"] == "Forecast Diagnostics Production Promotion & Persistence Closure"
-=======
     assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.39"
     assert m["build_name"] == "TradersPost Paper Execution & Forward Performance Validation"
->>>>>>> Stashed changes
+
     g = m["guardrails"]
     assert g["persisted_feature_origin_identity_propagation_closure"] is True
     assert g["immutable_origin_provenance"] is True

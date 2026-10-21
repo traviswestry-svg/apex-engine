@@ -13,13 +13,9 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_guardrails():
     d = json.loads(Path("config/apex_release_manifest.json").read_text())
-<<<<<<< Updated upstream
-    assert d["apex_version"] == "69.10.37"
-    assert d["build_name"] == "Forecast Diagnostics Production Promotion & Persistence Closure"
-=======
     assert d["apex_version"] == "69.10.39"
     assert d["build_name"] == "TradersPost Paper Execution & Forward Performance Validation"
->>>>>>> Stashed changes
+
     g = d["guardrails"]
     assert g["canonical_settlement_cohort_exact_sample_id_only"] is True
     assert g["canonical_settlement_cohort_writes_evidence"] is False
