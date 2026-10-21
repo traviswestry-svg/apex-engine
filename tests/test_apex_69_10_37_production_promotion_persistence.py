@@ -6,7 +6,7 @@ from engine import evening_recap
 def test_release_metadata_and_no_authority():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / 'config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.39'
+    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.40'
     g = manifest['guardrails']
     assert g['automatic_order_submission'] is False
     assert g['forecast_diagnostics_no_execution_authority'] is True
