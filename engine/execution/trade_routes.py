@@ -180,6 +180,14 @@ def register_trade_routes(
     except (OSError, RuntimeError, __import__("sqlite3").Error) as exc:
         app.config["PAPER_RECONCILIATION_INIT_ERROR"] = type(exc).__name__ + ":" + str(exc)
 
+    # CSV evidence is staged only through offline trusted code; no upload or trade route.
+    from engine.execution.traderspost_export_evidence import initialize_export_inbox
+    try:
+        initialize_export_inbox()
+        app.config["PAPER_EXPORT_INBOX_INIT_ERROR"] = None
+    except (OSError, RuntimeError, __import__("sqlite3").Error) as exc:
+        app.config["PAPER_EXPORT_INBOX_INIT_ERROR"] = type(exc).__name__
+
     @app.route("/api/paper/traderspost/ledger-health", methods=["GET"])
     def _tp_paper_ledger_health():
         # Existing global session/API authentication applies; no write operations.
@@ -189,6 +197,8 @@ def register_trade_routes(
         binding = canonical_binding_health()
         from engine.execution.paper_reconciliation import reconciliation_health
         reconciliation = reconciliation_health()
+        from engine.execution.traderspost_export_evidence import export_inbox_health
+        export_inbox = export_inbox_health()
         response = jsonify({"ok": data.get("ok", False),
                             "ledger_state": data.get("ledger_state"),
                             "ledger_initialization_error": app.config.get("PAPER_LEDGER_INIT_ERROR"),
@@ -198,7 +208,11 @@ def register_trade_routes(
                             "canonical_binding_operational": binding["operational"],
                             "canonical_binding_detail": binding["reason"],
                             "broker_reconciliation_operational": False,
-                            "broker_reconciliation_detail": "NO_VERIFIED_TRADERSPOST_BROKER_READER",
+                            "broker_reconciliation_detail": "TRADERSPOST_DEVELOPER_API_UNAVAILABLE",
+                            "evidence_source": "MANUAL_CSV_EXPORT_QUARANTINED",
+                            "export_inbox_state": export_inbox["state"],
+                            "quarantined_csv_events": export_inbox["quarantined_csv_events"],
+                            "export_inbox_initialization_error": app.config.get("PAPER_EXPORT_INBOX_INIT_ERROR"),
                             "reconciliation_journal": reconciliation["journal_state"],
                             "quarantined_events": reconciliation["quarantined_events"],
                             "reconciliation_initialization_error": app.config.get("PAPER_RECONCILIATION_INIT_ERROR")})
