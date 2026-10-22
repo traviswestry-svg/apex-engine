@@ -173,6 +173,13 @@ def register_trade_routes(
     except (OSError, RuntimeError, __import__("sqlite3").Error) as exc:
         app.config["PAPER_LEDGER_INIT_ERROR"] = type(exc).__name__ + ":" + str(exc)
 
+    from engine.execution.paper_reconciliation import initialize_reconciliation
+    try:
+        initialize_reconciliation()
+        app.config["PAPER_RECONCILIATION_INIT_ERROR"] = None
+    except (OSError, RuntimeError, __import__("sqlite3").Error) as exc:
+        app.config["PAPER_RECONCILIATION_INIT_ERROR"] = type(exc).__name__ + ":" + str(exc)
+
     @app.route("/api/paper/traderspost/ledger-health", methods=["GET"])
     def _tp_paper_ledger_health():
         # Existing global session/API authentication applies; no write operations.
@@ -180,6 +187,8 @@ def register_trade_routes(
         from engine.execution.paper_execution_foundation import canonical_binding_health
         data = snapshot()
         binding = canonical_binding_health()
+        from engine.execution.paper_reconciliation import reconciliation_health
+        reconciliation = reconciliation_health()
         response = jsonify({"ok": data.get("ok", False),
                             "ledger_state": data.get("ledger_state"),
                             "ledger_initialization_error": app.config.get("PAPER_LEDGER_INIT_ERROR"),
@@ -188,7 +197,11 @@ def register_trade_routes(
                             "ready_for_unattended_orders": False,
                             "canonical_binding_operational": binding["operational"],
                             "canonical_binding_detail": binding["reason"],
-                            "broker_reconciliation_operational": False})
+                            "broker_reconciliation_operational": False,
+                            "broker_reconciliation_detail": "NO_VERIFIED_TRADERSPOST_BROKER_READER",
+                            "reconciliation_journal": reconciliation["journal_state"],
+                            "quarantined_events": reconciliation["quarantined_events"],
+                            "reconciliation_initialization_error": app.config.get("PAPER_RECONCILIATION_INIT_ERROR")})
         response.headers["Cache-Control"] = "no-store"
         return response
 
