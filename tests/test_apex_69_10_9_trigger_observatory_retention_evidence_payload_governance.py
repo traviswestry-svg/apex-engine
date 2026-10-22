@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json, sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -6,13 +7,8 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_release_truth_and_guardrails():
     m=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-<<<<<<< Updated upstream
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.37'
-    assert m['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
-=======
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.39'
-    assert m['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
->>>>>>> Stashed changes
+    assert m['apex_version']==m['semantic_version']==m['application_version']==CURRENT_APEX_VERSION
+    assert m['build_name']==CURRENT_BUILD_NAME
     g=m['guardrails']
     assert g['automatic_trigger_pruning'] is False
     assert g['trigger_observatory_prune_explicit_apply_only'] is True

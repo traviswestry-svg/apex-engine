@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 from pathlib import Path
 
@@ -6,8 +7,8 @@ from engine.scanner_runtime_truth import resolve_scanner_runtime
 
 def test_release_truth_and_authority_guardrails():
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.39'
-    assert manifest['build_name'] == 'TradersPost Paper Execution & Forward Performance Validation'
+    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == CURRENT_APEX_VERSION
+    assert manifest['build_name'] == CURRENT_BUILD_NAME
     g = manifest['guardrails']
     assert g['scanner_fresh_heartbeat_is_cross_process_authority'] is True
     assert g['scanner_process_false_state_overridden_by_web_local_true'] is False
@@ -17,7 +18,7 @@ def test_release_truth_and_authority_guardrails():
     assert g['scanner_authority_changes_trade_decisions'] is False
     assert g['scanner_authority_changes_execution_authority'] is False
     registry = Path('config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.39' in registry
+    assert f'apex_version: {CURRENT_APEX_VERSION}' in registry
     assert 'scanner_process_authority_cross_process_health_truth_closure:' in registry
 
 

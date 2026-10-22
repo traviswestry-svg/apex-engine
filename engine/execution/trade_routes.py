@@ -164,17 +164,30 @@ def register_trade_routes(
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    # Initialize once at registration after the durable /data mount is visible.
+    # Failure is reported read-only and NEVER changes execution authority.
+    from engine.execution.paper_execution_foundation import initialize_ledger
+    try:
+        initialize_ledger()
+        app.config["PAPER_LEDGER_INIT_ERROR"] = None
+    except (OSError, RuntimeError, __import__("sqlite3").Error) as exc:
+        app.config["PAPER_LEDGER_INIT_ERROR"] = type(exc).__name__ + ":" + str(exc)
+
     @app.route("/api/paper/traderspost/ledger-health", methods=["GET"])
     def _tp_paper_ledger_health():
         # Existing global session/API authentication applies; no write operations.
         from engine.execution.paper_execution_foundation import snapshot
+        from engine.execution.paper_execution_foundation import canonical_binding_health
         data = snapshot()
+        binding = canonical_binding_health()
         response = jsonify({"ok": data.get("ok", False),
                             "ledger_state": data.get("ledger_state"),
+                            "ledger_initialization_error": app.config.get("PAPER_LEDGER_INIT_ERROR"),
                             "records": data.get("records", 0),
                             "unresolved": data.get("unresolved", 0),
                             "ready_for_unattended_orders": False,
-                            "canonical_binding_operational": False,
+                            "canonical_binding_operational": binding["operational"],
+                            "canonical_binding_detail": binding["reason"],
                             "broker_reconciliation_operational": False})
         response.headers["Cache-Control"] = "no-store"
         return response

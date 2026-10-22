@@ -14,7 +14,7 @@ import os
 import sqlite3
 
 ET = ZoneInfo("America/New_York")
-VERSION = "69.10.41"
+VERSION = "69.10.42"
 REQUIRED_STATES = ("DECISION_OBSERVED", "APPROVED", "SUBMITTED_UNCONFIRMED", "DELIVERY_UNKNOWN",
                    "BROKER_ACKNOWLEDGED", "FILL_VERIFIED", "EXIT_VERIFIED", "RECONCILED_CLOSED", "REJECTED")
 
@@ -52,13 +52,68 @@ def initialize_ledger(*, db_path=None):
     if not path.parent.is_dir():
         raise RuntimeError("PAPER_LEDGER_PARENT_MISSING")
     with _connect(str(path)) as db:
-        db.execute("PRAGMA integrity_check")
         check = db.execute("PRAGMA integrity_check").fetchone()[0]
         if check != "ok":
             raise RuntimeError("PAPER_LEDGER_INTEGRITY_FAILURE")
         db.execute("CREATE TABLE IF NOT EXISTS paper_decision_bindings (lifecycle_id TEXT PRIMARY KEY, canonical_decision_id TEXT NOT NULL, source_record_id TEXT NOT NULL, source_digest TEXT NOT NULL, bound_at TEXT NOT NULL, FOREIGN KEY(lifecycle_id) REFERENCES paper_lifecycle(id))")
         db.commit()
     return {"ok": True, "ledger_state": "AVAILABLE", "db_exists": path.is_file(), "dispatch_authorized": False}
+
+
+def persisted_canonical_reader(decision_id, *, evidence_db=None):
+    """Read an existing scanner-persisted decision, never an HTTP supplied object.
+
+    The evidence pipeline stores decision IDs and bounded snapshots. This reader
+    intentionally does NOT infer execution approval from learning eligibility.
+    """
+    from engine.evidence_pipeline import DEFAULT_DB
+    path = Path(evidence_db or DEFAULT_DB)
+    if not path.is_file() or not decision_id:
+        return None
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3) as db:
+            row = db.execute(
+                "SELECT decision_id, observed_at, ticker, snapshot_json FROM decisions WHERE decision_id=?",
+                (decision_id,),
+            ).fetchone()
+    except (sqlite3.Error, ValueError):
+        return None
+    if not row or row[2] != "SPX":
+        return None
+    try:
+        snapshot_json = json.loads(row[3]); institutional = snapshot_json.get("institutional_decision_object") or {}
+        contract = institutional.get("authoritative_contract") or snapshot_json.get("authoritative_contract")
+    except (TypeError, ValueError, AttributeError):
+        return None
+    if not isinstance(contract, dict) or contract.get("ticker") != "SPX":
+        return None
+    return {"decision_id": row[0], "record_id": row[0],
+            "origin": "canonical_scanner_persistence", "contract": contract,
+            "persisted": True, "observed_at": row[1]}
+
+
+def canonical_binding_health(*, evidence_db=None):
+    """Reports whether the real evidence-store reader is connected and readable.
+
+    Not a claim that any particular contract/decision is tradable.
+    """
+    from engine.evidence_pipeline import DEFAULT_DB
+    path = Path(evidence_db or DEFAULT_DB)
+    if not path.is_file():
+        return {"operational": False, "reason": "EVIDENCE_DB_MISSING"}
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=3) as db:
+            cols = {row[1] for row in db.execute("PRAGMA table_info(decisions)")}
+            valid = {"decision_id", "snapshot_json", "observed_at", "ticker"} <= cols
+        return {"operational": valid, "reason": "READY" if valid else "CANONICAL_SCHEMA_MISSING"}
+    except sqlite3.Error:
+        return {"operational": False, "reason": "EVIDENCE_DB_UNREADABLE"}
+
+
+def bind_persisted_canonical_observation(identifier, decision_id, contract, *, observed_at, db_path=None, evidence_db=None):
+    return bind_canonical_observation(identifier, decision_id, contract,
+        trusted_reader=lambda did: persisted_canonical_reader(did, evidence_db=evidence_db),
+        observed_at=observed_at, db_path=db_path)
 
 
 def bind_canonical_observation(identifier, decision_id, contract, *, trusted_reader, observed_at, db_path=None):

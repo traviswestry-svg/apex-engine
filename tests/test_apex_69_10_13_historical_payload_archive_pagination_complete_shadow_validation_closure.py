@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 import sqlite3
 from pathlib import Path
@@ -14,19 +15,14 @@ def _trigger_db(path: Path, n: int = 12):
 
 def test_release_identity_and_registry_alignment():
     m = json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-<<<<<<< Updated upstream
-    assert m['apex_version'] == m['semantic_version'] == m['application_version'] == '69.10.37'
-    assert m['build_name'] == 'Forecast Diagnostics Production Promotion & Persistence Closure'
-=======
-    assert m['apex_version'] == m['semantic_version'] == m['application_version'] == '69.10.39'
-    assert m['build_name'] == 'TradersPost Paper Execution & Forward Performance Validation'
->>>>>>> Stashed changes
+    assert m['apex_version'] == m['semantic_version'] == m['application_version'] == CURRENT_APEX_VERSION
+    assert m['build_name'] == CURRENT_BUILD_NAME
     g = m['guardrails']
     assert g['historical_payload_archive_resumable_batches'] is True
     assert g['historical_payload_archive_batch_max_rows'] == 500
     assert g['historical_payload_shadow_validation_paginated'] is True
     registry = (ROOT/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.39' in registry
+    assert f'apex_version: {CURRENT_APEX_VERSION}' in registry
     assert 'historical_payload_archive_pagination_complete_shadow_validation_closure:' in registry
 
 

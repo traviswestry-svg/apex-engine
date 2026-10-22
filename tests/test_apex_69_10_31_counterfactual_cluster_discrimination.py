@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json, sqlite3
 from pathlib import Path
 from engine import counterfactual_cluster_discrimination as ccd
@@ -51,13 +52,8 @@ def test_excursion_semantics_fail_closed_without_repair(tmp_path):
 def test_release_metadata_ratchets_to_691031():
     root=Path(__file__).resolve().parents[1]
     m=json.loads((root/'config/apex_release_manifest.json').read_text())
-<<<<<<< Updated upstream
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.37'
-    assert m['build_name']=='Forecast Diagnostics Production Promotion & Persistence Closure'
-=======
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.39'
-    assert m['build_name']=='TradersPost Paper Execution & Forward Performance Validation'
->>>>>>> Stashed changes
+    assert m['apex_version']==m['semantic_version']==m['application_version']==CURRENT_APEX_VERSION
+    assert m['build_name']==CURRENT_BUILD_NAME
     registry=(root/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.39' in registry
+    assert f'apex_version: {CURRENT_APEX_VERSION}' in registry
     assert 'counterfactual_cluster_discrimination_intelligence:' in registry

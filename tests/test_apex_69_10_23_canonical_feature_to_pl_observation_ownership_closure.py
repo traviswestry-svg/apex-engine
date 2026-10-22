@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 from pathlib import Path
 from engine import flow_pl_store
@@ -12,13 +13,8 @@ def _use_db(monkeypatch, tmp_path):
 
 def test_release_truth_and_handoff_guardrails():
     d = json.loads(Path("config/apex_release_manifest.json").read_text())
-<<<<<<< Updated upstream
-    assert d["apex_version"] == d["semantic_version"] == d["application_version"] == "69.10.37"
-    assert d["build_name"] == "Forecast Diagnostics Production Promotion & Persistence Closure"
-=======
-    assert d["apex_version"] == d["semantic_version"] == d["application_version"] == "69.10.39"
-    assert d["build_name"] == "TradersPost Paper Execution & Forward Performance Validation"
->>>>>>> Stashed changes
+    assert d["apex_version"] == d["semantic_version"] == d["application_version"] == CURRENT_APEX_VERSION
+    assert d["build_name"] == CURRENT_BUILD_NAME
     g = d["guardrails"]
     assert g["canonical_feature_pl_handoff_audit"] is True
     assert g["canonical_feature_pl_handoff_exact_tuple_only"] is True
