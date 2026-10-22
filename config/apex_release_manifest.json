@@ -1,6 +1,6 @@
 {
-  "apex_version": "69.10.44",
-  "build_name": "TradersPost Broker Evidence Integration & Paper Fill Reconciliation",
+  "apex_version": "69.10.45",
+  "build_name": "Supervised Paper Execution Preflight & Safety Gate",
   "release_series": "APEX 69",
   "application_entrypoint": "wsgi.py",
   "canonical_app": "app.py",
@@ -696,8 +696,8 @@
     "semantic_version": "25.1.1",
     "build": "11.0.1"
   },
-  "semantic_version": "69.10.44",
-  "application_version": "69.10.44",
+  "semantic_version": "69.10.45",
+  "application_version": "69.10.45",
   "storage_retention_guardrails": {
     "automatic_delete": false,
     "automatic_vacuum": false,

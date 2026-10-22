@@ -219,6 +219,21 @@ def register_trade_routes(
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    @app.route("/api/paper/traderspost/order-preflight", methods=["GET", "POST"])
+    def _tp_paper_order_preflight():
+        # Diagnostics only. POST evaluates proposed input but NEVER transmits it.
+        # Reuse the operator token for candidate evaluation; status GET requires
+        # only the existing global authenticated dashboard session.
+        from engine.execution.paper_order_preflight import inspect
+        if request.method == "POST" and not _tp_paper_authorized():
+            return jsonify({"ok": False, "error": "unauthorized"}), 403
+        candidate = request.get_json(silent=True) if request.method == "POST" else None
+        if request.method == "POST" and not isinstance(candidate, dict):
+            return jsonify({"ok": False, "error": "candidate JSON object required"}), 400
+        response = jsonify(inspect(candidate))
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.route("/api/paper/traderspost/dispatch", methods=["POST"])
     def _tp_paper_dispatch():
         # Same operator-token enforcement as the read-only probe.
