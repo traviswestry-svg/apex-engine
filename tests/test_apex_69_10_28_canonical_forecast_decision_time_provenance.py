@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import datetime as dt
 import json
 from pathlib import Path
@@ -23,8 +24,8 @@ def _ms(hh, mm):
 
 def test_release_truth_691028():
     m=json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == "69.10.41"
-    assert m["build_name"] == "Canonical Paper Decision Binding & Durable Ledger Activation"
+    assert m["apex_version"] == m["semantic_version"] == m["application_version"] == CURRENT_APEX_VERSION
+    assert m["build_name"] == CURRENT_BUILD_NAME
     assert m["guardrails"]["canonical_forecast_exact_identity_required_for_evening_grading"] is True
     assert m["guardrails"]["evening_forecast_reconstruction"] is False
 

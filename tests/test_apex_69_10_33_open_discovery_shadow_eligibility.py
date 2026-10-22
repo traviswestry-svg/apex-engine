@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 from engine.open_discovery_shadow_eligibility import _cluster_rows, _chronological_split, _discover
 
 def _r(ts,missed,conf=75,direction='BULLISH',state='NO_TRADE'):
@@ -30,7 +31,7 @@ def test_candidate_requires_holdout_support_and_lift():
 def test_release_metadata_69_10_33():
     import json
     m=json.load(open('config/apex_release_manifest.json'))
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.41'
+    assert m['apex_version']==m['semantic_version']==m['application_version']==CURRENT_APEX_VERSION
     reg=open('config/apex_capability_registry.yaml').read()
-    assert 'apex_version: 69.10.41' in reg
+    assert f'apex_version: {CURRENT_APEX_VERSION}' in reg
     assert 'open_discovery_counterfactual_discrimination_shadow_eligibility:' in reg

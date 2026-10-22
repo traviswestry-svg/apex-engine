@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 from pathlib import Path
 
@@ -43,10 +44,10 @@ def _last():
 def test_release_manifest_and_registry_ratchet():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.41"
-    assert manifest["build_name"] == "Canonical Paper Decision Binding & Durable Ledger Activation"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == CURRENT_APEX_VERSION
+    assert manifest["build_name"] == CURRENT_BUILD_NAME
     registry = (root / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.41" in registry
+    assert f"apex_version: {CURRENT_APEX_VERSION}" in registry
     assert "unified_structural_map_reversal_path_orchestration" in registry
 
 

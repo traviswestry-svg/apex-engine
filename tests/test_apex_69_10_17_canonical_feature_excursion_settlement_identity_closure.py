@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 import os
 import sqlite3
@@ -9,8 +10,8 @@ from engine import feature_store_writer as writer
 
 def test_release_truth_69_10_17():
     m=json.load(open('config/apex_release_manifest.json'))
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.41'
-    assert m['build_name']=='Canonical Paper Decision Binding & Durable Ledger Activation'
+    assert m['apex_version']==m['semantic_version']==m['application_version']==CURRENT_APEX_VERSION
+    assert m['build_name']==CURRENT_BUILD_NAME
 
 
 def test_flow_store_db_path_is_dynamic_after_import(monkeypatch, tmp_path):

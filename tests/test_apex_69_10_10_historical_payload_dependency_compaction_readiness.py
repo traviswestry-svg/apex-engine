@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 import sqlite3
 from pathlib import Path
@@ -7,15 +8,15 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def test_release_truth_and_compaction_guardrails():
     manifest=json.loads((ROOT/'config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']=='69.10.41'
-    assert manifest['build_name']=='Canonical Paper Decision Binding & Durable Ledger Activation'
+    assert manifest['apex_version']==manifest['semantic_version']==manifest['application_version']==CURRENT_APEX_VERSION
+    assert manifest['build_name']==CURRENT_BUILD_NAME
     g=manifest['guardrails']
     assert g['historical_payload_dependency_audit'] is True
     assert g['historical_payload_compaction_readiness_read_only'] is True
     assert g['historical_payload_rewrite_enabled'] is False
     assert g['historical_payload_archival_sidecar_required_before_lossy_rewrite'] is True
     registry=(ROOT/'config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.41' in registry
+    assert f'apex_version: {CURRENT_APEX_VERSION}' in registry
     assert 'historical_evidence_payload_dependency_compaction_readiness:' in registry
 
 

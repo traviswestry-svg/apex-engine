@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 from pathlib import Path
 
@@ -10,8 +11,8 @@ from engine.feature_store import frames_from_replay, resolve_frame_at_or_before
 
 def test_release_truth_and_replay_guardrails():
     manifest = json.loads(Path("config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.41"
-    assert manifest["build_name"] == "Canonical Paper Decision Binding & Durable Ledger Activation"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == CURRENT_APEX_VERSION
+    assert manifest["build_name"] == CURRENT_BUILD_NAME
     g = manifest["guardrails"]
     assert g["spx_learning_replay_frame_producer_enabled"] is True
     assert g["spx_learning_replay_reuses_live_active_level_provider_inputs"] is True
@@ -25,7 +26,7 @@ def test_release_truth_and_replay_guardrails():
     assert g["replay_frame_availability_changes_execution_authority"] is False
 
     registry = Path("config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.41" in registry
+    assert f"apex_version: {CURRENT_APEX_VERSION}" in registry
     assert "decision_time_replay_frame_availability_closure:" in registry
     assert "no_future_frame_join" in registry
     assert "no_staleness_relaxation" in registry

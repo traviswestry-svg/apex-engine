@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 from pathlib import Path
 from engine import evening_recap
@@ -6,7 +7,7 @@ from engine import evening_recap
 def test_release_metadata_and_no_authority():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads((root / 'config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.41'
+    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == CURRENT_APEX_VERSION
     g = manifest['guardrails']
     assert g['automatic_order_submission'] is False
     assert g['forecast_diagnostics_no_execution_authority'] is True

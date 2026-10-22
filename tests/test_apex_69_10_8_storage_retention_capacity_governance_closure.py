@@ -1,4 +1,5 @@
 from __future__ import annotations
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 
 import datetime as dt
 import json
@@ -26,8 +27,8 @@ def _evidence_db(path: Path) -> None:
 
 def test_release_truth_and_capacity_guardrails():
     manifest = json.loads((ROOT / "config/apex_release_manifest.json").read_text())
-    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == "69.10.41"
-    assert manifest["build_name"] == "Canonical Paper Decision Binding & Durable Ledger Activation"
+    assert manifest["apex_version"] == manifest["semantic_version"] == manifest["application_version"] == CURRENT_APEX_VERSION
+    assert manifest["build_name"] == CURRENT_BUILD_NAME
     g = manifest["guardrails"]
     assert g["storage_capacity_policy_canonical"] is True
     assert g["storage_capacity_warn_free_pct_default"] == 25.0
@@ -39,7 +40,7 @@ def test_release_truth_and_capacity_guardrails():
 
 def test_capability_registry_is_aligned_and_operations_only():
     registry = (ROOT / "config/apex_capability_registry.yaml").read_text()
-    assert "apex_version: 69.10.41" in registry
+    assert f"apex_version: {CURRENT_APEX_VERSION}" in registry
     assert "governed_storage_retention:" in registry
     assert 'version: "69.10.8"' in registry
     assert "engine.storage_capacity_policy" in registry

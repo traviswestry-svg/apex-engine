@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json, sqlite3
 from pathlib import Path
 from engine.canonical_market_calendar import classify
@@ -33,5 +34,5 @@ def test_rth_attribution_excludes_closed_pre_and_post():
 
 def test_release_metadata_6910321():
     root=Path(__file__).resolve().parents[1]; m=json.loads((root/'config/apex_release_manifest.json').read_text())
-    assert m['apex_version']==m['semantic_version']==m['application_version']=='69.10.41'
-    assert m['build_name']=='Canonical Paper Decision Binding & Durable Ledger Activation'
+    assert m['apex_version']==m['semantic_version']==m['application_version']==CURRENT_APEX_VERSION
+    assert m['build_name']==CURRENT_BUILD_NAME

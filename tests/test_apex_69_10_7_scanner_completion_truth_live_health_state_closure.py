@@ -1,3 +1,4 @@
+from release_truth import CURRENT_APEX_VERSION, CURRENT_BUILD_NAME
 import json
 from pathlib import Path
 
@@ -6,8 +7,8 @@ from engine.scanner_runtime_truth import resolve_scanner_runtime
 
 def test_release_truth_and_scanner_completion_guardrails():
     manifest = json.loads(Path('config/apex_release_manifest.json').read_text())
-    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == '69.10.41'
-    assert manifest['build_name'] == 'Canonical Paper Decision Binding & Durable Ledger Activation'
+    assert manifest['apex_version'] == manifest['semantic_version'] == manifest['application_version'] == CURRENT_APEX_VERSION
+    assert manifest['build_name'] == CURRENT_BUILD_NAME
     g = manifest['guardrails']
     assert g['scanner_completion_truth_separates_heartbeat_from_full_scan'] is True
     assert g['scanner_background_activity_substitutes_for_full_scan'] is False
@@ -21,7 +22,7 @@ def test_release_truth_and_scanner_completion_guardrails():
     assert g['scanner_health_changes_execution_authority'] is False
 
     registry = Path('config/apex_capability_registry.yaml').read_text()
-    assert 'apex_version: 69.10.41' in registry
+    assert f'apex_version: {CURRENT_APEX_VERSION}' in registry
     assert 'scanner_completion_truth_live_health_state_closure:' in registry
     assert 'heartbeat_does_not_equal_full_scan_completion' in registry
     assert 'stale_threshold_unchanged' in registry
