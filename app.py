@@ -1893,6 +1893,10 @@ _SCAN_COMPLETION_RUNTIME: Dict[str, Any] = {
     "last_post_scan_duration_seconds": None,
     "last_scheduler_sleep_seconds": None,
     "freshness_budget_exhausted_cycles": 0,
+    "scheduler_cycles_accounted": 0,
+    "freshness_budget_exhausted_episodes": 0,
+    "freshness_budget_exhausted_active": False,
+    "last_freshness_exhausted_episode_at": None,
     "last_scheduler_cycle_duration_seconds": None,
     "last_post_scan_phase_durations_seconds": {},
     "post_scan_deferred_flow_cycles": 0,
@@ -4552,10 +4556,11 @@ def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
     except Exception as _diagnostic_exc:
         print(f"[APEX DIAGNOSTICS] scan trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
     _attempt_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    _journal_attempt_id = __import__("uuid").uuid4().hex
     with STATE_LOCK:
         _SCAN_COMPLETION_RUNTIME["scan_attempts"] += 1
         _SCAN_COMPLETION_RUNTIME["last_attempt_at"] = _attempt_at
-    _record_scanner_coverage("ATTEMPT", occurred_at=_attempt_at)
+    _record_scanner_coverage("ATTEMPT", occurred_at=_attempt_at, attempt_id=_journal_attempt_id)
     if not SCAN_LOCK.acquire(blocking=False):
         with STATE_LOCK:
             _SCAN_COMPLETION_RUNTIME["scan_lock_skips"] += 1
@@ -4570,7 +4575,7 @@ def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
                     end_stage(_coverage_id, "FULL_SCAN", _scan_memory_start, outcome="LOCK_BUSY")
             except Exception as _diagnostic_exc:
                 print(f"[APEX DIAGNOSTICS] lock trace unavailable: {type(_diagnostic_exc).__name__}", flush=True)
-        _record_scanner_coverage("LOCK_BUSY", occurred_at=_attempt_at)
+        _record_scanner_coverage("LOCK_BUSY", occurred_at=_attempt_at, attempt_id=_journal_attempt_id)
         return False
     scan_start = time.monotonic()
     with STATE_LOCK:
@@ -4640,7 +4645,7 @@ def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
             _SCAN_COMPLETION_RUNTIME["last_duration_seconds"] = duration
             _SCAN_COMPLETION_RUNTIME["last_failure"] = None
             _SCAN_COMPLETION_RUNTIME["last_result"] = "COMPLETED"
-        _record_scanner_coverage("COMPLETED", duration=duration)
+        _record_scanner_coverage("COMPLETED", duration=duration, attempt_id=_journal_attempt_id)
         print(status, flush=True)
         if _coverage_id is not None:
             try:
@@ -4658,7 +4663,7 @@ def run_scan_once(force: bool = False, source: str = "SCHEDULER") -> bool:
             _SCAN_COMPLETION_RUNTIME["last_failure_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             _SCAN_COMPLETION_RUNTIME["last_failure"] = f"{type(e).__name__}: {e}"
             _SCAN_COMPLETION_RUNTIME["last_result"] = "FAILED"
-        _record_scanner_coverage("FAILED", reason=type(e).__name__)
+        _record_scanner_coverage("FAILED", reason=type(e).__name__, attempt_id=_journal_attempt_id)
         print(f"Fatal scan error: {e}", flush=True)
         if _coverage_id is not None:
             try:
@@ -5006,15 +5011,18 @@ def scanner_loop() -> None:
                               margin_seconds=_reserve)
         _sleep = min(max(0.0, float(SCAN_INTERVAL_SECONDS)), _plan.sleep_seconds,
                      next_scan_sleep(SCAN_INTERVAL_SECONDS, _stale, _age, _reserve))
+        from engine.scanner_scheduler_accounting import bounded_scheduler_sleep, update_freshness_episode
+        _exhausted = _age >= _stale
+        _sleep = bounded_scheduler_sleep(_sleep, freshness_exhausted=_exhausted)
         with STATE_LOCK:
+            update_freshness_episode(_SCAN_COMPLETION_RUNTIME, exhausted=_exhausted,
+                                     now_iso=dt.datetime.now(dt.timezone.utc).isoformat())
             _SCAN_COMPLETION_RUNTIME["last_post_scan_completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             _SCAN_COMPLETION_RUNTIME["last_post_scan_duration_seconds"] = _post_scan_elapsed
             _SCAN_COMPLETION_RUNTIME["last_scheduler_cycle_duration_seconds"] = _cycle_elapsed
             _SCAN_COMPLETION_RUNTIME["last_post_scan_phase_durations_seconds"] = _post_scan_phases
             _SCAN_COMPLETION_RUNTIME["last_scheduler_sleep_seconds"] = _sleep
-            if _age >= _stale:
-                _SCAN_COMPLETION_RUNTIME["freshness_budget_exhausted_cycles"] += 1
-        if _age >= _stale:
+        if _exhausted:
             print(f"[APEX SCANNER] freshness budget exhausted: age={_age:.1f}s post_cycle={_post_scan_elapsed}s", flush=True)
         time.sleep(_sleep)
 

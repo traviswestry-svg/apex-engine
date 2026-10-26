@@ -6,9 +6,30 @@ separately. No allocation, cache clearing, or execution authority.
 """
 from __future__ import annotations
 import pathlib
+import collections
+import threading
+import time
 from typing import Any, Dict
 
 VERSION = "69.10.38-runtime-observability-candidate"
+
+
+# Process-local, bounded history. No cgroup writes and no retained payloads.
+_MEMORY_SAMPLES = collections.deque(maxlen=16)
+_MEMORY_SAMPLES_LOCK = threading.Lock()
+
+
+def bounded_memory_trend(samples, *, current, noninactive, observed_monotonic):
+    """Return read-only trend; do not infer leaks from cache or one reading."""
+    valid = [(t, x) for t, x in samples if x is not None]
+    if not valid:
+        return {"samples": 0, "noninactive_delta_bytes": None,
+                "observation_span_seconds": None, "leak_confirmed": False}
+    start_t, start_b = valid[0]
+    return {"samples": len(valid),
+            "noninactive_delta_bytes": int(noninactive - start_b) if noninactive is not None else None,
+            "observation_span_seconds": round(max(0.0, observed_monotonic - start_t), 1),
+            "leak_confirmed": False}
 
 
 def _read_int(path: pathlib.Path):
@@ -76,7 +97,7 @@ def _psi_avg10(path: pathlib.Path, category: str):
 def memory_pressure_status(root: str = "/sys/fs/cgroup") -> Dict[str, Any]:
     base = pathlib.Path(root)
     stat = _read_kv(base / "memory.stat")
-    return classify_memory(
+    result = classify_memory(
         current=_read_int(base / "memory.current"),
         limit=_read_int(base / "memory.max"),
         inactive_file=stat.get("inactive_file", 0),
@@ -84,3 +105,12 @@ def memory_pressure_status(root: str = "/sys/fs/cgroup") -> Dict[str, Any]:
         psi_some_avg10=_psi_avg10(base / "memory.pressure", "some"),
         psi_full_avg10=_psi_avg10(base / "memory.pressure", "full"),
     )
+    now = time.monotonic()
+    with _MEMORY_SAMPLES_LOCK:
+        if not _MEMORY_SAMPLES or now - _MEMORY_SAMPLES[-1][0] >= 60:
+            _MEMORY_SAMPLES.append((now, result["estimated_noninactive_file_bytes"]))
+        result["bounded_trend"] = bounded_memory_trend(
+            _MEMORY_SAMPLES, current=result["current_bytes"],
+            noninactive=result["estimated_noninactive_file_bytes"], observed_monotonic=now,
+        )
+    return result
