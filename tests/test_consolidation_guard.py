@@ -41,6 +41,7 @@ TEST_ONLY_ALLOWLIST = {
     "engine.execution.paper_lifecycle_validation",
     "engine.flow_learning_checkpoint",
     "engine.scanner_freshness_deadline",
+    "engine.execution.paper_lifecycle_validation",
 }
 
 _VERSION_SUFFIX = re.compile(r"_v\d")
