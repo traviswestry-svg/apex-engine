@@ -803,6 +803,14 @@ def generate_morning_brief(
     # APEX 69.10.37: freeze additive decision-time diagnostics with the forecast.
     from .forecast_provenance_diagnostics import capture as _capture_forecast_diagnostics
     result["structured"]["forecast_provenance_diagnostics"] = _capture_forecast_diagnostics(dkl, _regime)
+    # Shadow calibration is deliberately not applied to official forecast values.
+    # No verified historical outcomes are loaded on the live forecast path.
+    from .adaptive_morning_forecast_calibration import calibrate as _shadow_calibrate
+    result["structured"]["adaptive_morning_calibration_shadow"] = _shadow_calibrate(
+        target_date=target_date, forecast_spot=getattr(dkl, "spot", None),
+        forecast_one_sigma=getattr(getattr(dkl, "expected_move", None), "em_1sigma", None),
+        history=(),
+    )
     result["forecast_identity"] = {
         "target_session_date": target_date,
         "source_session_date": source_date,
