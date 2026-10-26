@@ -1893,6 +1893,10 @@ _SCAN_COMPLETION_RUNTIME: Dict[str, Any] = {
     "last_post_scan_duration_seconds": None,
     "last_scheduler_sleep_seconds": None,
     "freshness_budget_exhausted_cycles": 0,
+    "scheduler_cycles_accounted": 0,
+    "freshness_budget_exhausted_episodes": 0,
+    "freshness_budget_exhausted_active": False,
+    "last_freshness_exhausted_episode_at": None,
     "last_scheduler_cycle_duration_seconds": None,
     "last_post_scan_phase_durations_seconds": {},
     "post_scan_deferred_flow_cycles": 0,
@@ -5007,15 +5011,18 @@ def scanner_loop() -> None:
                               margin_seconds=_reserve)
         _sleep = min(max(0.0, float(SCAN_INTERVAL_SECONDS)), _plan.sleep_seconds,
                      next_scan_sleep(SCAN_INTERVAL_SECONDS, _stale, _age, _reserve))
+        from engine.scanner_scheduler_accounting import bounded_scheduler_sleep, update_freshness_episode
+        _exhausted = _age >= _stale
+        _sleep = bounded_scheduler_sleep(_sleep, freshness_exhausted=_exhausted)
         with STATE_LOCK:
+            update_freshness_episode(_SCAN_COMPLETION_RUNTIME, exhausted=_exhausted,
+                                     now_iso=dt.datetime.now(dt.timezone.utc).isoformat())
             _SCAN_COMPLETION_RUNTIME["last_post_scan_completed_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
             _SCAN_COMPLETION_RUNTIME["last_post_scan_duration_seconds"] = _post_scan_elapsed
             _SCAN_COMPLETION_RUNTIME["last_scheduler_cycle_duration_seconds"] = _cycle_elapsed
             _SCAN_COMPLETION_RUNTIME["last_post_scan_phase_durations_seconds"] = _post_scan_phases
             _SCAN_COMPLETION_RUNTIME["last_scheduler_sleep_seconds"] = _sleep
-            if _age >= _stale:
-                _SCAN_COMPLETION_RUNTIME["freshness_budget_exhausted_cycles"] += 1
-        if _age >= _stale:
+        if _exhausted:
             print(f"[APEX SCANNER] freshness budget exhausted: age={_age:.1f}s post_cycle={_post_scan_elapsed}s", flush=True)
         time.sleep(_sleep)
 
