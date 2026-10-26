@@ -1,5 +1,5 @@
 schema_version: apex.capability_registry.v1
-apex_version: 69.10.46
+apex_version: 69.10.47
 capabilities:
   canonical_settlement_identity_decision_gamma_linkage_closure:
     description: "Exact registered feature-sample excursion recovery from later real P/L observations plus decision-time gamma identity propagation from the composition input."
@@ -1157,3 +1157,13 @@ capabilities:
       historical_diagnostic_backfill: false
       no_forecast_or_grading_changes: true
       no_execution_authority: true
+
+  paper_execution_lifecycle_validation_69_10_47:
+    description: "Offline SPX options lifecycle simulation with strict identity, fill quantity, and fail-closed loss checks."
+    canonical_modules: [engine.execution.paper_lifecycle_validation]
+    status: observational_simulation_only
+    version: "69.10.47"
+    decision_authority: none
+    execution_authority: none
+    production_effect: NO_ORDER_DISPATCH
+    guardrails: [no_broker_fill_promotion, no_verified_pnl_promotion, no_live_order_routing]
