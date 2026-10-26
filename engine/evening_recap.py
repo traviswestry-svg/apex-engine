@@ -402,6 +402,50 @@ def _grade(score: Optional[float]) -> str:
     return "A" if score >= 90 else "B" if score >= 80 else "C" if score >= 70 else "D" if score >= 60 else "F"
 
 
+def forecast_error_diagnostics(structured: dict, actual: dict, projected_regime: Optional[str], actual_regime: str) -> dict:
+    """Read-only, frozen-forecast error decomposition; never changes official grading."""
+    em = structured.get("expected_move") or {}
+    upper, lower = _num(em.get("upper")), _num(em.get("lower"))
+    move, spot = _num(em.get("one_sigma")), _num(structured.get("spot"))
+    result = {"version": "69.10.47-forecast-diagnostics-v1", "read_only": True,
+              "changes_official_score": False, "historical_forecast_rewritten": False,
+              "range": {"available": False}, "movement": {"available": False},
+              "regime": {"available": bool(projected_regime),
+                         "exact_match": bool(projected_regime and projected_regime.upper() == actual_regime.upper()),
+                         "projected": projected_regime, "actual": actual_regime}}
+    if not actual.get("available"):
+        return result
+    high, low = _num(actual.get("high")), _num(actual.get("low"))
+    if high is None or low is None:
+        return result
+    if upper is not None and lower is not None and upper >= lower:
+        projected_width = upper - lower
+        actual_width = high - low
+        projected_center = (upper + lower) / 2
+        actual_center = (high + low) / 2
+        result["range"] = {
+            "available": True, "forecast_high": round(upper, 2), "forecast_low": round(lower, 2),
+            "actual_high": round(high, 2), "actual_low": round(low, 2),
+            "high_error_points": round(high - upper, 2), "low_error_points": round(low - lower, 2),
+            "width_error_points": round(actual_width - projected_width, 2),
+            "center_error_points": round(actual_center - projected_center, 2),
+            "actual_width_points": round(actual_width, 2), "forecast_width_points": round(projected_width, 2),
+            "contained": high <= upper and low >= lower,
+            "definition": "ACTUAL_MINUS_FROZEN_FORECAST; POSITIVE_CENTER_IS_UPWARD_DISPLACEMENT",
+        }
+    if move is not None and move > 0 and spot is not None:
+        excursion = max(abs(high - spot), abs(low - spot))
+        result["movement"] = {
+            "available": True, "frozen_reference_spot": round(spot, 2),
+            "projected_max_excursion_points": round(move, 2),
+            "actual_max_excursion_points": round(excursion, 2),
+            "error_points": round(excursion - move, 2),
+            "actual_to_projected_ratio": round(excursion / move, 4),
+            "definition": "MAX_ABS_EXCURSION_FROM_FROZEN_MORNING_SPOT_NOT_HIGH_LOW_RANGE",
+        }
+    return result
+
+
 def build_comparison(morning: dict, bars: Iterable[dict], session_date: str) -> dict:
     structured = morning.get("structured") or {}
     actual = actual_session(bars, session_date)
@@ -427,11 +471,13 @@ def build_comparison(morning: dict, bars: Iterable[dict], session_date: str) -> 
     legacy_score = round(100.0 * sum(1 for c in checks if c.get("correct")) / len(checks), 1) if checks else None
     available_weight = sum(float(c.get("weight") or 0.0) for c in checks)
     score = round(100.0 * sum(float(c.get("weight") or 0.0) * float(c.get("accuracy") or 0.0) for c in checks) / available_weight, 1) if available_weight > 0 else None
+    diagnostics = forecast_error_diagnostics(structured, actual, projected_regime, actual_regime)
     levels = evaluate_levels(structured.get("levels") or [], bars, session_date)
     return {
         "actual": actual, "projected_regime": projected_regime or "Not structurally classified",
         "projected_regime_source": projected_regime_source, "actual_regime": actual_regime,
         "checks": checks, "score": score, "grade": _grade(score),
+        "forecast_error_diagnostics": diagnostics,
         "legacy_binary_score": legacy_score, "score_method": "WEIGHTED_CONTINUOUS_V69_10_3",
         "levels": levels, "level_summary": {
             "evaluated": len(levels), "touched": sum(1 for x in levels if x["touched"]),
@@ -449,6 +495,19 @@ def render_deterministic_markdown(session_date: str, comparison: dict) -> str:
     for c in comparison["checks"]:
         result = "PASS" if c.get("correct") else "MISS"
         lines.append(f"| {c['label']} | {c.get('projected')} | {c.get('actual')} | {result} |")
+    diagnostics = comparison.get("forecast_error_diagnostics") or {}
+    r, m, regime = diagnostics.get("range") or {}, diagnostics.get("movement") or {}, diagnostics.get("regime") or {}
+    lines += ["", "## Forecast Error Attribution (Read-only)", ""]
+    if r.get("available"):
+        lines.append(f"Range center error (actual − forecast): **{r['center_error_points']:+.2f} points**; width error: **{r['width_error_points']:+.2f} points**.")
+        lines.append(f"High error: **{r['high_error_points']:+.2f} points**; low error: **{r['low_error_points']:+.2f} points**.")
+    else:
+        lines.append("Range error unavailable: missing frozen forecast bounds or session bars.")
+    if m.get("available"):
+        lines.append(f"Maximum excursion from frozen morning spot: projected **{m['projected_max_excursion_points']:.2f}**, actual **{m['actual_max_excursion_points']:.2f}** (error **{m['error_points']:+.2f} points**). This is not the session high–low range.")
+    if regime.get("available"):
+        lines.append(f"Exact regime match: **{'YES' if regime['exact_match'] else 'NO'}** (separate from the existing compatible-family grade).")
+    lines.append("These diagnostics do not modify the validated accuracy, frozen morning forecast, or grading weights.")
     lines += ["", "## What Actually Happened", ""]
     if a.get("available"):
         lines.append(f"SPX opened **{a['open']:.2f}**, traded **{a['low']:.2f}–{a['high']:.2f}**, and closed **{a['close']:.2f}** ({a['direction']}, {a['net_change']:+.2f} points).")
