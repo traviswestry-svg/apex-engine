@@ -643,6 +643,11 @@ def generate_morning_brief(
     )
     timings["deterministic"] = round((time.perf_counter() - step) * 1000, 1)
 
+    from .morning_forecast_integrity import snapshot_identity as _snapshot_identity
+    from .morning_forecast_integrity import narrative_consistency as _narrative_consistency
+    from .morning_forecast_integrity import quality_dimensions as _quality_dimensions
+    _snapshot = _snapshot_identity(dkl.to_dict(), target_date, mode)
+
     narrative = ""
     err = None
     narrative_source = "none"
@@ -652,6 +657,10 @@ def generate_morning_brief(
     ncache = narrative_cache if narrative_cache is not None else cache
     cached_narrative = (ncache or {}).get(result_key) if ncache is not None else None
 
+    # Legacy cached narratives lack snapshot provenance and cannot be reused
+    # against refreshed deterministic market levels.
+    if cached_narrative and cached_narrative.get('snapshot_id') != _snapshot:
+        cached_narrative = None
     if cached_narrative and not refresh_narrative:
         narrative = str(cached_narrative.get("narrative") or "")
         err = cached_narrative.get("error")
@@ -740,6 +749,7 @@ def generate_morning_brief(
         if ncache is not None and narrative:
             ncache[result_key] = {
                 "narrative": narrative,
+                "snapshot_id": _snapshot,
                 "error": None,
                 "status": "FRESH",
                 "generated_at": _now_et().isoformat(),
@@ -792,7 +802,19 @@ def generate_morning_brief(
         "anthropic_telemetry": ai_telemetry,
         "markdown": markdown,
         "structured": dkl.to_dict(),
+        "forecast_snapshot_id": _snapshot,
+        "narrative_snapshot_id": _snapshot if narrative_source in {'anthropic', 'cache'} and narrative else None,
     }
+    _check = _narrative_consistency(narrative, result['structured']) if narrative else {
+        'status': 'NOT_VERIFIABLE', 'checked_fields': [], 'mismatches': []}
+    result['forecast_snapshot_integrity'] = {
+        'snapshot_id': _snapshot,
+        'narrative_numeric_consistency': _check,
+        'narrative_snapshot_bound': result['narrative_snapshot_id'] == _snapshot,
+        'authority': 'DIAGNOSTIC_ONLY',
+    }
+    result['forecast_quality_dimensions'] = _quality_dimensions(
+        narrative_status=narrative_status, snapshot_check=_check)
     # APEX 69.10.3: freeze a structured, pre-outcome regime projection.
     # Evening validation may never infer the forecast from free-text Markdown.
     _regime = _deterministic_forecast_regime(dkl)
@@ -811,6 +833,33 @@ def generate_morning_brief(
         forecast_one_sigma=getattr(getattr(dkl, "expected_move", None), "em_1sigma", None),
         history=(),
     )
+    result['adaptive_calibration_validation'] = {
+        'state': 'HISTORY_NOT_CONNECTED', 'verified_training_sessions': 0,
+        'walk_forward_holdout_sessions': 0, 'baseline_boundary_mae': None,
+        'shadow_boundary_mae': None, 'promotion_authority': False,
+        'reason': 'Production Morning Brief supplies no verified historical outcomes.',
+    }
+    # APEX 69.10.49: read-only dual-horizon and opening-drive observability.
+    # Neither the immutable archive nor the official expected-move calculation
+    # is changed by these diagnostics.
+    from .dual_horizon_forecast_integrity import (
+        classify_horizon as _classify_horizon,
+        opening_range_evidence as _opening_range_evidence,
+    )
+    result["dual_horizon_forecast_diagnostics"] = _classify_horizon(
+        mode=mode, source_session_date=source_date, target_session_date=target_date,
+        spot=getattr(dkl, "spot", None),
+        expected_move=getattr(getattr(dkl, "expected_move", None), "em_1sigma", None),
+    )
+    result["opening_drive_validation"] = _opening_range_evidence(
+        getattr(dkl, "levels", ()), target_session_date=target_date,
+    )
+    result["calibration_evidence_status"] = {
+        "state": "HISTORY_NOT_CONNECTED",
+        "official_forecast_modified": False,
+        "walk_forward_validated": False,
+        "reason": "No verified historical outcomes supplied on live Morning Brief path.",
+    }
     result["forecast_identity"] = {
         "target_session_date": target_date,
         "source_session_date": source_date,
