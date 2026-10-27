@@ -112,6 +112,10 @@ FROZEN_MAX 48 → 39. Test files renamed to unversioned names (8) plus 2 rescued
 Full suite 1,518 passed / 0 failed.
 
 ## Test-only module allowances
+- `engine.execution.paper_lifecycle_validation` (APEX 69.10.47) is an offline
+  synthetic lifecycle test harness. It has no runtime consumer or execution
+  authority; its scenario validation must not be treated as broker
+  reconciliation or authorization to submit orders.
 - `engine/scanner_freshness_deadline.py` remains a pure, test-covered planning
   policy with no execution authority; scanner runtime continues to use the
   existing cadence and post-scan deadline modules. Keep it allowlisted only
