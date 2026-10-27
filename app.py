@@ -12285,6 +12285,24 @@ def api_morning_brief_narrative_status():
         job = get_job(key)
         if not job:
             return jsonify({"ok": True, "status": "NOT_FOUND", "job_key": key, "target_session_date": target, "brief_mode": mode, "version": "50.6.5.4_NONBLOCKING_MORNING_BRIEF"})
+        # APEX 69.10.48: compare completed asynchronous prose against the
+        # latest deterministic snapshot; never silently display known conflicts.
+        if job.get('status') == 'COMPLETE' and job.get('narrative'):
+            try:
+                from engine.morning_forecast_integrity import narrative_consistency
+                current = _MORNING_BRIEF_CACHE.get(f"{target}:{mode}") or {}
+                structured = current.get('structured') or {}
+                if structured:
+                    check = narrative_consistency(job['narrative'], structured)
+                    job['forecast_snapshot_integrity'] = check
+                    if check['status'] == 'MISMATCH':
+                        job['status'] = 'SNAPSHOT_MISMATCH'
+                        job['narrative'] = None
+                        job['error'] = 'Narrative conflicts with current deterministic levels; suppressed.'
+                else:
+                    job['forecast_snapshot_integrity'] = {'status': 'NO_CURRENT_SNAPSHOT'}
+            except Exception:
+                job['forecast_snapshot_integrity'] = {'status': 'VALIDATION_UNAVAILABLE'}
         job["ok"] = True
         return jsonify(job)
     except Exception as exc:
