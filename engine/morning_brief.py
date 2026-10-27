@@ -839,6 +839,27 @@ def generate_morning_brief(
         'shadow_boundary_mae': None, 'promotion_authority': False,
         'reason': 'Production Morning Brief supplies no verified historical outcomes.',
     }
+    # APEX 69.10.49: read-only dual-horizon and opening-drive observability.
+    # Neither the immutable archive nor the official expected-move calculation
+    # is changed by these diagnostics.
+    from .dual_horizon_forecast_integrity import (
+        classify_horizon as _classify_horizon,
+        opening_range_evidence as _opening_range_evidence,
+    )
+    result["dual_horizon_forecast_diagnostics"] = _classify_horizon(
+        mode=mode, source_session_date=source_date, target_session_date=target_date,
+        spot=getattr(dkl, "spot", None),
+        expected_move=getattr(getattr(dkl, "expected_move", None), "em_1sigma", None),
+    )
+    result["opening_drive_validation"] = _opening_range_evidence(
+        getattr(dkl, "levels", ()), target_session_date=target_date,
+    )
+    result["calibration_evidence_status"] = {
+        "state": "HISTORY_NOT_CONNECTED",
+        "official_forecast_modified": False,
+        "walk_forward_validated": False,
+        "reason": "No verified historical outcomes supplied on live Morning Brief path.",
+    }
     result["forecast_identity"] = {
         "target_session_date": target_date,
         "source_session_date": source_date,
