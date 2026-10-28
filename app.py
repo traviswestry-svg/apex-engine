@@ -863,6 +863,10 @@ _FLOW_LEARNING_RUNTIME = {
     "learning_starvation_warning": False,
     "last_learning_budget_seconds": None,
     "last_learning_estimate_seconds": None,
+    "resource_admission_state": "NOT_CHECKED",
+    "memory_deferrals": 0,
+    "deadline_deferrals": 0,
+    "last_memory_snapshot": None,
     "live_session_cycles": 0,
     "pipeline_runs": 0,
     "source_clusters": 0,
@@ -4820,11 +4824,37 @@ def scanner_loop() -> None:
             "last_learning_budget_seconds": round(_learning_admission.remaining_budget_seconds, 3),
             "last_learning_estimate_seconds": _learning_admission.estimate_seconds,
         })
+        # APEX 69.10.48 candidate: fail-closed resource admission. The
+        # existing serial scanner owner remains the only learning writer.
+        from engine.learning_resource_admission import assess_resource_admission
+        _learning_memory = memory_pressure_status()
+        _memory_gate = assess_resource_admission(_learning_memory)
+        _FLOW_LEARNING_RUNTIME["resource_admission_state"] = _memory_gate
+        _FLOW_LEARNING_RUNTIME["last_memory_snapshot"] = {
+            k: _learning_memory.get(k) for k in (
+                "severity", "raw_usage_pct", "estimated_noninactive_file_usage_pct",
+                "psi_some_avg10", "psi_full_avg10")
+        }
+        if _learning_admission.state == "DEFERRED_SCANNER_DEADLINE":
+            _FLOW_LEARNING_RUNTIME["deadline_deferrals"] += 1
+        if _learning_admission.admitted and _memory_gate != "ADMITTED":
+            _FLOW_LEARNING_RUNTIME["memory_deferrals"] += 1
+            _FLOW_LEARNING_RUNTIME.update({
+                "last_state": _memory_gate,
+                "last_skip_reason": "RESOURCE_PROTECTION",
+            })
+        if _learning_admission.admitted and _memory_gate != "ADMITTED":
+            _learning_admission = __import__(
+                "engine.scanner_learning_continuity", fromlist=["LearningAdmission"]
+            ).LearningAdmission(False, _memory_gate,
+                                _learning_admission.remaining_budget_seconds,
+                                _learning_admission.estimate_seconds, 0, False)
         if not _learning_admission.admitted:
             _FLOW_LEARNING_RUNTIME.update({
                 "last_state": _learning_admission.state,
                 "last_skip_reason": (
                     "SCAN_FRESHNESS_PRIORITY" if _learning_admission.state == "DEFERRED_SCANNER_DEADLINE"
+                    else "RESOURCE_PROTECTION" if _learning_admission.state.startswith("DEFERRED_MEMORY")
                     else _learning_admission.state
                 ),
             })
@@ -12285,24 +12315,6 @@ def api_morning_brief_narrative_status():
         job = get_job(key)
         if not job:
             return jsonify({"ok": True, "status": "NOT_FOUND", "job_key": key, "target_session_date": target, "brief_mode": mode, "version": "50.6.5.4_NONBLOCKING_MORNING_BRIEF"})
-        # APEX 69.10.48: compare completed asynchronous prose against the
-        # latest deterministic snapshot; never silently display known conflicts.
-        if job.get('status') == 'COMPLETE' and job.get('narrative'):
-            try:
-                from engine.morning_forecast_integrity import narrative_consistency
-                current = _MORNING_BRIEF_CACHE.get(f"{target}:{mode}") or {}
-                structured = current.get('structured') or {}
-                if structured:
-                    check = narrative_consistency(job['narrative'], structured)
-                    job['forecast_snapshot_integrity'] = check
-                    if check['status'] == 'MISMATCH':
-                        job['status'] = 'SNAPSHOT_MISMATCH'
-                        job['narrative'] = None
-                        job['error'] = 'Narrative conflicts with current deterministic levels; suppressed.'
-                else:
-                    job['forecast_snapshot_integrity'] = {'status': 'NO_CURRENT_SNAPSHOT'}
-            except Exception:
-                job['forecast_snapshot_integrity'] = {'status': 'VALIDATION_UNAVAILABLE'}
         job["ok"] = True
         return jsonify(job)
     except Exception as exc:
