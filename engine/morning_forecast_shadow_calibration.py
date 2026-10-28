@@ -59,6 +59,8 @@ def extract_observation(recap: dict) -> dict | None:
         'forecast_center': (low + high) / 2, 'forecast_width': high - low,
         'forecast_move': expected, 'actual_center': (actual_low + actual_high) / 2,
         'actual_width': actual_high - actual_low, 'actual_move': realized,
+        'projected_regime': str(cmp.get('projected_regime') or ''),
+        'actual_regime': str(cmp.get('actual_regime') or ''),
         'exact_regime': str(cmp.get('projected_regime', '')).upper() == str(cmp.get('actual_regime', '')).upper(),
     }
 
@@ -98,6 +100,8 @@ def shadow_walk_forward(recaps: Iterable[dict], *, min_train: int = MIN_TRAIN, w
             'shadow_center_abs_error': abs(current['actual_center'] - predicted_center),
             'baseline_move_abs_error': abs(current['move_error']),
             'shadow_move_abs_error': abs(current['actual_move'] - predicted_move),
+            'baseline_width': current['forecast_width'], 'shadow_width': predicted_width,
+            'actual_width': current['actual_width'],
             'baseline_contained': baseline_bounds[0] <= actual_bounds[0] and baseline_bounds[1] >= actual_bounds[1],
             'shadow_contained': shadow_bounds[0] <= actual_bounds[0] and shadow_bounds[1] >= actual_bounds[1],
         })
@@ -127,3 +131,63 @@ def archived_shadow_report(*, limit: int = 250, min_train: int = MIN_TRAIN) -> d
     with connect(DB_PATH, timeout=10) as db:
         rows = db.execute('SELECT payload_json FROM apex49_evening_recaps ORDER BY session_date DESC LIMIT ?', (max(1, min(int(limit), 250)),)).fetchall()
     return shadow_walk_forward([_load(row[0]) for row in rows], min_train=min_train)
+
+
+def forecast_precision_report(recaps, *, min_train=MIN_TRAIN, window=MAX_TRAIN):
+    """Read-only precision report with strictly chronological shadow comparisons."""
+    raw = list(recaps)
+    observations = [o for r in raw if (o := extract_observation(r)) is not None]
+    counts = {}
+    for o in observations:
+        counts[o['session_date']] = counts.get(o['session_date'], 0) + 1
+    observations = sorted((o for o in observations if counts[o['session_date']] == 1),
+                          key=lambda o: o['session_date'])
+    def avg(values):
+        return round(sum(values) / len(values), 4) if values else None
+    walk = shadow_walk_forward(raw, min_train=min_train, window=window)
+    rows = walk['evaluations']
+    def precision(prefix):
+        return {
+            'sessions': len(rows),
+            'containment_rate': avg([float(r[prefix + '_contained']) for r in rows]),
+            'range_width_to_realized_ratio': avg([r[prefix + '_width'] / r['actual_width']
+                for r in rows if r['actual_width'] > 0]),
+            'center_mae': avg([r[prefix + '_center_abs_error'] for r in rows]),
+            'move_mae': avg([r[prefix + '_move_abs_error'] for r in rows]),
+        }
+    confusion = {}
+    for o in observations:
+        pair = o['projected_regime'] + ' -> ' + o['actual_regime']
+        confusion[pair] = confusion.get(pair, 0) + 1
+    return {
+        'ok': True, 'mode': 'SHADOW_RESEARCH_ONLY', 'production_promotion': False,
+        'official_forecast_mutated': False, 'official_scoring_mutated': False,
+        'status': walk['status'], 'eligible_sessions': len(observations),
+        'evaluated_sessions': len(rows), 'min_train': min_train, 'window': window,
+        'full_archive_diagnostics': {
+            'range_center_signed_bias': avg([o['center_error'] for o in observations]),
+            'range_center_mae': avg([abs(o['center_error']) for o in observations]),
+            'range_width_signed_bias': avg([o['width_error'] for o in observations]),
+            'move_signed_bias': avg([o['move_error'] for o in observations]),
+            'exact_regime_accuracy': avg([float(o['exact_regime']) for o in observations]),
+            'regime_confusion': confusion,
+        },
+        'out_of_sample': {'baseline': precision('baseline'), 'shadow': precision('shadow')},
+        'evaluation_details': rows,
+        'limitations': ['Canonical completed recaps only',
+                        'Containment must be read alongside range-width efficiency',
+                        'No automatic promotion or official forecast changes'],
+    }
+
+
+def archived_precision_report(*, limit=250, min_train=MIN_TRAIN, window=MAX_TRAIN):
+    """Bounded, read-only access to the existing canonical recap archive."""
+    from .evening_recap import DB_PATH, _load, init_db
+    from .canonical_persistence import connect
+    init_db()
+    with connect(DB_PATH, timeout=10) as db:
+        rows = db.execute('SELECT payload_json FROM apex49_evening_recaps '
+                          'ORDER BY session_date DESC LIMIT ?',
+                          (max(1, min(int(limit), 250)),)).fetchall()
+    return forecast_precision_report([_load(row[0]) for row in rows],
+                                     min_train=min_train, window=window)
