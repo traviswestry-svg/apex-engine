@@ -76,3 +76,22 @@ def register_institutional_research_lab_v243_routes(app, *, legacy_status_provid
     @app.get('/api/research/dashboard')
     def research_v243_dashboard():
         return jsonify(research.research_dashboard())
+
+
+    @app.get('/api/research/forecast-precision')
+    def research_forecast_precision():
+        """Read-only historical forecast precision and shadow evaluation."""
+        from .morning_forecast_shadow_calibration import archived_precision_report
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+            min_train = max(2, min(int(request.args.get('min_train', 20)), 120))
+            window = max(min_train, min(int(request.args.get('window', 120)), 250))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_CALIBRATION_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_precision_report(limit=limit,
+                min_train=min_train, window=window))
+        except Exception:
+            app.logger.exception('Forecast precision archive unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503
