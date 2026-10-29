@@ -151,5 +151,6 @@ Full suite 1,518 passed / 0 failed.
 
 ## Later test-only allowance (2026-10-29)
 - `engine.execution.paper_lifecycle_validation` remains test-only as a pure,
-  deterministic offline simulation; it has no runtime route or execution
-  authority.
+  deterministic offline simulation exercised for safety and lifecycle
+  validation; it has no runtime route or execution authority, cannot submit
+  orders, and cannot claim broker-verified outcomes.
