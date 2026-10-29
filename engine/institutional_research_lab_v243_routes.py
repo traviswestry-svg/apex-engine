@@ -111,3 +111,19 @@ def register_institutional_research_lab_v243_routes(app, *, legacy_status_provid
             app.logger.exception('Regime forecast archive unavailable')
             return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
                             'production_promotion': False}), 503
+
+    @app.get('/api/research/regime-containment-provenance')
+    def research_regime_containment_provenance():
+        """Read-only morning vote/archive audit and containment shadow evaluation."""
+        from .regime_containment_research import archived_report
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+            min_train = max(2, min(int(request.args.get('min_train', 8)), 120))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_RESEARCH_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_report(limit=limit, min_train=min_train))
+        except Exception:
+            app.logger.exception('Regime containment research unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503
