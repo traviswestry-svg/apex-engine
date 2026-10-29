@@ -148,3 +148,8 @@ Full suite 1,518 passed / 0 failed.
   foundation awaits integration with the scanner and pipeline. Its tests cover
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
+
+## Later test-only allowance (2026-10-29)
+- `engine.execution.paper_lifecycle_validation` remains test-only as a pure,
+  deterministic offline simulation; it has no runtime route or execution
+  authority.

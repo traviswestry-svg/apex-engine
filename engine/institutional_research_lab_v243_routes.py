@@ -95,3 +95,19 @@ def register_institutional_research_lab_v243_routes(app, *, legacy_status_provid
             app.logger.exception('Forecast precision archive unavailable')
             return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
                             'production_promotion': False}), 503
+
+    @app.get('/api/research/regime-forecast-integrity')
+    def research_regime_forecast_integrity():
+        """Read-only archive-bound regime and reference-price integrity report."""
+        from .regime_forecast_integrity import archived_report
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+            exploratory_min_train = max(2, min(int(request.args.get('exploratory_min_train', 8)), 19))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_DIAGNOSTIC_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_report(limit=limit, exploratory_min_train=exploratory_min_train))
+        except Exception:
+            app.logger.exception('Regime forecast archive unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503
