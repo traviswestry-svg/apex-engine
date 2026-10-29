@@ -148,3 +148,14 @@ Full suite 1,518 passed / 0 failed.
   foundation awaits integration with the scanner and pipeline. Its tests cover
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
+
+## Later test-only allowances (2026-10-29)
+- `engine.adaptive_morning_forecast_calibration` provides shadow-only,
+  walk-forward forecast calibration; it cannot change official forecasts.
+- `engine.dual_horizon_forecast_integrity` reports horizon and opening-range
+  diagnostics without forecasting remaining-session movement or changing
+  grading authority.
+- `engine.execution.paper_lifecycle_validation` replays synthetic paper-trade
+  scenarios offline; it cannot send orders or verify broker fills or P&L.
+- `engine.morning_forecast_integrity` provides read-only snapshot and narrative
+  consistency checks; it does not produce or authorize forecasts.
