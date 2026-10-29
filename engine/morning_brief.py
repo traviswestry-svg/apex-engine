@@ -617,6 +617,7 @@ def generate_morning_brief(
     _llm=call_anthropic,
     async_narrative: bool = False,
     defer_async_enqueue: bool = False,
+    premarket_provider_records: Optional[dict] = None,
     **engine_kwargs,
 ) -> dict:
     """Rebuild deterministic data every request while reusing session narrative.
@@ -806,7 +807,7 @@ def generate_morning_brief(
     # Additive research-only capture: upstream verified features only.
     # Never derive decision-time signals from after-close data.
     from .premarket_directional_features import freeze_features as _freeze_directional
-    _upstream_directional = result["structured"].get("premarket_directional_features")
+    _upstream_directional = premarket_provider_records or result["structured"].get("premarket_directional_features")
     result["structured"]["premarket_directional_feature_snapshot"] = _freeze_directional(
         _upstream_directional, decision_at=result["generated_at"])
     result["forecast_identity"] = {

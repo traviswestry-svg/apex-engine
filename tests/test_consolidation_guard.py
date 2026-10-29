@@ -42,6 +42,7 @@ TEST_ONLY_ALLOWLIST = {
     "engine.dual_horizon_forecast_integrity",
     "engine.execution.paper_lifecycle_validation",
     "engine.flow_learning_checkpoint",
+    "engine.learning_resource_admission",
     "engine.morning_forecast_integrity",
     "engine.morning_forecast_shadow_calibration",
     "engine.scanner_freshness_deadline",

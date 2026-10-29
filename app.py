@@ -863,10 +863,6 @@ _FLOW_LEARNING_RUNTIME = {
     "learning_starvation_warning": False,
     "last_learning_budget_seconds": None,
     "last_learning_estimate_seconds": None,
-    "resource_admission_state": "NOT_CHECKED",
-    "memory_deferrals": 0,
-    "deadline_deferrals": 0,
-    "last_memory_snapshot": None,
     "live_session_cycles": 0,
     "pipeline_runs": 0,
     "source_clusters": 0,
@@ -4824,37 +4820,11 @@ def scanner_loop() -> None:
             "last_learning_budget_seconds": round(_learning_admission.remaining_budget_seconds, 3),
             "last_learning_estimate_seconds": _learning_admission.estimate_seconds,
         })
-        # APEX 69.10.48 candidate: fail-closed resource admission. The
-        # existing serial scanner owner remains the only learning writer.
-        from engine.learning_resource_admission import assess_resource_admission
-        _learning_memory = memory_pressure_status()
-        _memory_gate = assess_resource_admission(_learning_memory)
-        _FLOW_LEARNING_RUNTIME["resource_admission_state"] = _memory_gate
-        _FLOW_LEARNING_RUNTIME["last_memory_snapshot"] = {
-            k: _learning_memory.get(k) for k in (
-                "severity", "raw_usage_pct", "estimated_noninactive_file_usage_pct",
-                "psi_some_avg10", "psi_full_avg10")
-        }
-        if _learning_admission.state == "DEFERRED_SCANNER_DEADLINE":
-            _FLOW_LEARNING_RUNTIME["deadline_deferrals"] += 1
-        if _learning_admission.admitted and _memory_gate != "ADMITTED":
-            _FLOW_LEARNING_RUNTIME["memory_deferrals"] += 1
-            _FLOW_LEARNING_RUNTIME.update({
-                "last_state": _memory_gate,
-                "last_skip_reason": "RESOURCE_PROTECTION",
-            })
-        if _learning_admission.admitted and _memory_gate != "ADMITTED":
-            _learning_admission = __import__(
-                "engine.scanner_learning_continuity", fromlist=["LearningAdmission"]
-            ).LearningAdmission(False, _memory_gate,
-                                _learning_admission.remaining_budget_seconds,
-                                _learning_admission.estimate_seconds, 0, False)
         if not _learning_admission.admitted:
             _FLOW_LEARNING_RUNTIME.update({
                 "last_state": _learning_admission.state,
                 "last_skip_reason": (
                     "SCAN_FRESHNESS_PRIORITY" if _learning_admission.state == "DEFERRED_SCANNER_DEADLINE"
-                    else "RESOURCE_PROTECTION" if _learning_admission.state.startswith("DEFERRED_MEMORY")
                     else _learning_admission.state
                 ),
             })
@@ -11851,6 +11821,7 @@ def _morning_es_context() -> dict:
         "daily_bars": [settlement_bar] if settlement_bar else [],
         "spot": safe_float(latest, 0.0) or None,
         "prev_settlement": settlement_proxy,
+        "prev_settlement_bar_at": (settlement_bar or {}).get("t"),
         "settlement_method": "previous_session_close_proxy" if settlement_proxy else None,
         "status": "ok" if selected else "unavailable",
         "reason": None if selected else "Massive returned no ES Globex bars for the current overnight window",
@@ -12017,6 +11988,7 @@ def api_morning_brief():
         stage_timings["profile_history_load"] = round((time.perf_counter() - stage_started) * 1000, 1)
         stage_started = time.perf_counter()
 
+        from engine.premarket_feature_provider import derive_es_features
         with _MORNING_BRIEF_LOCK:
             payload = generate_morning_brief(
                 cache=_MORNING_BRIEF_CACHE,
@@ -12037,6 +12009,9 @@ def api_morning_brief():
                 adr_val=adr_val,
                 vp_extra=vp_extra,
                 expected_move_confidence=(options_feed.get("diagnostics") or {}).get("confidence"),
+                premarket_provider_records=derive_es_features(
+                    futures_context, decision_at=now_et().isoformat(),
+                    target_session_date=str(session_context.get("target_session_date") or now.date().isoformat())),
                 overnight_bars=futures_context.get("bars") or [],
                 es_daily_bars=futures_context.get("daily_bars") or [],
                 es_spot=futures_context.get("spot"),

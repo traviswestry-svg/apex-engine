@@ -149,6 +149,11 @@ Full suite 1,518 passed / 0 failed.
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
 
+## Later test-only allowance (2026-10-29)
+- `engine.learning_resource_admission` remains test-only pending a reviewed
+  scanner integration. Its isolated tests cover fail-closed resource-pressure
+  classification; it does not control scanner execution.
+
 ## Later test-only allowances (2026-10-29)
 - `engine.adaptive_morning_forecast_calibration` provides shadow-only,
   walk-forward forecast calibration; it cannot change official forecasts.
