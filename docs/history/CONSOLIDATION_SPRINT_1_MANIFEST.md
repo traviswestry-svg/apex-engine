@@ -148,6 +148,9 @@ Full suite 1,518 passed / 0 failed.
   foundation awaits integration with the scanner and pipeline. Its tests cover
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
-- `engine.execution.paper_lifecycle_validation` remains test-only for offline
-  synthetic scenario validation; it performs no database writes, webhook calls,
-  or execution-authority changes.
+
+## Later test-only allowance (2026-10-29)
+- `engine.execution.paper_lifecycle_validation` remains test-only as a pure,
+  deterministic offline simulation exercised for safety and lifecycle
+  validation; it has no runtime route or execution authority, cannot submit
+  orders, and cannot claim broker-verified outcomes.
