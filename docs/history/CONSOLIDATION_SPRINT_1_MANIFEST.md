@@ -156,6 +156,11 @@ Full suite 1,518 passed / 0 failed.
   diagnostics without forecasting remaining-session movement or changing
   grading authority.
 - `engine.execution.paper_lifecycle_validation` replays synthetic paper-trade
-  scenarios offline; it cannot send orders or verify broker fills or P&L.
+  scenarios in a pure, deterministic offline simulation; it has no runtime
+  route or execution authority, cannot submit orders, and cannot claim
+  broker-verified outcomes.
 - `engine.morning_forecast_integrity` provides read-only snapshot and narrative
   consistency checks; it does not produce or authorize forecasts.
+- `engine.morning_forecast_shadow_calibration` supports shadow calibration and
+  regime diagnostics; tests validate the analysis without invoking a live
+  forecast or execution path.
