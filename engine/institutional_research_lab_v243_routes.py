@@ -143,3 +143,18 @@ def register_institutional_research_lab_v243_routes(app, *, legacy_status_provid
             app.logger.exception('Regime evidence de-correlation research unavailable')
             return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
                             'production_promotion': False}), 503
+
+    @app.get('/api/research/premarket-directional-features')
+    def research_premarket_directional_features():
+        """Read-only evidence coverage, no model promotion or official forecast changes."""
+        from .premarket_directional_features import archived_diagnostics
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_RESEARCH_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_diagnostics(limit=limit))
+        except Exception:
+            app.logger.exception('Premarket directional evidence unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503

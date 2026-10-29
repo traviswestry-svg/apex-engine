@@ -149,8 +149,18 @@ Full suite 1,518 passed / 0 failed.
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
 
-## Later test-only allowance (2026-10-29)
-- `engine.execution.paper_lifecycle_validation` remains test-only as a pure,
-  deterministic offline simulation exercised for safety and lifecycle
-  validation; it has no runtime route or execution authority, cannot submit
-  orders, and cannot claim broker-verified outcomes.
+## Later test-only allowances (2026-10-29)
+- `engine.adaptive_morning_forecast_calibration` provides shadow-only,
+  walk-forward forecast calibration; it cannot change official forecasts.
+- `engine.dual_horizon_forecast_integrity` reports horizon and opening-range
+  diagnostics without forecasting remaining-session movement or changing
+  grading authority.
+- `engine.execution.paper_lifecycle_validation` replays synthetic paper-trade
+  scenarios in a pure, deterministic offline simulation; it has no runtime
+  route or execution authority, cannot submit orders, and cannot claim
+  broker-verified outcomes.
+- `engine.morning_forecast_integrity` provides read-only snapshot and narrative
+  consistency checks; it does not produce or authorize forecasts.
+- `engine.morning_forecast_shadow_calibration` supports shadow calibration and
+  regime diagnostics; tests validate the analysis without invoking a live
+  forecast or execution path.
