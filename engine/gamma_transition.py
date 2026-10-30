@@ -24,6 +24,33 @@ VERSION = "69.10.14"
 SCHEMA_VERSION = "apex.gamma_transition.v3"
 IDENTITY_SCHEMA_VERSION = "apex.gamma_snapshot_identity.v1"
 MAX_STALE_SECONDS = 900
+# Provider-declared option-chain universe descriptors. Missing metadata must not be
+# inferred from price or gamma values. No new database columns are necessary: the
+# canonical snapshot JSON already retains observational metadata.
+GAMMA_COVERAGE_FIELDS = (
+    "calculation_universe_id", "contract_coverage_id", "expiration_coverage",
+    "strike_coverage", "option_side_coverage", "underlying_coverage",
+)
+
+
+def gamma_coverage_comparability(left: Mapping[str, Any], right: Mapping[str, Any]) -> Dict[str, Any]:
+    """Read-only comparability of *declared* provider calculation coverage.
+
+    For legacy observations with no coverage declaration, the state is UNKNOWN:
+    existing model compatibility semantics remain intact, but consumers must not
+    interpret UNKNOWN as verified identical contract coverage.
+    """
+    a = {k: _canonical_text(left.get(k)) for k in GAMMA_COVERAGE_FIELDS}
+    b = {k: _canonical_text(right.get(k)) for k in GAMMA_COVERAGE_FIELDS}
+    present = [k for k in GAMMA_COVERAGE_FIELDS if a[k] is not None or b[k] is not None]
+    missing = [k for k in present if a[k] is None or b[k] is None]
+    changed = [k for k in present if a[k] is not None and b[k] is not None and a[k] != b[k]]
+    state = ("UNKNOWN" if not present else "INCOMPLETE" if missing else
+             "CHANGED" if changed else "MATCHED")
+    return {"state": state, "declared_fields": present,
+            "missing_fields": missing, "changed_fields": changed,
+            "verified": state == "MATCHED"}
+
 _ET = ZoneInfo("America/New_York")
 
 _RUNTIME_LOCK = threading.RLock()
@@ -147,8 +174,11 @@ def canonical_identity_basis(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
     provider_source_timestamp = _canonical_text(snapshot.get("provider_source_timestamp"))
     model_material = {key: _canonical_text(snapshot.get(key)) for key in (
         "model_id", "model_version", "calculation_method", "gamma_unit") if _canonical_text(snapshot.get(key))}
+    coverage_material = {key: _canonical_text(snapshot.get(key)) for key in GAMMA_COVERAGE_FIELDS
+                         if _canonical_text(snapshot.get(key))}
     return {
         **({"declared_model_metadata": model_material} if model_material else {}),
+        **({"declared_coverage_metadata": coverage_material} if coverage_material else {}),
         "schema_version": IDENTITY_SCHEMA_VERSION,
         "ticker": str(snapshot.get("ticker") or "SPX").upper(),
         "source": str(snapshot.get("source") or "UNKNOWN").upper(),
@@ -283,6 +313,7 @@ def snapshot_from_gamma(
         "model_version": gamma.get("model_version"),
         "calculation_method": gamma.get("calculation_method"),
         "gamma_unit": gamma.get("gamma_unit"),
+        **{key: gamma.get(key) for key in GAMMA_COVERAGE_FIELDS if gamma.get(key) not in (None, "")},
         "flip_calculation_valid": gamma.get("flip_calculation_valid"),
         "underlying_spot": _f(gamma.get("underlying_spot")) if gamma.get("spot_synchronized_with_gamma") is True else None,
         "spot_synchronized_with_gamma": gamma.get("spot_synchronized_with_gamma") is True,
@@ -366,11 +397,7 @@ def _prior(path: str, ticker: str, observed: dt.datetime, minutes: int) -> Optio
             "WHERE ticker=? AND observed_at<=? ORDER BY observed_at DESC LIMIT 1",
             (ticker, target.isoformat()),
         ).fetchone()
-<<<<<<< Updated upstream
     return _row_to_snapshot(dict(r)) if r else None
-=======
-    return _row_to_snapshot(r) if r else None
->>>>>>> Stashed changes
 
 
 def gamma_model_integrity(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
@@ -390,8 +417,11 @@ def gamma_model_integrity(snapshot: Mapping[str, Any]) -> Dict[str, Any]:
 
 def gamma_models_comparable(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
     fields = ("source", "model_id", "model_version", "calculation_method", "gamma_unit")
-    return all(str(left.get(k) or "").strip() and
-               str(left.get(k)) == str(right.get(k)) for k in fields)
+    model_matches = all(str(left.get(k) or "").strip() and
+                        str(left.get(k)) == str(right.get(k)) for k in fields)
+    # An explicitly changed (or one-sided) universe is not comparable.
+    coverage = gamma_coverage_comparability(left, right)
+    return bool(model_matches and coverage["state"] in {"UNKNOWN", "MATCHED"})
 
 
 def regime_stability(current: Mapping[str, Any], history: list[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -458,7 +488,7 @@ def regime_stability(current: Mapping[str, Any], history: list[Mapping[str, Any]
 def _delta(cur: Mapping[str, Any], prev: Optional[Mapping[str, Any]], key: str, observed: dt.datetime, minutes: int) -> Optional[float]:
     if not prev:
         return None
-    if key in {"net_gex", "gamma_flip", "capacity_ratio"}:
+    if key in {"net_gex", "gamma_flip", "capacity_ratio", "zero_dte_share", "zero_one_dte_share", "weekly_gamma_share"}:
         model_fields = ("model_id", "model_version", "calculation_method", "gamma_unit")
         has_model_declaration = any(
             str(snapshot.get(field) or "").strip()
@@ -497,6 +527,7 @@ def compute_transition(current: Mapping[str, Any], *, db_path: Optional[str] = N
         "gamma_flip_change": None, "gamma_flip_velocity": None, "zero_dte_share_change": None, "zero_one_dte_share_change": None,
         "weekly_gamma_share_change": None, "durability_change": None, "gamma_path_transition": None,
         "transition_lineage": [], "schema_version": SCHEMA_VERSION,
+        "coverage_comparability_15m": "UNKNOWN", "coverage_comparability_details_15m": None,
         "behavioral_authority": False, "execution_authority": False,
         "automatic_calibration_activation": False, "production_effect": "NONE",
     }
@@ -523,6 +554,9 @@ def compute_transition(current: Mapping[str, Any], *, db_path: Optional[str] = N
                 "canonical_gamma_snapshot_id": row.get("canonical_gamma_snapshot_id"),
                 "observed_at": row.get("observed_at"),
             })
+    coverage_15 = gamma_coverage_comparability(current, p15) if p15 else None
+    base = {**base, "coverage_comparability_15m": coverage_15["state"] if coverage_15 else "NO_PRIOR",
+            "coverage_comparability_details_15m": coverage_15}
     if not available:
         return {**base, "status": "COLLECTING", "transition_state": "INSUFFICIENT_HISTORY", "transition_lineage": lineage}
     rapid = (r1 is not None and abs(r1) >= .20) or (r5 is not None and abs(r5) >= .30)
@@ -534,7 +568,7 @@ def compute_transition(current: Mapping[str, Any], *, db_path: Optional[str] = N
         state = "WEAKENING"
     else:
         state = "STABLE"
-    prev = p15 or p5 or p1 or p30
+    prev = next((row for row in (p15, p5, p1, p30) if row and gamma_models_comparable(current, row)), None)
     ratios = [abs(x) for x in (r1, r5, r15, r30) if x is not None]
     return {
         **base, "status": "AVAILABLE", "transition_state": state,
