@@ -148,3 +148,15 @@ Full suite 1,518 passed / 0 failed.
   foundation awaits integration with the scanner and pipeline. Its tests cover
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
+
+## Test-only diagnostics and validation (2026-10-30)
+- `engine.adaptive_morning_forecast_calibration` is shadow-only walk-forward
+  calibration and cannot write forecasts, labels, orders, or outcome evidence.
+- `engine.dual_horizon_forecast_integrity` provides read-only horizon diagnostics
+  without replacing the immutable first forecast used for grading.
+- `engine.execution.paper_lifecycle_validation` is a pure offline scenario
+  validator with no database, webhook, or execution authority.
+- `engine.learning_resource_admission` computes a conservative optional-work
+  admission result; it does not start workers or mutate persistence.
+- `engine.morning_forecast_integrity` provides read-only snapshot and narrative
+  consistency diagnostics without forecast authority.
