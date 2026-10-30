@@ -148,3 +148,15 @@ Full suite 1,518 passed / 0 failed.
   foundation awaits integration with the scanner and pipeline. Its tests cover
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
+
+## Test-only foundations (2026-10-30)
+- `engine.adaptive_morning_forecast_calibration` provides shadow-only calibration;
+  it remains outside official forecast authority until verified history is integrated.
+- `engine.dual_horizon_forecast_integrity` provides diagnostic-only horizon evidence;
+  it does not alter forecast grading or replace immutable baselines.
+- `engine.execution.paper_lifecycle_validation` replays synthetic paper scenarios
+  without broker authority and is kept isolated from production execution paths.
+- `engine.learning_resource_admission` is a fail-closed resource gate awaiting
+  integration with scanner-owned optional learning work.
+- `engine.morning_forecast_integrity` supplies read-only snapshot and narrative
+  checks, not forecast authority, pending integration into the brief workflow.
