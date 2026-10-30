@@ -77,3 +77,9 @@ def test_readonly_route_and_post_requires_token(monkeypatch):
     assert client.get('/api/paper/traderspost/readiness',headers=h).status_code==200
     assert client.get('/api/paper/traderspost/connectivity-test',headers=h).status_code==405
     assert client.post('/api/paper/traderspost/connectivity-test').status_code==403
+    def fail_connectivity_test():
+        raise ValueError('internal diagnostic')
+    monkeypatch.setattr(tp,'connectivity_test',fail_connectivity_test)
+    response=client.post('/api/paper/traderspost/connectivity-test',headers=h)
+    assert response.status_code==400
+    assert response.get_json()['error']=='invalid connectivity test request'

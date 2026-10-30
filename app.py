@@ -11988,6 +11988,7 @@ def api_morning_brief():
         stage_timings["profile_history_load"] = round((time.perf_counter() - stage_started) * 1000, 1)
         stage_started = time.perf_counter()
 
+        from engine.premarket_feature_provider import derive_es_features
         with _MORNING_BRIEF_LOCK:
             payload = generate_morning_brief(
                 cache=_MORNING_BRIEF_CACHE,
@@ -12008,7 +12009,7 @@ def api_morning_brief():
                 adr_val=adr_val,
                 vp_extra=vp_extra,
                 expected_move_confidence=(options_feed.get("diagnostics") or {}).get("confidence"),
-                premarket_provider_records=__import__("engine.premarket_feature_provider", fromlist=["derive_es_features"]).derive_es_features(
+                premarket_provider_records=derive_es_features(
                     futures_context, decision_at=now_et().isoformat(),
                     target_session_date=str(session_context.get("target_session_date") or now.date().isoformat())),
                 overnight_bars=futures_context.get("bars") or [],
