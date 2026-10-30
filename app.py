@@ -11819,6 +11819,12 @@ def _morning_es_context() -> dict:
         "ticker": front,
         "bars": selected,
         "daily_bars": [settlement_bar] if settlement_bar else [],
+        # Already-fetched completed previous RTH bars; the feature adapter
+        # validates full-session coverage before making a range observation.
+        "prior_rth_bars": [row for row in prior if isinstance(row, dict) and (
+            (lambda ts: ts is not None and dt.time(9, 30) <= ts.time() < dt.time(16))(
+                dt.datetime.fromtimestamp(float(row["t"])/1000.0, tz=dt.timezone.utc)
+                .astimezone(now.tzinfo) if isinstance(row.get("t"), (int, float)) else None))],
         "spot": safe_float(latest, 0.0) or None,
         "prev_settlement": settlement_proxy,
         "prev_settlement_bar_at": (settlement_bar or {}).get("t"),
@@ -11988,6 +11994,7 @@ def api_morning_brief():
         stage_timings["profile_history_load"] = round((time.perf_counter() - stage_started) * 1000, 1)
         stage_started = time.perf_counter()
 
+        from engine.premarket_feature_provider import derive_es_features
         with _MORNING_BRIEF_LOCK:
             payload = generate_morning_brief(
                 cache=_MORNING_BRIEF_CACHE,
@@ -12008,7 +12015,7 @@ def api_morning_brief():
                 adr_val=adr_val,
                 vp_extra=vp_extra,
                 expected_move_confidence=(options_feed.get("diagnostics") or {}).get("confidence"),
-                premarket_provider_records=__import__("engine.premarket_feature_provider", fromlist=["derive_es_features"]).derive_es_features(
+                premarket_provider_records=derive_es_features(
                     futures_context, decision_at=now_et().isoformat(),
                     target_session_date=str(session_context.get("target_session_date") or now.date().isoformat())),
                 overnight_bars=futures_context.get("bars") or [],
@@ -12021,7 +12028,7 @@ def api_morning_brief():
             stage_timings[f"brief_{timing_name}"] = timing_value
         stage_started = time.perf_counter()
         payload["options_feed"] = options_feed
-        payload["futures_feed"] = {k: v for k, v in futures_context.items() if k not in {"bars", "daily_bars"}}
+        payload["futures_feed"] = {k: v for k, v in futures_context.items() if k not in {"bars", "daily_bars", "prior_rth_bars"}}
         payload["session_context"] = session_context
         # APEX 50.4.2: unknown gamma is explicitly unconfirmed and reference-only.
         structured = payload.get("structured") or {}
