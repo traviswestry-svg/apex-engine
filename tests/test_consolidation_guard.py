@@ -44,6 +44,7 @@ TEST_ONLY_ALLOWLIST = {
     "engine.flow_learning_checkpoint",
     "engine.learning_resource_admission",
     "engine.morning_forecast_integrity",
+    "engine.morning_forecast_shadow_calibration",
     "engine.scanner_freshness_deadline",
 }
 
@@ -85,8 +86,8 @@ def _imports_of(path: Path, mods) -> set:
                 base = ".".join(path.relative_to(ROOT).with_suffix("").parts[:-node.level])
                 for a in node.names:
                     out.add(f"{base}.{a.name}")
-    # Literal importlib imports are runtime edges, even when a lightweight
-    # service delays loading a heavy implementation to avoid circular imports.
+    # Literal importlib and builtin imports are runtime edges, even when a
+    # lightweight service delays loading an implementation.
     # Only accept statically declared module names; dynamic strings remain
     # unresolvable and are not treated as reachability evidence.
     for node in ast.walk(tree):
@@ -95,7 +96,8 @@ def _imports_of(path: Path, mods) -> set:
         fn = node.func
         is_importlib = (isinstance(fn, ast.Attribute) and fn.attr == "import_module"
                         and isinstance(fn.value, ast.Name) and fn.value.id == "importlib")
-        if is_importlib and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+        is_builtin_import = isinstance(fn, ast.Name) and fn.id == "__import__"
+        if (is_importlib or is_builtin_import) and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
             out.add(node.args[0].value)
     return {i for i in out if i in mods}
 
@@ -176,3 +178,4 @@ def test_literal_dynamic_imports_are_runtime_edges():
     mods = _modules()
     service = ROOT / "engine" / "evening_recap_service.py"
     assert "engine.evening_recap" in _imports_of(service, mods)
+    assert "engine.premarket_feature_provider" in _imports_of(ROOT / "app.py", mods)

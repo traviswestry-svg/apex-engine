@@ -149,14 +149,23 @@ Full suite 1,518 passed / 0 failed.
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
 
-## Test-only diagnostics and validation (2026-10-30)
-- `engine.adaptive_morning_forecast_calibration` is shadow-only walk-forward
-  calibration and cannot write forecasts, labels, orders, or outcome evidence.
-- `engine.dual_horizon_forecast_integrity` provides read-only horizon diagnostics
-  without replacing the immutable first forecast used for grading.
-- `engine.execution.paper_lifecycle_validation` is a pure offline scenario
-  validator with no database, webhook, or execution authority.
-- `engine.learning_resource_admission` computes a conservative optional-work
-  admission result; it does not start workers or mutate persistence.
+## Later test-only allowance (2026-10-29)
+- `engine.learning_resource_admission` remains test-only pending a reviewed
+  scanner integration. Its isolated tests cover fail-closed resource-pressure
+  classification; it does not control scanner execution.
+
+## Later test-only allowances (2026-10-29)
+- `engine.adaptive_morning_forecast_calibration` provides shadow-only,
+  walk-forward forecast calibration; it cannot change official forecasts.
+- `engine.dual_horizon_forecast_integrity` reports horizon and opening-range
+  diagnostics without forecasting remaining-session movement or changing
+  grading authority.
+- `engine.execution.paper_lifecycle_validation` replays synthetic paper-trade
+  scenarios in a pure, deterministic offline simulation; it has no runtime
+  route or execution authority, cannot submit orders, and cannot claim
+  broker-verified outcomes.
 - `engine.morning_forecast_integrity` provides read-only snapshot and narrative
-  consistency diagnostics without forecast authority.
+  consistency checks; it does not produce or authorize forecasts.
+- `engine.morning_forecast_shadow_calibration` supports shadow calibration and
+  regime diagnostics; tests validate the analysis without invoking a live
+  forecast or execution path.
