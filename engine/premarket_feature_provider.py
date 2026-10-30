@@ -105,4 +105,46 @@ def derive_es_features(futures_context, *, decision_at, target_session_date,
         result['premarket_gap'] = {'value': (last / previous - 1) * 100,
             'source': source + ':PREVIOUS_ES_CLOSE_PROXY', 'observed_at': observed_at,
             'ingested_at': ingestion.isoformat(), 'decision_time_verified': True}
+    # Short-horizon trend: six consecutive, completed 5m bars with verified
+    # OHLC; slope normalized by observed range, no future bars or interpolation.
+    tail = selected[-6:]
+    if len(tail) == 6 and all(
+            tail[i+1][0] - tail[i][0] == timedelta(minutes=bar_minutes)
+            for i in range(5)):
+        highs = [_number(b.get('h')) for _, _, _, b in tail]
+        lows = [_number(b.get('l')) for _, _, _, b in tail]
+        if (all(v is not None for v in highs + lows) and
+                all(h >= l for h, l in zip(highs, lows))):
+            spread = max(highs) - min(lows)
+            if spread > 0:
+                result['premarket_trend_strength'] = row(
+                    (tail[-1][1] - tail[0][1]) / spread)
+
+    # Prior RTH range is usable only when the *existing* fetch includes
+    # a sufficiently complete, strictly previous regular-session sample.
+    prior_bars = futures_context.get('prior_rth_bars') or []
+    if isinstance(prior_bars, list):
+        eligible = []
+        for bar in prior_bars:
+            if not isinstance(bar, dict):
+                continue
+            ts = _dt(bar.get('t'))
+            hi, lo = _number(bar.get('h')), _number(bar.get('l'))
+            if (ts and ts < window_start and hi is not None and lo is not None
+                    and hi >= lo and ts + timedelta(minutes=bar_minutes) <= decision):
+                eligible.append((ts, hi, lo))
+        eligible.sort()
+        # 5-minute regular trading session has 78 bars. At least 75 and
+        # both open/close boundaries are required to avoid partial ranges.
+        if len(eligible) >= 75 and len({x[0] for x in eligible}) == len(eligible):
+            day = eligible[0][0].astimezone(ET).date()
+            rth_open = datetime.combine(day, time(9, 30), ET).astimezone(timezone.utc)
+            rth_end = datetime.combine(day, time(16), ET).astimezone(timezone.utc)
+            if (all(rth_open <= ts < rth_end for ts, _, _ in eligible)
+                    and eligible[0][0] <= rth_open + timedelta(minutes=5)
+                    and eligible[-1][0] >= rth_end - timedelta(minutes=10)):
+                high = max(x[1] for x in eligible)
+                low = min(x[2] for x in eligible)
+                if high > low:
+                    result['prior_day_range_position'] = row((last-low)/(high-low))
     return result
