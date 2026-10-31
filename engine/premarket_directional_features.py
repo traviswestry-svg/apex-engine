@@ -56,6 +56,10 @@ def freeze_features(source, *, decision_at):
                 result['usable_count'] += 1
         if key not in result['features']:
             result['features'][key] = {'status': status, 'value': None}
+    diagnostics = source.get('_availability_diagnostics') if isinstance(source, dict) else None
+    if isinstance(diagnostics, dict) and diagnostics.get('schema') == 'PREMARKET_FEATURE_AVAILABILITY_V1':
+        # Capture at generation time, not at archive-read time. Never invent prior data.
+        result['availability_diagnostics'] = diagnostics
     result['status'] = 'FEATURES_AVAILABLE' if result['usable_count'] else 'ABSTAIN_NO_VERIFIED_FEATURES'
     return result
 
@@ -98,11 +102,15 @@ def archive_diagnostics(mornings):
             continue
         signal=shadow_direction(snapshot)
         counts[signal['status']] += 1
-        decisions.append({'session_date': day, 'status': signal['status'],
-                          'direction': signal['direction'],
-                          'usable_count': snapshot.get('usable_count',0),
-                          'feature_status': {k:v.get('status') for k,v in
-                              (snapshot.get('features') or {}).items()}})
+        item = {'session_date': day, 'status': signal['status'],
+                'direction': signal['direction'],
+                'usable_count': snapshot.get('usable_count',0),
+                'feature_status': {k:v.get('status') for k,v in
+                    (snapshot.get('features') or {}).items()}}
+        diagnostics = snapshot.get('availability_diagnostics')
+        if isinstance(diagnostics, dict) and diagnostics.get('schema') == 'PREMARKET_FEATURE_AVAILABILITY_V1':
+            item['availability_diagnostics'] = diagnostics
+        decisions.append(item)
     return {'ok': True, 'mode': 'SHADOW_RESEARCH_ONLY',
             'production_promotion': False, 'official_forecast_mutated': False,
             'sessions': len(mornings), 'status_counts': dict(counts),

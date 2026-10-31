@@ -11836,6 +11836,18 @@ def _morning_es_context() -> dict:
 
 _APEX50_LAST_DATA_QUALITY = {}
 
+def _premarket_records_with_diagnostics(futures_context, *, decision_at, target_session_date):
+    """Attach bounded read-only availability reasons to the frozen research snapshot."""
+    from engine.premarket_feature_provider import derive_es_features
+    from engine.premarket_availability_diagnostics import diagnose
+    records = derive_es_features(futures_context, decision_at=decision_at,
+                                 target_session_date=target_session_date)
+    records['_availability_diagnostics'] = diagnose(
+        futures_context, decision_at=decision_at,
+        target_session_date=target_session_date, available=records)
+    return records
+
+
 @app.route("/api/morning-brief", methods=["GET"])
 def api_morning_brief():
     """Generate or return the cached SPX institutional morning brief.
@@ -12015,7 +12027,7 @@ def api_morning_brief():
                 adr_val=adr_val,
                 vp_extra=vp_extra,
                 expected_move_confidence=(options_feed.get("diagnostics") or {}).get("confidence"),
-                premarket_provider_records=derive_es_features(
+                premarket_provider_records=_premarket_records_with_diagnostics(
                     futures_context, decision_at=now_et().isoformat(),
                     target_session_date=str(session_context.get("target_session_date") or now.date().isoformat())),
                 overnight_bars=futures_context.get("bars") or [],
