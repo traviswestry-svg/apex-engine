@@ -148,3 +148,16 @@ Full suite 1,518 passed / 0 failed.
   foundation awaits integration with the scanner and pipeline. Its tests cover
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
+
+## Later test-only allowances (2026-10-31)
+- `engine.adaptive_morning_forecast_calibration` provides shadow-only
+  walk-forward candidates; keep it out of runtime forecast authority until
+  explicitly integrated.
+- `engine.dual_horizon_forecast_integrity` provides read-only horizon and
+  opening-range diagnostics; it does not revise the canonical forecast.
+- `engine.execution.paper_lifecycle_validation` validates synthetic offline
+  scenarios and must not be used as live execution authorization.
+- `engine.learning_resource_admission` is a pure resource gate awaiting
+  scanner integration; it starts no workers and mutates no persistence.
+- `engine.morning_forecast_integrity` provides read-only snapshot and narrative
+  consistency diagnostics, not production forecast authority.

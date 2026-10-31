@@ -37,8 +37,13 @@ RUNTIME_ROOTS = ["app", "wsgi", "scanner_worker", "signal_evaluator",
 # list in later sprints; never grow it without a reason recorded in the
 # consolidation manifest.
 TEST_ONLY_ALLOWLIST = {
+    "engine.adaptive_morning_forecast_calibration",
     "engine.canonical_decision",
+    "engine.dual_horizon_forecast_integrity",
+    "engine.execution.paper_lifecycle_validation",
     "engine.flow_learning_checkpoint",
+    "engine.learning_resource_admission",
+    "engine.morning_forecast_integrity",
     "engine.scanner_freshness_deadline",
 }
 

@@ -16,6 +16,7 @@ ALLOWED_ROOT_PYTHON = {
     "app.py",               # legacy-compatible web module
     "flatfiles_ingest.py",  # operator CLI
     "flatfiles_probe.py",   # operator CLI
+    "release_truth.py",    # canonical release identity for regression tests
     "scanner_worker.py",    # Render worker entry point
     "signal_evaluator.py",  # scanner-integrated evaluator
     "wsgi.py",              # production WSGI entry point
