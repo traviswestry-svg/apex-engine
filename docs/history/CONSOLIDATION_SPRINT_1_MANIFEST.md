@@ -149,15 +149,17 @@ Full suite 1,518 passed / 0 failed.
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
 
-## Later test-only allowances (2026-10-31)
+## Later test-only allowances (2026-10-29–2026-10-31)
 - `engine.adaptive_morning_forecast_calibration` provides shadow-only
-  walk-forward candidates; keep it out of runtime forecast authority until
-  explicitly integrated.
+  walk-forward candidates and cannot change official forecasts.
 - `engine.dual_horizon_forecast_integrity` provides read-only horizon and
-  opening-range diagnostics; it does not revise the canonical forecast.
-- `engine.execution.paper_lifecycle_validation` validates synthetic offline
-  scenarios and must not be used as live execution authorization.
-- `engine.learning_resource_admission` is a pure resource gate awaiting
-  scanner integration; it starts no workers and mutates no persistence.
+  opening-range diagnostics without changing forecast or grading authority.
+- `engine.execution.paper_lifecycle_validation` replays synthetic paper-trade
+  scenarios offline and has no live execution or broker-outcome authority.
+- `engine.learning_resource_admission` classifies resource pressure fail-closed
+  pending reviewed scanner integration; it does not control scanner execution.
 - `engine.morning_forecast_integrity` provides read-only snapshot and narrative
-  consistency diagnostics, not production forecast authority.
+  consistency checks and does not produce or authorize forecasts.
+- `engine.morning_forecast_shadow_calibration` supports shadow calibration and
+  regime diagnostics; tests validate the analysis without invoking a live
+  forecast or execution path.
