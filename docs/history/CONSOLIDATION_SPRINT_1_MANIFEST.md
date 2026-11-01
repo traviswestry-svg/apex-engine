@@ -148,3 +148,13 @@ Full suite 1,518 passed / 0 failed.
   foundation awaits integration with the scanner and pipeline. Its tests cover
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
+
+## Later test-only allowance (2026-11-01)
+- `engine.adaptive_morning_forecast_calibration` and
+  `engine.morning_forecast_integrity` provide shadow-only forecast diagnostics;
+  `engine.dual_horizon_forecast_integrity` provides read-only evidence checks.
+  Their tests verify these bounded, non-authoritative APIs without wiring them
+  into runtime decision paths.
+- `engine.execution.paper_lifecycle_validation` is a pure offline scenario
+  validator, and `engine.learning_resource_admission` is a conservative
+  resource gate. Both are currently exercised only in isolated unit tests.

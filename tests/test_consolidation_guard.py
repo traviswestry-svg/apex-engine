@@ -39,6 +39,11 @@ RUNTIME_ROOTS = ["app", "wsgi", "scanner_worker", "signal_evaluator",
 TEST_ONLY_ALLOWLIST = {
     "engine.canonical_decision",
     "engine.flow_learning_checkpoint",
+    "engine.adaptive_morning_forecast_calibration",
+    "engine.dual_horizon_forecast_integrity",
+    "engine.execution.paper_lifecycle_validation",
+    "engine.learning_resource_admission",
+    "engine.morning_forecast_integrity",
     "engine.scanner_freshness_deadline",
 }
 
