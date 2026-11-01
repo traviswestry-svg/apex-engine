@@ -6,7 +6,8 @@ No post-session actuals, reconstructed gaps or inferred timestamps are accepted.
 """
 from __future__ import annotations
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time
+from zoneinfo import ZoneInfo
 from math import isfinite
 
 FEATURES = ('overnight_es_return', 'overnight_vwap_displacement',
@@ -90,6 +91,24 @@ def shadow_direction(snapshot):
 def archive_diagnostics(mornings):
     counts=Counter(); decisions=[]
     for day, morning in sorted(mornings.items()):
+        # Archive keys are TARGET session dates, not proof of a same-day
+        # premarket forecast. Preserve NEXT_SESSION_PREP without scoring it.
+        identity = morning.get('forecast_identity') or {}
+        generated = _time(morning.get('generated_at'))
+        generated_et = generated.astimezone(ZoneInfo('America/New_York')) if generated else None
+        mode = identity.get('brief_mode') or morning.get('brief_mode')
+        if mode == 'NEXT_SESSION_PREP' or (generated_et and generated_et.date().isoformat() < day):
+            counts['NEXT_SESSION_PREPARATION_NOT_PREMARKET'] += 1
+            decisions.append({'session_date': day, 'status': 'NEXT_SESSION_PREPARATION_NOT_PREMARKET',
+                'brief_mode': mode, 'generated_at': morning.get('generated_at'),
+                'canonical_forecast_id': morning.get('canonical_forecast_id'),
+                'note': 'Archived preparation record; not a same-day premarket prediction'})
+            continue
+        if generated_et and generated_et.date().isoformat() > day:
+            counts['ARCHIVE_DATE_INTEGRITY_REVIEW'] += 1
+            decisions.append({'session_date': day, 'status': 'ARCHIVE_DATE_INTEGRITY_REVIEW',
+                'generated_at': morning.get('generated_at'), 'brief_mode': mode})
+            continue
         structured = morning.get('structured') or {}
         snapshot = structured.get('premarket_directional_feature_snapshot')
         if not isinstance(snapshot, dict):
