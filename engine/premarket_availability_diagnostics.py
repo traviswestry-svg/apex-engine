@@ -88,12 +88,43 @@ def diagnose(futures_context, *, decision_at, target_session_date, available=Non
                     reasons['premarket_trend_strength'] = (
                         'INSUFFICIENT_CONSECUTIVE_COMPLETED_BARS' if not contiguous
                         else 'INVALID_OR_ZERO_TREND_OHLC_RANGE')
+                prior = context.get('prior_rth_bars')
+                by_day = {}
+                if isinstance(prior, list):
+                    for b in prior:
+                        if not isinstance(b, dict):
+                            continue
+                        ts = _dt(b.get('t'))
+                        if ts and ts < start and ts + timedelta(minutes=bar_minutes) <= decision:
+                            local = ts.astimezone(ET)
+                            if time(9, 30) <= local.time() < time(16):
+                                by_day.setdefault(local.date(), []).append((ts, b))
+                selected_day = max(by_day) if by_day else None
+                rows = sorted(by_day.get(selected_day, []))
+                timestamps = [ts for ts, _ in rows]
+                rth = {'selected_session_date': selected_day.isoformat() if selected_day else None,
+                       'bar_count': len(rows), 'unique_timestamps': len(set(timestamps)),
+                       'first_bar_at': timestamps[0].isoformat() if rows else None,
+                       'last_bar_at': timestamps[-1].isoformat() if rows else None,
+                       'required_minimum_bars': 75,
+                       'expected_open_et': '09:30', 'expected_last_bar_et': '15:55'}
+                diagnostics['prior_rth_session'] = rth
                 if 'prior_day_range_position' not in available:
-                    prior = context.get('prior_rth_bars')
-                    if not isinstance(prior, list) or len(prior) < 75:
-                        reasons['prior_day_range_position'] = 'INSUFFICIENT_PRIOR_RTH_BARS'
+                    if not rows:
+                        reason = 'PRIOR_RTH_BARS_UNAVAILABLE'
+                    elif len(set(timestamps)) != len(rows):
+                        reason = 'PRIOR_RTH_DUPLICATE_TIMESTAMPS'
+                    elif len(rows) < 75:
+                        reason = 'PRIOR_RTH_SESSION_INCOMPLETE'
+                    elif (timestamps[0].astimezone(ET).time() != time(9, 30)
+                          or timestamps[-1].astimezone(ET).time() != time(15, 55)):
+                        reason = 'PRIOR_RTH_OPEN_OR_CLOSE_MISSING'
+                    elif any(_number(b.get('h')) is None or _number(b.get('l')) is None or
+                             _number(b.get('h')) < _number(b.get('l')) for _, b in rows):
+                        reason = 'PRIOR_RTH_OHLC_INVALID'
                     else:
-                        reasons['prior_day_range_position'] = 'PRIOR_RTH_COVERAGE_OR_OHLC_INVALID'
+                        reason = 'PRIOR_RTH_RANGE_NOT_VERIFIED'
+                    reasons['prior_day_range_position'] = reason
     for key in ES_KEYS:
         if key in available:
             reasons[key] = 'AVAILABLE'

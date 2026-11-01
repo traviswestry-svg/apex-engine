@@ -149,7 +149,7 @@ Full suite 1,518 passed / 0 failed.
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
 
-## Later test-only allowances (2026-10-29–2026-10-31)
+## Later test-only allowances (2026-10-29–2026-11-01)
 - `engine.adaptive_morning_forecast_calibration` provides shadow-only
   walk-forward candidates and cannot change official forecasts.
 - `engine.dual_horizon_forecast_integrity` provides read-only horizon and
