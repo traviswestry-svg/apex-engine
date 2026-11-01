@@ -120,29 +120,33 @@ def derive_es_features(futures_context, *, decision_at, target_session_date,
                 result['premarket_trend_strength'] = row(
                     (tail[-1][1] - tail[0][1]) / spread)
 
-    # Prior RTH range is usable only when the *existing* fetch includes
-    # a sufficiently complete, strictly previous regular-session sample.
+    # Accept only the most recent RTH session before the overnight start.
+    # The provider normally supplies one date; defend against mixed-date
+    # payloads and never aggregate several sessions into a synthetic range.
     prior_bars = futures_context.get('prior_rth_bars') or []
     if isinstance(prior_bars, list):
-        eligible = []
+        eligible_by_day = {}
         for bar in prior_bars:
             if not isinstance(bar, dict):
                 continue
             ts = _dt(bar.get('t'))
             hi, lo = _number(bar.get('h')), _number(bar.get('l'))
-            if (ts and ts < window_start and hi is not None and lo is not None
+            if not (ts and ts < window_start and hi is not None and lo is not None
                     and hi >= lo and ts + timedelta(minutes=bar_minutes) <= decision):
-                eligible.append((ts, hi, lo))
-        eligible.sort()
-        # 5-minute regular trading session has 78 bars. At least 75 and
-        # both open/close boundaries are required to avoid partial ranges.
+                continue
+            local = ts.astimezone(ET)
+            if time(9, 30) <= local.time() < time(16):
+                eligible_by_day.setdefault(local.date(), []).append((ts, hi, lo))
+        day = max(eligible_by_day) if eligible_by_day else None
+        eligible = sorted(eligible_by_day.get(day, []))
+        # Require a nearly complete, unique 5-minute RTH sample including
+        # the open and final 15:55 bar; partial days must abstain.
         if len(eligible) >= 75 and len({x[0] for x in eligible}) == len(eligible):
-            day = eligible[0][0].astimezone(ET).date()
             rth_open = datetime.combine(day, time(9, 30), ET).astimezone(timezone.utc)
-            rth_end = datetime.combine(day, time(16), ET).astimezone(timezone.utc)
-            if (all(rth_open <= ts < rth_end for ts, _, _ in eligible)
-                    and eligible[0][0] <= rth_open + timedelta(minutes=5)
-                    and eligible[-1][0] >= rth_end - timedelta(minutes=10)):
+            rth_last = datetime.combine(day, time(15, 55), ET).astimezone(timezone.utc)
+            if (eligible[0][0] == rth_open and eligible[-1][0] == rth_last
+                    and all((ts - rth_open).total_seconds() % (bar_minutes * 60) == 0
+                            for ts, _, _ in eligible)):
                 high = max(x[1] for x in eligible)
                 low = min(x[2] for x in eligible)
                 if high > low:

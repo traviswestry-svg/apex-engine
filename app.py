@@ -11810,25 +11810,39 @@ def _morning_es_context() -> dict:
         elif when < start:
             prior.append(row)
     latest = selected[-1].get("c") if selected else None
-    # Massive futures aggregates do not expose the exchange's official daily
-    # settlement in this route. The final prior-session bar close is retained as
-    # an explicit proxy and marked as a fallback in data-quality diagnostics.
-    settlement_bar = prior[-1] if prior else None
-    settlement_proxy = safe_float((settlement_bar or {}).get("c"), 0.0) or None
+    # The most recent completed RTH date is identified from observed bars,
+    # never by taking the last arbitrary Globex bar. Holidays/partial sessions
+    # fail closed rather than supplying a misleading close or range.
+    prior_rth_by_day = {}
+    for row in prior:
+        if not isinstance(row, dict):
+            continue
+        try:
+            ts = dt.datetime.fromtimestamp(float(row["t"]) / 1000, tz=dt.timezone.utc).astimezone(now.tzinfo)
+        except (ValueError, TypeError, OverflowError, OSError, KeyError):
+            continue
+        if dt.time(9, 30) <= ts.time() < dt.time(16) and ts.date() < now.date():
+            prior_rth_by_day.setdefault(ts.date(), []).append(row)
+    prior_day = max(prior_rth_by_day) if prior_rth_by_day else None
+    prior_rth = sorted(prior_rth_by_day.get(prior_day, []), key=lambda r: r["t"])
+    # 5-minute ES RTH close proxy: require the actual 15:55 ET bar, not a
+    # 17:55 Globex bar or a bar from an older session.
+    closing = []
+    for row in prior_rth:
+        ts = dt.datetime.fromtimestamp(float(row["t"]) / 1000, tz=dt.timezone.utc).astimezone(now.tzinfo)
+        if ts.time() == dt.time(15, 55):
+            closing.append(row)
+    close_bar = closing[0] if len(closing) == 1 else None
+    close_proxy = safe_float((close_bar or {}).get("c"), 0.0) or None
     return {
         "ticker": front,
         "bars": selected,
-        "daily_bars": [settlement_bar] if settlement_bar else [],
-        # Already-fetched completed previous RTH bars; the feature adapter
-        # validates full-session coverage before making a range observation.
-        "prior_rth_bars": [row for row in prior if isinstance(row, dict) and (
-            (lambda ts: ts is not None and dt.time(9, 30) <= ts.time() < dt.time(16))(
-                dt.datetime.fromtimestamp(float(row["t"])/1000.0, tz=dt.timezone.utc)
-                .astimezone(now.tzinfo) if isinstance(row.get("t"), (int, float)) else None))],
+        "daily_bars": [close_bar] if close_bar else [],
+        "prior_rth_bars": prior_rth,
         "spot": safe_float(latest, 0.0) or None,
-        "prev_settlement": settlement_proxy,
-        "prev_settlement_bar_at": (settlement_bar or {}).get("t"),
-        "settlement_method": "previous_session_close_proxy" if settlement_proxy else None,
+        "prev_settlement": close_proxy,
+        "prev_settlement_bar_at": (close_bar or {}).get("t"),
+        "settlement_method": "previous_session_close_proxy" if close_proxy else None,
         "status": "ok" if selected else "unavailable",
         "reason": None if selected else "Massive returned no ES Globex bars for the current overnight window",
     }
