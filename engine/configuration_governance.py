@@ -274,7 +274,6 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_SCANNER_COVERAGE_DB','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scanner_coverage.db','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite path for persisted scanner lifecycle coverage.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_SCANNER_PROCESS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enables scanner-owned lifecycle coverage recording in this process.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_SCAN_COVERAGE_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Output path for paired scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
-<<<<<<< Updated upstream
 ])
 
 # APEX runtime memory and scanner diagnostics output configuration.
@@ -315,8 +314,6 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_SCANNER_COVERAGE_DB','category':'DATABASE','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scanner_coverage.db','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'SQLite path for scanner coverage authority.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_SCANNER_PROCESS','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Marks the dedicated scanner process to prevent recursive startup.','safety_critical':False,'used_in_code':True},
  {'name':'APEX_SCAN_COVERAGE_PATH','category':'HEALTH','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Bounded JSONL output for paired scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
-=======
->>>>>>> Stashed changes
 ])
 
 # APEX runtime memory and scanner diagnostics output configuration.
