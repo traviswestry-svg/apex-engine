@@ -113,8 +113,8 @@ Full suite 1,518 passed / 0 failed.
 
 ## Test-only module allowances
 - `engine.execution.paper_lifecycle_validation` (APEX 69.10.47) is an offline
-  synthetic lifecycle test harness. It has no runtime consumer or execution
-  authority; its scenario validation must not be treated as broker
+  synthetic lifecycle test harness with no runtime consumer or execution
+  authority. Its scenario validation must not be treated as broker
   reconciliation or authorization to submit orders.
 - `engine/scanner_freshness_deadline.py` remains a pure, test-covered planning
   policy with no execution authority; scanner runtime continues to use the
@@ -124,6 +124,10 @@ Full suite 1,518 passed / 0 failed.
   foundation awaits integration with the scanner and pipeline. Its tests cover
   persistence and compare-and-swap behavior; it is not runtime execution
   authority.
+- `engine.morning_forecast_shadow_calibration` remains test-only because it is
+  an offline, read-only research candidate with no route/UI wiring and must not
+  modify production forecasts or scoring. Its focused tests cover chronology,
+  provenance, and abstention; runtime integration requires separate review.
 
 ---
 

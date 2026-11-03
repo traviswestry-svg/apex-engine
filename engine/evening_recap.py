@@ -147,7 +147,13 @@ def _official_forecast_eligibility(payload: dict) -> tuple[bool, str, str]:
         target_date = dt.date.fromisoformat(target)
     except Exception:
         return False, "TARGET_SESSION_DATE_INVALID", target
-    if mode and mode not in {"PREMARKET", "NEXT_SESSION_PREP"}:
+    # Preparation briefs are research context, never same-day canonical grading authority.
+    # Keep them as immutable revisions so a later PREMARKET brief can claim the slot.
+    if mode == "NEXT_SESSION_PREP":
+        return False, "NEXT_SESSION_PREPARATION_NOT_OFFICIAL", target
+    if generated.date() != target_date:
+        return False, "NOT_SAME_DAY_PREMARKET", target
+    if mode and mode != "PREMARKET":
         return False, f"POST_OUTCOME_OR_LIVE_MODE:{mode}", target
     if state in {"OPENING_DRIVE", "MID_MORNING", "LUNCH", "AFTERNOON", "POWER_HOUR", "AFTER_HOURS"}:
         return False, f"POST_OUTCOME_OR_LIVE_STATE:{state}", target

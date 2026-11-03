@@ -11810,24 +11810,57 @@ def _morning_es_context() -> dict:
         elif when < start:
             prior.append(row)
     latest = selected[-1].get("c") if selected else None
-    # Massive futures aggregates do not expose the exchange's official daily
-    # settlement in this route. The final prior-session bar close is retained as
-    # an explicit proxy and marked as a fallback in data-quality diagnostics.
-    settlement_bar = prior[-1] if prior else None
-    settlement_proxy = safe_float((settlement_bar or {}).get("c"), 0.0) or None
+    # The most recent completed RTH date is identified from observed bars,
+    # never by taking the last arbitrary Globex bar. Holidays/partial sessions
+    # fail closed rather than supplying a misleading close or range.
+    prior_rth_by_day = {}
+    for row in prior:
+        if not isinstance(row, dict):
+            continue
+        try:
+            ts = dt.datetime.fromtimestamp(float(row["t"]) / 1000, tz=dt.timezone.utc).astimezone(now.tzinfo)
+        except (ValueError, TypeError, OverflowError, OSError, KeyError):
+            continue
+        if dt.time(9, 30) <= ts.time() < dt.time(16) and ts.date() < now.date():
+            prior_rth_by_day.setdefault(ts.date(), []).append(row)
+    prior_day = max(prior_rth_by_day) if prior_rth_by_day else None
+    prior_rth = sorted(prior_rth_by_day.get(prior_day, []), key=lambda r: r["t"])
+    # 5-minute ES RTH close proxy: require the actual 15:55 ET bar, not a
+    # 17:55 Globex bar or a bar from an older session.
+    closing = []
+    for row in prior_rth:
+        ts = dt.datetime.fromtimestamp(float(row["t"]) / 1000, tz=dt.timezone.utc).astimezone(now.tzinfo)
+        if ts.time() == dt.time(15, 55):
+            closing.append(row)
+    close_bar = closing[0] if len(closing) == 1 else None
+    close_proxy = safe_float((close_bar or {}).get("c"), 0.0) or None
     return {
         "ticker": front,
         "bars": selected,
-        "daily_bars": [settlement_bar] if settlement_bar else [],
+        "daily_bars": [close_bar] if close_bar else [],
+        "prior_rth_bars": prior_rth,
         "spot": safe_float(latest, 0.0) or None,
-        "prev_settlement": settlement_proxy,
-        "settlement_method": "previous_session_close_proxy" if settlement_proxy else None,
+        "prev_settlement": close_proxy,
+        "prev_settlement_bar_at": (close_bar or {}).get("t"),
+        "settlement_method": "previous_session_close_proxy" if close_proxy else None,
         "status": "ok" if selected else "unavailable",
         "reason": None if selected else "Massive returned no ES Globex bars for the current overnight window",
     }
 
 
 _APEX50_LAST_DATA_QUALITY = {}
+
+def _premarket_records_with_diagnostics(futures_context, *, decision_at, target_session_date):
+    """Attach bounded read-only availability reasons to the frozen research snapshot."""
+    from engine.premarket_feature_provider import derive_es_features
+    from engine.premarket_availability_diagnostics import diagnose
+    records = derive_es_features(futures_context, decision_at=decision_at,
+                                 target_session_date=target_session_date)
+    records['_availability_diagnostics'] = diagnose(
+        futures_context, decision_at=decision_at,
+        target_session_date=target_session_date, available=records)
+    return records
+
 
 @app.route("/api/morning-brief", methods=["GET"])
 def api_morning_brief():
@@ -11987,6 +12020,7 @@ def api_morning_brief():
         stage_timings["profile_history_load"] = round((time.perf_counter() - stage_started) * 1000, 1)
         stage_started = time.perf_counter()
 
+        from engine.premarket_feature_provider import derive_es_features
         with _MORNING_BRIEF_LOCK:
             payload = generate_morning_brief(
                 cache=_MORNING_BRIEF_CACHE,
@@ -12007,6 +12041,9 @@ def api_morning_brief():
                 adr_val=adr_val,
                 vp_extra=vp_extra,
                 expected_move_confidence=(options_feed.get("diagnostics") or {}).get("confidence"),
+                premarket_provider_records=_premarket_records_with_diagnostics(
+                    futures_context, decision_at=now_et().isoformat(),
+                    target_session_date=str(session_context.get("target_session_date") or now.date().isoformat())),
                 overnight_bars=futures_context.get("bars") or [],
                 es_daily_bars=futures_context.get("daily_bars") or [],
                 es_spot=futures_context.get("spot"),
@@ -12017,7 +12054,7 @@ def api_morning_brief():
             stage_timings[f"brief_{timing_name}"] = timing_value
         stage_started = time.perf_counter()
         payload["options_feed"] = options_feed
-        payload["futures_feed"] = {k: v for k, v in futures_context.items() if k not in {"bars", "daily_bars"}}
+        payload["futures_feed"] = {k: v for k, v in futures_context.items() if k not in {"bars", "daily_bars", "prior_rth_bars"}}
         payload["session_context"] = session_context
         # APEX 50.4.2: unknown gamma is explicitly unconfirmed and reference-only.
         structured = payload.get("structured") or {}
@@ -12285,24 +12322,6 @@ def api_morning_brief_narrative_status():
         job = get_job(key)
         if not job:
             return jsonify({"ok": True, "status": "NOT_FOUND", "job_key": key, "target_session_date": target, "brief_mode": mode, "version": "50.6.5.4_NONBLOCKING_MORNING_BRIEF"})
-        # APEX 69.10.48: compare completed asynchronous prose against the
-        # latest deterministic snapshot; never silently display known conflicts.
-        if job.get('status') == 'COMPLETE' and job.get('narrative'):
-            try:
-                from engine.morning_forecast_integrity import narrative_consistency
-                current = _MORNING_BRIEF_CACHE.get(f"{target}:{mode}") or {}
-                structured = current.get('structured') or {}
-                if structured:
-                    check = narrative_consistency(job['narrative'], structured)
-                    job['forecast_snapshot_integrity'] = check
-                    if check['status'] == 'MISMATCH':
-                        job['status'] = 'SNAPSHOT_MISMATCH'
-                        job['narrative'] = None
-                        job['error'] = 'Narrative conflicts with current deterministic levels; suppressed.'
-                else:
-                    job['forecast_snapshot_integrity'] = {'status': 'NO_CURRENT_SNAPSHOT'}
-            except Exception:
-                job['forecast_snapshot_integrity'] = {'status': 'VALIDATION_UNAVAILABLE'}
         job["ok"] = True
         return jsonify(job)
     except Exception as exc:

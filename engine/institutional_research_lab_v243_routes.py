@@ -76,3 +76,85 @@ def register_institutional_research_lab_v243_routes(app, *, legacy_status_provid
     @app.get('/api/research/dashboard')
     def research_v243_dashboard():
         return jsonify(research.research_dashboard())
+
+
+    @app.get('/api/research/forecast-precision')
+    def research_forecast_precision():
+        """Read-only historical forecast precision and shadow evaluation."""
+        from .morning_forecast_shadow_calibration import archived_precision_report
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+            min_train = max(2, min(int(request.args.get('min_train', 20)), 120))
+            window = max(min_train, min(int(request.args.get('window', 120)), 250))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_CALIBRATION_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_precision_report(limit=limit,
+                min_train=min_train, window=window))
+        except Exception:
+            app.logger.exception('Forecast precision archive unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503
+
+    @app.get('/api/research/regime-forecast-integrity')
+    def research_regime_forecast_integrity():
+        """Read-only archive-bound regime and reference-price integrity report."""
+        from .regime_forecast_integrity import archived_report
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+            exploratory_min_train = max(2, min(int(request.args.get('exploratory_min_train', 8)), 19))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_DIAGNOSTIC_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_report(limit=limit, exploratory_min_train=exploratory_min_train))
+        except Exception:
+            app.logger.exception('Regime forecast archive unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503
+
+    @app.get('/api/research/regime-containment-provenance')
+    def research_regime_containment_provenance():
+        """Read-only morning vote/archive audit and containment shadow evaluation."""
+        from .regime_containment_research import archived_report
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+            min_train = max(2, min(int(request.args.get('min_train', 8)), 120))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_RESEARCH_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_report(limit=limit, min_train=min_train))
+        except Exception:
+            app.logger.exception('Regime containment research unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503
+
+    @app.get('/api/research/regime-evidence-decorrelation')
+    def research_regime_evidence_decorrelation():
+        """Research-only family-aware regime and directional range comparison."""
+        from .regime_evidence_decorrelation import archived_report
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+            min_train = max(2, min(int(request.args.get('min_train', 8)), 120))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_RESEARCH_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_report(limit=limit, min_train=min_train))
+        except Exception:
+            app.logger.exception('Regime evidence de-correlation research unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503
+
+    @app.get('/api/research/premarket-directional-features')
+    def research_premarket_directional_features():
+        """Read-only evidence coverage, no model promotion or official forecast changes."""
+        from .premarket_directional_features import archived_diagnostics
+        try:
+            limit = max(1, min(int(request.args.get('limit', 250)), 250))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'error': 'INVALID_RESEARCH_PARAMETERS'}), 400
+        try:
+            return jsonify(archived_diagnostics(limit=limit))
+        except Exception:
+            app.logger.exception('Premarket directional evidence unavailable')
+            return jsonify({'ok': False, 'status': 'ARCHIVE_UNAVAILABLE',
+                            'production_promotion': False}), 503
