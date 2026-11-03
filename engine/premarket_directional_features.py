@@ -220,6 +220,81 @@ def magnitude_conflict_diagnostics(snapshot):
     }
 
 
+def forecast_center_integrity(morning, recap, observation):
+    """Audit recorded SPX range arithmetic without modifying official scoring.
+
+    Morning structured values are the frozen source; recap comparison bounds are
+    rounded for display. Outcome actual high/low must originate in the completed
+    recap. Never substitute later prices for absent source fields.
+    """
+    from .morning_forecast_shadow_calibration import _number
+    structured = (morning.get('structured') or {}) if isinstance(morning, dict) else {}
+    move = structured.get('expected_move') or {}
+    cmp = recap.get('comparison') or {}
+    actual = cmp.get('actual') or {}
+    checks = [c for c in (cmp.get('checks') or [])
+              if isinstance(c, dict) and c.get('key') == 'expected_move_containment']
+    issues = []
+    fl, fh = _number(move.get('lower')), _number(move.get('upper'))
+    al, ah = _number(actual.get('low')), _number(actual.get('high'))
+    if None in (fl, fh) or fl >= fh:
+        issues.append('FROZEN_EXPECTED_RANGE_INVALID_OR_ABSENT')
+    if None in (al, ah) or al > ah or not actual.get('available'):
+        issues.append('COMPLETED_ACTUAL_RANGE_INVALID_OR_ABSENT')
+    if len(checks) != 1:
+        issues.append('CONTAINMENT_CHECK_MISSING_OR_DUPLICATE')
+    if not issues:
+        # Original extractor derives its forecast bounds from this display string,
+        # whose two-decimal formatting introduces at most half-cent rounding.
+        rounded_bounds = (round(fl, 2), round(fh, 2))
+        displayed = (round(observation['forecast_center'] - observation['forecast_width']/2, 2),
+                     round(observation['forecast_center'] + observation['forecast_width']/2, 2))
+        if any(abs(a-b) > 0.011 for a,b in zip(rounded_bounds, displayed)):
+            issues.append('RECAP_PROJECTED_BOUNDS_DO_NOT_MATCH_FROZEN_FORECAST')
+        if (abs(al - (observation['actual_center']-observation['actual_width']/2)) > 0.0001 or
+            abs(ah - (observation['actual_center']+observation['actual_width']/2)) > 0.0001):
+            issues.append('RECAP_ACTUAL_BOUNDS_INCONSISTENT')
+        expected_contained = al >= fl and ah <= fh
+        # Official containment is calculated from unrounded frozen bounds;
+        # do not change this definition or its historical result.
+        if checks[0].get('correct') is not expected_contained:
+            issues.append('OFFICIAL_CONTAINMENT_BOOLEAN_MISMATCH')
+        extra = cmp.get('forecast_error_diagnostics') or {}
+        range_diag = extra.get('range') or {}
+        if range_diag.get('available') is True:
+            if _number(range_diag.get('center_error_points')) is not None and abs(
+                range_diag['center_error_points'] - ((al+ah-fl-fh)/2)) > 0.011:
+                issues.append('OFFICIAL_CENTER_ERROR_DIAGNOSTIC_MISMATCH')
+            if isinstance(range_diag.get('contained'), bool) and range_diag['contained'] != expected_contained:
+                issues.append('OFFICIAL_RANGE_DIAGNOSTIC_CONTAINMENT_MISMATCH')
+        return {
+            'schema': 'FORECAST_CENTER_RESIDUAL_INTEGRITY_V1',
+            'mode': 'READ_ONLY_EXACT_CANONICAL_AUDIT',
+            'status': 'VERIFIED' if not issues else 'INCONSISTENT',
+            'issues': issues, 'unit': 'SPX_INDEX_POINTS',
+            'forecast_low': fl, 'forecast_high': fh,
+            'forecast_center': round((fl+fh)/2, 4),
+            'forecast_width': round(fh-fl, 4),
+            'actual_low': al, 'actual_high': ah,
+            'actual_midrange': round((al+ah)/2, 4),
+            'actual_width': round(ah-al, 4),
+            'center_residual_points': round((al+ah-fl-fh)/2, 4),
+            'high_error_points': round(ah-fh, 4),
+            'low_error_points': round(al-fl, 4),
+            'width_error_points': round((ah-al)-(fh-fl), 4),
+            'high_excess_points': round(max(0.,ah-fh), 4),
+            'low_excess_points': round(max(0.,fl-al), 4),
+            'contained_from_frozen_bounds': expected_contained,
+            'official_containment_check': checks[0].get('correct'),
+            'frozen_reference_spot': _number(structured.get('spot')),
+            'expected_move_metric': 'MAX_ABS_EXCURSION_FROM_FROZEN_MORNING_SPOT',
+            'note': 'Midrange displacement is not open-to-close return. Recap display bounds may be rounded by 0.005 index points.',
+        }
+    return {'schema': 'FORECAST_CENTER_RESIDUAL_INTEGRITY_V1',
+            'mode': 'READ_ONLY_EXACT_CANONICAL_AUDIT',
+            'status': 'UNVERIFIABLE', 'issues': issues, 'unit': 'SPX_INDEX_POINTS'}
+
+
 def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
     """Exact-canonical, read-only session-outcome join; never trains on current outcomes.
 
@@ -233,6 +308,7 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
     recap_counts = Counter(str(x.get('session_date')) for x in recaps if isinstance(x, dict))
     recap_by_day = {str(x.get('session_date')): x for x in recaps if isinstance(x, dict)}
     rows = []
+    integrity_exclusions = []
     exclusions = Counter()
     for day, morning in sorted(mornings.items()):
         if not isinstance(morning, dict) or not morning:
@@ -268,8 +344,15 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
         if obs is None:
             exclusions['OUTCOME_INCOMPLETE_OR_INCOMPATIBLE'] += 1
             continue
+        integrity = forecast_center_integrity(morning, recap, obs)
+        if integrity['status'] != 'VERIFIED':
+            exclusions['FORECAST_CENTER_INTEGRITY_' + integrity['status']] += 1
+            integrity_exclusions.append({'session_date': day,
+                'canonical_forecast_id': identity['forecast_id'],
+                'status': integrity['status'], 'issues': integrity['issues']})
+            continue
         diagnostic = magnitude_conflict_diagnostics(snapshot)
-        residual = obs['actual_center'] - obs['forecast_center']
+        residual = integrity['center_residual_points']
         rows.append({
             'session_date': day,
             'canonical_forecast_id': identity['forecast_id'],
@@ -279,6 +362,7 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
             'forecast_center_residual_points': round(residual, 4),
             'residual_direction': ('ABOVE_FORECAST_CENTER' if residual > 0 else
                                    'BELOW_FORECAST_CENTER' if residual < 0 else 'AT_FORECAST_CENTER'),
+            'forecast_center_integrity': integrity,
             'actual_session_range_points': round(obs['actual_width'], 4),
             'forecast_contained_actual_range': (
                 obs['actual_center']-obs['actual_width']/2 >= obs['forecast_center']-obs['forecast_width']/2 and
@@ -293,7 +377,8 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
             'eligible_sessions': len(rows), 'minimum_for_research_comparison': min_samples,
             'comparison_ready': len(rows) >= min_samples,
             'conflict_type_counts': dict(counts), 'excluded_reasons': dict(exclusions),
-            'rows': rows, 'production_promotion': False,
+            'rows': rows, 'integrity_exclusions': integrity_exclusions,
+            'production_promotion': False,
             'official_forecast_mutated': False, 'official_scoring_mutated': False,
             'accuracy_claim': False,
             'limitations': [

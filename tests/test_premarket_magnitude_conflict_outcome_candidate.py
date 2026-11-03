@@ -25,12 +25,13 @@ def snapshot(vwap=1.865):
 def morning(snap=None, mode='PREMARKET', generated=AT):
     return {'generated_at': generated, 'session_context': {'brief_mode':mode},
             'canonical_forecast_provenance': {'forecast_id':'fcst1', 'snapshot_hash':'hash1'},
-            'structured': {'premarket_directional_feature_snapshot': snap or snapshot()}}
+            'structured': {'expected_move': {'lower':90.0,'upper':110.0}, 'spot':100.0,
+                           'premarket_directional_feature_snapshot': snap or snapshot()}}
 
 def recap(forecast_id='fcst1', hash='hash1', actual_low=96, actual_high=106):
     return {'session_date': DAY, 'forecast_id':forecast_id, 'forecast_snapshot_hash':hash,
             'comparison': {'actual':{'available':True, 'low':actual_low, 'high':actual_high},
-                           'checks':[{'key':'expected_move_containment','projected':'90 to 110'},
+                           'checks':[{'key':'expected_move_containment','projected':'90 to 110','correct': (actual_low >= 90 and actual_high <= 110)},
                                      {'key':'expected_move_size','projected':10,'actual':8,
                                       'reference_spot':100,
                                       'actual_metric':'MAX_ABS_EXCURSION_FROM_FROZEN_MORNING_SPOT'}]}}
