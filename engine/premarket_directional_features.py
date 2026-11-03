@@ -88,6 +88,81 @@ def shadow_direction(snapshot):
             'regime': None, 'confidence': None,
             'note': 'Unvalidated directional context, not a regime prediction'}
 
+# The directional rule below is the existing three-input unanimity rule.
+# ES-derived inputs may be correlated: vote counts are NOT independent evidence,
+# calibrated probabilities, or weights in production forecasts.
+REQUIRED_DIRECTIONAL_INPUTS = (
+    'overnight_es_return', 'overnight_vwap_displacement', 'premarket_gap'
+)
+
+
+def explain_shadow_agreement(snapshot):
+    """Read-only explanation of the current shadow_direction rule.
+
+    Uses *only* frozen canonical feature rows. Never rereads providers, fills
+    absent values, or derives observations from subsequent market outcomes.
+    The original signal remains authoritative and its behavior is unchanged.
+    """
+    features = (snapshot or {}).get('features') or {}
+    evidence = {}
+    positive = negative = 0
+    unavailable = []
+    neutral = []
+    for key in FEATURES:
+        row = features.get(key) or {}
+        status = row.get('status', 'MISSING')
+        value = row.get('value')
+        valid = (status == 'AVAILABLE' and isinstance(value, (int, float))
+                 and not isinstance(value, bool) and isfinite(value))
+        direction = ('POSITIVE' if value > 0 else 'NEGATIVE' if value < 0 else 'NEUTRAL') if valid else 'NOT_EVALUATED'
+        participates = key in REQUIRED_DIRECTIONAL_INPUTS
+        if participates:
+            if not valid:
+                unavailable.append(key)
+            elif value == 0:
+                neutral.append(key)
+            elif value > 0:
+                positive += 1
+            else:
+                negative += 1
+        evidence[key] = {
+            'status': status,
+            'value': float(value) if valid else None,
+            'direction': direction,
+            'required_for_unanimity': participates,
+            'vote': (1 if value > 0 else -1 if value < 0 else 0) if valid and participates else None,
+            'source': row.get('source') if valid else None,
+            'observed_at': row.get('observed_at') if valid else None,
+            'ingested_at': row.get('ingested_at') if valid else None,
+            'age_seconds': row.get('age_seconds') if valid else None,
+        }
+    if unavailable:
+        reason = 'REQUIRED_DIRECTIONAL_INPUT_UNAVAILABLE'
+    elif neutral:
+        reason = 'REQUIRED_DIRECTIONAL_INPUT_ZERO'
+    elif positive and negative:
+        reason = 'REQUIRED_DIRECTIONAL_INPUTS_CONFLICT'
+    elif positive == 3 or negative == 3:
+        reason = 'THREE_REQUIRED_INPUTS_UNANIMOUS'
+    else:
+        reason = 'REQUIRED_DIRECTIONAL_INPUT_INVALID'
+    return {
+        'schema': 'PREMARKET_SHADOW_AGREEMENT_EXPLAINABILITY_V1',
+        'mode': 'READ_ONLY_FROZEN_EVIDENCE',
+        'decision_at': (snapshot or {}).get('decision_at'),
+        'rule': 'THREE_REQUIRED_NONZERO_ES_INPUTS_UNANIMOUS',
+        'required_inputs': list(REQUIRED_DIRECTIONAL_INPUTS),
+        'positive_votes': positive, 'negative_votes': negative,
+        'unavailable_required_inputs': unavailable,
+        'neutral_required_inputs': neutral,
+        'reason': reason,
+        'features': evidence,
+        'independence_verified': False,
+        'confidence_calibrated': False,
+        'note': 'Three ES-derived inputs are potentially correlated; two additional ES features and gamma do not vote in this legacy rule.',
+    }
+
+
 def archive_diagnostics(mornings):
     counts=Counter(); decisions=[]
     for day, morning in sorted(mornings.items()):
@@ -126,6 +201,7 @@ def archive_diagnostics(mornings):
                 'usable_count': snapshot.get('usable_count',0),
                 'feature_status': {k:v.get('status') for k,v in
                     (snapshot.get('features') or {}).items()}}
+        item['agreement_explainability'] = explain_shadow_agreement(snapshot)
         diagnostics = snapshot.get('availability_diagnostics')
         if isinstance(diagnostics, dict) and diagnostics.get('schema') == 'PREMARKET_FEATURE_AVAILABILITY_V1':
             item['availability_diagnostics'] = diagnostics
