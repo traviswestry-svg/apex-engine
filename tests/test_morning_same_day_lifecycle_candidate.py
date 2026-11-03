@@ -22,7 +22,7 @@ def test_preparation_then_same_day(monkeypatch, tmp_path):
     lifecycle = result['details'][0]['lifecycle']
     assert lifecycle['revision_count'] == 2
     assert lifecycle['brief_modes'] == {'NEXT_SESSION_PREP': 1, 'PREMARKET': 1}
-    assert lifecycle['classification'] == 'CANONICAL_ARCHIVED'
+    assert lifecycle['classification'] == 'CANONICAL_SAME_DAY_ARCHIVED'
 
 
 def test_preparation_only_is_not_official(monkeypatch, tmp_path):
