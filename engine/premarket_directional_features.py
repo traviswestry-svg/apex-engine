@@ -6,9 +6,9 @@ No post-session actuals, reconstructed gaps or inferred timestamps are accepted.
 """
 from __future__ import annotations
 from collections import Counter
-from datetime import datetime, timezone, time
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone
 from math import isfinite
+from zoneinfo import ZoneInfo
 
 FEATURES = ('overnight_es_return', 'overnight_vwap_displacement',
             'premarket_gap', 'prior_day_range_position', 'premarket_trend_strength',
@@ -91,12 +91,12 @@ def shadow_direction(snapshot):
 def archive_diagnostics(mornings):
     counts=Counter(); decisions=[]
     for day, morning in sorted(mornings.items()):
-        # Archive keys are TARGET session dates, not proof of a same-day
-        # premarket forecast. Preserve NEXT_SESSION_PREP without scoring it.
         identity = morning.get('forecast_identity') or {}
+        session_context = morning.get('session_context') or {}
         generated = _time(morning.get('generated_at'))
         generated_et = generated.astimezone(ZoneInfo('America/New_York')) if generated else None
-        mode = identity.get('brief_mode') or morning.get('brief_mode')
+        mode = (identity.get('brief_mode') or session_context.get('brief_mode') or
+                morning.get('brief_mode'))
         if mode == 'NEXT_SESSION_PREP' or (generated_et and generated_et.date().isoformat() < day):
             counts['NEXT_SESSION_PREPARATION_NOT_PREMARKET'] += 1
             decisions.append({'session_date': day, 'status': 'NEXT_SESSION_PREPARATION_NOT_PREMARKET',
@@ -138,13 +138,63 @@ def archive_diagnostics(mornings):
                             'Directional context is not an exact-regime classifier.',
                             'No trained model or out-of-sample accuracy claim.']}
 
+def _archive_lifecycle_context(db, days):
+    """Read-only exact-date revision inventory; never infer or backfill predictions."""
+    from .evening_recap import _load, _official_forecast_eligibility
+    result = {}
+    for day in days:
+        records = db.execute(
+            'SELECT generated_at,payload_json,is_official FROM apex49_morning_revisions '
+            'WHERE session_date=? ORDER BY id ASC', (day,)
+        ).fetchall()
+        modes = {}
+        same_day_eligible = 0
+        for generated_at, raw, official in records:
+            payload = _load(raw)
+            mode = str((payload.get('session_context') or {}).get('brief_mode') or
+                       (payload.get('forecast_identity') or {}).get('brief_mode') or 'UNKNOWN').upper()
+            modes[mode] = modes.get(mode, 0) + 1
+            eligible, _, target = _official_forecast_eligibility(payload)
+            if eligible and target == day:
+                same_day_eligible += 1
+        result[day] = {'revision_count': len(records), 'brief_modes': modes,
+                       'same_day_eligible_revisions': same_day_eligible,
+                       'has_canonical_snapshot': bool(db.execute(
+                           'SELECT 1 FROM apex49_morning_snapshots WHERE session_date=?', (day,)
+                       ).fetchone()),
+                       'classification': 'CANONICAL_ARCHIVED' if db.execute(
+                           'SELECT 1 FROM apex49_morning_snapshots WHERE session_date=?', (day,)
+                       ).fetchone() else ('SAME_DAY_REVISION_WITHOUT_CANONICAL' if same_day_eligible
+                                         else 'PREPARATION_OR_NONELIGIBLE_ONLY' if records
+                                         else 'NO_ARCHIVE_RECORD'),
+                       'observation_only': True}
+    return result
+
+
 def archived_diagnostics(*, limit=250):
     from .evening_recap import DB_PATH, _load, init_db
     from .canonical_persistence import connect
     init_db()
     with connect(DB_PATH, timeout=10) as db:
-        mornings = {day: _load(payload) for day, payload in db.execute(
-            'SELECT session_date,payload_json FROM apex49_morning_snapshots '
-            'ORDER BY session_date DESC LIMIT ?', (max(1, min(int(limit), 250)),)
-        ).fetchall()}
-    return archive_diagnostics(mornings)
+        cap = max(1, min(int(limit), 250))
+        # Include dates represented only by revisions; preparation records must be visible
+        # but must never be represented as verified premarket forecasts.
+        days = [r[0] for r in db.execute(
+            'SELECT session_date FROM apex49_morning_snapshots '
+            'UNION SELECT session_date FROM apex49_morning_revisions '
+            'ORDER BY session_date DESC LIMIT ?', (cap,)
+        ).fetchall()]
+        mornings = {}
+        for day in days:
+            row = db.execute('SELECT payload_json FROM apex49_morning_snapshots '
+                             'WHERE session_date=?', (day,)).fetchone()
+            mornings[day] = _load(row[0]) if row else {}
+        lifecycle = _archive_lifecycle_context(db, days)
+    report = archive_diagnostics(mornings)
+    for item in report['details']:
+        context = lifecycle.get(item['session_date'])
+        item['lifecycle'] = context
+        if context and not context['has_canonical_snapshot'] and context['revision_count']:
+            item['status'] = context['classification']
+    report['status_counts'] = dict(Counter(x['status'] for x in report['details']))
+    return report
