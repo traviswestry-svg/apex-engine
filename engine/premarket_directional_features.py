@@ -295,6 +295,118 @@ def forecast_center_integrity(morning, recap, observation):
             'status': 'UNVERIFIABLE', 'issues': issues, 'unit': 'SPX_INDEX_POINTS'}
 
 
+def forecast_center_construction_provenance(morning):
+    """Read immutable morning inputs; do not reconstruct absent provider metadata.
+
+    Structural arithmetic verification is not a raw quote provenance guarantee.
+    """
+    from .morning_forecast_shadow_calibration import _number
+    structured = (morning.get('structured') or {}) if isinstance(morning, dict) else {}
+    move = structured.get('expected_move') or {}
+    diagnostic = (structured.get('forecast_provenance_diagnostics') or {}).get('expected_move') or {}
+    spot, low, high = (_number(structured.get('spot')), _number(move.get('lower')),
+                       _number(move.get('upper')))
+    sigma = _number(move.get('one_sigma'))
+    path = diagnostic.get('selected_path')
+    issues = []
+    if None in (spot, low, high, sigma) or sigma <= 0 or low >= high:
+        issues.append('FROZEN_CENTER_INPUTS_MISSING_OR_INVALID')
+    if not diagnostic:
+        issues.append('DECISION_TIME_EXPECTED_MOVE_PROVENANCE_ABSENT')
+    if not issues:
+        if abs((spot + sigma) - high) > .011 or abs((spot - sigma) - low) > .011:
+            issues.append('FROZEN_SPOT_SIGMA_BOUNDS_MISMATCH')
+        if (_number(diagnostic.get('reference_spot')) is None or
+            abs(diagnostic['reference_spot'] - spot) > .011 or
+            _number(diagnostic.get('selected_one_sigma')) is None or
+            abs(diagnostic['selected_one_sigma'] - sigma) > .011 or
+            _number(diagnostic.get('upper')) is None or
+            abs(diagnostic['upper'] - high) > .011 or
+            _number(diagnostic.get('lower')) is None or
+            abs(diagnostic['lower'] - low) > .011):
+            issues.append('FROZEN_PROVENANCE_VALUES_MISMATCH')
+        straddle = _number(diagnostic.get('straddle_implied_one_sigma'))
+        iv = _number(diagnostic.get('iv_implied_one_sigma'))
+        if (path == 'STRADDLE_FIRST' and (straddle is None or abs(straddle-sigma) > .011) or
+            path == 'IV_FALLBACK' and (straddle is not None or iv is None or abs(iv-sigma) > .011) or
+            path not in ('STRADDLE_FIRST', 'IV_FALLBACK')):
+            issues.append('SELECTED_EXPECTED_MOVE_PATH_MISMATCH')
+    return {
+        'schema': 'FORECAST_CENTER_CONSTRUCTION_PROVENANCE_V1',
+        'mode': 'READ_ONLY_FROZEN_CONSTRUCTION',
+        'status': 'UNVERIFIABLE' if 'FROZEN_CENTER_INPUTS_MISSING_OR_INVALID' in issues or
+                  'DECISION_TIME_EXPECTED_MOVE_PROVENANCE_ABSENT' in issues else
+                  'INCONSISTENT' if issues else 'ARITHMETIC_VERIFIED_SOURCE_UNVERIFIED',
+        'issues': issues, 'reference_spot': spot, 'selected_one_sigma': sigma,
+        'forecast_low': low, 'forecast_high': high,
+        'forecast_center': round((low+high)/2, 4) if low is not None and high is not None else None,
+        'formula': 'LOWER=SPOT-SIGMA;UPPER=SPOT+SIGMA',
+        'selected_path': path,
+        'straddle_implied_one_sigma': _number(diagnostic.get('straddle_implied_one_sigma')),
+        'iv_implied_one_sigma': _number(diagnostic.get('iv_implied_one_sigma')),
+        'source_quote_timestamp': diagnostic.get('quote_timestamp'),
+        'source_option_expiration': diagnostic.get('option_expiration'),
+        'missing_source_metadata': list(diagnostic.get('missing_source_metadata') or []),
+        'provider_source_verified': False,
+        'note': 'Arithmetic only; unarchived raw option quote, expiry and timing cannot be inferred.',
+    }
+
+
+def shadow_directional_center_sensitivity(morning, *, actual_low=None, actual_high=None):
+    """Predeclared what-if offsets from frozen ES return; never used as official predictions.
+
+    The ES return is in percentage points; converting to SPX points using frozen
+    SPX spot is an unvalidated cross-instrument proxy. Two fixed sensitivities
+    are descriptive, not fitted or selected using the realized outcome.
+    """
+    from .morning_forecast_shadow_calibration import _number
+    provenance = forecast_center_construction_provenance(morning)
+    snapshot = ((morning.get('structured') or {}).get('premarket_directional_feature_snapshot') or {})
+    row = (snapshot.get('features') or {}).get('overnight_es_return') or {}
+    value = _number(row.get('value')) if row.get('status') == 'AVAILABLE' else None
+    issues = []
+    if provenance['status'] != 'ARITHMETIC_VERIFIED_SOURCE_UNVERIFIED':
+        issues.append('CENTER_CONSTRUCTION_NOT_VERIFIED')
+    if value is None or not row.get('source') or not _time(row.get('observed_at')) or not _time(row.get('ingested_at')):
+        issues.append('VERIFIED_OVERNIGHT_ES_RETURN_UNAVAILABLE')
+    decision = _time(snapshot.get('decision_at'))
+    if (not decision or (row.get('observed_at') and _time(row.get('observed_at')) > decision) or
+        (row.get('ingested_at') and _time(row.get('ingested_at')) > decision)):
+        issues.append('FEATURE_TIME_NOT_VERIFIED')
+    if issues:
+        return {'schema': 'FORECAST_CENTER_SHADOW_DISPLACEMENT_V1',
+                'mode': 'READ_ONLY_PREDECLARED_SENSITIVITY', 'status': 'ABSTAIN',
+                'issues': issues, 'candidates': [], 'production_promotion': False}
+    spot, sigma = provenance['reference_spot'], provenance['selected_one_sigma']
+    proxy = spot * value / 100.0
+    candidates = []
+    for fraction in (0.5, 1.0):
+        offset = max(-sigma, min(sigma, proxy*fraction))
+        center = spot + offset
+        low, high = center-sigma, center+sigma
+        candidate = {'sensitivity_fraction': fraction, 'offset_points': round(offset, 4),
+                     'shadow_center': round(center, 4), 'shadow_low': round(low, 4),
+                     'shadow_high': round(high, 4), 'width_unchanged': True}
+        if None not in (actual_low, actual_high):
+            candidate['retrospective_abs_center_error'] = round(abs((actual_low+actual_high)/2-center), 4)
+            candidate['retrospective_contained'] = actual_low >= low and actual_high <= high
+        candidates.append(candidate)
+    return {'schema': 'FORECAST_CENTER_SHADOW_DISPLACEMENT_V1',
+            'mode': 'READ_ONLY_PREDECLARED_SENSITIVITY', 'status': 'DESCRIPTIVE_ONLY',
+            'issues': [], 'input_feature': 'overnight_es_return',
+            'frozen_feature_value_percent': value,
+            'frozen_feature_observed_at': row.get('observed_at'),
+            'frozen_feature_source': row.get('source'),
+            'raw_proxy_offset_points': round(proxy, 4),
+            'offset_cap_points': sigma, 'candidates': candidates,
+            'sample_size_sufficient': False, 'confidence_calibrated': False,
+            'production_promotion': False,
+            'limitations': ['ES percent return mapped to SPX points is an unvalidated proxy.',
+                            'ES, SPX and reference spot can differ in level and timing.',
+                            'Sensitivity factors are fixed, not fitted on session outcomes.',
+                            'Realized prices are used only for retrospective comparison.']}
+
+
 def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
     """Exact-canonical, read-only session-outcome join; never trains on current outcomes.
 
@@ -352,6 +464,9 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
                 'status': integrity['status'], 'issues': integrity['issues']})
             continue
         diagnostic = magnitude_conflict_diagnostics(snapshot)
+        construction = forecast_center_construction_provenance(morning)
+        sensitivity = shadow_directional_center_sensitivity(morning,
+            actual_low=integrity['actual_low'], actual_high=integrity['actual_high'])
         residual = integrity['center_residual_points']
         rows.append({
             'session_date': day,
@@ -363,6 +478,8 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
             'residual_direction': ('ABOVE_FORECAST_CENTER' if residual > 0 else
                                    'BELOW_FORECAST_CENTER' if residual < 0 else 'AT_FORECAST_CENTER'),
             'forecast_center_integrity': integrity,
+            'forecast_center_construction_provenance': construction,
+            'shadow_directional_center_sensitivity': sensitivity,
             'actual_session_range_points': round(obs['actual_width'], 4),
             'forecast_contained_actual_range': (
                 obs['actual_center']-obs['actual_width']/2 >= obs['forecast_center']-obs['forecast_width']/2 and
@@ -428,6 +545,8 @@ def archive_diagnostics(mornings):
                     (snapshot.get('features') or {}).items()}}
         item['agreement_explainability'] = explain_shadow_agreement(snapshot)
         item['magnitude_conflict_diagnostics'] = magnitude_conflict_diagnostics(snapshot)
+        item['forecast_center_construction_provenance'] = forecast_center_construction_provenance(morning)
+        item['shadow_directional_center_sensitivity'] = shadow_directional_center_sensitivity(morning)
         diagnostics = snapshot.get('availability_diagnostics')
         if isinstance(diagnostics, dict) and diagnostics.get('schema') == 'PREMARKET_FEATURE_AVAILABILITY_V1':
             item['availability_diagnostics'] = diagnostics
