@@ -163,6 +163,146 @@ def explain_shadow_agreement(snapshot):
     }
 
 
+
+def magnitude_conflict_diagnostics(snapshot):
+    """Descriptive, frozen-only ES magnitude and conflict typology; no signal changes.
+
+    Values have heterogeneous units; their absolute magnitudes must never be
+    added or interpreted as independent weights or calibrated confidence.
+    """
+    agreement = explain_shadow_agreement(snapshot)
+    rows = agreement['features']
+    required = REQUIRED_DIRECTIONAL_INPUTS
+    values = {key: rows[key]['value'] for key in required}
+    positive = agreement['positive_votes']
+    negative = agreement['negative_votes']
+    if agreement['unavailable_required_inputs']:
+        typology = 'INCOMPLETE_REQUIRED_EVIDENCE'
+    elif agreement['neutral_required_inputs']:
+        typology = 'ZERO_REQUIRED_INPUT'
+    elif positive == 3:
+        typology = 'UNANIMOUS_POSITIVE_ES'
+    elif negative == 3:
+        typology = 'UNANIMOUS_NEGATIVE_ES'
+    elif values['overnight_es_return'] is not None and values['premarket_gap'] is not None and (
+        values['overnight_es_return'] * values['premarket_gap'] > 0 and
+        values['overnight_vwap_displacement'] * values['overnight_es_return'] < 0
+    ):
+        typology = ('VWAP_RECOVERY_AGAINST_NEGATIVE_OVERNIGHT' if
+                    values['overnight_es_return'] < 0 else
+                    'VWAP_PULLBACK_AGAINST_POSITIVE_OVERNIGHT')
+    else:
+        typology = 'OTHER_REQUIRED_SIGN_CONFLICT'
+    features = {}
+    for key in FEATURES:
+        row = rows[key]
+        value = row['value']
+        features[key] = {
+            'status': row['status'], 'signed_value': value,
+            'absolute_magnitude': abs(value) if value is not None else None,
+            'unit': ('ES_POINTS' if key == 'overnight_vwap_displacement' else
+                     'PERCENT' if key in ('overnight_es_return', 'premarket_gap') else
+                     'PROVIDER_FEATURE_UNITS'),
+            'direction': row['direction'],
+            'required_for_unanimity': row['required_for_unanimity'],
+        }
+    return {
+        'schema': 'PREMARKET_MAGNITUDE_CONFLICT_V1',
+        'mode': 'READ_ONLY_FROZEN_EVIDENCE',
+        'decision_at': (snapshot or {}).get('decision_at'),
+        'conflict_type': typology,
+        'agreement_reason': agreement['reason'],
+        'features': features,
+        'confidence_calibrated': False,
+        'independence_verified': False,
+        'production_promotion': False,
+        'note': 'No magnitude weighting or vote changes; units differ and ES inputs may be correlated.',
+    }
+
+
+def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
+    """Exact-canonical, read-only session-outcome join; never trains on current outcomes.
+
+    Outcomes are descriptive realized *forecast-center residuals*, not market
+    open-to-close directional returns. Rejects duplicate recaps and invalid
+    canonical origins; never reconstructs unarchived premarket features.
+    """
+    from .morning_forecast_shadow_calibration import extract_observation
+    if min_samples < 2:
+        raise ValueError('min_samples must be >= 2')
+    recap_counts = Counter(str(x.get('session_date')) for x in recaps if isinstance(x, dict))
+    recap_by_day = {str(x.get('session_date')): x for x in recaps if isinstance(x, dict)}
+    rows = []
+    exclusions = Counter()
+    for day, morning in sorted(mornings.items()):
+        if not isinstance(morning, dict) or not morning:
+            exclusions['NO_CANONICAL_MORNING'] += 1
+            continue
+        identity = morning.get('canonical_forecast_provenance') or {}
+        mode = str((morning.get('session_context') or {}).get('brief_mode') or
+                   (morning.get('forecast_identity') or {}).get('brief_mode') or
+                   morning.get('brief_mode') or '').upper()
+        generated = _time(morning.get('generated_at'))
+        generated_day = generated.astimezone(ZoneInfo('America/New_York')).date().isoformat() if generated else None
+        if mode != 'PREMARKET' or generated_day != day:
+            exclusions['INVALID_CANONICAL_ORIGIN'] += 1
+            continue
+        snapshot = (morning.get('structured') or {}).get('premarket_directional_feature_snapshot')
+        if not isinstance(snapshot, dict) or snapshot.get('schema') != 'PREMARKET_DIRECTIONAL_FEATURES_V1':
+            exclusions['DIRECTIONAL_SNAPSHOT_ABSENT'] += 1
+            continue
+        if recap_counts[day] > 1:
+            exclusions['AMBIGUOUS_DUPLICATE_RECAP'] += 1
+            continue
+        recap = recap_by_day.get(day)
+        if recap is None:
+            exclusions['NO_COMPLETED_RECAP'] += 1
+            continue
+        if not identity.get('forecast_id') or not identity.get('snapshot_hash') or (
+            recap.get('forecast_id') != identity['forecast_id'] or
+            recap.get('forecast_snapshot_hash') != identity['snapshot_hash']
+        ):
+            exclusions['EXACT_CANONICAL_IDENTITY_MISMATCH'] += 1
+            continue
+        obs = extract_observation(recap)
+        if obs is None:
+            exclusions['OUTCOME_INCOMPLETE_OR_INCOMPATIBLE'] += 1
+            continue
+        diagnostic = magnitude_conflict_diagnostics(snapshot)
+        residual = obs['actual_center'] - obs['forecast_center']
+        rows.append({
+            'session_date': day,
+            'canonical_forecast_id': identity['forecast_id'],
+            'decision_at': snapshot.get('decision_at'),
+            'conflict_type': diagnostic['conflict_type'],
+            'shadow_direction': shadow_direction(snapshot)['direction'],
+            'forecast_center_residual_points': round(residual, 4),
+            'residual_direction': ('ABOVE_FORECAST_CENTER' if residual > 0 else
+                                   'BELOW_FORECAST_CENTER' if residual < 0 else 'AT_FORECAST_CENTER'),
+            'actual_session_range_points': round(obs['actual_width'], 4),
+            'forecast_contained_actual_range': (
+                obs['actual_center']-obs['actual_width']/2 >= obs['forecast_center']-obs['forecast_width']/2 and
+                obs['actual_center']+obs['actual_width']/2 <= obs['forecast_center']+obs['forecast_width']/2
+            ),
+            'outcome_metric': 'REALIZED_SESSION_MIDRANGE_MINUS_FROZEN_FORECAST_CENTER',
+        })
+    counts = Counter(row['conflict_type'] for row in rows)
+    return {'schema': 'PREMARKET_SHADOW_OUTCOME_ATTRIBUTION_V1',
+            'mode': 'READ_ONLY_EXACT_CANONICAL_OUTCOMES',
+            'status': 'DESCRIPTIVE_SAMPLE_AVAILABLE' if rows else 'NO_ELIGIBLE_MATCHED_OUTCOMES',
+            'eligible_sessions': len(rows), 'minimum_for_research_comparison': min_samples,
+            'comparison_ready': len(rows) >= min_samples,
+            'conflict_type_counts': dict(counts), 'excluded_reasons': dict(exclusions),
+            'rows': rows, 'production_promotion': False,
+            'official_forecast_mutated': False, 'official_scoring_mutated': False,
+            'accuracy_claim': False,
+            'limitations': [
+                'Outcome direction is relative to frozen forecast center, not SPX open-to-close direction.',
+                'No trained model, calibrated confidence, or walk-forward improvement claim.',
+                'Actuals are used for retrospective scoring only; never feature construction.',
+                'Missing historical feature snapshots cannot be backfilled from outcomes.',
+            ]}
+
 def archive_diagnostics(mornings):
     counts=Counter(); decisions=[]
     for day, morning in sorted(mornings.items()):
@@ -202,6 +342,7 @@ def archive_diagnostics(mornings):
                 'feature_status': {k:v.get('status') for k,v in
                     (snapshot.get('features') or {}).items()}}
         item['agreement_explainability'] = explain_shadow_agreement(snapshot)
+        item['magnitude_conflict_diagnostics'] = magnitude_conflict_diagnostics(snapshot)
         diagnostics = snapshot.get('availability_diagnostics')
         if isinstance(diagnostics, dict) and diagnostics.get('schema') == 'PREMARKET_FEATURE_AVAILABILITY_V1':
             item['availability_diagnostics'] = diagnostics
@@ -288,6 +429,9 @@ def archived_diagnostics(*, limit=250):
                              'WHERE session_date=?', (day,)).fetchone()
             mornings[day] = _load(row[0]) if row else {}
         lifecycle = _archive_lifecycle_context(db, days)
+        recaps = [_load(row[0]) for row in db.execute(
+            'SELECT payload_json FROM apex49_evening_recaps WHERE session_date IN ('
+            + ','.join('?' for _ in days) + ')', days).fetchall()] if days else []
     report = archive_diagnostics(mornings)
     for item in report['details']:
         day = item['session_date']
@@ -312,4 +456,5 @@ def archived_diagnostics(*, limit=250):
             item['direction'] = None
             item['directional_snapshot_presence'] = 'ABSENT'
     report['status_counts'] = dict(Counter(x['status'] for x in report['details']))
+    report['shadow_outcome_attribution'] = shadow_outcome_attribution(mornings, recaps)
     return report
