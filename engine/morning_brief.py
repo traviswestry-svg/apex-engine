@@ -833,6 +833,14 @@ def generate_morning_brief(
         "provider_source_verified": _source["provider_source_verified"],
         "metadata_note": "Frozen pre-outcome: top-level quote_timestamp is the earlier leg event time; nested record preserves both timestamps. Quality is advisory.",
     })
+    # Read-only availability and fallback inventory is frozen before canonical
+    # persistence; never recompute the evidence from later provider observations.
+    from .premarket_expected_move_availability import capture as _capture_expected_move_availability
+    _em_prov["premarket_source_availability"] = _capture_expected_move_availability(
+        expected_move_source_evidence, _source,
+        decision_at=result["generated_at"],
+        reference_spot=_em_prov.get("reference_spot"),
+    )
     _em_prov["missing_source_metadata"] = [
         name for name in ("source_atm_straddle_quote", "source_atm_iv", "source_time_to_close_year_fraction",
                           "option_expiration", "quote_timestamp", "quote_age_seconds", "quote_bid_ask")
