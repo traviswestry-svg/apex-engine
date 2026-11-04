@@ -295,6 +295,94 @@ def forecast_center_integrity(morning, recap, observation):
             'status': 'UNVERIFIABLE', 'issues': issues, 'unit': 'SPX_INDEX_POINTS'}
 
 
+
+
+def forecast_range_failure_decomposition(integrity):
+    """Algebraic, retrospective decomposition on already verified actual/baseline bounds.
+
+    This is geometric *feasibility*, not causal attribution or a future forecast.
+    No reconstructed prices or alternative official grading are introduced.
+    """
+    schema = 'FORECAST_RANGE_FAILURE_DECOMPOSITION_V1'
+    base = {'schema': schema, 'mode': 'READ_ONLY_VERIFIED_OUTCOME_GEOMETRY',
+            'official_scoring_mutated': False, 'production_promotion': False}
+    if not isinstance(integrity, dict) or integrity.get('status') != 'VERIFIED':
+        return {**base, 'status': 'UNVERIFIABLE', 'failure_type': None,
+                'issues': ['VERIFIED_FORECAST_CENTER_INTEGRITY_REQUIRED']}
+    from .morning_forecast_shadow_calibration import _number
+    fl, fh, al, ah = (_number(integrity.get(k)) for k in
+                      ('forecast_low', 'forecast_high', 'actual_low', 'actual_high'))
+    if None in (fl, fh, al, ah) or fl >= fh or al > ah:
+        return {**base, 'status': 'UNVERIFIABLE', 'failure_type': None,
+                'issues': ['VALID_FROZEN_AND_REALIZED_BOUNDS_REQUIRED']}
+    fw, aw = fh-fl, ah-al
+    fc, ac = (fl+fh)/2, (al+ah)/2
+    half = fw/2
+    upper_excess = max(0., ah-fh)
+    lower_excess = max(0., fl-al)
+    contained = al >= fl and ah <= fh
+    # Under a fixed original width, these are the exact possible centers of
+    # an interval containing the realized high and low, if the width suffices.
+    width_deficit = max(0., aw-fw)
+    possible_lower = ah-half if width_deficit <= 1e-8 else None
+    possible_upper = al+half if width_deficit <= 1e-8 else None
+    if contained:
+        typology = 'CONTAINED'
+    elif width_deficit > 1e-8:
+        typology = 'WIDTH_INSUFFICIENT_AND_PLACEMENT_MISMATCH' if abs(fc-ac) > 1e-8 else 'WIDTH_INSUFFICIENT_CENTER_ALIGNED'
+    else:
+        typology = 'PLACEMENT_ONLY_WIDTH_SUFFICIENT'
+    minimum_shift = (max(possible_lower-fc, 0., fc-possible_upper)
+                     if possible_lower is not None else None)
+    # This quantity is the extra symmetrical HALF-width needed if the
+    # original center is not moved. It is NOT a proposed prediction.
+    fixed_center_extra_half_width = max(0., ah-fc-half, fc-al-half)
+    return {**base, 'status': 'VERIFIED', 'failure_type': typology,
+            'contained': contained, 'issues': [], 'unit': 'SPX_INDEX_POINTS',
+            'original_forecast_width': round(fw, 4),
+            'actual_session_width': round(aw, 4),
+            'minimum_total_width_shortfall_points': round(width_deficit, 4),
+            'original_center': round(fc, 4),
+            'actual_midrange': round(ac, 4),
+            'center_residual_points': round(ac-fc, 4),
+            'upper_boundary_excess_points': round(upper_excess, 4),
+            'lower_boundary_excess_points': round(lower_excess, 4),
+            'fixed_center_required_additional_half_width_points': round(fixed_center_extra_half_width, 4),
+            'fixed_width_feasible_center_interval': (
+                {'lower': round(possible_lower, 4), 'upper': round(possible_upper, 4)}
+                if possible_lower is not None else None),
+            'minimum_fixed_width_center_shift_points': (
+                round(minimum_shift, 4) if minimum_shift is not None else None),
+            'explanation': ('Width and placement are distinct geometric constraints. '
+                            'Do not treat the decomposition as causal inference or a calibrated offset.'),
+        }
+
+
+def frozen_option_quote_integrity_visibility(morning):
+    """Expose only the existing canonical Morning Brief audit, never rerun it.
+
+    In particular, no later provider data, recap values, or synthetic quote age
+    can upgrade missing historical quote evidence to SOURCE_VERIFIED.
+    """
+    schema = 'EXPECTED_MOVE_RESEARCH_SOURCE_VISIBILITY_V1'
+    base = {'schema': schema, 'mode': 'READ_ONLY_FROZEN_CANONICAL_SOURCE',
+            'production_promotion': False, 'official_forecast_mutated': False}
+    structured = morning.get('structured') if isinstance(morning, dict) else None
+    provenance = ((structured or {}).get('forecast_provenance_diagnostics') or {}).get('expected_move') or {}
+    frozen = provenance.get('decision_time_source_integrity')
+    if not isinstance(frozen, dict) or frozen.get('schema') != 'EXPECTED_MOVE_DECISION_TIME_SOURCE_INTEGRITY_V1':
+        return {**base, 'status': 'LEGACY_SOURCE_AUDIT_NOT_ARCHIVED',
+                'source_integrity': None,
+                'note': 'Do not infer raw options quotes or source integrity from legacy arithmetic fields.'}
+    # Preserve original frozen status/legs/issues verbatim as evidence. The
+    # research reader does not independently certify a provider source.
+    return {**base, 'status': 'FROZEN_SOURCE_AUDIT_AVAILABLE',
+            'source_integrity': frozen,
+            'source_status': frozen.get('status'),
+            'provider_source_verified': frozen.get('provider_source_verified') is True,
+            'note': 'Nested source integrity is copied from the immutable Morning Brief, not recomputed.'}
+
+
 def forecast_center_construction_provenance(morning):
     """Read immutable morning inputs; do not reconstruct absent provider metadata.
 
@@ -478,6 +566,8 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
             'residual_direction': ('ABOVE_FORECAST_CENTER' if residual > 0 else
                                    'BELOW_FORECAST_CENTER' if residual < 0 else 'AT_FORECAST_CENTER'),
             'forecast_center_integrity': integrity,
+            'forecast_range_failure_decomposition': forecast_range_failure_decomposition(integrity),
+            'option_quote_integrity_visibility': frozen_option_quote_integrity_visibility(morning),
             'forecast_center_construction_provenance': construction,
             'shadow_directional_center_sensitivity': sensitivity,
             'actual_session_range_points': round(obs['actual_width'], 4),
@@ -546,6 +636,7 @@ def archive_diagnostics(mornings):
         item['agreement_explainability'] = explain_shadow_agreement(snapshot)
         item['magnitude_conflict_diagnostics'] = magnitude_conflict_diagnostics(snapshot)
         item['forecast_center_construction_provenance'] = forecast_center_construction_provenance(morning)
+        item['option_quote_integrity_visibility'] = frozen_option_quote_integrity_visibility(morning)
         item['shadow_directional_center_sensitivity'] = shadow_directional_center_sensitivity(morning)
         diagnostics = snapshot.get('availability_diagnostics')
         if isinstance(diagnostics, dict) and diagnostics.get('schema') == 'PREMARKET_FEATURE_AVAILABILITY_V1':
