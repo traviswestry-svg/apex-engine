@@ -287,10 +287,16 @@ def compute_atm_straddle_iv_details(contracts_calls, contracts_puts, spot: float
         "atm_strike": k,
         "call": {"bid": diagnostic_value(getattr(c, "bid", None)), "ask": diagnostic_value(getattr(c, "ask", None)),
                  "mid": diagnostic_value(getattr(c, "mid", None)), "last": diagnostic_value(getattr(c, "last", None)),
-                 "iv": diagnostic_value(getattr(c, "iv", None)), "method": call_method},
+                 "iv": diagnostic_value(getattr(c, "iv", None)), "method": call_method,
+                 "source": getattr(c, "source", None), "contract_id": getattr(c, "osi_key", None),
+                 "expiration": getattr(c, "expiration", None), "quote_timestamp": getattr(c, "quote_timestamp", None),
+                 "quote_age_seconds": diagnostic_value(getattr(c, "quote_age_seconds", None))},
         "put": {"bid": diagnostic_value(getattr(put, "bid", None)), "ask": diagnostic_value(getattr(put, "ask", None)),
                 "mid": diagnostic_value(getattr(put, "mid", None)), "last": diagnostic_value(getattr(put, "last", None)),
-                "iv": diagnostic_value(getattr(put, "iv", None)), "method": put_method},
+                "iv": diagnostic_value(getattr(put, "iv", None)), "method": put_method,
+                "source": getattr(put, "source", None), "contract_id": getattr(put, "osi_key", None),
+                "expiration": getattr(put, "expiration", None), "quote_timestamp": getattr(put, "quote_timestamp", None),
+                "quote_age_seconds": diagnostic_value(getattr(put, "quote_age_seconds", None))},
     })
     if not present(call_px) or not present(put_px):
         details["reason"] = "ATM call/put lacked both a valid mid and last trade"

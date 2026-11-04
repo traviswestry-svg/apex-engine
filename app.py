@@ -12041,6 +12041,15 @@ def api_morning_brief():
                 adr_val=adr_val,
                 vp_extra=vp_extra,
                 expected_move_confidence=(options_feed.get("diagnostics") or {}).get("confidence"),
+                expected_move_source_evidence={
+                    "provider": options_feed.get("source"),
+                    "expiration": options_feed.get("expiration"),
+                    "quote_selection": options_feed.get("diagnostics"),
+                    "atm_straddle_premium": straddle,
+                    "atm_iv": atm_iv,
+                    "time_to_expiry_year_fraction": time_to_expiry_frac,
+                    "captured_at": now_et().isoformat(),
+                },
                 premarket_provider_records=_premarket_records_with_diagnostics(
                     futures_context, decision_at=now_et().isoformat(),
                     target_session_date=str(session_context.get("target_session_date") or now.date().isoformat())),
