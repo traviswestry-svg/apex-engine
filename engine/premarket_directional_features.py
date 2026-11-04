@@ -383,6 +383,155 @@ def frozen_option_quote_integrity_visibility(morning):
             'note': 'Nested source integrity is copied from the immutable Morning Brief, not recomputed.'}
 
 
+
+
+def expected_move_source_eligibility(morning):
+    """Classify only frozen, decision-time quote audit evidence; never recalculate quotes.
+
+    This is research cohort eligibility, not forecast-generation eligibility.
+    A source-verified audit must explicitly attest verification, contain no
+    issues, and be arithmetically consistent with the frozen forecast.
+    """
+    visibility = frozen_option_quote_integrity_visibility(morning)
+    frozen = visibility.get('source_integrity')
+    construction = forecast_center_construction_provenance(morning)
+    if frozen is None:
+        quality, reason = 'LEGACY_UNVERIFIED', 'FROZEN_SOURCE_AUDIT_ABSENT'
+        issues = []
+    else:
+        status = frozen.get('status')
+        issues = list(frozen.get('issues')) if isinstance(frozen.get('issues'), list) else []
+        source_verified = frozen.get('provider_source_verified') is True
+        # A frozen verified label without its auditable two-sided leg records
+        # is not strong enough for the strict comparison cohort. Inspect only
+        # archived fields; never fetch quotes or manufacture timestamps.
+        legs = frozen.get('quote_legs') or {}
+        complete_legs = True
+        for side in ('call', 'put'):
+            leg = legs.get(side) if isinstance(legs, dict) else None
+            if not isinstance(leg, dict):
+                complete_legs = False
+                break
+            try:
+                bid, ask, mid = (float(leg[k]) for k in ('bid', 'ask', 'mid'))
+                age = float(leg['quote_age_at_decision_seconds'])
+                limit = float((frozen.get('limits') or {})['max_quote_age_seconds'])
+            except (ValueError, TypeError, KeyError):
+                complete_legs = False
+                break
+            if (not all(isfinite(x) for x in (bid, ask, mid, age, limit)) or
+                bid <= 0 or ask < bid or mid <= 0 or age < 0 or age > limit or
+                limit <= 0 or leg.get('method') != 'mid' or
+                not all(leg.get(k) for k in ('contract_id', 'source', 'expiration', 'provider_quote_timestamp')) or
+                leg.get('expiration') != frozen.get('option_expiration')):
+                complete_legs = False
+                break
+        if status == 'SOURCE_VERIFIED' and source_verified and not issues and complete_legs:
+            quality, reason = 'VERIFIED', 'FROZEN_QUOTE_SOURCE_VERIFIED'
+        elif status == 'REJECTED_INTEGRITY':
+            quality, reason = 'REJECTED', 'FROZEN_SOURCE_INTEGRITY_REJECTED'
+        elif status == 'DEGRADED_SOURCE_EVIDENCE':
+            quality, reason = 'DEGRADED', 'FROZEN_SOURCE_EVIDENCE_DEGRADED'
+        else:
+            quality, reason = 'INCONSISTENT_AUDIT', 'FROZEN_SOURCE_AUDIT_CONTRADICTORY_OR_UNKNOWN'
+        if quality == 'VERIFIED' and construction['status'] != 'ARITHMETIC_VERIFIED_SOURCE_UNVERIFIED':
+            quality, reason = 'INCONSISTENT_AUDIT', 'FROZEN_CONSTRUCTION_NOT_ARITHMETICALLY_VERIFIED'
+    # IV comparison is documentation of the archived *alternative*, not a
+    # recommendation or synthetic IV-derived quote, and never overrides source quality.
+    structured = (morning.get('structured') or {}) if isinstance(morning, dict) else {}
+    frozen_move = ((structured.get('forecast_provenance_diagnostics') or {})
+                   .get('expected_move') or {})
+    try:
+        implied_iv = float(frozen_move.get('iv_implied_one_sigma'))
+        valid_iv = isfinite(implied_iv) and implied_iv > 0
+    except (ValueError, TypeError):
+        valid_iv = False
+    frozen_iv = frozen.get('source_atm_iv') if isinstance(frozen, dict) else None
+    try:
+        valid_iv = valid_iv and isfinite(float(frozen_iv)) and float(frozen_iv) > 0
+    except (TypeError, ValueError):
+        valid_iv = False
+    return {
+        'schema': 'EXPECTED_MOVE_SOURCE_RESEARCH_ELIGIBILITY_V1',
+        'mode': 'READ_ONLY_FROZEN_SOURCE_CLASSIFICATION',
+        'quality': quality,
+        'reason': reason,
+        'strict_research_eligible': quality == 'VERIFIED',
+        'frozen_integrity_status': frozen.get('status') if isinstance(frozen, dict) else None,
+        'frozen_provider_source_verified': frozen.get('provider_source_verified') is True if isinstance(frozen, dict) else False,
+        'frozen_issues': issues,
+        'construction_status': construction['status'],
+        'iv_alternative_evidence': ('NUMERIC_IV_AND_IMPLIED_MOVE_ARCHIVED_SOURCE_NOT_INDEPENDENTLY_VERIFIED'
+                                    if valid_iv else 'NO_COMPLETE_FROZEN_IV_ALTERNATIVE'),
+        'production_promotion': False,
+        'official_forecast_mutated': False,
+        'official_scoring_mutated': False,
+        'note': 'Research segmentation does not replace straddle selection, trigger an IV fallback, or reconstruct historical quotes.',
+    }
+
+
+def _source_quality_outcome_segments(rows, *, min_samples):
+    """Descriptive matched-outcome group summaries, never accuracy or model fitness."""
+    groups = {}
+    for quality in ('VERIFIED', 'DEGRADED', 'REJECTED', 'LEGACY_UNVERIFIED', 'INCONSISTENT_AUDIT'):
+        selected = [r for r in rows if r['expected_move_source_eligibility']['quality'] == quality]
+        count = len(selected)
+        contained = sum(r['forecast_contained_actual_range'] is True for r in selected)
+        abs_errors = [abs(r['forecast_center_residual_points']) for r in selected]
+        groups[quality] = {
+            'sessions': count,
+            'contained_sessions': contained,
+            'failed_containment_sessions': count - contained,
+            'descriptive_containment_fraction': round(contained / count, 4) if count else None,
+            'mean_absolute_center_residual_points': round(sum(abs_errors) / count, 4) if count else None,
+            'session_dates': [r['session_date'] for r in selected],
+            'comparison_ready': quality == 'VERIFIED' and count >= min_samples,
+        }
+    return {
+        'schema': 'EXPECTED_MOVE_SHADOW_SOURCE_SEGMENTS_V1',
+        'mode': 'READ_ONLY_EXACT_CANONICAL_OUTCOMES',
+        'groups': groups,
+        'strict_verified_sessions': groups['VERIFIED']['sessions'],
+        'strict_comparison_ready': groups['VERIFIED']['comparison_ready'],
+        'descriptive_sessions_including_unverified': len(rows),
+        'minimum_for_research_comparison': min_samples,
+        'source_quality_restriction': 'STRICT_VERIFIED_ONLY',
+        'accuracy_claim': False,
+        'production_promotion': False,
+        'note': 'Source-quality cohorts are descriptive and are not statistically comparable at small sample sizes.',
+    }
+
+
+def source_quality_coverage(mornings):
+    """Count source audit coverage only among eligible same-day canonical origins."""
+    counts = Counter()
+    exclusions = Counter()
+    for day, morning in sorted(mornings.items()):
+        if not isinstance(morning, dict) or not morning:
+            exclusions['NO_CANONICAL_MORNING'] += 1
+            continue
+        mode = str((morning.get('session_context') or {}).get('brief_mode') or
+                   (morning.get('forecast_identity') or {}).get('brief_mode') or
+                   morning.get('brief_mode') or '').upper()
+        generated = _time(morning.get('generated_at'))
+        generated_day = generated.astimezone(ZoneInfo('America/New_York')).date().isoformat() if generated else None
+        if mode != 'PREMARKET' or generated_day != day:
+            exclusions['INVALID_CANONICAL_ORIGIN'] += 1
+            continue
+        counts[expected_move_source_eligibility(morning)['quality']] += 1
+    valid = sum(counts.values())
+    return {
+        'schema': 'EXPECTED_MOVE_SOURCE_COVERAGE_V1',
+        'mode': 'READ_ONLY_CANONICAL_SOURCE_COVERAGE',
+        'eligible_canonical_origins': valid,
+        'quality_counts': dict(counts),
+        'excluded_origins': dict(exclusions),
+        'source_verified_fraction': round(counts['VERIFIED'] / valid, 4) if valid else None,
+        'production_promotion': False,
+        'note': 'Denominator is eligible same-day canonical origin, not all revisions or sessions.',
+    }
+
+
 def forecast_center_construction_provenance(morning):
     """Read immutable morning inputs; do not reconstruct absent provider metadata.
 
@@ -568,6 +717,7 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
             'forecast_center_integrity': integrity,
             'forecast_range_failure_decomposition': forecast_range_failure_decomposition(integrity),
             'option_quote_integrity_visibility': frozen_option_quote_integrity_visibility(morning),
+            'expected_move_source_eligibility': expected_move_source_eligibility(morning),
             'forecast_center_construction_provenance': construction,
             'shadow_directional_center_sensitivity': sensitivity,
             'actual_session_range_points': round(obs['actual_width'], 4),
@@ -578,11 +728,14 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
             'outcome_metric': 'REALIZED_SESSION_MIDRANGE_MINUS_FROZEN_FORECAST_CENTER',
         })
     counts = Counter(row['conflict_type'] for row in rows)
+    segments = _source_quality_outcome_segments(rows, min_samples=min_samples)
     return {'schema': 'PREMARKET_SHADOW_OUTCOME_ATTRIBUTION_V1',
             'mode': 'READ_ONLY_EXACT_CANONICAL_OUTCOMES',
             'status': 'DESCRIPTIVE_SAMPLE_AVAILABLE' if rows else 'NO_ELIGIBLE_MATCHED_OUTCOMES',
             'eligible_sessions': len(rows), 'minimum_for_research_comparison': min_samples,
-            'comparison_ready': len(rows) >= min_samples,
+            'comparison_ready': segments['strict_comparison_ready'],
+            'all_source_descriptive_sample_ready': len(rows) >= min_samples,
+            'source_quality_segmentation': segments,
             'conflict_type_counts': dict(counts), 'excluded_reasons': dict(exclusions),
             'rows': rows, 'integrity_exclusions': integrity_exclusions,
             'production_promotion': False,
@@ -637,6 +790,7 @@ def archive_diagnostics(mornings):
         item['magnitude_conflict_diagnostics'] = magnitude_conflict_diagnostics(snapshot)
         item['forecast_center_construction_provenance'] = forecast_center_construction_provenance(morning)
         item['option_quote_integrity_visibility'] = frozen_option_quote_integrity_visibility(morning)
+        item['expected_move_source_eligibility'] = expected_move_source_eligibility(morning)
         item['shadow_directional_center_sensitivity'] = shadow_directional_center_sensitivity(morning)
         diagnostics = snapshot.get('availability_diagnostics')
         if isinstance(diagnostics, dict) and diagnostics.get('schema') == 'PREMARKET_FEATURE_AVAILABILITY_V1':
@@ -751,5 +905,6 @@ def archived_diagnostics(*, limit=250):
             item['direction'] = None
             item['directional_snapshot_presence'] = 'ABSENT'
     report['status_counts'] = dict(Counter(x['status'] for x in report['details']))
+    report['source_quality_coverage'] = source_quality_coverage(mornings)
     report['shadow_outcome_attribution'] = shadow_outcome_attribution(mornings, recaps)
     return report
