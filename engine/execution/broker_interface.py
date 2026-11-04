@@ -38,6 +38,7 @@ class OptionContract:
     liquidity_score: Optional[float] = None  # 0..100
     quote_age_seconds: Optional[float] = None
     source: Optional[str] = None            # "quantdata" | "polygon" | "massive" | "etrade"
+    quote_timestamp: Optional[str] = None  # provider event time, UTC; never fetch time
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

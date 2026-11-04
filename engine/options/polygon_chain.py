@@ -91,6 +91,7 @@ def _map_snapshot(r: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # Preserve the raw value so the normalizer can compute age relative
         # to the chain fetch time instead of treating freshness as unknown.
         "last_updated": lq.get("last_updated") or lq.get("sip_timestamp"),
+        "quote_timestamp": lq.get("last_updated") or lq.get("sip_timestamp"),
         "last": lt.get("price"),
         "volume": day.get("volume"),
         "open_interest": r.get("open_interest"),

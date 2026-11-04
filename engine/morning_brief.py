@@ -618,6 +618,7 @@ def generate_morning_brief(
     async_narrative: bool = False,
     defer_async_enqueue: bool = False,
     premarket_provider_records: Optional[dict] = None,
+    expected_move_source_evidence: Optional[dict] = None,
     **engine_kwargs,
 ) -> dict:
     """Rebuild deterministic data every request while reusing session narrative.
@@ -804,6 +805,39 @@ def generate_morning_brief(
     # APEX 69.10.37: freeze additive decision-time diagnostics with the forecast.
     from .forecast_provenance_diagnostics import capture as _capture_forecast_diagnostics
     result["structured"]["forecast_provenance_diagnostics"] = _capture_forecast_diagnostics(dkl, _regime)
+    # Additive provenance is frozen *before* canonical persistence, never copied
+    # from later market observations or used to change the expected move.
+    from .expected_move_source_integrity import audit as _audit_expected_move_source
+    _source = _audit_expected_move_source(
+        expected_move_source_evidence, result["structured"]["forecast_provenance_diagnostics"]["expected_move"],
+        decision_at=result["generated_at"],
+    )
+    result["structured"]["forecast_provenance_diagnostics"]["expected_move"]["decision_time_source_integrity"] = _source
+    _em_prov = result["structured"]["forecast_provenance_diagnostics"]["expected_move"]
+    _legs = _source["quote_legs"]
+    _leg_timestamps = [_legs[side]["provider_quote_timestamp"] for side in ("call", "put")]
+    # The legacy fields now carry the same source evidence as the nested audit.
+    # Top-level quote timestamp is the earlier leg event time, not capture time.
+    _em_prov.update({
+        "source_atm_straddle_quote": _source["source_atm_straddle_premium"],
+        "source_atm_iv": _source["source_atm_iv"],
+        "source_time_to_close_year_fraction": _source["time_to_expiry_year_fraction"],
+        "option_expiration": _source["option_expiration"],
+        "quote_timestamp": (min(_leg_timestamps) if all(_leg_timestamps) else None),
+        "quote_age_seconds": (max(_legs[side]["quote_age_at_decision_seconds"] for side in ("call", "put"))
+                              if all(_legs[side]["quote_age_at_decision_seconds"] is not None for side in ("call", "put")) else None),
+        "quote_bid_ask": ({side: {k: _legs[side][k] for k in ("bid", "ask", "mid", "method", "provider_quote_timestamp")}
+                           for side in ("call", "put")}
+                          if any(_legs[side]["bid"] is not None or _legs[side]["ask"] is not None for side in ("call", "put"))
+                          else None),
+        "provider_source_verified": _source["provider_source_verified"],
+        "metadata_note": "Frozen pre-outcome: top-level quote_timestamp is the earlier leg event time; nested record preserves both timestamps. Quality is advisory.",
+    })
+    _em_prov["missing_source_metadata"] = [
+        name for name in ("source_atm_straddle_quote", "source_atm_iv", "source_time_to_close_year_fraction",
+                          "option_expiration", "quote_timestamp", "quote_age_seconds", "quote_bid_ask")
+        if _em_prov[name] is None
+    ]
     # Additive research-only capture: upstream verified features only.
     # Never derive decision-time signals from after-close data.
     from .premarket_directional_features import freeze_features as _freeze_directional

@@ -60,6 +60,25 @@ def _age_seconds(value: Any, *, now: Optional[dt.datetime] = None) -> Optional[f
     except Exception:
         return None
 
+def _quote_timestamp_iso(value: Any) -> Optional[str]:
+    """Normalize the provider quote event timestamp (never use ingestion time)."""
+    if value in (None, ""):
+        return None
+    try:
+        if isinstance(value, str) and not value.strip().replace(".", "", 1).isdigit():
+            parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return None  # ambiguous timezone
+        else:
+            raw = float(value)
+            magnitude = abs(raw)
+            divisor = 1e9 if magnitude >= 1e17 else 1e6 if magnitude >= 1e14 else 1e3 if magnitude >= 1e11 else 1
+            parsed = dt.datetime.fromtimestamp(raw / divisor, tz=dt.timezone.utc)
+        return parsed.astimezone(dt.timezone.utc).isoformat()
+    except (ValueError, TypeError, OverflowError, OSError):
+        return None
+
+
 def compute_quote_metrics(bid: Optional[float], ask: Optional[float],
                           volume: Optional[int], open_interest: Optional[int],
                           quote_age_seconds: Optional[float]) -> Dict[str, Optional[float]]:
@@ -114,6 +133,11 @@ def normalize_contract(raw: Dict[str, Any], *, symbol: str = "SPX",
     volume = pick("volume", "totalVolume", cast=_i)
     oi = pick("open_interest", "openInterest", "oi", cast=_i)
 
+    lq = raw.get("last_quote") or {}
+    event_ts = (raw.get("quote_timestamp") or raw.get("last_updated") or raw.get("sip_timestamp")
+                or lq.get("last_updated") or lq.get("sip_timestamp")
+                or raw.get("quote_time") or raw.get("timeStamp") or raw.get("quoteTime"))
+    quote_timestamp = _quote_timestamp_iso(event_ts)
     q_age = pick("quote_age_seconds", "quoteAge")
     if q_age is None:
         lq = raw.get("last_quote") or {}
@@ -140,7 +164,7 @@ def normalize_contract(raw: Dict[str, Any], *, symbol: str = "SPX",
         theta=_f(greeks.get("theta")), vega=_f(greeks.get("vega")),
         iv=_f(greeks.get("iv") or greeks.get("impliedVolatility") or greeks.get("volatility")),
         spread_pct=metrics["spread_pct"], liquidity_score=metrics["liquidity_score"],
-        quote_age_seconds=q_age, source=source,
+        quote_age_seconds=q_age, quote_timestamp=quote_timestamp, source=source,
     )
 
 
