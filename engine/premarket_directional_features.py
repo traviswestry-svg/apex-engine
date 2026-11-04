@@ -9,6 +9,7 @@ from collections import Counter
 from datetime import datetime, timezone, time
 from zoneinfo import ZoneInfo
 from math import isfinite
+from .premarket_expected_move_availability import visibility as premarket_source_availability_visibility
 
 FEATURES = ('overnight_es_return', 'overnight_vwap_displacement',
             'premarket_gap', 'prior_day_range_position', 'premarket_trend_strength',
@@ -718,6 +719,7 @@ def shadow_outcome_attribution(mornings, recaps, *, min_samples=20):
             'forecast_range_failure_decomposition': forecast_range_failure_decomposition(integrity),
             'option_quote_integrity_visibility': frozen_option_quote_integrity_visibility(morning),
             'expected_move_source_eligibility': expected_move_source_eligibility(morning),
+            'premarket_expected_move_source_availability': premarket_source_availability_visibility(morning),
             'forecast_center_construction_provenance': construction,
             'shadow_directional_center_sensitivity': sensitivity,
             'actual_session_range_points': round(obs['actual_width'], 4),
@@ -791,6 +793,7 @@ def archive_diagnostics(mornings):
         item['forecast_center_construction_provenance'] = forecast_center_construction_provenance(morning)
         item['option_quote_integrity_visibility'] = frozen_option_quote_integrity_visibility(morning)
         item['expected_move_source_eligibility'] = expected_move_source_eligibility(morning)
+        item['premarket_expected_move_source_availability'] = premarket_source_availability_visibility(morning)
         item['shadow_directional_center_sensitivity'] = shadow_directional_center_sensitivity(morning)
         diagnostics = snapshot.get('availability_diagnostics')
         if isinstance(diagnostics, dict) and diagnostics.get('schema') == 'PREMARKET_FEATURE_AVAILABILITY_V1':
