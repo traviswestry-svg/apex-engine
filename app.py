@@ -12050,6 +12050,7 @@ def api_morning_brief():
                     "time_to_expiry_year_fraction": time_to_expiry_frac,
                     "captured_at": now_et().isoformat(),
                 },
+                decision_time_futures_context=futures_context,
                 premarket_provider_records=_premarket_records_with_diagnostics(
                     futures_context, decision_at=now_et().isoformat(),
                     target_session_date=str(session_context.get("target_session_date") or now.date().isoformat())),

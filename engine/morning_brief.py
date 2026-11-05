@@ -619,6 +619,7 @@ def generate_morning_brief(
     defer_async_enqueue: bool = False,
     premarket_provider_records: Optional[dict] = None,
     expected_move_source_evidence: Optional[dict] = None,
+    decision_time_futures_context: Optional[dict] = None,
     **engine_kwargs,
 ) -> dict:
     """Rebuild deterministic data every request while reusing session narrative.
@@ -840,6 +841,14 @@ def generate_morning_brief(
         expected_move_source_evidence, _source,
         decision_at=result["generated_at"],
         reference_spot=_em_prov.get("reference_spot"),
+    )
+    # Additive source acquisition from the already-fetched ES provider payload.
+    # No new network IO, model promotion, or future-bar ingestion.
+    from .decision_time_volatility_candidates import capture as _capture_volatility_candidates
+    _em_prov["shadow_volatility_source_candidates"] = _capture_volatility_candidates(
+        decision_time_futures_context, decision_at=result["generated_at"],
+        reference_spot=_em_prov.get("reference_spot"),
+        existing_availability=_em_prov["premarket_source_availability"],
     )
     _em_prov["missing_source_metadata"] = [
         name for name in ("source_atm_straddle_quote", "source_atm_iv", "source_time_to_close_year_fraction",
