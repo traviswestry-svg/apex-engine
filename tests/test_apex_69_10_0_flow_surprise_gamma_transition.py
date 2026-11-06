@@ -10,10 +10,10 @@ from engine.canonical_persistence import connect
 from engine.dynamic_state import build_dynamic_state
 
 
-def _history(n=20, *, bucket_time="2026-09-01T10:05:00", expiration="2026-09-01"):
+def _history(n=20, *, bucket_time="2026-08-31T10:05:00", expiration="2026-08-31"):
     rows=[]
     for i in range(n):
-        rows.append({"session_date":"2026-09-01", "decision_time":bucket_time,
+        rows.append({"session_date":str(bucket_time)[:10], "decision_time":bucket_time,
                      "features":{"cluster_expiration":expiration,
                                  "cluster_total_premium":100000+i*1000,
                                  "cluster_total_contracts":100+i,
@@ -22,7 +22,7 @@ def _history(n=20, *, bucket_time="2026-09-01T10:05:00", expiration="2026-09-01"
 
 
 def test_flow_surprise_time_bucket_and_expiration_class_separation():
-    h=_history(20)+_history(20, bucket_time="2026-09-01T10:35:00")+_history(20, expiration="2026-09-08")
+    h=_history(20)+_history(20, bucket_time="2026-08-31T10:35:00")+_history(20, expiration="2026-09-08")
     cl={"cluster_id":"canonical-1","expiration":"2026-09-01","total_premium":250000,"total_contracts":250,"duration_seconds":50}
     out=evaluate_flow_surprise(cl, session_date="2026-09-01", decision_time="2026-09-01T10:10:00", historical_rows=h)
     assert out["baseline_sample_size"] == 20

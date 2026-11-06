@@ -302,7 +302,8 @@ def write_samples(*, priced_clusters: List[Dict[str, Any]],
             surprise = evaluate_flow_surprise(
                 cl, session_date=session_date, decision_time=decision_time,
                 historical_rows=feature_store_db.historical_feature_rows(
-                    ticker=cl.get("ticker") or ticker, limit=5000))
+                    ticker=cl.get("ticker") or ticker, limit=5000,
+                    before_session_date=session_date))
             for k, v in surprise.items():
                 if k in {"schema_version", "cluster_id"} or isinstance(v, (dict, list)):
                     continue

@@ -202,7 +202,8 @@ def get_features(sample_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def historical_feature_rows(*, ticker: Optional[str] = None, limit: int = 5000) -> List[Dict[str, Any]]:
+def historical_feature_rows(*, ticker: Optional[str] = None, limit: int = 5000,
+                            before_session_date: Optional[str] = None) -> List[Dict[str, Any]]:
     """Read immutable feature rows for observational contextual baselines.
 
     This deliberately returns features only; labels/outcomes remain separated.
@@ -212,8 +213,15 @@ def historical_feature_rows(*, ticker: Optional[str] = None, limit: int = 5000) 
     try:
         sql = "SELECT sample_id,session_date,ticker,decision_time,features_json FROM flow_features"
         args: List[Any] = []
+        conditions = []
         if ticker:
-            sql += " WHERE ticker=?"; args.append(ticker)
+            conditions.append("ticker=?"); args.append(ticker)
+        if before_session_date:
+            # Exclude ineligible rows before LIMIT, so busy current/future
+            # sessions cannot crowd valid older baseline observations out.
+            conditions.append("session_date<?"); args.append(before_session_date)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY decision_time DESC LIMIT ?"; args.append(max(1, int(limit)))
         with _conn() as c:
             rows = c.execute(sql, tuple(args)).fetchall()
