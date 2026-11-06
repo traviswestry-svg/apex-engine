@@ -110,9 +110,10 @@ def register_flow_clusters_routes(
             # APEX 69.10.0: contextual surprise consumes canonical cluster identity.
             # It is observational only and never changes cluster scores or independence.
             try:
-                history = feature_store_db.historical_feature_rows(ticker=default_ticker, limit=5000)
                 now = _dt.datetime.now(_dt.timezone.utc)
                 session = now.astimezone(__import__('zoneinfo').ZoneInfo("America/New_York")).date().isoformat()
+                history = feature_store_db.historical_feature_rows(
+                    ticker=default_ticker, limit=5000, before_session_date=session)
                 for key in ("clusters", "singletons"):
                     for cl in result.get(key, []):
                         decision_time = f"{session}T{cl.get('end_time')}"

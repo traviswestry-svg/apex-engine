@@ -73,12 +73,36 @@ def evaluate_flow_surprise(cluster: Mapping[str, Any], *, session_date: str,
     exp_class = expiration_class(cluster.get("expiration"), session_date)
     context = {"session_time_bucket": bucket, "expiration_class": exp_class,
                "conditioning_dimensions": ["session_time_bucket", "expiration_class"]}
+    try:
+        target_session = dt.date.fromisoformat(str(session_date)[:10])
+    except (TypeError, ValueError):
+        target_session = None
     base: List[Mapping[str, Any]] = []
     for row in historical_rows or []:
         features = row.get("features") if isinstance(row.get("features"), Mapping) else row
         rdt = row.get("decision_time") or features.get("decision_time")
         rsd = row.get("session_date") or str(rdt or "")[:10]
         rexp = features.get("cluster_expiration")
+        # Strict prior-session baseline: same-session and future records must
+        # never enter the decision-time reference distribution, even if they
+        # were already stored by another cluster or exposed by a later replay.
+        # Exclude rows whose session identity cannot be validated.
+        try:
+            historic_session = dt.date.fromisoformat(str(rsd)[:10])
+        except (TypeError, ValueError):
+            continue
+        observed = _parse_time(rdt)
+        if (target_session is None or historic_session >= target_session
+                or observed is None):
+            continue
+        # A row's timestamp must belong to its declared market session.
+        if observed.tzinfo is not None:
+            observed_date = observed.astimezone(
+                __import__("zoneinfo").ZoneInfo("America/New_York")).date()
+        else:
+            observed_date = observed.date()
+        if observed_date != historic_session:
+            continue
         if session_time_bucket(rdt) == bucket and expiration_class(rexp, rsd) == exp_class:
             base.append(features)
 
