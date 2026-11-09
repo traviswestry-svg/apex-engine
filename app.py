@@ -7983,6 +7983,13 @@ def api_institutional_os():
                 # A timed-out running thread cannot be killed by Future.cancel().
                 vp_pool.shutdown(wait=False, cancel_futures=True)
 
+            # Read-only input diagnostic assembled from the already-completed
+            # bounded fetch; no additional calls to the volume provider.
+            from engine.volume_auction_input_investigation import analyze as _audit_vp_input
+            _vp_input_investigation = _audit_vp_input(
+                bundle=volume_bundle, timed_out=timed_out,
+                duration_ms=vp_elapsed_ms, fetch_timeout_seconds=_FETCH_TIMEOUT)
+
             # Run nine-engine pipeline
             result = _build_institutional_decision(
                 ticker=ticker,
@@ -8674,6 +8681,15 @@ def api_institutional_os():
                         result, is_rth=(_session_state_now == "MARKET_OPEN"))
                 except Exception as _cl_err:
                     print(f"Component liveness error (non-fatal): {type(_cl_err).__name__}: {_cl_err!r}", flush=True)
+            # Complete liveness interpretation from the existing assembled
+            # payload. This is diagnostic only and never gates a trade.
+            try:
+                result["volume_auction_input_investigation"] = _audit_vp_input(
+                    bundle=volume_bundle, timed_out=timed_out,
+                    duration_ms=vp_elapsed_ms, fetch_timeout_seconds=_FETCH_TIMEOUT,
+                    liveness=result.get("component_liveness"))
+            except Exception:
+                result["volume_auction_input_investigation"] = _vp_input_investigation
             recommendation = result.get("recommendation", "")
             if "ENTER" in recommendation and "NOW" in recommendation:
                 # De-dupe: fire once per distinct recommendation per session, so the

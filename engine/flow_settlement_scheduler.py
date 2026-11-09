@@ -97,6 +97,16 @@ class FlowSettlementScheduler:
                 ticker=self.ticker,
                 max_sessions=self.max_sessions,
             )
+            # Observational summary from existing exact-identity diagnostic rows;
+            # this never changes settlement decisions or evidence ownership.
+            try:
+                from .settlement_gap_investigation import analyze as _audit_gap
+                result["settlement_gap_investigation"] = _audit_gap(result)
+            except Exception as _audit_err:
+                result["settlement_gap_investigation"] = {
+                    "state": "DIAGNOSTIC_UNAVAILABLE", "read_only": True,
+                    "error_type": type(_audit_err).__name__,
+                }
             with self._lock:
                 self._status.update({
                     "ok": bool(result.get("state") != "ERROR"),
