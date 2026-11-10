@@ -90,3 +90,85 @@ def test_integration_wiring_and_no_route_duplication():
     assert '"scanner_settlement_phase_memory_attribution": scanner_settlement_phase_memory_inspect()' in app
     assert 'end_stage(_phase_id, "SETTLEMENT_PASS"' in sched
     assert app.count('"scanner_settlement_phase_memory_attribution":') == 1
+
+
+def test_rejection_breakdown_explains_zero_verified():
+    legacy = pair(); legacy.pop('process_start_ticks')
+    nonverified = pair(verified=False)
+    other = pair(stage='UNKNOWN')
+    no_rss = pair(); no_rss['before'].pop('rss_kib')
+    wrong_schema = pair(); wrong_schema['schema'] = 'unknown.schema'
+    out = mod.summarize([legacy, nonverified, other, no_rss, wrong_schema, 3], parse_failures=2,
+                        truncated_tail=True, read_lines=8)
+    d = out['reconciliation']
+    assert out['status'] == 'NO_VERIFIED_PHASE_PAIRS'
+    assert d['classification_counts'] == {
+        'MALFORMED_JSON': 2, 'MISSING_OR_INVALID_PROCESS_IDENTITY': 1,
+        'MISSING_PROCESS_RSS': 1, 'NON_OBJECT_JSON_RECORD': 1,
+        'UNSUPPORTED_PAIR_SCHEMA': 1, 'UNSUPPORTED_STAGE': 1,
+        'UNVERIFIED_PROCESS_IDENTITY': 1}
+    assert d['tail_window_truncated'] is True
+    assert d['strict_identity_matching']
+    assert d['evaluated_lines'] == 8
+
+
+def test_verified_scan_only_is_not_misreported_as_same_process_both_phases():
+    out = mod.summarize([pair(stage='FULL_SCAN')])
+    assert out['status'] == 'PHASE_PAIRS_AVAILABLE'
+    assert out['reconciliation']['same_process_scan_and_settlement_present'] is False
+
+
+def test_same_pid_different_process_start_does_not_count_cross_phase():
+    out = mod.summarize([pair(stage='FULL_SCAN', ticks=10),
+                         pair(stage='SETTLEMENT_PASS', ticks=11)])
+    assert out['reconciliation']['same_process_scan_and_settlement_present'] is False
+    assert len(out['processes']) == 2
+
+
+def test_bounded_tail_rejection_counts_without_reading_full_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, 'READ_BYTES', 2048)
+    p = tmp_path / 'pairs.jsonl'
+    old = json.dumps({'stage':'LEGACY', 'padding':'x'*2300}) + '\n'
+    p.write_text(old*30 + json.dumps({'stage':'FULL_SCAN', 'schema':'apex.memory_pair.v1'}) + '\n'
+                 + '{bad json\n')
+    out = mod.inspect(path=p)
+    assert out['status'] == 'NO_VERIFIED_PHASE_PAIRS'
+    d = out['reconciliation']
+    assert d['tail_window_truncated'] is True
+    assert d['classification_counts']['MALFORMED_JSON'] == 1
+    assert d['classification_counts']['MISSING_OR_INVALID_PROCESS_IDENTITY'] == 1
+    assert out['bounded_read_max_bytes'] == 2048
+
+
+def test_writer_provides_compatible_identity_diagnostic(tmp_path, monkeypatch):
+    monkeypatch.setenv('APEX_MEMORY_PAIR_PATH', str(tmp_path / 'memory.jsonl'))
+    before = {'processes': {'scanner': {'memory': {'rss_kib': 123, 'private_dirty_kib': 60}}},
+              'cgroup': {'current_bytes': 1234, 'memory_stat': {'anon_bytes': 111}, 'events': {'max':0}}}
+    after = {'processes': {'scanner': {'memory': {'rss_kib': 132, 'private_dirty_kib': 62}}},
+             'cgroup': {'current_bytes': 1256, 'memory_stat': {'anon_bytes': 120}, 'events': {'max':0}}}
+    snapshots = iter([before, after])
+    monkeypatch.setattr(paired, 'snapshot', lambda **kw: next(snapshots))
+    monkeypatch.setattr(paired, '_process_start_ticks', lambda pid: 987)
+    started = paired.begin_stage('cycle-1', 'FULL_SCAN')
+    paired.end_stage('cycle-1', 'FULL_SCAN', started)
+    result = mod.inspect(path=tmp_path / 'memory.jsonl')
+    assert result['verified_records'] == 1
+    assert result['reconciliation']['classification_counts']['VERIFIED'] == 1
+    raw = json.loads((tmp_path / 'memory.jsonl').read_text())
+    assert raw['identity_diagnostic'] == 'VERIFIED'
+    assert raw['process_identity_verified'] is True
+    assert raw['process_start_ticks'] == 987
+
+
+def test_writer_missing_start_time_is_explained_not_promoted(tmp_path, monkeypatch):
+    monkeypatch.setenv('APEX_MEMORY_PAIR_PATH', str(tmp_path / 'memory.jsonl'))
+    snap = {'processes': {'scanner': {'memory': {'rss_kib': 123}}},
+            'cgroup': {'current_bytes': 100}}
+    monkeypatch.setattr(paired, 'snapshot', lambda **kw: snap)
+    monkeypatch.setattr(paired, '_process_start_ticks', lambda pid: None)
+    token = paired.begin_stage('cycle-1', 'SETTLEMENT_PASS')
+    paired.end_stage('cycle-1', 'SETTLEMENT_PASS', token)
+    output = mod.inspect(path=tmp_path / 'memory.jsonl')
+    assert output['verified_records'] == 0
+    assert output['reconciliation']['classification_counts']['MISSING_OR_INVALID_PROCESS_IDENTITY'] == 1
+    assert json.loads((tmp_path / 'memory.jsonl').read_text())['identity_diagnostic'] == 'PROCESS_START_UNAVAILABLE'

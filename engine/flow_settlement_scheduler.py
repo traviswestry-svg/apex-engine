@@ -109,7 +109,7 @@ class FlowSettlementScheduler:
                 )
                 _phase_outcome = str(result.get("state") or "COMPLETED")
             finally:
-                if _phase_diag is not None:
+                if _phase_diag is not None and _phase_token is not None:
                     try:
                         _phase_diag.end_stage(_phase_id, "SETTLEMENT_PASS", _phase_token, outcome=_phase_outcome)
                     except Exception:

@@ -26,6 +26,11 @@ from engine.scanner_settlement_phase_memory_attribution import inspect as scanne
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
+from engine import health_response_memory_attribution as health_memory_attribution
+from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
+from engine.scanner_settlement_phase_memory_attribution import (
+    inspect as scanner_settlement_phase_memory_inspect,
+)
 
 # APEX Trade Director Phase 6 — lazy trade learning/replay persistence
 try:

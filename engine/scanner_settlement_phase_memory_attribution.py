@@ -56,16 +56,49 @@ def _record(raw):
     }
 
 
-def summarize(records):
-    """Only compare records with the same verified Linux process start identity."""
-    valid = [r for r in (_record(item) for item in records) if r is not None]
+def _classification(raw):
+    """Explain exclusion; never relax canonical PID + Linux process-start identity."""
+    if not isinstance(raw, dict):
+        return "NON_OBJECT_JSON_RECORD"
+    if raw.get("stage") not in VALID_STAGES:
+        return "UNSUPPORTED_STAGE"
+    if raw.get("schema") not in (None, "apex.memory_pair.v1"):
+        return "UNSUPPORTED_PAIR_SCHEMA"
+    pid, start = _int(raw.get("process_pid")), _int(raw.get("process_start_ticks"))
+    if pid is None or pid <= 0 or start is None or start <= 0:
+        return "MISSING_OR_INVALID_PROCESS_IDENTITY"
+    if raw.get("process_identity_verified") is not True:
+        return "UNVERIFIED_PROCESS_IDENTITY"
+    if not isinstance(raw.get("before"), dict) or not isinstance(raw.get("after"), dict):
+        return "MISSING_PHASE_BOUNDARY"
+    if _int(raw["before"].get("rss_kib")) is None or _int(raw["after"].get("rss_kib")) is None:
+        return "MISSING_PROCESS_RSS"
+    return "VERIFIED"
+
+
+def summarize(records, *, parse_failures=0, truncated_tail=False, read_lines=None):
+    """Classify bounded records and group only strictly verified instances."""
+    classified = defaultdict(int)
+    valid = []
+    seen_stages = defaultdict(int)
+    writer_identity_diagnostics = defaultdict(int)
+    for raw in records:
+        why = _classification(raw)
+        classified[why] += 1
+        if isinstance(raw, dict):
+            if raw.get("stage") in VALID_STAGES:
+                seen_stages[raw["stage"]] += 1
+            if raw.get("identity_diagnostic") in ("VERIFIED", "PROCESS_START_UNAVAILABLE", "PROCESS_IDENTITY_CHANGED"):
+                writer_identity_diagnostics[raw["identity_diagnostic"]] += 1
+        if why == "VERIFIED":
+            item = _record(raw)
+            if item is not None:
+                valid.append(item)
+    if parse_failures:
+        classified["MALFORMED_JSON"] += parse_failures
     grouped = defaultdict(list)
     for record in valid:
         grouped[(record["process_pid"], record["process_start_ticks"])].append(record)
-    if not valid:
-        return {"status": "NO_VERIFIED_PHASE_PAIRS", "verified_records": 0,
-                "processes": [], "limitations": ["Legacy phase records lack verified process identity"]}
-    # Preserve append order; choose newest observed process within bounded tail.
     keys = list(grouped)[-3:]
     processes = []
     for pid, ticks in reversed(keys):
@@ -80,20 +113,43 @@ def summarize(records):
                 "max_observed_rss_decrease_kib": min(rss) if rss else None,
                 "net_observed_phase_rss_delta_kib": sum(rss) if rss else None,
             }
-        first = group[0]
-        last = group[-1]
+        first, last = group[0], group[-1]
         processes.append({"pid": pid, "process_start_ticks": ticks,
                           "paired_records": len(group), "phases": phases,
                           "first_observed_at": first["observed_at"],
                           "last_observed_at": last["observed_at"],
                           "same_process_boundary_rss_delta_kib": _difference(last["rss_after_kib"], first["rss_before_kib"]),
                           "interpretation": "PHASE_CORRELATED_NOT_CAUSAL"})
-    return {"status": "PHASE_PAIRS_AVAILABLE", "verified_records": len(valid),
-            "processes": processes,
-            "limitations": ["Per-stage delta includes concurrent work and retained allocations may occur outside the stage",
-                            "Same-process phase boundaries do not isolate Python heap or SQLite cache",
-                            "Records without verified process start time are excluded",
-                            "Only a bounded tail of existing phase records is inspected"]}
+    stage_pair_present = any(
+        any(r["stage"] == "FULL_SCAN" for r in group) and
+        any(r["stage"] == "SETTLEMENT_PASS" for r in group)
+        for group in grouped.values()
+    )
+    status = ("PHASE_PAIRS_AVAILABLE" if valid else "NO_VERIFIED_PHASE_PAIRS")
+    # Backwards-compatible: PHASE_PAIRS_AVAILABLE means verified *stage records*,
+    # not necessarily both stage kinds on the same process. Report that distinction.
+    return {
+        "status": status, "verified_records": len(valid), "processes": processes,
+        "reconciliation": {
+            "reader_schema": SCHEMA,
+            "writer_pair_schema_expected": "apex.memory_pair.v1",
+            "candidate_records": len(records),
+            "evaluated_lines": read_lines if read_lines is not None else len(records) + parse_failures,
+            "classification_counts": dict(sorted(classified.items())),
+            "stage_counts": dict(sorted(seen_stages.items())),
+            "writer_identity_diagnostic_counts": dict(sorted(writer_identity_diagnostics.items())),
+            "malformed_json_lines": parse_failures,
+            "tail_window_truncated": bool(truncated_tail),
+            "same_process_scan_and_settlement_present": stage_pair_present,
+            "strict_identity_matching": True,
+            "interpretation": ("VERIFIED_RECORDS_FOUND" if valid else
+                               "NO_ELIGIBLE_RECORDS_IN_BOUNDED_WINDOW"),
+        },
+        "limitations": ["Per-stage delta includes concurrent work and retained allocations may occur outside the stage",
+                        "Same-process phase boundaries do not isolate Python heap or SQLite cache",
+                        "Missing or invalid process start time is never reconstructed or inferred",
+                        "Only a bounded tail of existing phase records is inspected; earlier records may exist"],
+    }
 
 
 def inspect(*, path=None):
@@ -111,19 +167,25 @@ def inspect(*, path=None):
         # Discard incomplete trailing record, if any.
         if data and not data.endswith(b"\n"):
             data = data.rpartition(b"\n")[0] + b"\n"
+        lines = data.splitlines()[-MAX_RECORDS:]
         records = []
-        for line in data.splitlines()[-MAX_RECORDS:]:
+        rejected_json = 0
+        for line in lines:
             try:
                 records.append(json.loads(line))
             except (UnicodeError, ValueError, TypeError):
-                continue
-        summary = summarize(records)
+                rejected_json += 1
+        summary = summarize(records, parse_failures=rejected_json,
+                            truncated_tail=offset > 0 or len(data.splitlines()) > MAX_RECORDS,
+                            read_lines=len(lines))
         summary.update({"source": "existing_paired_runtime_diagnostics_jsonl",
                         "bounded_read_max_bytes": READ_BYTES, "max_records": MAX_RECORDS,
                         "source_bytes": size})
     except OSError:
         summary = {"status": "PHASE_TRACE_UNAVAILABLE", "verified_records": 0,
-                   "processes": [], "source": "existing_paired_runtime_diagnostics_jsonl"}
+                   "processes": [], "source": "existing_paired_runtime_diagnostics_jsonl",
+                   "reconciliation": {"classification_counts": {}, "strict_identity_matching": True,
+                                      "interpretation": "SOURCE_UNAVAILABLE"}}
     summary.update({"schema": SCHEMA, "observed_at": datetime.now(timezone.utc).isoformat(),
                     "read_only": True, "db_reads": False, "decision_authority": False,
                     "execution_authority": False, "changes_trade_decisions": False,
