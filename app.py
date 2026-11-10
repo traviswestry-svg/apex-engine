@@ -20,6 +20,9 @@ from flask import Flask, jsonify, render_template, request, redirect, g, has_req
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.scanner_runtime_truth import resolve_scanner_runtime
 from engine.runtime_memory_pressure import memory_pressure_status
+from engine import health_response_memory_attribution as health_memory_attribution
+from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
+from engine.scanner_settlement_phase_memory_attribution import inspect as scanner_settlement_phase_memory_inspect
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
@@ -7596,7 +7599,7 @@ def _read_scanner_coverage_status():
 
 @app.route("/health")
 def health():
-    _health_memory_start = health_memory_attribution.begin()
+    _health_measurement = health_memory_attribution.begin()
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
@@ -7700,14 +7703,14 @@ def health():
         ),
         "is_tradeable": s_session == "MARKET_OPEN",
     }
-    _health_construction_end_ns = time.perf_counter_ns()
-    _health_construction_end_rss = health_memory_attribution.rss_kib()
+    _construction_end_ns = time.perf_counter_ns()
+    _construction_end_rss_kib = health_memory_attribution.rss_kib()
     _health_response = jsonify(_health_payload)
     try:
         health_memory_attribution.completed(
-            _health_memory_start,
-            construction_end_ns=_health_construction_end_ns,
-            construction_end_rss_kib=_health_construction_end_rss,
+            _health_measurement,
+            construction_end_ns=_construction_end_ns,
+            construction_end_rss_kib=_construction_end_rss_kib,
             response=_health_response,
         )
     except Exception:
