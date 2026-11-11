@@ -7603,7 +7603,6 @@ def _read_scanner_coverage_status():
 @app.route("/health")
 def health():
     _health_start = health_memory_attribution.begin()
-    _health_measurement = health_memory_attribution.begin()
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
@@ -7716,16 +7715,6 @@ def health():
         health_memory_attribution.completed(
             _health_start, construction_end_ns=_health_construction_end_ns,
             construction_end_rss_kib=_health_construction_end_rss, response=_health_response)
-    _construction_end_ns = time.perf_counter_ns()
-    _construction_end_rss_kib = health_memory_attribution.rss_kib()
-    _health_response = jsonify(_health_payload)
-    try:
-        health_memory_attribution.completed(
-            _health_measurement,
-            construction_end_ns=_construction_end_ns,
-            construction_end_rss_kib=_construction_end_rss_kib,
-            response=_health_response,
-        )
     except Exception:
         pass
     return _health_response
