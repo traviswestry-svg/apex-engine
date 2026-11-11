@@ -75,7 +75,6 @@ def _cgroup():
     return {"current_bytes": current, "limit_bytes": maximum, "peak_bytes": peak,
             "usage_pct": round(100 * current / maximum, 2) if current is not None and maximum else None,
             "events": events, "memory_stat": memory_stat}
-            "memory_stat": memory_stat, "events": events}
 
 
 def snapshot(scanner_pid=None, web_pid=None, stage="PERIODIC"):

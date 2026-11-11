@@ -7698,8 +7698,6 @@ def health():
         "runtime_memory_investigation": runtime_memory_investigation(),
         "scanner_settlement_phase_memory_attribution": scanner_settlement_phase_memory_inspect(),
         "health_response_memory_attribution": health_memory_attribution.prior_completed(),
-        "health_response_memory_attribution": health_memory_attribution.prior_completed(),
-        "scanner_settlement_phase_memory_attribution": scanner_settlement_phase_memory_inspect(),
         "scanner_process": (
             {"available": False, "state": "NOT_EXPECTED", "error": None,
              "detail": "Heartbeat is not required while the scanner is scheduled idle."}

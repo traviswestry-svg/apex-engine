@@ -92,13 +92,6 @@ class FlowSettlementScheduler:
         local_now = now.astimezone(_ET) if now is not None and now.tzinfo else (now.replace(tzinfo=_ET) if now is not None else dt.datetime.now(_ET))
         cutoff, scope = self._cutoff(local_now)
         try:
-            _phase_id = _phase_start = None
-            try:
-                from . import paired_runtime_diagnostics as _phase_diag
-                _phase_id = _phase_diag.new_cycle_id("settlement")
-                _phase_start = _phase_diag.begin_stage(_phase_id, "SETTLEMENT_PASS")
-            except Exception:
-                pass
             _phase_diag = None
             _phase_id = _phase_token = None
             try:
@@ -114,11 +107,6 @@ class FlowSettlementScheduler:
                     ticker=self.ticker,
                     max_sessions=self.max_sessions,
                 )
-                _phase_outcome = "ERROR" if result.get("state") == "ERROR" else "COMPLETED"
-            finally:
-                if _phase_start is not None:
-                    try:
-                        _phase_diag.end_stage(_phase_id, "SETTLEMENT_PASS", _phase_start, outcome=_phase_outcome)
                 _phase_outcome = str(result.get("state") or "COMPLETED")
             finally:
                 if _phase_diag is not None and _phase_token is not None:
