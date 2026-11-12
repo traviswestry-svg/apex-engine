@@ -1,4 +1,5 @@
 import sqlite3
+
 from engine import trigger_observatory_historical_query_audit as module
 
 def seed(path):
