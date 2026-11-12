@@ -20,17 +20,12 @@ from flask import Flask, jsonify, render_template, request, redirect, g, has_req
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.scanner_runtime_truth import resolve_scanner_runtime
 from engine.runtime_memory_pressure import memory_pressure_status
+from engine.container_memory_limit_event_investigation import observe as container_memory_limit_event_observe
 from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
-from engine.scanner_settlement_phase_memory_attribution import inspect as scanner_settlement_phase_memory_inspect
 from engine import health_response_memory_attribution as health_memory_attribution
-from engine import health_response_memory_attribution as health_memory_attribution
-from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
-from engine.scanner_settlement_phase_memory_attribution import inspect as scanner_settlement_phase_memory_inspect
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
-from engine import health_response_memory_attribution as health_memory_attribution
-from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
 from engine.scanner_settlement_phase_memory_attribution import (
     inspect as scanner_settlement_phase_memory_inspect,
 )
@@ -7695,6 +7690,7 @@ def health():
         "source_health": _source_observability(s_sources, generated_at),
         "storage": storage_status(),
         "memory_pressure": memory_pressure_status(),
+        "container_memory_limit_event_investigation": container_memory_limit_event_observe(),
         "runtime_memory_investigation": runtime_memory_investigation(),
         "scanner_settlement_phase_memory_attribution": scanner_settlement_phase_memory_inspect(),
         "health_response_memory_attribution": health_memory_attribution.prior_completed(),
