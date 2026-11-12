@@ -1,11 +1,5 @@
-import importlib.util
 import sqlite3
-from pathlib import Path
-
-MODULE = Path(__file__).resolve().parents[1] / 'engine' / 'trigger_observatory_historical_query_audit.py'
-spec = importlib.util.spec_from_file_location('query_audit', MODULE)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from engine import trigger_observatory_historical_query_audit as module
 
 def seed(path):
     with sqlite3.connect(path) as conn:
