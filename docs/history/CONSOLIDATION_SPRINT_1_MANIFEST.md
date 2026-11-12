@@ -163,3 +163,6 @@ Full suite 1,518 passed / 0 failed.
 - `engine.morning_forecast_shadow_calibration` supports shadow calibration and
   regime diagnostics; tests validate the analysis without invoking a live
   forecast or execution path.
+- `engine.trigger_observatory_historical_query_audit` provides bounded,
+  read-only operator diagnostics; it is deliberately not part of a runtime
+  execution path.
