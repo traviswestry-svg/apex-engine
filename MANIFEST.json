@@ -1,0 +1,20 @@
+{
+  "title": "APEX Trigger Observatory Historical-Query Memory Audit",
+  "source_archive": "apex-engine-main(20261112-221036).zip",
+  "apex_version": "69.10.47",
+  "change_type": "operator-only read-only audit",
+  "files_added": [
+    "engine/trigger_observatory_historical_query_audit.py",
+    "tests/test_trigger_observatory_historical_query_audit.py",
+    "APEX_TRIGGER_OBSERVATORY_HISTORICAL_QUERY_AUDIT_REPORT.md"
+  ],
+  "files_changed": [],
+  "trading_behavior_changed": false,
+  "database_mutations": false,
+  "stage3_storage_work": "DEFERRED",
+  "validation": {
+    "new_audit_tests_passed": 5,
+    "selected_existing_regressions_passed": 27,
+    "full_ci": "NOT_CERTIFIED: Flask dependency unavailable"
+  }
+}
