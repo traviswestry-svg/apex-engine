@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 from zoneinfo import ZoneInfo
 
-from .canonical_persistence import connect as canonical_connect
+from .canonical_persistence import connect as canonical_connect, connection as canonical_connection
 from .persistent_store import persistent_sqlite_path
 
 VERSION = "69.10.3"
@@ -247,16 +247,41 @@ def _reconcile_window_integrity_conn(conn, *, now: Any = None) -> Dict[str, int]
     return counts
 
 
+def _linked_trigger_observations(conn: sqlite3.Connection, trigger_ids: set[str],
+                                 *, batch_size: int = 256):
+    """Fetch only the exact trigger owners required by the current diagnostic.
+
+    Bound parameters and batch width; never sweep every historical observation
+    merely to assemble a small linked report.
+    """
+    size = max(1, min(int(batch_size), 256))
+    identities = sorted({str(value).strip() for value in trigger_ids if str(value).strip()})
+    for start in range(0, len(identities), size):
+        batch = identities[start:start + size]
+        placeholders = ",".join("?" for _ in batch)
+        cursor = conn.execute(
+            "SELECT * FROM trade_trigger_price_observations "
+            f"WHERE trigger_id IN ({placeholders}) ORDER BY trigger_id,observed_at",
+            batch,
+        )
+        try:
+            for record in cursor:
+                yield record
+        finally:
+            cursor.close()
+
+
 def _attach_window_metrics(rows: list[Dict[str, Any]], resolved: str, *, now: Any = None) -> Dict[str, int]:
     """Attach horizon-safe observation metrics to trigger rows in memory."""
     by_trigger: Dict[str, list[Dict[str, Any]]] = {}
     try:
-        with canonical_connect(resolved, read_only=True, timeout=4) as conn:
-            conn.row_factory = sqlite3.Row
-            for obs in conn.execute(
-                "SELECT * FROM trade_trigger_price_observations ORDER BY trigger_id,observed_at"
-            ).fetchall():
-                by_trigger.setdefault(str(obs["trigger_id"]), []).append(dict(obs))
+        trigger_ids = {str(row.get("trigger_id") or "").strip() for row in rows
+                       if str(row.get("trigger_id") or "").strip()}
+        if trigger_ids:
+            with canonical_connection(resolved, read_only=True, timeout=4) as conn:
+                conn.row_factory = sqlite3.Row
+                for obs in _linked_trigger_observations(conn, trigger_ids):
+                    by_trigger.setdefault(str(obs["trigger_id"]), []).append(dict(obs))
     except Exception:
         by_trigger = {}
     counts = {"IN_WINDOW": 0, "LATE": 0, "WINDOW_MISSED": 0, "OBSERVING": 0, "NOT_APPLICABLE": 0}
@@ -876,6 +901,35 @@ def effectiveness(*, symbol: str = "SPX", path: Optional[str] = None) -> Dict[st
             "execution_authority": False, "broker_mutation": False,
             "production_effect": PRODUCTION_EFFECT}
 
+def _linked_rows(conn: sqlite3.Connection, *, table: str, columns: str,
+                 decision_ids: set[str], batch_size: int = 256):
+    """Stream exact linked decision metadata without loading an entire evidence table.
+
+    Names are fixed internal literals, not user input; only values are bound.
+    A query batch is bounded well below SQLite's legacy 999-variable limit.
+    """
+    allowed = {
+        ("decisions", "decision_id,session,action,snapshot_json"),
+        ("grading_results", "decision_id,horizon_seconds"),
+    }
+    if (table, columns) not in allowed:
+        raise ValueError("unsupported exact-identity metadata query")
+    size = max(1, min(int(batch_size), 256))
+    identities = sorted({str(value).strip() for value in decision_ids if str(value).strip()})
+    for start in range(0, len(identities), size):
+        batch = identities[start:start + size]
+        placeholders = ",".join("?" for _ in batch)
+        cursor = conn.execute(
+            f"SELECT {columns} FROM {table} WHERE decision_id IN ({placeholders})",
+            batch,
+        )
+        try:
+            for record in cursor:
+                yield record
+        finally:
+            cursor.close()
+
+
 def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                           evidence_path: Optional[str] = None) -> Dict[str, Any]:
     """Read-only decision-quality and confidence-reliability validation.
@@ -903,7 +957,7 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                 "calibration_context_quality": {}}
 
     initialize_store(resolved)
-    with canonical_connect(resolved, read_only=True, timeout=4) as conn:
+    with canonical_connection(resolved, read_only=True, timeout=4) as conn:
         conn.row_factory = sqlite3.Row
         rows = [dict(r) for r in conn.execute(
             """SELECT trigger_id,decision_id,source,trigger_type,setup_family,direction,disposition,
@@ -913,6 +967,9 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
             (_u(symbol, "SPX"),),
         ).fetchall()]
     observation_window_counts = _attach_window_metrics(rows, resolved)
+    # These are the only decisions whose metadata can affect the selected report.
+    linked_decision_ids = {str(row.get("decision_id") or "").strip()
+                           for row in rows if str(row.get("decision_id") or "").strip()}
 
     # Canonical session, decision class, release cohort, and grade horizon are
     # joined from the evidence ledger by decision_id. Metadata parsing is isolated
@@ -924,15 +981,16 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
     if Path(evidence_resolved).exists():
         evidence_metadata_status = "READY"
         try:
-            with canonical_connect(evidence_resolved, read_only=True, timeout=4) as conn:
+            with canonical_connection(evidence_resolved, read_only=True, timeout=4) as conn:
                 conn.row_factory = sqlite3.Row
                 has_decisions = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='decisions'"
                 ).fetchone()
                 if has_decisions:
-                    for meta_row in conn.execute(
-                        "SELECT decision_id,session,action,snapshot_json FROM decisions"
-                    ).fetchall():
+                    for meta_row in _linked_rows(
+                        conn, table="decisions", columns="decision_id,session,action,snapshot_json",
+                        decision_ids=linked_decision_ids,
+                    ):
                         decision_id = str(meta_row["decision_id"] or "").strip()
                         if not decision_id:
                             continue
@@ -1038,9 +1096,10 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='grading_results'"
                 ).fetchone()
                 if has_grades:
-                    for grade_row in conn.execute(
-                        "SELECT decision_id,horizon_seconds FROM grading_results"
-                    ).fetchall():
+                    for grade_row in _linked_rows(
+                        conn, table="grading_results", columns="decision_id,horizon_seconds",
+                        decision_ids=linked_decision_ids,
+                    ):
                         decision_id = str(grade_row["decision_id"] or "").strip()
                         if not decision_id:
                             continue
@@ -2282,28 +2341,28 @@ def learning_readiness(*, evidence_path: Optional[str] = None, trigger_path: Opt
     if Path(trigger_path).exists():
         try:
             now_epoch = datetime.now(timezone.utc).timestamp()
-            with canonical_connect(trigger_path, read_only=True, timeout=4) as tconn:
+            with canonical_connection(trigger_path, read_only=True, timeout=4) as tconn:
                 tconn.row_factory = sqlite3.Row
-                rows = tconn.execute("SELECT status,triggered_at,observation_count,observation_window_seconds,window_integrity_status FROM observed_trade_triggers").fetchall()
-            for row in rows:
-                status_value = str(row["status"] or "").upper()
-                window_value = str(row["window_integrity_status"] or "").upper()
-                if window_value == "IN_WINDOW": maturation["in_window"] += 1
-                elif window_value == "LATE": maturation["late"] += 1
-                elif window_value == "WINDOW_MISSED": maturation["window_missed"] += 1
-                if status_value == "OBSERVING":
-                    maturation["observing"] += 1
-                    try:
-                        if now_epoch - _epoch(row["triggered_at"]) >= int(row["observation_window_seconds"] or MAX_HOLD_SECONDS):
-                            maturation["overdue_observing"] += 1
-                    except Exception:
-                        pass
-                elif status_value == "OBSERVED":
-                    maturation["matured"] += 1
-                elif status_value == "OBSERVATION_WINDOW_INCOMPLETE":
-                    maturation["observation_window_incomplete"] += 1
-                if int(row["observation_count"] or 0) > 0:
-                    maturation["with_price_observations"] += 1
+                rows = tconn.execute("SELECT status,triggered_at,observation_count,observation_window_seconds,window_integrity_status FROM observed_trade_triggers")
+                for row in rows:
+                    status_value = str(row["status"] or "").upper()
+                    window_value = str(row["window_integrity_status"] or "").upper()
+                    if window_value == "IN_WINDOW": maturation["in_window"] += 1
+                    elif window_value == "LATE": maturation["late"] += 1
+                    elif window_value == "WINDOW_MISSED": maturation["window_missed"] += 1
+                    if status_value == "OBSERVING":
+                        maturation["observing"] += 1
+                        try:
+                            if now_epoch - _epoch(row["triggered_at"]) >= int(row["observation_window_seconds"] or MAX_HOLD_SECONDS):
+                                maturation["overdue_observing"] += 1
+                        except Exception:
+                            pass
+                    elif status_value == "OBSERVED":
+                        maturation["matured"] += 1
+                    elif status_value == "OBSERVATION_WINDOW_INCOMPLETE":
+                        maturation["observation_window_incomplete"] += 1
+                    if int(row["observation_count"] or 0) > 0:
+                        maturation["with_price_observations"] += 1
         except Exception:
             pass
 
