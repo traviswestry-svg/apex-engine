@@ -48,9 +48,17 @@ def _cgroup():
                 events[key] = int(value)
     except (OSError, ValueError):
         pass
+    memory_stat = {}
+    try:
+        for line in (root / "memory.stat").read_text().splitlines():
+            key, _, value = line.partition(" ")
+            if key in {"anon", "file", "inactive_file", "active_file", "slab", "kernel"}:
+                memory_stat[key + "_bytes"] = int(value)
+    except (OSError, ValueError):
+        pass
     return {"current_bytes": current, "limit_bytes": maximum, "peak_bytes": peak,
             "usage_pct": round(100 * current / maximum, 2) if current is not None and maximum else None,
-            "events": events}
+            "events": events, "memory_stat": memory_stat}
 
 
 def snapshot(scanner_pid=None, web_pid=None, stage="PERIODIC"):

@@ -92,11 +92,27 @@ class FlowSettlementScheduler:
         local_now = now.astimezone(_ET) if now is not None and now.tzinfo else (now.replace(tzinfo=_ET) if now is not None else dt.datetime.now(_ET))
         cutoff, scope = self._cutoff(local_now)
         try:
-            result = feature_store_writer.settle_pending_labels(
-                before_session_date=cutoff,
-                ticker=self.ticker,
-                max_sessions=self.max_sessions,
-            )
+            _phase_id = _phase_start = None
+            try:
+                from . import paired_runtime_diagnostics as _phase_diagnostics
+                _phase_id = _phase_diagnostics.new_cycle_id("settlement")
+                _phase_start = _phase_diagnostics.begin_stage(_phase_id, "SETTLEMENT_PASS")
+            except Exception:
+                pass
+            _phase_outcome = "ERROR"
+            try:
+                result = feature_store_writer.settle_pending_labels(
+                    before_session_date=cutoff,
+                    ticker=self.ticker,
+                    max_sessions=self.max_sessions,
+                )
+                _phase_outcome = result.get("state", "COMPLETED")
+            finally:
+                if _phase_start is not None:
+                    try:
+                        _phase_diagnostics.end_stage(_phase_id, "SETTLEMENT_PASS", _phase_start, outcome=_phase_outcome)
+                    except Exception:
+                        pass
             # Observational summary from existing exact-identity diagnostic rows;
             # this never changes settlement decisions or evidence ownership.
             try:

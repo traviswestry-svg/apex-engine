@@ -83,6 +83,19 @@ def test_scheduler_diagnostic_failure_does_not_change_settlement(monkeypatch):
     assert s.run_if_due(force=True)['state']=='COMPLETED'
 
 
+def test_scheduler_skips_instrumentation_when_not_due_and_records_errors(monkeypatch):
+    stages = []
+    monkeypatch.setattr(paired, 'new_cycle_id', lambda prefix: 'cycle')
+    monkeypatch.setattr(paired, 'begin_stage', lambda cycle, stage: stages.append('start') or 'token')
+    monkeypatch.setattr(paired, 'end_stage', lambda cycle, stage, token, outcome: stages.append(outcome))
+    monkeypatch.setattr(settlement.feature_store_writer, 'settle_pending_labels',
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError('failure')))
+    s = settlement.FlowSettlementScheduler(enabled=True, interval_seconds=300)
+    assert s.run_if_due(monotonic_now=100)['state'] == 'ERROR'
+    assert s.run_if_due(monotonic_now=101)['cadence_skips'] == 1
+    assert stages == ['start', 'ERROR']
+
+
 def test_integration_wiring_and_no_route_duplication():
     root=Path(__file__).resolve().parents[1]
     app=(root/'app.py').read_text()
@@ -172,3 +185,16 @@ def test_writer_missing_start_time_is_explained_not_promoted(tmp_path, monkeypat
     assert output['verified_records'] == 0
     assert output['reconciliation']['classification_counts']['MISSING_OR_INVALID_PROCESS_IDENTITY'] == 1
     assert json.loads((tmp_path / 'memory.jsonl').read_text())['identity_diagnostic'] == 'PROCESS_START_UNAVAILABLE'
+
+
+def test_writer_rejects_changed_process_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv('APEX_MEMORY_PAIR_PATH', str(tmp_path / 'memory.jsonl'))
+    monkeypatch.setattr(paired, 'snapshot', lambda **kw: {'processes': {'scanner': {'memory': {'rss_kib': 123}}}})
+    ticks = iter([100, 101])
+    monkeypatch.setattr(paired, '_process_start_ticks', lambda pid: next(ticks))
+    token = paired.begin_stage('cycle', 'FULL_SCAN')
+    paired.end_stage('cycle', 'FULL_SCAN', token)
+    raw = json.loads((tmp_path / 'memory.jsonl').read_text())
+    assert raw['identity_diagnostic'] == 'PROCESS_IDENTITY_CHANGED'
+    assert raw['process_identity_verified'] is False
+    assert mod.inspect(path=tmp_path / 'memory.jsonl')['verified_records'] == 0
