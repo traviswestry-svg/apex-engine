@@ -40,18 +40,6 @@ def _cgroup():
     current = _read_int(root / "memory.current")
     maximum = _read_int(root / "memory.max")
     peak = _read_int(root / "memory.peak")
-    memory_stat = {}
-    try:
-        for line in (root / "memory.stat").read_text().splitlines():
-            parts = line.split()
-            if len(parts) == 2 and parts[0] in {
-                    "anon", "file", "inactive_file", "active_file", "shmem"}:
-                try:
-                    memory_stat[f"{parts[0]}_bytes"] = int(parts[1])
-                except ValueError:
-                    pass
-    except OSError:
-        pass
     events = {}
     try:
         for line in (root / "memory.events").read_text().splitlines():

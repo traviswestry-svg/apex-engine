@@ -1,0 +1,148 @@
+{
+  "apex_version": "69.10.47",
+  "container_memory_limit_event_investigation": {
+    "automatic_reclamation": false,
+    "baseline_cumulative_max": 0,
+    "bounded_intervals": 8,
+    "bounded_samples": 16,
+    "cgroup_identity_verified": true,
+    "changes_trade_decisions": false,
+    "cumulative_events_at_last_sample": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "db_reads": false,
+    "decision_authority": false,
+    "execution_authority": false,
+    "limitations": [
+      "Cgroup memory.events counters are cumulative; historical events are not assigned timestamps",
+      "Sampling brackets an event between requests; it does not timestamp an individual allocation",
+      "The cgroup includes other processes; phase coincidence does not prove causation",
+      "State is web-worker local and resets on restart or worker change",
+      "Only the latest verified phase completion per stage/process is considered for temporal context",
+      "Raw memory.current includes potentially reclaimable file-backed cache"
+    ],
+    "max_events_since_process_local_baseline": 0,
+    "new_max_event_intervals": [],
+    "observed_at": "2026-11-12T15:31:10.173116+00:00",
+    "read_only": true,
+    "sample_count": 1,
+    "schema": "apex.container_memory_limit_event_investigation.v1",
+    "status": "BASELINE_ESTABLISHED_NO_EVENT_TIME_INFERRED",
+    "web_worker_pid": 200
+  },
+  "runtime_memory_investigation": {
+    "automatic_reclamation": false,
+    "bounded_trend": {
+      "cgroup_anon_delta_bytes": 0,
+      "cgroup_current_delta_bytes": 0,
+      "cgroup_file_delta_bytes": 0,
+      "max_events_since_first_sample": 0,
+      "max_events_since_previous_sample": null,
+      "oom_events_since_previous_sample": null,
+      "oom_kills_since_first_sample": 0,
+      "oom_kills_since_previous_sample": null,
+      "process_rss_delta_kib": 0,
+      "sample_count": 1,
+      "span_seconds": 0
+    },
+    "cgroup": {
+      "accounting": {
+        "active_file_bytes": 17260544,
+        "anon_bytes": 1401188352,
+        "anon_thp_bytes": 0,
+        "file_bytes": 2136449024,
+        "file_dirty_bytes": 53248,
+        "file_mapped_bytes": 294912,
+        "file_writeback_bytes": 0,
+        "inactive_file_bytes": 2119188480,
+        "kernel_bytes": 37740544,
+        "pagetables_bytes": 4354048,
+        "shmem_bytes": 0,
+        "slab_bytes": 33079736,
+        "slab_reclaimable_bytes": 32444472,
+        "slab_unreclaimable_bytes": 635264,
+        "sock_bytes": 0
+      },
+      "current_bytes": 3576733696,
+      "events_cumulative": {
+        "high": 0,
+        "low": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_group_kill": 0,
+        "oom_kill": 0
+      },
+      "limit_bytes": 4294967296,
+      "peak_bytes": 3635322880
+    },
+    "changes_trade_decisions": false,
+    "db_reads": false,
+    "decision_authority": false,
+    "execution_authority": false,
+    "limitations": [
+      "cgroup stat categories can overlap; do not sum them",
+      "web RSS is one process and is not total container memory",
+      "cgroup max counters are cumulative; deltas only apply within this process",
+      "no memory leak or database root cause established from these samples"
+    ],
+    "observed_at": "2026-11-12T15:31:10.173745+00:00",
+    "read_only": true,
+    "schema": "apex.runtime_memory_investigation.v1",
+    "sqlite": {
+      "measurement": "NOT_SAMPLED",
+      "note": "SQLite heap/cache attribution requires profiled connections; database size is not process RSS."
+    },
+    "stage_trace": {
+      "note": "Inspect scanner/settlement phase checkpoints separately; no file scan is performed here.",
+      "read_by_endpoint": false,
+      "source": "existing paired_runtime_diagnostics JSONL"
+    },
+    "status": "SINGLE_SAMPLE_NO_CAUSAL_ATTRIBUTION",
+    "web_process": {
+      "anonymous_rss_kib": 581556,
+      "available": true,
+      "file_rss_kib": 10232,
+      "peak_rss_kib": 591788,
+      "pid": 200,
+      "rss_kib": 591788,
+      "shared_rss_kib": 0,
+      "virtual_size_kib": 878936
+    }
+  },
+  "memory_pressure": {
+    "bounded_trend": {
+      "leak_confirmed": false,
+      "noninactive_delta_bytes": 0,
+      "observation_span_seconds": 0.0,
+      "samples": 1
+    },
+    "cgroup_events_cumulative": {
+      "high": 0,
+      "low": 0,
+      "max": 0,
+      "oom": 0,
+      "oom_group_kill": 0,
+      "oom_kill": 0
+    },
+    "current_bytes": 3576733696,
+    "decision_authority": false,
+    "estimated_noninactive_file_bytes": 1457545216,
+    "estimated_noninactive_file_usage_pct": 33.94,
+    "execution_authority": false,
+    "inactive_file_bytes": 2119188480,
+    "limit_bytes": 4294967296,
+    "note": "Inactive file cache is often reclaimable; this is not a guaranteed free-memory estimate. OOM counters are cumulative.",
+    "psi_full_avg10": 0.0,
+    "psi_some_avg10": 0.0,
+    "raw_usage_pct": 83.28,
+    "read_only": true,
+    "severity": "NORMAL",
+    "version": "69.10.38-runtime-observability-candidate"
+  },
+  "process_started_at": "2026-11-12T15:21:46.459851+00:00"
+}
