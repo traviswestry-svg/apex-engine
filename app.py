@@ -23,6 +23,10 @@ from engine.runtime_memory_pressure import memory_pressure_status
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
+from engine import health_response_memory_attribution as health_memory_attribution
+from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
+from engine.container_memory_limit_event_investigation import observe as container_memory_limit_event_observe
+from engine.scanner_settlement_phase_memory_attribution import inspect as scanner_settlement_phase_memory_inspect
 
 # APEX Trade Director Phase 6 — lazy trade learning/replay persistence
 try:
@@ -7591,6 +7595,7 @@ def _read_scanner_coverage_status():
 
 @app.route("/health")
 def health():
+    _health_measurement = health_memory_attribution.begin()
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
@@ -7638,7 +7643,8 @@ def health():
     effective_updated_at = scan_updated_at or generated_at
     updated_at_basis = "last_completed_scan" if scan_updated_at else "status_generated_at"
 
-    return jsonify({
+    _phase_memory = scanner_settlement_phase_memory_inspect()
+    _health_payload = {
         "ok": True,
         "apex_version": VERSION,
         "version": VERSION,
@@ -7683,6 +7689,12 @@ def health():
         "source_health": _source_observability(s_sources, generated_at),
         "storage": storage_status(),
         "memory_pressure": memory_pressure_status(),
+        "runtime_memory_investigation": runtime_memory_investigation(),
+        "container_memory_limit_event_investigation": container_memory_limit_event_observe(
+            phase_summary=_phase_memory,
+        ),
+        "scanner_settlement_phase_memory_attribution": scanner_settlement_phase_memory_inspect(),
+        "health_response_memory_attribution": health_memory_attribution.prior_completed(),
         "scanner_process": (
             {"available": False, "state": "NOT_EXPECTED", "error": None,
              "detail": "Heartbeat is not required while the scanner is scheduled idle."}
@@ -7690,7 +7702,17 @@ def health():
             else _scanner_runtime.get("heartbeat")
         ),
         "is_tradeable": s_session == "MARKET_OPEN",
-    })
+    }
+    _construction_end_ns = time.perf_counter_ns()
+    _construction_end_rss_kib = health_memory_attribution.rss_kib()
+    _health_response = jsonify(_health_payload)
+    health_memory_attribution.completed(
+        _health_measurement,
+        construction_end_ns=_construction_end_ns,
+        construction_end_rss_kib=_construction_end_rss_kib,
+        response=_health_response,
+    )
+    return _health_response
 
 # =============================================================================
 # APEX 4.5 NEW API ROUTES

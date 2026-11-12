@@ -126,6 +126,8 @@ def read_settlement_reconciliation() -> Dict[str, Any]:
 
 
 def write_scanner_heartbeat(payload: Optional[Dict[str, Any]] = None) -> None:
+    from .heartbeat_payload_budget import compact_scanner_heartbeat
+
     body = {
         "pid": os.getpid(),
         "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -133,6 +135,7 @@ def write_scanner_heartbeat(payload: Optional[Dict[str, Any]] = None) -> None:
     }
     if payload:
         body.update(payload)
+    body = compact_scanner_heartbeat(body)
     path = scanner_heartbeat_path()
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(body, sort_keys=True), encoding="utf-8")
