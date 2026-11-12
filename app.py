@@ -20,13 +20,15 @@ from flask import Flask, jsonify, render_template, request, redirect, g, has_req
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.scanner_runtime_truth import resolve_scanner_runtime
 from engine.runtime_memory_pressure import memory_pressure_status
+from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
+from engine.container_memory_limit_event_investigation import observe as container_memory_limit_event_observe
+from engine import health_response_memory_attribution as health_memory_attribution
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
-from engine import health_response_memory_attribution as health_memory_attribution
-from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
-from engine.container_memory_limit_event_investigation import observe as container_memory_limit_event_observe
-from engine.scanner_settlement_phase_memory_attribution import inspect as scanner_settlement_phase_memory_inspect
+from engine.scanner_settlement_phase_memory_attribution import (
+    inspect as scanner_settlement_phase_memory_inspect,
+)
 
 # APEX Trade Director Phase 6 — lazy trade learning/replay persistence
 try:
@@ -7595,7 +7597,10 @@ def _read_scanner_coverage_status():
 
 @app.route("/health")
 def health():
-    _health_measurement = health_memory_attribution.begin()
+    try:
+        _health_memory_start = health_memory_attribution.begin()
+    except Exception:
+        _health_memory_start = None
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
@@ -7643,7 +7648,6 @@ def health():
     effective_updated_at = scan_updated_at or generated_at
     updated_at_basis = "last_completed_scan" if scan_updated_at else "status_generated_at"
 
-    _phase_memory = scanner_settlement_phase_memory_inspect()
     _health_payload = {
         "ok": True,
         "apex_version": VERSION,
@@ -7689,12 +7693,6 @@ def health():
         "source_health": _source_observability(s_sources, generated_at),
         "storage": storage_status(),
         "memory_pressure": memory_pressure_status(),
-        "runtime_memory_investigation": runtime_memory_investigation(),
-        "container_memory_limit_event_investigation": container_memory_limit_event_observe(
-            phase_summary=_phase_memory,
-        ),
-        "scanner_settlement_phase_memory_attribution": scanner_settlement_phase_memory_inspect(),
-        "health_response_memory_attribution": health_memory_attribution.prior_completed(),
         "scanner_process": (
             {"available": False, "state": "NOT_EXPECTED", "error": None,
              "detail": "Heartbeat is not required while the scanner is scheduled idle."}
@@ -7703,15 +7701,43 @@ def health():
         ),
         "is_tradeable": s_session == "MARKET_OPEN",
     }
-    _construction_end_ns = time.perf_counter_ns()
-    _construction_end_rss_kib = health_memory_attribution.rss_kib()
+    try:
+        _health_payload.update({
+            "runtime_memory_investigation": runtime_memory_investigation(),
+        })
+    except Exception:
+        _health_payload["runtime_memory_investigation"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        _health_payload.update({
+            "scanner_settlement_phase_memory_attribution": scanner_settlement_phase_memory_inspect(),
+        })
+    except Exception:
+        _health_payload["scanner_settlement_phase_memory_attribution"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    _phase_memory = _health_payload["scanner_settlement_phase_memory_attribution"]
+    try:
+        _health_payload["container_memory_limit_event_investigation"] = container_memory_limit_event_observe(
+            phase_summary=_health_payload["scanner_settlement_phase_memory_attribution"])
+    except Exception:
+        _health_payload["container_memory_limit_event_investigation"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        _health_payload.update({
+            "health_response_memory_attribution": health_memory_attribution.prior_completed(),
+        })
+    except Exception:
+        _health_payload["health_response_memory_attribution"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    _health_construction_end_ns = time.perf_counter_ns()
+    try:
+        _health_construction_end_rss = health_memory_attribution.rss_kib()
+    except Exception:
+        _health_construction_end_rss = None
     _health_response = jsonify(_health_payload)
-    health_memory_attribution.completed(
-        _health_measurement,
-        construction_end_ns=_construction_end_ns,
-        construction_end_rss_kib=_construction_end_rss_kib,
-        response=_health_response,
-    )
+    if _health_memory_start is not None:
+        try:
+            health_memory_attribution.completed(
+                _health_memory_start, construction_end_ns=_health_construction_end_ns,
+                construction_end_rss_kib=_health_construction_end_rss, response=_health_response)
+        except Exception:
+            pass
     return _health_response
 
 # =============================================================================

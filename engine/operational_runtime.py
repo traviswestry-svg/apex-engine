@@ -14,6 +14,7 @@ import sqlite3
 from typing import Any, Dict, Optional
 
 from .canonical_persistence import connect as canonical_connect
+from .heartbeat_payload_budget import compact_scanner_heartbeat
 from .storage_capacity_policy import classify_free_pct
 
 VERSION = "24.2.1_PRODUCTION_HARDENING"
