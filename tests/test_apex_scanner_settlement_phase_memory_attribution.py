@@ -83,6 +83,20 @@ def test_scheduler_diagnostic_failure_does_not_change_settlement(monkeypatch):
     assert s.run_if_due(force=True)['state']=='COMPLETED'
 
 
+def test_scheduler_skips_and_errors_are_attributed(monkeypatch):
+    import engine.paired_runtime_diagnostics as diag
+    stages = []
+    monkeypatch.setattr(diag, 'new_cycle_id', lambda prefix: 's1')
+    monkeypatch.setattr(diag, 'begin_stage', lambda *args: stages.append('start') or 'token')
+    monkeypatch.setattr(diag, 'end_stage', lambda *args, **kw: stages.append(kw['outcome']))
+    monkeypatch.setattr(settlement.feature_store_writer, 'settle_pending_labels',
+                        lambda **kw: (_ for _ in ()).throw(RuntimeError('failure')))
+    s = settlement.FlowSettlementScheduler(enabled=True)
+    assert s.run_if_due(monotonic_now=100)['state'] == 'ERROR'
+    assert s.run_if_due(monotonic_now=101)['state'] == 'ERROR'
+    assert stages == ['start', 'ERROR']
+
+
 def test_integration_wiring_and_no_route_duplication():
     root=Path(__file__).resolve().parents[1]
     app=(root/'app.py').read_text()
@@ -172,3 +186,35 @@ def test_writer_missing_start_time_is_explained_not_promoted(tmp_path, monkeypat
     assert output['verified_records'] == 0
     assert output['reconciliation']['classification_counts']['MISSING_OR_INVALID_PROCESS_IDENTITY'] == 1
     assert json.loads((tmp_path / 'memory.jsonl').read_text())['identity_diagnostic'] == 'PROCESS_START_UNAVAILABLE'
+
+
+def test_writer_rejects_changed_process_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv('APEX_MEMORY_PAIR_PATH', str(tmp_path / 'memory.jsonl'))
+    monkeypatch.setattr(paired, 'snapshot', lambda **kw: {'processes': {'scanner': {'memory': {'rss_kib': 10}}}})
+    ticks = iter([100, 101])
+    monkeypatch.setattr(paired, '_process_start_ticks', lambda pid: next(ticks))
+    token = paired.begin_stage('c1', 'FULL_SCAN')
+    paired.end_stage('c1', 'FULL_SCAN', token)
+    raw = json.loads((tmp_path / 'memory.jsonl').read_text())
+    assert raw['identity_diagnostic'] == 'PROCESS_IDENTITY_CHANGED'
+    assert not raw['process_identity_verified']
+    assert mod.inspect(path=tmp_path / 'memory.jsonl')['verified_records'] == 0
+
+
+def test_proc_stat_handles_parentheses_in_process_name(monkeypatch):
+    class Stat:
+        def read_text(self):
+            return '42 (name with ) parens) ' + ' '.join(['S'] + ['0'] * 18 + ['123'])
+    monkeypatch.setattr(paired, 'Path', lambda path: Stat())
+    assert paired._process_start_ticks(42) == 123
+
+
+def test_malformed_nested_cgroup_data_is_safe(tmp_path):
+    record = pair()
+    record['cgroup_before'] = ['invalid']
+    record['cgroup_after']['memory_stat'] = 'invalid'
+    p = tmp_path / 'pairs.jsonl'
+    p.write_text(json.dumps({'stage': []}) + '\n' + json.dumps(record) + '\n')
+    out = mod.inspect(path=p)
+    assert out['verified_records'] == 1
+    assert out['processes'][0]['phases']['FULL_SCAN']['last_completed']['cgroup_file_delta_bytes'] is None
