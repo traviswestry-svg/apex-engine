@@ -69,6 +69,23 @@ def test_health_memory_diagnostics_fail_open(monkeypatch):
         assert body[key]["status"] == "DIAGNOSTIC_UNAVAILABLE"
 
 
+def test_health_memory_attribution_reports_previous_response(tmp_path, monkeypatch):
+    from engine import health_response_memory_attribution as attribution
+
+    monkeypatch.setenv("APEX_MEMORY_PAIR_PATH", str(tmp_path / "missing.jsonl"))
+    with attribution._LOCK:
+        attribution._EVENTS.clear()
+    client = apex_app.app.test_client()
+    first = client.get("/health")
+    second = client.get("/health")
+    assert first.status_code == second.status_code == 200
+    assert first.get_json()["health_response_memory_attribution"]["last_completed"] is None
+    body = second.get_json()
+    assert body["health_response_memory_attribution"]["last_completed"]["response_bytes"] == len(first.data)
+    assert body["runtime_memory_investigation"]["read_only"]
+    assert body["scanner_settlement_phase_memory_attribution"]["status"] == "PHASE_TRACE_UNAVAILABLE"
+
+
 def test_source_health_does_not_invent_latency():
     observed = apex_app._source_observability(
         {

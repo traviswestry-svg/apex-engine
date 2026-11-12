@@ -21,7 +21,8 @@ def _rss(record):
 def _process_start_ticks(pid):
     try:
         stat = Path(f"/proc/{int(pid)}/stat").read_text()
-        return int(stat[stat.rindex(")") + 1:].split()[19])
+        ticks = int(stat.rsplit(")", 1)[1].split()[19])
+        return ticks if ticks > 0 else None
     except (OSError, ValueError, IndexError):
         return None
 

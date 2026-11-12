@@ -50,11 +50,15 @@ def _cgroup():
         pass
     memory_stat = {}
     try:
+        byte_keys = {"anon", "file", "inactive_file", "active_file", "shmem",
+                     "file_mapped", "file_dirty", "file_writeback", "slab",
+                     "slab_reclaimable", "slab_unreclaimable", "kernel", "sock",
+                     "pagetables", "anon_thp"}
         for line in (root / "memory.stat").read_text().splitlines():
-            key, _, value = line.partition(" ")
-            if key in {"anon", "file", "inactive_file", "active_file", "slab", "kernel"}:
-                memory_stat[key + "_bytes"] = int(value)
-    except (OSError, ValueError):
+            parts = line.split()
+            if len(parts) == 2 and parts[0] in byte_keys and parts[1].isdecimal():
+                memory_stat[parts[0] + "_bytes"] = int(parts[1])
+    except OSError:
         pass
     return {"current_bytes": current, "limit_bytes": maximum, "peak_bytes": peak,
             "usage_pct": round(100 * current / maximum, 2) if current is not None and maximum else None,
