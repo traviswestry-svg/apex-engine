@@ -1,5 +1,5 @@
 import copy,unittest,json,pathlib
-from collect_observation import compare, BASELINE
+from tools.collect_observation import compare,BASELINE
 class TestObservation(unittest.TestCase):
  def setUp(self):
   self.b=json.loads(BASELINE.read_text());self.c=copy.deepcopy(self.b)

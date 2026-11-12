@@ -7713,6 +7713,7 @@ def health():
         })
     except Exception:
         _health_payload["scanner_settlement_phase_memory_attribution"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    _phase_memory = _health_payload["scanner_settlement_phase_memory_attribution"]
     try:
         _health_payload["container_memory_limit_event_investigation"] = container_memory_limit_event_observe(
             phase_summary=_health_payload["scanner_settlement_phase_memory_attribution"])

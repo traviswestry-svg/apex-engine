@@ -91,16 +91,16 @@ class FlowSettlementScheduler:
 
         local_now = now.astimezone(_ET) if now is not None and now.tzinfo else (now.replace(tzinfo=_ET) if now is not None else dt.datetime.now(_ET))
         cutoff, scope = self._cutoff(local_now)
+        _phase_diag = None
+        _phase_id = _phase_token = None
         try:
+            from . import paired_runtime_diagnostics as _phase_diag
+            _phase_id = _phase_diag.new_cycle_id("settlement")
+            _phase_token = _phase_diag.begin_stage(_phase_id, "SETTLEMENT_PASS")
+        except Exception:
             _phase_diag = None
-            _phase_id = _phase_token = None
-            try:
-                from . import paired_runtime_diagnostics as _phase_diag
-                _phase_id = _phase_diag.new_cycle_id("settlement")
-                _phase_token = _phase_diag.begin_stage(_phase_id, "SETTLEMENT_PASS")
-            except Exception:
-                _phase_diag = None
-            _phase_outcome = "ERROR"
+        _phase_outcome = "ERROR"
+        try:
             try:
                 result = feature_store_writer.settle_pending_labels(
                     before_session_date=cutoff,
