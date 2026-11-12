@@ -14,6 +14,7 @@ import sqlite3
 from typing import Any, Dict, Optional
 
 from .canonical_persistence import connect as canonical_connect
+from .heartbeat_payload_budget import compact_scanner_heartbeat
 from .storage_capacity_policy import classify_free_pct
 
 VERSION = "24.2.1_PRODUCTION_HARDENING"
@@ -133,6 +134,7 @@ def write_scanner_heartbeat(payload: Optional[Dict[str, Any]] = None) -> None:
     }
     if payload:
         body.update(payload)
+    body = compact_scanner_heartbeat(body)
     path = scanner_heartbeat_path()
     temp = path.with_suffix(path.suffix + ".tmp")
     temp.write_text(json.dumps(body, sort_keys=True), encoding="utf-8")
