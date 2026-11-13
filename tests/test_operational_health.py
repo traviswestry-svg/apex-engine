@@ -42,6 +42,8 @@ def test_health_memory_diagnostics_report_prior_response(monkeypatch):
         attribution._EVENTS.clear()
     phase = {"processes": []}
     monkeypatch.setattr(apex_app, "scanner_settlement_phase_memory_inspect", lambda: phase)
+    audit = {"status": "FIRST_PROCESS_SAMPLE"}
+    monkeypatch.setattr(apex_app, "web_allocation_retention_observe", lambda: audit)
     monkeypatch.setattr(apex_app, "container_memory_limit_event_observe",
                         lambda **kwargs: {"phase_summary": kwargs["phase_summary"]})
     client = apex_app.app.test_client()
@@ -50,6 +52,7 @@ def test_health_memory_diagnostics_report_prior_response(monkeypatch):
     assert first["health_response_memory_attribution"]["status"] == "NO_PRIOR_COMPLETED_REQUEST"
     assert second["health_response_memory_attribution"]["last_completed"]["response_bytes"] > 0
     assert first["container_memory_limit_event_investigation"]["phase_summary"] == phase
+    assert first["web_process_allocation_retention_audit"] == audit
     assert "runtime_memory_investigation" in first
 
 
@@ -60,12 +63,13 @@ def test_health_memory_diagnostics_fail_open(monkeypatch):
     monkeypatch.setattr(apex_app, "runtime_memory_investigation", unavailable)
     monkeypatch.setattr(apex_app, "scanner_settlement_phase_memory_inspect", unavailable)
     monkeypatch.setattr(apex_app, "container_memory_limit_event_observe", unavailable)
+    monkeypatch.setattr(apex_app, "web_allocation_retention_observe", unavailable)
     monkeypatch.setattr(apex_app.health_memory_attribution, "begin", unavailable)
     response = apex_app.app.test_client().get("/health")
     assert response.status_code == 200
     body = response.get_json()
     for key in ("runtime_memory_investigation", "scanner_settlement_phase_memory_attribution",
-                "container_memory_limit_event_investigation"):
+                "container_memory_limit_event_investigation", "web_process_allocation_retention_audit"):
         assert body[key]["status"] == "DIAGNOSTIC_UNAVAILABLE"
 
 

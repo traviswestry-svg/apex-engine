@@ -22,6 +22,7 @@ from engine.scanner_runtime_truth import resolve_scanner_runtime
 from engine.runtime_memory_pressure import memory_pressure_status
 from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
 from engine.container_memory_limit_event_investigation import observe as container_memory_limit_event_observe
+from engine.web_process_allocation_retention_audit import observe as web_allocation_retention_observe
 from engine import health_response_memory_attribution as health_memory_attribution
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
@@ -7725,6 +7726,10 @@ def health():
         })
     except Exception:
         _health_payload["health_response_memory_attribution"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        _health_payload["web_process_allocation_retention_audit"] = web_allocation_retention_observe()
+    except Exception:
+        _health_payload["web_process_allocation_retention_audit"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
     _health_construction_end_ns = time.perf_counter_ns()
     try:
         _health_construction_end_rss = health_memory_attribution.rss_kib()
