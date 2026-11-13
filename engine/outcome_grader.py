@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from engine.evidence_pipeline import _connect, DEFAULT_DB, readiness
+from engine.canonical_persistence import connection as canonical_connection
 VERSION='69.10.14'; SCHEMA_VERSION='apex.outcome_grader.v3'; DEFAULT_HORIZON=int(os.getenv('APEX_GRADING_HORIZON_SECONDS','300'))
 def _dt(v): return datetime.fromisoformat(str(v).replace('Z','+00:00'))
 def _decision_time_gamma(row):
@@ -80,7 +81,7 @@ def horizon_integrity(path: str|Path=DEFAULT_DB)->dict[str,Any]:
          'execution_authority':False,'production_effect':'OBSERVATIONAL_ONLY'}
  if not Path(path).exists(): return {**result,'status':'MISSING_EVIDENCE_DB','stored_grade_count':0}
  try:
-  with _connect(path) as c:
+  with canonical_connection(path, read_only=True, timeout=4) as c:
    rows=c.execute("SELECT g.decision_id,g.status,g.horizon_seconds,g.outcome_json,d.observed_at FROM grading_results g LEFT JOIN decisions d ON d.decision_id=g.decision_id").fetchall()
  except Exception as exc:
   return {**result,'status':'DEGRADED','error':f'{type(exc).__name__}: {exc}'}

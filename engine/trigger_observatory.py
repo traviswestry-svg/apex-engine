@@ -448,6 +448,19 @@ def initialize_store(path: Optional[str] = None, *, reconcile: bool = True) -> D
             "production_effect": PRODUCTION_EFFECT}
 
 
+def reconcile_historical_observation_windows(*, path: Optional[str] = None) -> Dict[str, Any]:
+    """Explicit write-side maintenance, never called by reporting endpoints.
+
+    This runs the established schema migration and historical observation-window
+    reconciliation. Schedule or invoke only as an operator-approved maintenance
+    action; reporting functions use strictly read-only connections instead.
+    """
+    result = initialize_store(path, reconcile=True)
+    return {**result, "operation": "EXPLICIT_HISTORICAL_RECONCILIATION",
+            "reporting_side_effect": False, "execution_authority": False,
+            "broker_mutation": False}
+
+
 def _direction(value: Any) -> str:
     text = _u(value)
     if any(x in text for x in ("CALL", "BULL", "LONG", "BUY")): return "BULLISH"
@@ -829,7 +842,6 @@ def effectiveness(*, symbol: str = "SPX", path: Optional[str] = None) -> Dict[st
         return {"ok": True, "status": "WAITING_FOR_TRIGGERS", "sample_size": 0,
                 "groups": [], "version": VERSION, "execution_authority": False,
                 "production_effect": PRODUCTION_EFFECT}
-    initialize_store(resolved)
     with canonical_connect(resolved, read_only=True, timeout=4) as conn:
         conn.row_factory = sqlite3.Row
         rows = [dict(r) for r in conn.execute(
@@ -956,7 +968,6 @@ def predictive_validation(*, symbol: str = "SPX", path: Optional[str] = None,
                 "cross_cohorts": {}, "calibration_fragmentation": {},
                 "calibration_context_quality": {}}
 
-    initialize_store(resolved)
     with canonical_connection(resolved, read_only=True, timeout=4) as conn:
         conn.row_factory = sqlite3.Row
         rows = [dict(r) for r in conn.execute(
@@ -2236,7 +2247,6 @@ def history(*, symbol: str = "SPX", limit: int = 100, status: Optional[str] = No
     resolved = path or _path()
     if not Path(resolved).exists():
         return {"ok": True, "status": "WAITING_FOR_TRIGGERS", "triggers": [], "version": VERSION}
-    initialize_store(resolved)
     limit = max(1, min(int(limit), 1000)); args: list[Any] = [_u(symbol, "SPX")]
     query = "SELECT * FROM observed_trade_triggers WHERE symbol=?"
     if status: query += " AND status=?"; args.append(_u(status))
@@ -2421,7 +2431,6 @@ def trade_visualization(*, trigger_id: Optional[str] = None, symbol: str = "SPX"
         return {"ok": True, "status": "WAITING_FOR_TRIGGERS", "trade": None,
                 "execution_authority": False, "broker_mutation": False,
                 "production_effect": PRODUCTION_EFFECT, "version": VERSION}
-    initialize_store(resolved)
     with canonical_connect(resolved, read_only=True, timeout=4) as conn:
         conn.row_factory = sqlite3.Row
         if trigger_id:
