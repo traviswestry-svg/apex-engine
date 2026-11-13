@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from engine.execution.broker_interface import OptionContract
 from engine.chain_quality import evaluate_chain_quality
+from engine.options.spxo_contract_lifecycle import classify_contract
 
 
 def _f(v: Any) -> Optional[float]:
@@ -152,6 +153,7 @@ def normalize_contract(raw: Dict[str, Any], *, symbol: str = "SPX",
     greeks = raw.get("greeks") or raw
     osi = str(raw.get("osi_key") or raw.get("osiKey") or raw.get("symbol") or "")
 
+    lifecycle = classify_contract(raw)
     strike_i = int(strike) if float(strike).is_integer() else strike
     return OptionContract(
         symbol=symbol,
@@ -165,6 +167,10 @@ def normalize_contract(raw: Dict[str, Any], *, symbol: str = "SPX",
         iv=_f(greeks.get("iv") or greeks.get("impliedVolatility") or greeks.get("volatility")),
         spread_pct=metrics["spread_pct"], liquidity_score=metrics["liquidity_score"],
         quote_age_seconds=q_age, quote_timestamp=quote_timestamp, source=source,
+        contract_class=lifecycle["contract_class"], settlement_type=lifecycle["settlement_type"],
+        settlement_reference=lifecycle["settlement_reference"],
+        last_trading_timestamp=lifecycle["last_trading_timestamp"],
+        lifecycle_status=lifecycle["lifecycle_status"],
     )
 
 

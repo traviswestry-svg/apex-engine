@@ -1,0 +1,16 @@
+APEX SPXO Contract Lifecycle, Settlement Identity & Execution Preflight Compatibility Audit
+BASE: apex-engine-main(20261112-221036).zip
+MODE: incremental candidate patch (not full repository)
+FILES:
+engine/options/spxo_contract_lifecycle.py
+engine/options/options_data_bus.py
+engine/options/polygon_chain.py
+engine/execution/broker_interface.py
+engine/execution/paper_order_preflight.py
+engine/execution/trade_risk_guard.py
+engine/execution/traderspost_paper.py
+scripts/spxo_compatibility_audit.py
+scripts/__init__.py
+tests/test_spxo_contract_compatibility.py
+APEX_SPXO_COMPATIBILITY_REPORT.md
+MANIFEST.txt

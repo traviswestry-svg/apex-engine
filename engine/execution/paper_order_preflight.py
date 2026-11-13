@@ -7,6 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
+from engine.options.spxo_contract_lifecycle import classify_contract, execution_blockers
 import os
 
 ET = ZoneInfo('America/New_York')
@@ -52,6 +53,7 @@ def inspect(candidate=None, *, clock=None, decision_reader=None):
         if not isinstance(contract, dict) or contract.get('ticker') != 'SPX':
             blockers.append('EXACT_SPX_OPTION_CONTRACT_REQUIRED')
         else:
+            blockers.extend(execution_blockers(contract))
             if contract.get('side') not in ('CALL', 'PUT'):
                 blockers.append('OPTION_SIDE_REQUIRED')
             if _amount(contract.get('strike')) is None:
@@ -87,6 +89,7 @@ def inspect(candidate=None, *, clock=None, decision_reader=None):
     return {
         'ok': True, 'mode': 'READ_ONLY_PREFLIGHT', 'test_signal_creates_orders': False,
         'candidate_checked': candidate is not None, 'checks': flags,
+        'contract_lifecycle': classify_contract(data['contract']) if isinstance(data.get('contract'), dict) else None,
         'blockers': sorted(set(blockers)), 'may_send_order': False,
         'ready_for_unattended_orders': False, 'paper_fill_verified': False,
         'warning': 'This diagnostic cannot authorize a paper order; webhook test=true never executes a trade.'

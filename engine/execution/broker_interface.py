@@ -39,6 +39,11 @@ class OptionContract:
     quote_age_seconds: Optional[float] = None
     source: Optional[str] = None            # "quantdata" | "polygon" | "massive" | "etrade"
     quote_timestamp: Optional[str] = None  # provider event time, UTC; never fetch time
+    contract_class: Optional[str] = None      # SPX / SPXW / SPXO; distinct from underlying
+    settlement_type: Optional[str] = None    # AM / PM / UNKNOWN
+    settlement_reference: Optional[str] = None
+    last_trading_timestamp: Optional[str] = None
+    lifecycle_status: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
