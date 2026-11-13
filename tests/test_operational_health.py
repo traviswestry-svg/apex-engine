@@ -36,6 +36,56 @@ def test_health_includes_memory_pressure(monkeypatch):
     assert body["memory_pressure"] == pressure
 
 
+def test_health_memory_diagnostics_report_prior_response(monkeypatch):
+    attribution = apex_app.health_memory_attribution
+    with attribution._LOCK:
+        attribution._EVENTS.clear()
+    phase = {"processes": []}
+    monkeypatch.setattr(apex_app, "scanner_settlement_phase_memory_inspect", lambda: phase)
+    monkeypatch.setattr(apex_app, "container_memory_limit_event_observe",
+                        lambda **kwargs: {"phase_summary": kwargs["phase_summary"]})
+    client = apex_app.app.test_client()
+    first = client.get("/health").get_json()
+    second = client.get("/health").get_json()
+    assert first["health_response_memory_attribution"]["status"] == "NO_PRIOR_COMPLETED_REQUEST"
+    assert second["health_response_memory_attribution"]["last_completed"]["response_bytes"] > 0
+    assert first["container_memory_limit_event_investigation"]["phase_summary"] == phase
+    assert "runtime_memory_investigation" in first
+
+
+def test_health_memory_diagnostics_fail_open(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("unavailable")
+
+    monkeypatch.setattr(apex_app, "runtime_memory_investigation", unavailable)
+    monkeypatch.setattr(apex_app, "scanner_settlement_phase_memory_inspect", unavailable)
+    monkeypatch.setattr(apex_app, "container_memory_limit_event_observe", unavailable)
+    monkeypatch.setattr(apex_app.health_memory_attribution, "begin", unavailable)
+    response = apex_app.app.test_client().get("/health")
+    assert response.status_code == 200
+    body = response.get_json()
+    for key in ("runtime_memory_investigation", "scanner_settlement_phase_memory_attribution",
+                "container_memory_limit_event_investigation"):
+        assert body[key]["status"] == "DIAGNOSTIC_UNAVAILABLE"
+
+
+def test_health_memory_attribution_reports_previous_response(tmp_path, monkeypatch):
+    from engine import health_response_memory_attribution as attribution
+
+    monkeypatch.setenv("APEX_MEMORY_PAIR_PATH", str(tmp_path / "missing.jsonl"))
+    with attribution._LOCK:
+        attribution._EVENTS.clear()
+    client = apex_app.app.test_client()
+    first = client.get("/health")
+    second = client.get("/health")
+    assert first.status_code == second.status_code == 200
+    assert first.get_json()["health_response_memory_attribution"]["last_completed"] is None
+    body = second.get_json()
+    assert body["health_response_memory_attribution"]["last_completed"]["response_bytes"] == len(first.data)
+    assert body["runtime_memory_investigation"]["read_only"]
+    assert body["scanner_settlement_phase_memory_attribution"]["status"] == "PHASE_TRACE_UNAVAILABLE"
+
+
 def test_source_health_does_not_invent_latency():
     observed = apex_app._source_observability(
         {
