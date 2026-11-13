@@ -1,0 +1,7 @@
+Candidate: APEX Web-Process Anonymous-Memory Allocation & Retention Audit
+Baseline: apex-engine-main(20261112-221036).zip
+Apply from repository root: patch -p1 < app.py.patch
+Copy: engine/web_process_allocation_retention_audit.py
+Copy: tests/test_apex_web_process_allocation_retention_audit.py
+No new environment variables; no schema or trading-authority changes.
+Selected regression tests: 104 passed; full CI pending Flask-enabled environment.
