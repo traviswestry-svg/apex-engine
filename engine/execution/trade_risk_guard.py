@@ -11,6 +11,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
+from engine.options.spxo_contract_lifecycle import execution_blockers
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -167,6 +168,10 @@ def validate_entry(
     limits = limits or RiskLimits.from_env()
     reasons: List[str] = []
     warnings: List[str] = []
+
+    # Block unsafe/ambiguous settlement classes independently of underlying symbol.
+    if any(contract.get(k) for k in ("osi_key", "osiKey", "option_symbol", "contract_class", "settlement_type")):
+        reasons.extend(execution_blockers(contract))
 
     # SPX-only
     sym = str(contract.get("symbol", "")).upper()

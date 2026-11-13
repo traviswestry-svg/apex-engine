@@ -85,6 +85,7 @@ def _map_snapshot(r: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "type": d.get("contract_type"),               # "call"/"put" → normalized downstream
         "expiration": d.get("expiration_date"),
         "symbol": d.get("ticker"),                     # O:SPXW...
+        "contract_ticker": d.get("ticker"),          # preserve option class at source
         "bid": lq.get("bid"),
         "ask": lq.get("ask"),
         # Polygon option snapshots expose quote timestamps in nanoseconds.

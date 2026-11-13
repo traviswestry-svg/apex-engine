@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from zoneinfo import ZoneInfo
+from engine.options.spxo_contract_lifecycle import execution_blockers
 
 VERSION = '69.10.39'
 ET = ZoneInfo('America/New_York')
@@ -57,6 +58,15 @@ def _positive_decimal(value, name):
 def make_signal(request_data, clock=None):
     """Create exact-contract SPX long option opening/exit signal only."""
     d = dict(request_data)
+    # Input may contain a root in the option-symbol field even when ticker=SPX.
+    # Never silently recast SPXO or AM settlement into SPXW paper 0DTE.
+    contract = dict(d.get("contract") or {}) if isinstance(d.get("contract"), dict) else {}
+    for key in ("osi_key", "option_symbol", "contract_symbol", "contract_class", "settlement_type", "settlement_reference", "expiration"):
+        if key in d and key not in contract:
+            contract[key] = d[key]
+    blockers = execution_blockers(contract)
+    if blockers:
+        raise ValueError("CONTRACT_LIFECYCLE_BLOCKED:" + ",".join(blockers))
     when = clock or now_utc()
     local = when.astimezone(ET)
     # Exit instructions remain available until 11:55 ET for protective flattening.
