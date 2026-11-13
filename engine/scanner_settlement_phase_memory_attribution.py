@@ -26,6 +26,10 @@ def _difference(after, before):
     return after - before if after is not None and before is not None else None
 
 
+def _mapping(value):
+    return value if isinstance(value, dict) else {}
+
+
 def _record(raw):
     if not isinstance(raw, dict) or raw.get("stage") not in VALID_STAGES:
         return None
@@ -34,11 +38,11 @@ def _record(raw):
         return None
     before = raw.get("before") or {}
     after = raw.get("after") or {}
-    c0 = raw.get("cgroup_before") or {}
-    c1 = raw.get("cgroup_after") or {}
-    s0 = c0.get("memory_stat") or {}
-    s1 = c1.get("memory_stat") or {}
-    event0, event1 = c0.get("events") or {}, c1.get("events") or {}
+    c0 = _mapping(raw.get("cgroup_before"))
+    c1 = _mapping(raw.get("cgroup_after"))
+    s0 = _mapping(c0.get("memory_stat"))
+    s1 = _mapping(c1.get("memory_stat"))
+    event0, event1 = _mapping(c0.get("events")), _mapping(c1.get("events"))
     return {
         "process_pid": pid, "process_start_ticks": start,
         "stage": raw["stage"], "cycle_id": str(raw.get("cycle_id") or "")[:90],
@@ -60,7 +64,7 @@ def _classification(raw):
     """Explain exclusion; never relax canonical PID + Linux process-start identity."""
     if not isinstance(raw, dict):
         return "NON_OBJECT_JSON_RECORD"
-    if raw.get("stage") not in VALID_STAGES:
+    if not isinstance(raw.get("stage"), str) or raw["stage"] not in VALID_STAGES:
         return "UNSUPPORTED_STAGE"
     if raw.get("schema") not in (None, "apex.memory_pair.v1"):
         return "UNSUPPORTED_PAIR_SCHEMA"
@@ -86,7 +90,7 @@ def summarize(records, *, parse_failures=0, truncated_tail=False, read_lines=Non
         why = _classification(raw)
         classified[why] += 1
         if isinstance(raw, dict):
-            if raw.get("stage") in VALID_STAGES:
+            if isinstance(raw.get("stage"), str) and raw["stage"] in VALID_STAGES:
                 seen_stages[raw["stage"]] += 1
             if raw.get("identity_diagnostic") in ("VERIFIED", "PROCESS_START_UNAVAILABLE", "PROCESS_IDENTITY_CHANGED"):
                 writer_identity_diagnostics[raw["identity_diagnostic"]] += 1
