@@ -1,19 +1,13 @@
-# APEX — one-shot second container memory-limit observation
+# APEX 69.10.47 — Governance candidate
 
-This utility is **not an APEX patch**. It performs a read-only GET on the existing `/health` endpoint, or compares an exported health JSON file, against the bundled November 12, 2026 10:31 AM ET baseline.
+This ZIP is an **additive governance patch**, not a full repository replacement and not a production release.
 
-Run from a machine that can access your APEX endpoint:
+Apply `docs/release_governance/` and `scripts/verify_cumulative_candidate_inventory.py` to your review branch. Do not modify `config/apex_release_manifest.json` or execution authority.
 
-```bash
-python collect_observation.py --out apex_second_memory_observation.json
-```
-
-Or if you have copied the next full `/health` JSON to a file:
+Offline verification:
 
 ```bash
-python collect_observation.py --file next_health.json --out apex_second_memory_observation.json
+python scripts/verify_cumulative_candidate_inventory.py --baseline "apex-engine-main(20261030-113020).zip" --candidate "apex-engine-main(20261114-103859).zip" --inventory docs/release_governance/CHANGED_FILES_69_10_47_CANDIDATE.csv --reconciliation docs/release_governance/CANDIDATE_RECONCILIATION.json
 ```
 
-The report is **incomparable** if the web worker PID, process start time, cgroup identity verification, counter monotonicity, or observation chronology do not match. This is intentionally conservative; an APEX deployment may reset the baseline. The script makes one GET request, adds no instrumentation, and never touches trading logic or database storage. A second response from the same APEX web worker is needed to interpret per-worker `sample_count` and event intervals; the script does not poll repeatedly.
-
-*Source baseline*: `/health` user-provided snapshot at 2026-11-12T15:31:10Z, worker PID 200, cumulative max/oom/oom_kill all 0. No later production measurement was accessible from this execution environment.
+The source audit provided by the user references a different October 31 baseline and reports 2,801 passed/3 environment failures. The exact inventory in this package compares the available October 30 and November 14 archives.
