@@ -12,7 +12,7 @@ def test_signal_integrity_guard_remains_wired():
 
 def test_volume_profile_timing_remains_wired():
     assert "volume_profile duration_ms=" in APP
-    assert "vp_started = _apex_vp_time.monotonic()" in APP
+    assert "volume_bundle, vp_status, vp_elapsed_ms = _ios_vp_fetch(" in APP
 
 def test_full_scan_diagnostics_are_present():
     tree = ast.parse(APP)
