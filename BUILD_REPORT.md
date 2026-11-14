@@ -1,67 +1,33 @@
-# APEX 69.10.48 — Morning Forecast Snapshot Integrity & Adaptive Calibration Validation
+# APEX 69.10.47 — Institutional OS Volume-Profile Single-Flight Memory Fix
 
-Baseline: apex-engine-main(20261026-232707).zip (69.10.47).
-Delivery: changed-files-only candidate. No release-manifest bump; not production-certified.
+## Classification
+Incremental candidate against `apex-engine-main(20261114-103859).zip`; not deployed, not certified for production, no version or schema bump, no broker execution authorization.
 
-## Implemented
-- Deterministic structured snapshot SHA-256 identity for each Morning Brief response.
-- Fail-closed narrative cache reuse when snapshot identity changes or provenance is missing.
-- Numeric disagreement detection for explicit developing POC, VAH, and call-wall mentions.
-- Async narrative status endpoint suppresses a completed narrative when an explicit discrepancy is found against the latest in-process deterministic snapshot.
-- Frontend handles SNAPSHOT_MISMATCH as a narrative-unavailable condition.
-- Separate forecast-quality dimensions; calendar coverage is NOT_VERIFIED, and forecast confidence is NOT_HISTORICALLY_CALIBRATED.
-- Explicit calibration validation status HISTORY_NOT_CONNECTED, zero training and holdout sessions, and promotion_authority=false.
-- Official forecast values, archive semantics, execution authority, and adaptive shadow behavior unchanged.
+## Source-supported root risk
+`app.py::api_institutional_os()` created a new `ThreadPoolExecutor(max_workers=1)` for each composition's `_volume_profile_bundle` call. On `Future.result(timeout=_FETCH_TIMEOUT)`, `future.cancel()` does not stop an already-running callable; `shutdown(wait=False)` does not wait for it. A later composition could therefore create another executor while the earlier provider call is still running, causing overlapping volume-profile work and thread/temporary allocation pressure. The Nov 14 log confirmed a 3-second timeout and repeated `institutional_os` requests but does NOT establish this path as the sole source of the measured cgroup pressure.
+
+## Correction
+- Add process-local `engine/ios_volume_profile_singleflight.py` with one reusable worker and a nonblocking semaphore held **until the provider actually exits**, not until the caller's timeout.
+- Report `BUSY` immediately with the same empty/default bundle as existing timeouts rather than queueing or launching a second volume-profile job.
+- Preserve the original 3-second configured timeout, truthful `timed_out_components` classification, volume-profile input investigation, and downstream nine-engine composition/evidence rules.
+- Expose bounded, scalar-only `/health.ios_volume_profile_singleflight` counters, no retained result payloads.
+- Leave `start_render.sh` Gunicorn `--max-requests 80 --max-requests-jitter 20` unchanged. Gunicorn request-based worker recycling can be observed from the existing server logs; no new signal or execution authority.
+
+## Limitations / remaining risks
+- Timeout **cannot terminate** a provider stuck indefinitely. This implementation prevents overlapping work but a permanently blocked provider keeps the sole volume-profile slot busy; volume profile degrades until worker recycling or provider recovery. Underlying HTTP/file I/O still needs provider-specific timeouts.
+- The **six-way base data fetch pool** still creates one executor per composition and may have similar timeout-tail risks. It was not changed to avoid broadening this patch; evaluate separately using observed evidence.
+- This correction does not prove resolution of previous container memory events, and does not profile Python heap owners or prevent other application cache growth.
+- Diagnostics are process-local; `/health` requests routed to different workers/instances have separate counters. Render has 2 instances; don't sum or infer same-instance trends across them.
 
 ## Verification
-17 focused tests passed; py_compile passed.
+- `python -m compileall -q app.py engine/ios_volume_profile_singleflight.py tests/test_ios_volume_profile_singleflight.py`: passed.
+- Selected pytest: 33 passed (`test_ios_volume_profile_singleflight.py`, SPXO compatibility, TradersPost paper dispatch, consolidation guard, release truth, gamma integrity).
+- Full repository CI not run; Flask missing in this environment for app-level tests (`ModuleNotFoundError: flask`).
+- Need full CI on GitHub/Render, particularly `tests/test_ios_single_flight.py` and institutional OS endpoint behavior, before deploying.
 
-## Known limitations / release blockers
-- Async narratives are keyed by target date and mode, not snapshot fingerprint. A same-session completed narrative may be reused when its numeric claims are not explicitly detected; PARTIALLY_CHECKED/NOT_VERIFIABLE is not proof of snapshot binding. Full closure requires snapshot-keyed async job identity and persistence migration.
-- Numeric check covers explicit named fields only, not free-form paraphrases or every institutional level.
-- Historical forecast/outcome records are not wired to the calibration evaluator; no real walk-forward improvement measured.
-- No full repository CI or production deployment validation was performed.
-- Keep candidate in shadow mode; do not promote calibration or call the release production-complete.
-
----
-
-# Adaptive Morning Forecast Calibration — shadow candidate
-
-Base repository: uploaded APEX 69.10.47. Release manifest unchanged.
-
-Includes read-only robust median calibration for prior verified sessions and a walk-forward evaluator. The morning brief emits an INSUFFICIENT_VERIFIED_HISTORY shadow diagnostic by default: it deliberately does not load outcome history on the live request path. No live forecast modification, performance claim, historical backfill, execution change, or automatic promotion.
-
-Offline evaluation requires the operator to supply completed session rows with frozen forecast provenance, spot, expected move, realized high/low, and explicit outcome_complete=true. At least 20 unique prior sessions required. Candidate scaling bounded to 0.75–1.5 and center shift bounded to +/-0.5 sigma. All historical records excluded from own training date; duplicate session dates excluded.
-
-Focused tests: 6 passed. Python compilation passed. Full CI, production load, and historical backtest not run. Do not deploy as an accuracy-improving model without genuine historical walk-forward evidence.
-
----
-
-# APEX 69.10.38 — Scanner Lifecycle Reconciliation & Canonical Evidence Integrity Closure
-
-## Delivery status: PARTIAL CANDIDATE — NOT RELEASE READY
-
-Base repository: apex-engine-main(20261020-201823).zip. Canonical manifest remains 69.10.37 intentionally: the requested complete 69.10.38 scope has not yet been implemented or validated.
-
-## Implemented
-- Scanner-owned journal schema v2: additive `attempt_id` column and index, legacy rows retained.
-- Per-invocation UUID generated in `run_scan_once`, propagated to ATTEMPT, COMPLETED, FAILED and LOCK_BUSY journal events.
-- Journal rejects duplicate ATTEMPT IDs, unmatched terminal IDs, cross-process terminal IDs and duplicate terminal outcomes.
-- Read-only cross-process `attempt_reconciliation` with paired/recent/stale counts, legacy uncorrelated counts and bounded stale examples. Stale unmatched attempts are UNCONFIRMED, not failures.
-- Existing settlement exact-ID diagnostics, postscan budget and authority gates retained unchanged.
-
-## Not implemented / not claimed
-- Canonical feature-to-excursion identity divergence root cause repair; requires production row-level evidence or reproducible local fixtures. No synthetic P/L or fuzzy joins added.
-- Durable cross-process postscan phase telemetry and source last-success probes.
-- Production migration/deployment validation and full CI.
-
-## Tests
-26 focused tests passed including scanner lifecycle, settlement identity, scheduler cadence and postscan deadline. Python compile succeeded. No full suite or Render deployment was run.
-
-## Changed files
-- app.py
-- engine/scanner_coverage_authority.py
-- tests/test_apex_69_10_38_scanner_reconciliation.py
-
-## Safety
-No broker execution, trade decision or label authority changes. No release manifest bump.
+## Deployment acceptance
+1. Reconcile patch against the current branch and run full CI.
+2. Confirm unchanged execution hard stop and SPXO fail-closed invariants.
+3. Verify 3-second provider timeout leads to single `timed_out` count, subsequent attempts while in-flight increment `busy_skips`; once provider completes, next request succeeds.
+4. Compare same-instance `/health` private_dirty and cgroup anon before/after normal dashboard workload, and monitor `memory.events.max` and Gunicorn worker restarts.
+5. Do not promote the cumulative research candidate or begin Stage 3 merely because this patch passes targeted tests.

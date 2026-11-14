@@ -7730,6 +7730,11 @@ def health():
         _health_payload["web_process_allocation_retention_audit"] = web_allocation_retention_observe()
     except Exception:
         _health_payload["web_process_allocation_retention_audit"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        from engine.ios_volume_profile_singleflight import snapshot as _ios_vp_snapshot
+        _health_payload["ios_volume_profile_singleflight"] = _ios_vp_snapshot()
+    except Exception:
+        _health_payload["ios_volume_profile_singleflight"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
     _health_construction_end_ns = time.perf_counter_ns()
     try:
         _health_construction_end_rss = health_memory_attribution.rss_kib()
@@ -8014,27 +8019,21 @@ def api_institutional_os():
             intraday_bars = fetched["intraday_bars"]
             vix_price = fetched["vix_price"]
 
-            # Volume profile must also be bounded. A Future timeout cannot kill
-            # an already-running task, so detach the daemon executor immediately;
-            # provider-level HTTP timeouts remain the final containment boundary.
-            import time as _apex_vp_time
-            vp_started = _apex_vp_time.monotonic()
-            vp_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="apex-os-vp")
-            vp_future = vp_pool.submit(_volume_profile_bundle, ticker=ticker, days=1, multiplier=5)
-            try:
-                volume_bundle = vp_future.result(timeout=_FETCH_TIMEOUT)
-            except Exception as vp_err:
-                vp_future.cancel()
-                # str(TimeoutError()) is empty — log type + repr so the cause is visible.
-                print(f"[IOS] volume_profile timed out / failed: {type(vp_err).__name__}: {vp_err!r} (timeout={_FETCH_TIMEOUT}s)", flush=True)
-                volume_bundle = {}
+            # A timed-out Future cannot terminate the provider task. The
+            # process-local single-flight pool holds its slot until that task
+            # actually completes, preventing overlapping detached workers.
+            from engine.ios_volume_profile_singleflight import fetch as _ios_vp_fetch
+            volume_bundle, vp_status, vp_elapsed_ms = _ios_vp_fetch(
+                _volume_profile_bundle, timeout=_FETCH_TIMEOUT,
+                ticker=ticker, days=1, multiplier=5,
+            )
+            if vp_status != "COMPLETED":
                 timed_out.append("volume_profile")
-            finally:
-                vp_elapsed_ms = round((_apex_vp_time.monotonic() - vp_started) * 1000, 1)
+                print(f"[IOS] volume_profile {vp_status} "
+                      f"duration_ms={vp_elapsed_ms} ticker={ticker}", flush=True)
+            else:
                 print(f"[IOS] volume_profile duration_ms={vp_elapsed_ms} "
-                      f"timed_out={'volume_profile' in timed_out} ticker={ticker}", flush=True)
-                # A timed-out running thread cannot be killed by Future.cancel().
-                vp_pool.shutdown(wait=False, cancel_futures=True)
+                      f"timed_out=False ticker={ticker}", flush=True)
 
             # Read-only input diagnostic assembled from the already-completed
             # bounded fetch; no additional calls to the volume provider.
