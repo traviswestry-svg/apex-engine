@@ -20,9 +20,16 @@ from flask import Flask, jsonify, render_template, request, redirect, g, has_req
 from engine.operational_runtime import storage_status, read_scanner_heartbeat
 from engine.scanner_runtime_truth import resolve_scanner_runtime
 from engine.runtime_memory_pressure import memory_pressure_status
+from engine.runtime_memory_investigation import inspect as runtime_memory_investigation
+from engine.container_memory_limit_event_investigation import observe as container_memory_limit_event_observe
+from engine.web_process_allocation_retention_audit import observe as web_allocation_retention_observe
+from engine import health_response_memory_attribution as health_memory_attribution
 from engine.storage_retention import audit as apex_storage_retention_audit
 from engine.institutional_intelligence_mesh import build_intelligence_mesh
 from engine.canonical_persistence import connect as canonical_sqlite_connect
+from engine.scanner_settlement_phase_memory_attribution import (
+    inspect as scanner_settlement_phase_memory_inspect,
+)
 
 # APEX Trade Director Phase 6 — lazy trade learning/replay persistence
 try:
@@ -7591,6 +7598,10 @@ def _read_scanner_coverage_status():
 
 @app.route("/health")
 def health():
+    try:
+        _health_memory_start = health_memory_attribution.begin()
+    except Exception:
+        _health_memory_start = None
     generated_dt = dt.datetime.now(dt.timezone.utc)
     generated_at = generated_dt.isoformat()
     _scanner_runtime = _effective_scanner_runtime(generated_dt)
@@ -7638,7 +7649,7 @@ def health():
     effective_updated_at = scan_updated_at or generated_at
     updated_at_basis = "last_completed_scan" if scan_updated_at else "status_generated_at"
 
-    return jsonify({
+    _health_payload = {
         "ok": True,
         "apex_version": VERSION,
         "version": VERSION,
@@ -7690,7 +7701,54 @@ def health():
             else _scanner_runtime.get("heartbeat")
         ),
         "is_tradeable": s_session == "MARKET_OPEN",
-    })
+    }
+    try:
+        _health_payload.update({
+            "runtime_memory_investigation": runtime_memory_investigation(),
+        })
+    except Exception:
+        _health_payload["runtime_memory_investigation"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        _health_payload.update({
+            "scanner_settlement_phase_memory_attribution": scanner_settlement_phase_memory_inspect(),
+        })
+    except Exception:
+        _health_payload["scanner_settlement_phase_memory_attribution"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    _phase_memory = _health_payload["scanner_settlement_phase_memory_attribution"]
+    try:
+        _health_payload["container_memory_limit_event_investigation"] = container_memory_limit_event_observe(
+            phase_summary=_health_payload["scanner_settlement_phase_memory_attribution"])
+    except Exception:
+        _health_payload["container_memory_limit_event_investigation"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        _health_payload.update({
+            "health_response_memory_attribution": health_memory_attribution.prior_completed(),
+        })
+    except Exception:
+        _health_payload["health_response_memory_attribution"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        _health_payload["web_process_allocation_retention_audit"] = web_allocation_retention_observe()
+    except Exception:
+        _health_payload["web_process_allocation_retention_audit"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        from engine.ios_volume_profile_singleflight import snapshot as _ios_vp_snapshot
+        _health_payload["ios_volume_profile_singleflight"] = _ios_vp_snapshot()
+    except Exception:
+        _health_payload["ios_volume_profile_singleflight"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    _health_construction_end_ns = time.perf_counter_ns()
+    try:
+        _health_construction_end_rss = health_memory_attribution.rss_kib()
+    except Exception:
+        _health_construction_end_rss = None
+    _health_response = jsonify(_health_payload)
+    if _health_memory_start is not None:
+        try:
+            health_memory_attribution.completed(
+                _health_memory_start, construction_end_ns=_health_construction_end_ns,
+                construction_end_rss_kib=_health_construction_end_rss, response=_health_response)
+        except Exception:
+            pass
+    return _health_response
 
 # =============================================================================
 # APEX 4.5 NEW API ROUTES
@@ -7961,27 +8019,21 @@ def api_institutional_os():
             intraday_bars = fetched["intraday_bars"]
             vix_price = fetched["vix_price"]
 
-            # Volume profile must also be bounded. A Future timeout cannot kill
-            # an already-running task, so detach the daemon executor immediately;
-            # provider-level HTTP timeouts remain the final containment boundary.
-            import time as _apex_vp_time
-            vp_started = _apex_vp_time.monotonic()
-            vp_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="apex-os-vp")
-            vp_future = vp_pool.submit(_volume_profile_bundle, ticker=ticker, days=1, multiplier=5)
-            try:
-                volume_bundle = vp_future.result(timeout=_FETCH_TIMEOUT)
-            except Exception as vp_err:
-                vp_future.cancel()
-                # str(TimeoutError()) is empty — log type + repr so the cause is visible.
-                print(f"[IOS] volume_profile timed out / failed: {type(vp_err).__name__}: {vp_err!r} (timeout={_FETCH_TIMEOUT}s)", flush=True)
-                volume_bundle = {}
+            # A timed-out Future cannot terminate the provider task. The
+            # process-local single-flight pool holds its slot until that task
+            # actually completes, preventing overlapping detached workers.
+            from engine.ios_volume_profile_singleflight import fetch as _ios_vp_fetch
+            volume_bundle, vp_status, vp_elapsed_ms = _ios_vp_fetch(
+                _volume_profile_bundle, timeout=_FETCH_TIMEOUT,
+                ticker=ticker, days=1, multiplier=5,
+            )
+            if vp_status != "COMPLETED":
                 timed_out.append("volume_profile")
-            finally:
-                vp_elapsed_ms = round((_apex_vp_time.monotonic() - vp_started) * 1000, 1)
+                print(f"[IOS] volume_profile {vp_status} "
+                      f"duration_ms={vp_elapsed_ms} ticker={ticker}", flush=True)
+            else:
                 print(f"[IOS] volume_profile duration_ms={vp_elapsed_ms} "
-                      f"timed_out={'volume_profile' in timed_out} ticker={ticker}", flush=True)
-                # A timed-out running thread cannot be killed by Future.cancel().
-                vp_pool.shutdown(wait=False, cancel_futures=True)
+                      f"timed_out=False ticker={ticker}", flush=True)
 
             # Read-only input diagnostic assembled from the already-completed
             # bounded fetch; no additional calls to the volume provider.

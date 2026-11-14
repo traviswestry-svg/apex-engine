@@ -1,0 +1,9 @@
+# Additive APEX 69.10.47 candidate
+Base: apex-engine-main(20261114-103859).zip
+Apply app.patch or merge app.py with current branch.
+No change to release manifest or broker execution.
+
+Changed files / SHA-256:
+92cdb2e5f1660b1477817323c73ea3fe4d5f778ba174ac6bb2042545b33c6b4a  app.py
+7cd4cd23204fa0e7de348d8a6d1de3dbca32e6abc983480958aac9d6bff32425  engine/ios_volume_profile_singleflight.py
+051c364f9723ac376058cf1dba90f546b929c78bdffd49a8bfaa6fb427e66860  tests/test_ios_volume_profile_singleflight.py
