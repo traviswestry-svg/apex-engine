@@ -1,7 +1,7 @@
-Candidate: APEX Web-Process Anonymous-Memory Allocation & Retention Audit
-Baseline: apex-engine-main(20261112-221036).zip
-Apply from repository root: patch -p1 < app.py.patch
-Copy: engine/web_process_allocation_retention_audit.py
-Copy: tests/test_apex_web_process_allocation_retention_audit.py
-No new environment variables; no schema or trading-authority changes.
-Selected regression tests: 104 passed; full CI pending Flask-enabled environment.
+APEX 69.10.47 — Flow Learning Starvation & Scanner Deadline Scheduling Audit
+Base: apex-engine-main(20261112-221036).zip
+app.py.patch: one call after existing assess_learning and before admission branch
+engine/flow_learning_deadline_audit.py: new bounded pure diagnostic
+ tests/test_flow_learning_deadline_audit.py: 5 tests
+APEX_FLOW_LEARNING_STARVATION_AUDIT_REPORT.md: rationale, guardrails, verification
+No version bump; no trading authority; Stage 3 not modified.

@@ -166,3 +166,6 @@ Full suite 1,518 passed / 0 failed.
 - `engine.trigger_observatory_historical_query_audit` is an operator-invoked,
   read-only CLI audit and intentionally has no application or scanner runtime
   integration.
+- `engine.flow_learning_deadline_audit` provides read-only diagnostics of
+  scanner-owned learning admission; it does not schedule work, change
+  admission, or participate in runtime execution.
