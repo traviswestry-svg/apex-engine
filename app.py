@@ -7735,6 +7735,11 @@ def health():
         _health_payload["ios_volume_profile_singleflight"] = _ios_vp_snapshot()
     except Exception:
         _health_payload["ios_volume_profile_singleflight"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
+    try:
+        from engine.ios_bounded_provider_execution import snapshot as _ios_provider_snapshot
+        _health_payload["ios_bounded_provider_execution"] = _ios_provider_snapshot()
+    except Exception:
+        _health_payload["ios_bounded_provider_execution"] = {"status": "DIAGNOSTIC_UNAVAILABLE"}
     _health_construction_end_ns = time.perf_counter_ns()
     try:
         _health_construction_end_rss = health_memory_attribution.rss_kib()
@@ -7982,35 +7987,30 @@ def api_institutional_os():
             session_ctx = market_session_context()
             timed_out: List[str] = []
 
-            # Fetch all data inputs in parallel under ONE shared timeout.
-            # Do not use a ThreadPoolExecutor context manager here: its __exit__
-            # waits for every provider task, which previously defeated the timeout
-            # and blocked the Render gunicorn worker indefinitely.
-            pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix="apex-os-fetch")
-            future_map = {
-                pool.submit(quantdata_flow_snapshot, ticker): ("flow_snapshot", {}),
-                pool.submit(get_daily_bars, "SPY", 260): ("spy_bars", []),
-                pool.submit(get_daily_bars, "QQQ", 260): ("qqq_bars", []),
-                pool.submit(get_daily_bars, ticker, 260): ("daily_bars", []),
-                pool.submit(get_intraday_bars, ticker, 5, 3): ("intraday_bars", []),
-                pool.submit(get_vix_price): ("vix_price", None),
-            }
-            done, not_done = wait(tuple(future_map), timeout=_FETCH_TIMEOUT)
-            fetched = {}
-            for future, (label, default) in future_map.items():
-                if future in done:
-                    try:
-                        fetched[label] = future.result()
-                    except Exception as exc:
-                        print(f"[IOS] {label} failed ({type(exc).__name__}: {exc})", flush=True)
-                        fetched[label] = default
-                        timed_out.append(label)
-                else:
-                    future.cancel()
-                    fetched[label] = default
-                    timed_out.append(label)
-                    print(f"[IOS] {label} timed out after {_FETCH_TIMEOUT:.1f}s", flush=True)
-            pool.shutdown(wait=False, cancel_futures=True)
+            # Shared process-local pool: six active providers maximum, no queue.
+            # Timed-out running calls retain their slots until actual completion,
+            # so a repeated dashboard refresh cannot multiply background work.
+            from engine.ios_bounded_provider_execution import fetch_many as _ios_fetch_many
+            _provider_specs = (
+                (f"flow_snapshot:{ticker}", quantdata_flow_snapshot, (ticker,), {}),
+                ("spy_bars:SPY:260", get_daily_bars, ("SPY", 260), []),
+                ("qqq_bars:QQQ:260", get_daily_bars, ("QQQ", 260), []),
+                (f"daily_bars:{ticker}:260", get_daily_bars, (ticker, 260), []),
+                (f"intraday_bars:{ticker}:5:3", get_intraday_bars, (ticker, 5, 3), []),
+                ("vix_price", get_vix_price, (), None),
+            )
+            _provider_results, _provider_degraded, _provider_status = _ios_fetch_many(
+                _provider_specs, timeout=_FETCH_TIMEOUT,
+            )
+            fetched = dict(zip(
+                ("flow_snapshot", "spy_bars", "qqq_bars", "daily_bars", "intraday_bars", "vix_price"),
+                (_provider_results[key] for key, _, _, _ in _provider_specs),
+            ))
+            for _key, _label in zip((spec[0] for spec in _provider_specs), fetched):
+                if _key in _provider_degraded:
+                    timed_out.append(_label)
+                    print(f"[IOS] {_label} degraded: {_provider_status[_key]}", flush=True)
+            del _provider_results  # no persistent provider payload cache
 
             flow_snapshot = fetched["flow_snapshot"]
             spy_bars = fetched["spy_bars"]
