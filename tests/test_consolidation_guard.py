@@ -41,6 +41,7 @@ TEST_ONLY_ALLOWLIST = {
     "engine.canonical_decision",
     "engine.dual_horizon_forecast_integrity",
     "engine.execution.paper_lifecycle_validation",
+    "engine.flow_learning_deadline_audit",
     "engine.flow_learning_checkpoint",
     "engine.learning_resource_admission",
     "engine.morning_forecast_integrity",
