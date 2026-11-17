@@ -1,20 +1,14 @@
 {
-  "name": "APEX Stage 3B.1 \u2014 Immutable Archive Reader Compatibility & Historical Replay Verification",
-  "type": "offline_incremental_candidate",
-  "source_snapshot": "apex-engine-main(20261112-221036).zip",
-  "files": [
-    "scripts/apex_stage3b1_archive_replay_audit.py",
-    "tests/test_apex_stage3b1_archive_replay_audit.py",
-    "patches/OPTIONAL_ARCHIVE_INVALID_UTF8_FAIL_CLOSED.patch",
-    "APEX_STAGE3B1_BUILD_REPORT.md",
-    "stage3b1_offline_report.json"
-  ],
-  "optional_patch_auto_applied": false,
+  "build": "APEX Stage 3B.2 — Historical Archive-to-Source Correspondence & Replay Equivalence Audit",
+  "base_snapshot": "apex-engine-main(20261112-221036).zip",
+  "candidate_type": "incremental_operator_initiated_read_only",
+  "add_files": ["scripts/apex_stage3b2_archive_source_replay_audit.py", "tests/test_apex_stage3b2_archive_source_replay_audit.py"],
+  "modified_production_files": [],
+  "dependencies": "Python 3 standard library only",
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "production_data_access": false,
-  "tests_passed": 12,
-  "original_reader_cases_passed": 8,
-  "original_reader_cases_total": 9,
-  "optional_patched_reader_cases_passed": 9,
-  "optional_patched_reader_cases_total": 9
+  "production_replay": false,
+  "reader_cutover": false,
+  "database_writes": false,
+  "review_required_before_deploy": true,
+  "stage3b1_invalid_utf8_reader_fix_automatically_applied": false
 }
