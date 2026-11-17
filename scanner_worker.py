@@ -407,7 +407,6 @@ def main() -> int:
         _end_stage(_cycle_id, "EVIDENCE_GRADE", _evidence_grade_start)
         _memory_checkpoint("EVIDENCE_GRADE_COMPLETE")
 
-        _settlement_pass_start = _begin_stage(_cycle_id, "SETTLEMENT_PASS")
         # APEX 69.0.2 — explicit scanner-owned settlement cadence. The first
         # loop performs an immediate recovery pass; later loops are bounded by
         # APEX_FLOW_SETTLEMENT_SECONDS. No label is fabricated when persisted
@@ -422,7 +421,6 @@ def main() -> int:
                 decision_authority_suppressed=False, source="scanner_worker.py",
             )
 
-        _end_stage(_cycle_id, "SETTLEMENT_PASS", _settlement_pass_start)
         _memory_checkpoint("SETTLEMENT_PASS_COMPLETE")
 
         _tick_feed_pass_start = _begin_stage(_cycle_id, "TICK_FEED_PASS")
