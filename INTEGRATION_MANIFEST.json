@@ -1,19 +1,16 @@
 {
-  "title": "APEX Stage 3B.2.2 \u2014 Historical Archive Size Distribution & Source-Identity Provenance Audit",
-  "type": "incremental_candidate",
-  "base_source": "apex-engine-main(20261112-221036).zip",
-  "production_sqlite_modified": false,
-  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "stage": "3B.2.3",
+  "name": "Bounded Large-Payload Correspondence & Historical Format Provenance Verification",
+  "delivery": "incremental_candidate_no_repo_overwrite",
   "files": [
-    "scripts/apex_stage3b22_archive_metadata_provenance_audit.py",
-    "tests/test_apex_stage3b22_archive_metadata_provenance_audit.py"
+    "scripts/apex_stage3b23_large_payload_provenance_audit.py",
+    "tests/test_apex_stage3b23_large_payload_provenance_audit.py",
+    "APEX_STAGE3B23_BUILD_REPORT.md"
   ],
-  "limitations": [
-    "bounded oldest/newest archive samples, not population quantiles",
-    "metadata bytes not verified against compressed BLOB",
-    "source identity existence is not source/archive payload equality",
-    "timestamps are text comparison only",
-    "query deadline cooperative, not hard I/O wall-clock deadline",
-    "full repository CI and actual Render probe pending"
-  ]
+  "production_mutations": false,
+  "production_deployment_performed": false,
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "selected_tests": {"stage3b23":16,"prior_stage3b21_and_stage3b22":35,"total_passed":51},
+  "full_ci": "NOT_RUN",
+  "operator_entrypoint": "python scripts/apex_stage3b23_large_payload_provenance_audit.py --root /data --sample-rows 2 --query-budget-ms 400 --total-budget-ms 10000 --max-payload-bytes 1572864 --raw-byte-budget 16777216 --output /tmp/apex-stage3b23-large-payload.json"
 }
