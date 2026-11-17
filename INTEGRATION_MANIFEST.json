@@ -1,18 +1,21 @@
 {
-  "build_name": "APEX Stage 3A.2 — SQLite Record-Size, Payload-Shape & Retention Dependency Audit",
-  "apex_version_context": "69.10.47",
-  "baseline": "apex-engine-main(20261112-221036).zip + Stage 3A read-only audit candidate",
-  "type": "incremental_optional_operator_diagnostic",
-  "deploy_required": true,
-  "files_to_add": [
-    "scripts/apex_stage3a2_record_audit.py",
-    "tests/test_apex_stage3a2_record_audit.py"
+  "name": "APEX Stage 3A.3 — Bounded JSON Structural Redundancy & Lossless Compression Feasibility Audit",
+  "status": "CANDIDATE_NOT_DEPLOYED",
+  "type": "incremental_standalone_operator_diagnostic",
+  "files": [
+    "scripts/apex_stage3a3_json_audit.py",
+    "tests/test_apex_stage3a3_json_audit.py",
+    "APEX_STAGE3A3_BUILD_REPORT.md",
+    "INTEGRATION_MANIFEST.json"
   ],
-  "files_to_modify": [],
-  "schema_migrations": false,
-  "production_execution_performed": false,
-  "trading_authority_changes": false,
-  "automatic_retention_changes": false,
-  "selected_tests_passed": 47,
-  "full_ci": "PENDING"
+  "deployment_changes": false,
+  "scheduled_changes": false,
+  "sqlite_writes": false,
+  "payload_export": false,
+  "hash_export": false,
+  "schema_migration": false,
+  "cleanup_authorized": false,
+  "execution_authority_changed": false,
+  "local_selected_tests_passed": 37,
+  "full_repository_ci": "NOT_RUN"
 }
