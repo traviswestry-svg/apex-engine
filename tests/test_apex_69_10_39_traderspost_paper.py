@@ -7,7 +7,7 @@ from engine.execution import traderspost_paper as tp
 CLOCK = datetime(2026,10,20,14,0,tzinfo=timezone.utc)
 BASE = dict(signal_id='sample-order-0001',ticker='SPX',option_type='call',action='open',
             decision_id='decision-1',governance_approved=True,human_approved=True,
-            expiration='2026-10-20',strike=5800,ask=4,bid=3.8,quantity=2)
+            expiration='2026-10-20',contract_class='SPXW',strike=5800,ask=4,bid=3.8,quantity=2)
 
 def test_build_exact_contract_and_risk():
     p=tp.make_signal(BASE,CLOCK)
