@@ -1,0 +1,16 @@
+--- a/engine/historical_payload_archive.py
++++ b/engine/historical_payload_archive.py
+@@ -225,4 +225,5 @@ def retrieve_archived_payload(
+         raw = _decompress(row["archive_blob"], row["archive_codec"])
++        payload = raw.decode("utf-8")
+     except Exception as exc:
+         return {"ok": False, "state": "ARCHIVE_DECODE_FAILURE", "error": f"{type(exc).__name__}: {exc}"}
+     actual_hash = hashlib.sha256(raw).hexdigest()
+@@ -235,6 +236,6 @@ def retrieve_archived_payload(
+         "source_bytes": int(row["source_bytes"]),
+         "archive_bytes": int(row["archive_bytes"]),
+         "archive_codec": row["archive_codec"],
+-        "payload": raw.decode("utf-8") if intact else None,
++        "payload": payload if intact else None,
+         "payload_values_exposed": bool(intact),
+     }
