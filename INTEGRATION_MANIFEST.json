@@ -1,18 +1,20 @@
 {
-  "candidate": "APEX_STAGE3B0_OFFLINE_COMPRESSION_COMPATIBILITY",
-  "base_source_snapshot": "apex-engine-main(20261112-221036).zip",
-  "add_only": [
-    "scripts/apex_stage3b0_compatibility_audit.py",
-    "tests/test_apex_stage3b0_compatibility_audit.py"
+  "name": "APEX Stage 3B.1 \u2014 Immutable Archive Reader Compatibility & Historical Replay Verification",
+  "type": "offline_incremental_candidate",
+  "source_snapshot": "apex-engine-main(20261112-221036).zip",
+  "files": [
+    "scripts/apex_stage3b1_archive_replay_audit.py",
+    "tests/test_apex_stage3b1_archive_replay_audit.py",
+    "patches/OPTIONAL_ARCHIVE_INVALID_UTF8_FAIL_CLOSED.patch",
+    "APEX_STAGE3B1_BUILD_REPORT.md",
+    "stage3b1_offline_report.json"
   ],
-  "overwrites_existing_files": false,
-  "new_service_endpoints": false,
-  "new_background_jobs": false,
-  "database_connections": false,
-  "database_schema_changes": false,
-  "archive_backfill": false,
-  "production_migration": false,
-  "trade_execution_authority_change": false,
-  "recommendation": "Evaluate existing historical_payload_archive ZLIB_9 contract rather than create overlapping archive code",
-  "readme": "APEX_STAGE3B0_BUILD_REPORT.md"
+  "optional_patch_auto_applied": false,
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "production_data_access": false,
+  "tests_passed": 12,
+  "original_reader_cases_passed": 8,
+  "original_reader_cases_total": 9,
+  "optional_patched_reader_cases_passed": 9,
+  "optional_patched_reader_cases_total": 9
 }

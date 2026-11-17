@@ -1,0 +1,177 @@
+{
+  "fixture_database_writes_only": true,
+  "guardrails": {
+    "no_archive_mutation": true,
+    "no_canonical_mutation": true,
+    "no_checkpoint": true,
+    "no_deletion": true,
+    "no_production_database_access": true,
+    "no_trade_or_execution_authority": true,
+    "no_vacuum": true
+  },
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "mode": "OFFLINE_SYNTHETIC_ONLY",
+  "production_reader_cutover": false,
+  "production_replay_performed": false,
+  "repo_root": "/mnt/data/stage3b1_work/repo/apex-engine-main",
+  "schema": "apex.stage3b1_immutable_archive_reader_replay.v1",
+  "source_database_opened": false,
+  "static_reader_inventory": {
+    "by_type": {
+      "DECISION_SNAPSHOT": {
+        "archive_reader_reference_files": [
+          "engine/historical_payload_archive.py"
+        ],
+        "candidate_reader_files": [
+          "engine/broker_synchronized_position_state.py",
+          "engine/decision_outcome_attribution.py",
+          "engine/dynamic_state_calibration_governance.py",
+          "engine/dynamic_state_outcome_calibration.py",
+          "engine/evidence_pipeline.py",
+          "engine/execution/paper_execution_foundation.py",
+          "engine/feature_store.py",
+          "engine/gamma_transition.py",
+          "engine/historical_effectiveness_observatory.py",
+          "engine/historical_evidence_lifecycle.py",
+          "engine/historical_payload_compaction.py",
+          "engine/live_operations.py",
+          "engine/market_memory_engine_v220.py",
+          "engine/outcome_grader.py",
+          "engine/recommendation_ledger.py",
+          "engine/storage_retention.py",
+          "engine/trade_director_market_memory.py",
+          "engine/trigger_observatory.py"
+        ],
+        "source_reference_files": [
+          "engine/broker_synchronized_position_state.py",
+          "engine/decision_outcome_attribution.py",
+          "engine/dynamic_state_calibration_governance.py",
+          "engine/dynamic_state_outcome_calibration.py",
+          "engine/evidence_pipeline.py",
+          "engine/execution/paper_execution_foundation.py",
+          "engine/feature_store.py",
+          "engine/gamma_transition.py",
+          "engine/historical_effectiveness_observatory.py",
+          "engine/historical_evidence_lifecycle.py",
+          "engine/historical_payload_archive.py",
+          "engine/historical_payload_compaction.py",
+          "engine/live_operations.py",
+          "engine/market_memory_engine_v220.py",
+          "engine/outcome_grader.py",
+          "engine/recommendation_ledger.py",
+          "engine/storage_retention.py",
+          "engine/trade_director_market_memory.py",
+          "engine/trigger_observatory.py"
+        ]
+      },
+      "TRIGGER_EVIDENCE": {
+        "archive_reader_reference_files": [
+          "engine/historical_payload_archive.py"
+        ],
+        "candidate_reader_files": [
+          "engine/adaptive_portfolio_calibration.py",
+          "engine/adaptive_refusal_calibration.py",
+          "engine/decision_intelligence_core.py",
+          "engine/dynamic_state_calibration_governance.py",
+          "engine/explainable_intelligence_assistant.py",
+          "engine/failed_breakdown_lifecycle.py",
+          "engine/historical_payload_compaction.py",
+          "engine/institutional_evidence.py",
+          "engine/institutional_governance.py",
+          "engine/institutional_order_flow_intelligence.py",
+          "engine/institutional_playbook_engine.py",
+          "engine/institutional_research.py",
+          "engine/production_governance.py",
+          "engine/recommendation_ledger.py",
+          "engine/storage_retention.py",
+          "engine/trigger_observatory.py"
+        ],
+        "source_reference_files": [
+          "engine/adaptive_portfolio_calibration.py",
+          "engine/adaptive_refusal_calibration.py",
+          "engine/decision_intelligence_core.py",
+          "engine/dynamic_state_calibration_governance.py",
+          "engine/explainable_intelligence_assistant.py",
+          "engine/failed_breakdown_lifecycle.py",
+          "engine/historical_payload_archive.py",
+          "engine/historical_payload_compaction.py",
+          "engine/institutional_evidence.py",
+          "engine/institutional_governance.py",
+          "engine/institutional_order_flow_intelligence.py",
+          "engine/institutional_playbook_engine.py",
+          "engine/institutional_research.py",
+          "engine/production_governance.py",
+          "engine/recommendation_ledger.py",
+          "engine/storage_retention.py",
+          "engine/trigger_observatory.py"
+        ]
+      }
+    },
+    "files_scanned": 421,
+    "scope_limited": false,
+    "source_hints_only_not_verified_call_graph": true
+  },
+  "status": "BLOCKED_READER_FAILURE_PATHS",
+  "synthetic_existing_reader_contract": {
+    "all_passed": false,
+    "checks": [
+      {
+        "case": "byte_exact_decision_snapshot",
+        "observed": "ARCHIVE_VERIFIED",
+        "passed": true
+      },
+      {
+        "case": "byte_exact_trigger_evidence",
+        "observed": "ARCHIVE_VERIFIED",
+        "passed": true
+      },
+      {
+        "case": "missing_row",
+        "observed": "ROW_NOT_ARCHIVED",
+        "passed": true
+      },
+      {
+        "case": "tampered_hash",
+        "observed": "ARCHIVE_INTEGRITY_FAILURE",
+        "passed": true
+      },
+      {
+        "case": "truncated_blob",
+        "observed": "ARCHIVE_DECODE_FAILURE",
+        "passed": true
+      },
+      {
+        "case": "unsupported_codec",
+        "observed": "ARCHIVE_DECODE_FAILURE",
+        "passed": true
+      },
+      {
+        "case": "wrong_length",
+        "observed": "ARCHIVE_INTEGRITY_FAILURE",
+        "passed": true
+      },
+      {
+        "case": "invalid_utf8",
+        "exception_type": "UnicodeDecodeError",
+        "observed": "UNHANDLED_EXCEPTION",
+        "passed": false
+      },
+      {
+        "case": "synthetic_replay_and_gamma_identity",
+        "observed": "SYNTHETIC_ONLY",
+        "passed": true
+      }
+    ],
+    "passed": 8,
+    "total": 9
+  },
+  "unverified_gates": [
+    "historical_production_replay_equivalence",
+    "cross_database_gamma_and_decision_identity",
+    "production_reader_cutover_coverage",
+    "real_archive_source_correspondence",
+    "external_backup_restore_test",
+    "rollback_on_isolated_restored_copy",
+    "performance_on_production_representative_fixtures"
+  ]
+}
