@@ -1,14 +1,15 @@
 {
-  "build": "APEX Stage 3B.2 — Historical Archive-to-Source Correspondence & Replay Equivalence Audit",
-  "base_snapshot": "apex-engine-main(20261112-221036).zip",
-  "candidate_type": "incremental_operator_initiated_read_only",
-  "add_files": ["scripts/apex_stage3b2_archive_source_replay_audit.py", "tests/test_apex_stage3b2_archive_source_replay_audit.py"],
-  "modified_production_files": [],
-  "dependencies": "Python 3 standard library only",
+  "stage": "3B.2.1",
+  "name": "Archive Payload-Budget Attribution & Bounded Correspondence Recovery",
+  "integration_type": "additive_operator_cli_only",
+  "files_to_add": [
+    "scripts/apex_stage3b21_budget_recovery_audit.py",
+    "tests/test_apex_stage3b21_budget_recovery_audit.py"
+  ],
+  "overwrites_existing_files": false,
+  "production_data_mutation": false,
+  "archive_reader_replacement": false,
+  "trading_authority_change": false,
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "production_replay": false,
-  "reader_cutover": false,
-  "database_writes": false,
-  "review_required_before_deploy": true,
-  "stage3b1_invalid_utf8_reader_fix_automatically_applied": false
+  "validated_against": "Stage 3B.2 candidate source and fixture conventions; not full repo CI"
 }
