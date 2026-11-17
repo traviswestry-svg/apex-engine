@@ -1,0 +1,17 @@
+{
+  "base": "apex-engine-main(20261112-221036).zip",
+  "apex_version": "69.10.47",
+  "build": "Stage 3A SQLite Database Growth, Storage Capacity & Safe Retention Audit",
+  "candidate_only": true,
+  "files_added": [
+    "scripts/apex_stage3a_storage_audit.py",
+    "tests/test_apex_stage3a_storage_audit.py"
+  ],
+  "files_modified": [],
+  "database_migrations": false,
+  "automated_cleanup": false,
+  "changes_trade_decisions": false,
+  "changes_execution_authority": false,
+  "selected_tests_passed": 67,
+  "full_ci_passed": null
+}
