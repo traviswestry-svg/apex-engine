@@ -1,15 +1,19 @@
 {
-  "stage": "3B.2.1",
-  "name": "Archive Payload-Budget Attribution & Bounded Correspondence Recovery",
-  "integration_type": "additive_operator_cli_only",
-  "files_to_add": [
-    "scripts/apex_stage3b21_budget_recovery_audit.py",
-    "tests/test_apex_stage3b21_budget_recovery_audit.py"
-  ],
-  "overwrites_existing_files": false,
-  "production_data_mutation": false,
-  "archive_reader_replacement": false,
-  "trading_authority_change": false,
+  "title": "APEX Stage 3B.2.2 \u2014 Historical Archive Size Distribution & Source-Identity Provenance Audit",
+  "type": "incremental_candidate",
+  "base_source": "apex-engine-main(20261112-221036).zip",
+  "production_sqlite_modified": false,
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "validated_against": "Stage 3B.2 candidate source and fixture conventions; not full repo CI"
+  "files": [
+    "scripts/apex_stage3b22_archive_metadata_provenance_audit.py",
+    "tests/test_apex_stage3b22_archive_metadata_provenance_audit.py"
+  ],
+  "limitations": [
+    "bounded oldest/newest archive samples, not population quantiles",
+    "metadata bytes not verified against compressed BLOB",
+    "source identity existence is not source/archive payload equality",
+    "timestamps are text comparison only",
+    "query deadline cooperative, not hard I/O wall-clock deadline",
+    "full repository CI and actual Render probe pending"
+  ]
 }
