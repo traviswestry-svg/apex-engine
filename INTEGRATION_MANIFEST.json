@@ -1,21 +1,18 @@
 {
-  "name": "APEX Stage 3A.3 — Bounded JSON Structural Redundancy & Lossless Compression Feasibility Audit",
-  "status": "CANDIDATE_NOT_DEPLOYED",
-  "type": "incremental_standalone_operator_diagnostic",
-  "files": [
-    "scripts/apex_stage3a3_json_audit.py",
-    "tests/test_apex_stage3a3_json_audit.py",
-    "APEX_STAGE3A3_BUILD_REPORT.md",
-    "INTEGRATION_MANIFEST.json"
+  "candidate": "APEX_STAGE3B0_OFFLINE_COMPRESSION_COMPATIBILITY",
+  "base_source_snapshot": "apex-engine-main(20261112-221036).zip",
+  "add_only": [
+    "scripts/apex_stage3b0_compatibility_audit.py",
+    "tests/test_apex_stage3b0_compatibility_audit.py"
   ],
-  "deployment_changes": false,
-  "scheduled_changes": false,
-  "sqlite_writes": false,
-  "payload_export": false,
-  "hash_export": false,
-  "schema_migration": false,
-  "cleanup_authorized": false,
-  "execution_authority_changed": false,
-  "local_selected_tests_passed": 37,
-  "full_repository_ci": "NOT_RUN"
+  "overwrites_existing_files": false,
+  "new_service_endpoints": false,
+  "new_background_jobs": false,
+  "database_connections": false,
+  "database_schema_changes": false,
+  "archive_backfill": false,
+  "production_migration": false,
+  "trade_execution_authority_change": false,
+  "recommendation": "Evaluate existing historical_payload_archive ZLIB_9 contract rather than create overlapping archive code",
+  "readme": "APEX_STAGE3B0_BUILD_REPORT.md"
 }
