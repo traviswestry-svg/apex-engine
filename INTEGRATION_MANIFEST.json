@@ -1,17 +1,18 @@
 {
-  "base": "apex-engine-main(20261112-221036).zip",
-  "apex_version": "69.10.47",
-  "build": "Stage 3A SQLite Database Growth, Storage Capacity & Safe Retention Audit",
-  "candidate_only": true,
-  "files_added": [
-    "scripts/apex_stage3a_storage_audit.py",
-    "tests/test_apex_stage3a_storage_audit.py"
+  "build_name": "APEX Stage 3A.2 — SQLite Record-Size, Payload-Shape & Retention Dependency Audit",
+  "apex_version_context": "69.10.47",
+  "baseline": "apex-engine-main(20261112-221036).zip + Stage 3A read-only audit candidate",
+  "type": "incremental_optional_operator_diagnostic",
+  "deploy_required": true,
+  "files_to_add": [
+    "scripts/apex_stage3a2_record_audit.py",
+    "tests/test_apex_stage3a2_record_audit.py"
   ],
-  "files_modified": [],
-  "database_migrations": false,
-  "automated_cleanup": false,
-  "changes_trade_decisions": false,
-  "changes_execution_authority": false,
-  "selected_tests_passed": 67,
-  "full_ci_passed": null
+  "files_to_modify": [],
+  "schema_migrations": false,
+  "production_execution_performed": false,
+  "trading_authority_changes": false,
+  "automatic_retention_changes": false,
+  "selected_tests_passed": 47,
+  "full_ci": "PENDING"
 }
