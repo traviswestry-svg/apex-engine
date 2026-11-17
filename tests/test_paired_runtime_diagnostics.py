@@ -32,3 +32,9 @@ def test_write_failure_is_fail_open(monkeypatch):
     m,writes=load(monkeypatch)
     m.append_bounded=lambda *args: (_ for _ in ()).throw(OSError("unavailable"))
     m.scan_event("scan-1","ATTEMPT")
+
+def test_process_start_ticks_reads_linux_stat_with_spaces_in_name(monkeypatch):
+    m,writes=load(monkeypatch)
+    monkeypatch.setattr(m.Path, "read_text", lambda self: "42 (worker name) " + " ".join(
+        ["S"] + ["0"] * 18 + ["987"] + ["0"] * 5))
+    assert m._process_start_ticks(42) == 987
