@@ -9,7 +9,8 @@ export APEX_SCANNER_MANAGED_EXTERNALLY=true
 
 python scanner_worker.py &
 SCANNER_PID=$!
-gunicorn wsgi:app --bind "0.0.0.0:${PORT}" --workers 1 --threads 4 --timeout 120 &
+gunicorn wsgi:app --bind "0.0.0.0:${PORT}" --workers 1 --threads 4 --timeout 120 \
+  --max-requests 80 --max-requests-jitter 20 --graceful-timeout 120 &
 WEB_PID=$!
 
 # APEX runtime memory closure: optional low-overhead /proc+cgroup sidecar.
