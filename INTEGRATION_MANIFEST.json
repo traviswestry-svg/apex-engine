@@ -1,17 +1,15 @@
 {
-  "stage": "3B.3.3.1",
-  "name": "Historical Render Deployment Lifecycle & Gamma Activation Evidence Reconciliation",
+  "stage": "3B.3.3.2",
+  "name": "Authenticated Render Deployment Timeline & Lifecycle Evidence Collection",
   "status": "CANDIDATE_READ_ONLY_RESEARCH",
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "new_production_path": "scripts/apex_stage3b331_render_lifecycle_gamma_audit.py",
-  "tests": ["tests/test_apex_stage3b331_render_lifecycle_gamma_audit.py", "tests/_stage3b33_test_dependency.py"],
-  "production_modules_modified": [],
-  "preexisting_script_required": "scripts/apex_stage3b33_deployment_gamma_contract_audit.py",
-  "remotes_contacted": false,
-  "database_reads_or_writes": false,
-  "runtime_cutover": false,
-  "trade_execution_authority": false,
-  "local_new_tests_passed": 20,
-  "full_repository_ci": "NOT_RUN",
-  "production_execution": "NOT_RUN"
+  "deploy_only": ["scripts/apex_stage3b332_render_evidence_collector.py"],
+  "tests": ["tests/test_apex_stage3b332_render_evidence_collector.py"],
+  "documentation": ["APEX_STAGE3B332_BUILD_REPORT.md"],
+  "existing_files_modified": [],
+  "requires": ["Python 3.10+", "scripts/apex_stage3b331_render_lifecycle_gamma_audit.py for downstream reconciliation"],
+  "network": "Only direct HTTPS GET to api.render.com in explicit --mode api with RENDER_API_KEY; --mode offline performs zero network requests",
+  "writes": "Only two new local JSON report outputs in operator-selected out-dir; no databases, deployment actions, or trading changes",
+  "authentication_limitation": "Authenticated API session is not an independent historical activation attestation",
+  "test_results": {"focused_and_compatibility_passed": 22, "predecessor_regressions_passed": 20, "full_repository_ci": "NOT_RUN"}
 }
