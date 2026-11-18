@@ -8,7 +8,7 @@ import ssl
 import sys
 import urllib.request
 
-BASELINE = pathlib.Path(__file__).with_name('baseline_20261112_1031_ET.json')
+BASELINE = pathlib.Path(__file__).resolve().parents[1] / 'baseline_20261112_1031_ET.json'
 DEFAULT_URL = 'https://apex-engine-dashboard.onrender.com/health'
 EVENTS = ('max','oom','oom_kill','high','low','oom_group_kill')
 
