@@ -44,6 +44,15 @@ def test_provider_error_releases_slot():
     assert state == "COMPLETED" and value == {"ok": True}
 
 
+def test_fetch_reports_elapsed_monotonic_time(monkeypatch):
+    times = iter((10.0, 10.125))
+    monkeypatch.setattr(vp.time, "monotonic", lambda: next(times))
+    value, state, elapsed_ms = vp.fetch(lambda **kw: {"ok": True}, timeout=0.2)
+    assert value == {"ok": True}
+    assert state == "COMPLETED"
+    assert elapsed_ms == 125.0
+
+
 def test_metrics_have_no_payload_retention():
     metrics = vp.snapshot()
     assert metrics["max_active_provider_calls"] == 1
