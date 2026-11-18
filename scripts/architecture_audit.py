@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_ROOT_PYTHON = {
     "apex_engines.py",      # compatibility facade
     "app.py",               # legacy-compatible web module
+    "collect_observation.py",  # operator CLI
     "flatfiles_ingest.py",  # operator CLI
     "flatfiles_probe.py",   # operator CLI
     "release_truth.py",     # canonical release identity

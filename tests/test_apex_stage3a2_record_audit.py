@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-P = Path(__file__).parents[1] / 'scripts' / 'apex_stage3a2_record_audit.py'
+P = Path(__file__).resolve().parents[1] / 'scripts' / 'apex_stage3a2_record_audit.py'
 spec = importlib.util.spec_from_file_location('stage3a2', P)
 a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(a)
