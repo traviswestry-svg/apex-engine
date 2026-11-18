@@ -1,23 +1,17 @@
 {
-  "candidate": "APEX Stage 3B.3 — Canonical Evidence Reader Compatibility & Cross-Database Identity Verification",
-  "type": "operator_invoked_read_only_audit",
-  "source_snapshot": "apex-engine-main(20261112-221036).zip",
-  "files_to_add": [
-    "scripts/apex_stage3b3_reader_identity_audit.py",
-    "tests/test_apex_stage3b3_reader_identity_audit.py"
+  "candidate": "APEX Stage 3B.3.1 — Canonical Gamma Linkage Completeness & Historical Eligibility Classification",
+  "type": "additive_operator_initiated_research_only",
+  "files": [
+    "scripts/apex_stage3b31_gamma_eligibility_audit.py",
+    "tests/test_apex_stage3b31_gamma_eligibility_audit.py",
+    "APEX_STAGE3B31_BUILD_REPORT.md"
   ],
-  "files_to_modify": [],
-  "production_schema_changes": false,
-  "production_reader_cutover": false,
-  "changes_trade_or_execution_authority": false,
+  "requires_runtime_code_changes": false,
+  "production_database_mode": "read_only",
+  "archive_payload_reads": false,
+  "historical_eligibility_can_be_confirmed_with_current_evidence": false,
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "stage3b1_invalid_utf8_fix_applied": false,
-  "tests": {
-    "new_stage3b3": 15,
-    "prior_stage3b21_stage3b22_stage3b23_regressions": 51,
-    "selected_total_passed": 66,
-    "full_repository_ci": "NOT_RUN",
-    "production_execution": "NOT_RUN"
-  },
-  "integration_notes": "Review and merge only files_to_add. Run full CI before deployment. The prior regression test modules used for local validation are not part of this ZIP; they are separate previously delivered candidates."
+  "tests_new_passed": 12,
+  "full_repository_ci": "NOT_RUN",
+  "production_executed": false
 }
