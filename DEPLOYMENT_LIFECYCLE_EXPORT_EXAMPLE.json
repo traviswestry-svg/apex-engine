@@ -1,0 +1,22 @@
+{
+  "_NOTE": "SYNTHETIC EXAMPLE ONLY. Not a Render export or historical activation attestation. Populate with real, independently checked Render deployment and event evidence.",
+  "deployments": [
+    {
+      "deploy_id": "dep-example123",
+      "service_id": "srv-d7p3u2navr4c73d2q0jg",
+      "commit_sha": "0000000000000000000000000000000000000000",
+      "status": "deactivated",
+      "started_at": "2026-10-01T12:00:00Z",
+      "live_at": "2026-10-01T12:02:00Z"
+    }
+  ],
+  "events": [
+    {
+      "deploy_id": "dep-example123",
+      "service_id": "srv-d7p3u2navr4c73d2q0jg",
+      "event_type": "deploy_activated",
+      "outcome": "succeeded",
+      "occurred_at": "2026-10-01T12:02:00Z"
+    }
+  ]
+}
