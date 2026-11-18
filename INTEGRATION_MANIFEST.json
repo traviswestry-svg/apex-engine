@@ -1,16 +1,23 @@
 {
-  "stage": "3B.2.3",
-  "name": "Bounded Large-Payload Correspondence & Historical Format Provenance Verification",
-  "delivery": "incremental_candidate_no_repo_overwrite",
-  "files": [
-    "scripts/apex_stage3b23_large_payload_provenance_audit.py",
-    "tests/test_apex_stage3b23_large_payload_provenance_audit.py",
-    "APEX_STAGE3B23_BUILD_REPORT.md"
+  "candidate": "APEX Stage 3B.3 — Canonical Evidence Reader Compatibility & Cross-Database Identity Verification",
+  "type": "operator_invoked_read_only_audit",
+  "source_snapshot": "apex-engine-main(20261112-221036).zip",
+  "files_to_add": [
+    "scripts/apex_stage3b3_reader_identity_audit.py",
+    "tests/test_apex_stage3b3_reader_identity_audit.py"
   ],
-  "production_mutations": false,
-  "production_deployment_performed": false,
+  "files_to_modify": [],
+  "production_schema_changes": false,
+  "production_reader_cutover": false,
+  "changes_trade_or_execution_authority": false,
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "selected_tests": {"stage3b23":16,"prior_stage3b21_and_stage3b22":35,"total_passed":51},
-  "full_ci": "NOT_RUN",
-  "operator_entrypoint": "python scripts/apex_stage3b23_large_payload_provenance_audit.py --root /data --sample-rows 2 --query-budget-ms 400 --total-budget-ms 10000 --max-payload-bytes 1572864 --raw-byte-budget 16777216 --output /tmp/apex-stage3b23-large-payload.json"
+  "stage3b1_invalid_utf8_fix_applied": false,
+  "tests": {
+    "new_stage3b3": 15,
+    "prior_stage3b21_stage3b22_stage3b23_regressions": 51,
+    "selected_total_passed": 66,
+    "full_repository_ci": "NOT_RUN",
+    "production_execution": "NOT_RUN"
+  },
+  "integration_notes": "Review and merge only files_to_add. Run full CI before deployment. The prior regression test modules used for local validation are not part of this ZIP; they are separate previously delivered candidates."
 }
