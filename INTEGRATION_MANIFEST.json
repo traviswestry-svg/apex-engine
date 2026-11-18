@@ -1,18 +1,23 @@
 {
-  "build": "APEX Stage 3B.3.2 — Historical Gamma Policy Provenance & Versioned Eligibility Contract Verification",
-  "candidate_status": "RESEARCH_ONLY_NOT_DEPLOYED",
-  "based_on_source_snapshot": "apex-engine-main(20261112-221036).zip",
-  "files_to_add": [
-    "scripts/apex_stage3b32_historical_gamma_policy_audit.py",
-    "tests/test_apex_stage3b32_historical_gamma_policy_audit.py"
+  "stage": "3B.3.3",
+  "name": "Historical Deployment Provenance & Effective-Dated Gamma Contract Reconciliation",
+  "status": "CANDIDATE_READ_ONLY_RESEARCH",
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "new_paths": [
+    "scripts/apex_stage3b33_deployment_gamma_contract_audit.py",
+    "tests/test_apex_stage3b33_deployment_gamma_contract_audit.py"
   ],
-  "replaces_existing_engine_modules": false,
-  "existing_historical_archive_modified": false,
-  "production_migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "supporting_files": [
+    "DEPLOYMENT_EXPORT_EXAMPLE.json",
+    "APEX_STAGE3B33_BUILD_REPORT.md"
+  ],
+  "production_modules_modified": [],
+  "sqlite_operations": "NONE",
+  "external_api_calls": "NONE",
+  "git_checks": "LOCAL_READ_ONLY_GIT_SHOW_WHEN_HISTORY_PRESENT",
+  "effective_date_promotion": "NEVER_AUTOMATIC",
+  "local_validation": {"focused_tests_passed": 16, "snapshot_policy_markers_found": 4},
+  "prerequisites": ["Python 3.10+", "Optional local .git commit history", "Optional authenticated deployment-history export"],
   "full_ci": "NOT_RUN",
-  "local_tests": {"new_stage3b32": 12, "prior_stage3b31_regression": 12, "total": 24, "failed": 0},
-  "operation": "operator_initiated_read_only_audit",
-  "report_output": "outside_persistent_data_root",
-  "requires_independent_historical_deployment_attestation": true,
-  "no_automatic_historical_policy_enforcement": true
+  "production_execution": "NOT_RUN"
 }

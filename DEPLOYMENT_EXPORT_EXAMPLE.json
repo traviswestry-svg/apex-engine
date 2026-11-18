@@ -1,0 +1,11 @@
+{
+  "deployments": [
+    {
+      "service_id": "srv-d7p3u2navr4c73d2q0jg",
+      "commit_sha": "0000000000000000000000000000000000000000",
+      "status": "live",
+      "started_at": "2026-10-01T12:00:00Z",
+      "live_at": "2026-10-01T12:01:00Z"
+    }
+  ]
+}
