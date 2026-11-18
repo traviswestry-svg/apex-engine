@@ -1,17 +1,18 @@
 {
-  "candidate": "APEX Stage 3B.3.1 — Canonical Gamma Linkage Completeness & Historical Eligibility Classification",
-  "type": "additive_operator_initiated_research_only",
-  "files": [
-    "scripts/apex_stage3b31_gamma_eligibility_audit.py",
-    "tests/test_apex_stage3b31_gamma_eligibility_audit.py",
-    "APEX_STAGE3B31_BUILD_REPORT.md"
+  "build": "APEX Stage 3B.3.2 — Historical Gamma Policy Provenance & Versioned Eligibility Contract Verification",
+  "candidate_status": "RESEARCH_ONLY_NOT_DEPLOYED",
+  "based_on_source_snapshot": "apex-engine-main(20261112-221036).zip",
+  "files_to_add": [
+    "scripts/apex_stage3b32_historical_gamma_policy_audit.py",
+    "tests/test_apex_stage3b32_historical_gamma_policy_audit.py"
   ],
-  "requires_runtime_code_changes": false,
-  "production_database_mode": "read_only",
-  "archive_payload_reads": false,
-  "historical_eligibility_can_be_confirmed_with_current_evidence": false,
-  "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "tests_new_passed": 12,
-  "full_repository_ci": "NOT_RUN",
-  "production_executed": false
+  "replaces_existing_engine_modules": false,
+  "existing_historical_archive_modified": false,
+  "production_migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "full_ci": "NOT_RUN",
+  "local_tests": {"new_stage3b32": 12, "prior_stage3b31_regression": 12, "total": 24, "failed": 0},
+  "operation": "operator_initiated_read_only_audit",
+  "report_output": "outside_persistent_data_root",
+  "requires_independent_historical_deployment_attestation": true,
+  "no_automatic_historical_policy_enforcement": true
 }
