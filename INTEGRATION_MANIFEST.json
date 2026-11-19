@@ -1,17 +1,11 @@
 {
-  "stage": "3B.3.3.1",
-  "name": "Historical Render Deployment Lifecycle & Gamma Activation Evidence Reconciliation",
-  "status": "CANDIDATE_READ_ONLY_RESEARCH",
+  "stage": "3B.3.4",
+  "build": "Historical Gamma Implementation Commit & Runtime Activation Provenance Audit",
+  "candidate": true,
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "new_production_path": "scripts/apex_stage3b331_render_lifecycle_gamma_audit.py",
-  "tests": ["tests/test_apex_stage3b331_render_lifecycle_gamma_audit.py", "tests/_stage3b33_test_dependency.py"],
-  "production_modules_modified": [],
-  "preexisting_script_required": "scripts/apex_stage3b33_deployment_gamma_contract_audit.py",
-  "remotes_contacted": false,
-  "database_reads_or_writes": false,
-  "runtime_cutover": false,
-  "trade_execution_authority": false,
-  "local_new_tests_passed": 20,
-  "full_repository_ci": "NOT_RUN",
-  "production_execution": "NOT_RUN"
+  "new_files": ["scripts/apex_stage3b34_gamma_commit_activation_audit.py", "tests/test_apex_stage3b34_gamma_commit_activation_audit.py", "APEX_STAGE3B34_BUILD_REPORT.md"],
+  "dependencies": ["Git history for commit evidence (optional, absence reported)", "Stage 3B.3.3.2 deployment-history.json and render-native-evidence.json"],
+  "existing_modules_modified": [],
+  "tests": {"selected_passed":55,"selected_skipped":1,"full_repo_ci":"NOT_RUN"},
+  "safety": {"read_only":true,"no_db_reads":true,"no_git_writes":true,"no_remote_requests":true,"no_trading_authority":true,"no_migration":true}
 }
