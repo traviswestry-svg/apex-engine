@@ -1,15 +1,30 @@
 {
-  "stage": "3B.3.7",
-  "build_name": "Gamma Origin Candidate Semantic Verification & Historical Deployment Bracketing",
-  "status": "CANDIDATE_NOT_DEPLOYED",
+  "stage": "APEX Stage 3B.3.8",
+  "title": "Historical Render Deployment Recovery & Gamma Runtime Activation Evidence Audit",
+  "kind": "ADDITIVE_READ_ONLY_CANDIDATE",
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "additive_entrypoint": "scripts/apex_stage3b37_semantic_deployment_bracketing.py",
-  "dependencies_to_preserve": ["scripts/apex_stage3b36_gamma_origin_discovery.py", "scripts/apex_stage3b35_git_boundary_audit.py"],
-  "tests": ["tests/test_apex_stage3b37_semantic_deployment_bracketing.py", "tests/test_apex_stage3b36_gamma_origin_discovery.py", "tests/test_apex_stage3b35_git_boundary_audit.py"],
-  "tests_passed": 32,
-  "tests_failed": 0,
-  "production_db_access": false,
-  "historical_behavior_executed": false,
-  "runtime_activation_attested": false,
-  "effective_date_assigned": false
+  "files": [
+    "APEX_STAGE3B38_BUILD_REPORT.md",
+    "INTEGRATION_MANIFEST.json",
+    "scripts/apex_stage3b332_render_evidence_collector.py",
+    "scripts/apex_stage3b35_git_boundary_audit.py",
+    "scripts/apex_stage3b36_gamma_origin_discovery.py",
+    "scripts/apex_stage3b37_semantic_deployment_bracketing.py",
+    "scripts/apex_stage3b38_historical_render_runtime_audit.py",
+    "tests/test_apex_stage3b332_render_evidence_collector.py",
+    "tests/test_apex_stage3b35_git_boundary_audit.py",
+    "tests/test_apex_stage3b36_gamma_origin_discovery.py",
+    "tests/test_apex_stage3b37_semantic_deployment_bracketing.py",
+    "tests/test_apex_stage3b38_historical_render_runtime_audit.py"
+  ],
+  "dependencies": [
+    "apex_stage3b332_render_evidence_collector.py",
+    "apex_stage3b35_git_boundary_audit.py",
+    "apex_stage3b36_gamma_origin_discovery.py",
+    "apex_stage3b37_semantic_deployment_bracketing.py"
+  ],
+  "tested": "64 passed, 1 skipped selected tests",
+  "production_tested": false,
+  "provider_attested": false,
+  "runtime_activation_verified": false
 }
