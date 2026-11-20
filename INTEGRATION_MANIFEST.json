@@ -1,20 +1,15 @@
 {
-  "stage": "APEX Stage 3B.3.6",
-  "title": "Historical Gamma Implementation Origin & Deployment Boundary Discovery",
-  "build_type": "ADDITIVE_RESEARCH_ONLY_CANDIDATE",
+  "stage": "3B.3.7",
+  "build_name": "Gamma Origin Candidate Semantic Verification & Historical Deployment Bracketing",
+  "status": "CANDIDATE_NOT_DEPLOYED",
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "new_files": [
-    "scripts/apex_stage3b36_gamma_origin_discovery.py",
-    "tests/test_apex_stage3b36_gamma_origin_discovery.py"
-  ],
-  "bundled_prior_dependency_unchanged": [
-    "scripts/apex_stage3b35_git_boundary_audit.py",
-    "tests/test_apex_stage3b35_git_boundary_audit.py"
-  ],
-  "tests_passed": 24,
-  "production_validation": false,
-  "git_network_operations": false,
-  "database_access": false,
-  "deployment_mutations": false,
-  "trade_execution_authority": false
+  "additive_entrypoint": "scripts/apex_stage3b37_semantic_deployment_bracketing.py",
+  "dependencies_to_preserve": ["scripts/apex_stage3b36_gamma_origin_discovery.py", "scripts/apex_stage3b35_git_boundary_audit.py"],
+  "tests": ["tests/test_apex_stage3b37_semantic_deployment_bracketing.py", "tests/test_apex_stage3b36_gamma_origin_discovery.py", "tests/test_apex_stage3b35_git_boundary_audit.py"],
+  "tests_passed": 32,
+  "tests_failed": 0,
+  "production_db_access": false,
+  "historical_behavior_executed": false,
+  "runtime_activation_attested": false,
+  "effective_date_assigned": false
 }
