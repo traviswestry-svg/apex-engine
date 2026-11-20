@@ -1,18 +1,20 @@
 {
-  "stage": "3B.3.5",
-  "name": "Verified Historical Git Commit Provenance & Gamma Implementation Boundary Audit",
-  "mode": "READ_ONLY_EXTERNAL_GIT_PROVENANCE",
+  "stage": "APEX Stage 3B.3.6",
+  "title": "Historical Gamma Implementation Origin & Deployment Boundary Discovery",
+  "build_type": "ADDITIVE_RESEARCH_ONLY_CANDIDATE",
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
   "new_files": [
-    "scripts/apex_stage3b35_git_boundary_audit.py",
-    "tests/test_apex_stage3b35_git_boundary_audit.py",
-    "APEX_STAGE3B35_BUILD_REPORT.md",
-    "INTEGRATION_MANIFEST.json"
+    "scripts/apex_stage3b36_gamma_origin_discovery.py",
+    "tests/test_apex_stage3b36_gamma_origin_discovery.py"
   ],
-  "replaced_production_modules": [],
-  "predecessor_outputs": ["deployment-history.json", "render-native-evidence.json"],
-  "remote_git_operations": false,
+  "bundled_prior_dependency_unchanged": [
+    "scripts/apex_stage3b35_git_boundary_audit.py",
+    "tests/test_apex_stage3b35_git_boundary_audit.py"
+  ],
+  "tests_passed": 24,
+  "production_validation": false,
+  "git_network_operations": false,
   "database_access": false,
-  "runtime_activation_verified": false,
-  "testing": {"selected_passed": 85, "selected_skipped": 1, "full_repository_ci": "NOT_RUN"}
+  "deployment_mutations": false,
+  "trade_execution_authority": false
 }
