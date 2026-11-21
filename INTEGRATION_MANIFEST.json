@@ -1,14 +1,17 @@
 {
-  "build": "APEX Stage 3B.3.12 CANDIDATE",
-  "status": "CANDIDATE_NOT_PRODUCTION_VALIDATED",
+  "stage": "APEX Stage 3B.3.13",
+  "title": "Historical Producer-Origin & Runtime Activation Evidence Audit",
+  "candidate_only": true,
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "dependencies": [
-    "scripts/apex_stage3b310_origin_population_audit.py",
-    "scripts/apex_stage3b39_runtime_decision_gamma_audit.py"
+  "tests": "17 synthetic unit tests",
+  "files_added": [
+    "scripts/apex_stage3b313_producer_runtime_evidence_audit.py",
+    "tests/test_apex_stage3b313_producer_runtime_evidence_audit.py",
+    ".github/workflows/apex-stage3b313-producer-runtime-audit.yml"
   ],
-  "research_boundary": "2026-09-18T13:45:00.256463Z",
-  "unit_tests": "8 passed (synthetic only)",
-  "production_files_modified": false,
-  "data_sensitivity": "No DB artifacts bundled; includes user-supplied synthetic verification JSON",
-  "scope": "bounded live read-only aggregate linkage and provenance reconciliation, NOT runtime activation attestation"
+  "files_modified": [],
+  "requires_previous_aggregate": "apex.stage3b312_decision_time_linkage_runtime_evidence.v1",
+  "writes": "aggregate report in caller-selected output outside protected /data",
+  "production_databases_accessed": false,
+  "automatic_runtime_attestation": false
 }
