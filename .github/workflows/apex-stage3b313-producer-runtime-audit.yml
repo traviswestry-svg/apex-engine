@@ -1,0 +1,27 @@
+name: APEX Stage 3B.3.13 - Producer Origin Runtime Audit
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/apex_stage3b313_producer_runtime_evidence_audit.py'
+      - 'tests/test_apex_stage3b313_producer_runtime_evidence_audit.py'
+      - '.github/workflows/apex-stage3b313-producer-runtime-audit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-regression-only:
+    name: Stage 3B.3.13 synthetic evidence tests (not runtime attestation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Execute synthetic fixture tests only
+        run: python -m unittest discover -s tests -p 'test_apex_stage3b313_producer_runtime_evidence_audit.py' -v

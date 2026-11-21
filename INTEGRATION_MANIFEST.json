@@ -1,4 +1,5 @@
 {
+<<<<<<< Updated upstream
   "stage": "3B.3.11",
   "title": "Isolated Historical Gamma Semantic Behavior & Decision-Time Replay Validation",
   "candidate_only": true,
@@ -10,4 +11,21 @@
   "historical_parent_commit": "6d8df89bda76765be4efeb5bbbdc5cb94f3518ab",
   "production_execution_of_historical_code": false,
   "migration_authority": "BLOCKED_RESEARCH_ONLY"
+=======
+  "stage": "APEX Stage 3B.3.13",
+  "title": "Historical Producer-Origin & Runtime Activation Evidence Audit",
+  "candidate_only": true,
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "tests": "17 synthetic unit tests",
+  "files_added": [
+    "scripts/apex_stage3b313_producer_runtime_evidence_audit.py",
+    "tests/test_apex_stage3b313_producer_runtime_evidence_audit.py",
+    ".github/workflows/apex-stage3b313-producer-runtime-audit.yml"
+  ],
+  "files_modified": [],
+  "requires_previous_aggregate": "apex.stage3b312_decision_time_linkage_runtime_evidence.v1",
+  "writes": "aggregate report in caller-selected output outside protected /data",
+  "production_databases_accessed": false,
+  "automatic_runtime_attestation": false
+>>>>>>> Stashed changes
 }
