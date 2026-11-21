@@ -1,46 +1,17 @@
 {
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-  "stage": "APEX Stage 3B.3.13",
-  "title": "Historical Producer-Origin & Runtime Activation Evidence Audit",
-  "candidate_only": true,
-  "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "tests": "17 synthetic unit tests",
-  "files_added": [
-    "scripts/apex_stage3b313_producer_runtime_evidence_audit.py",
-    "tests/test_apex_stage3b313_producer_runtime_evidence_audit.py",
-    ".github/workflows/apex-stage3b313-producer-runtime-audit.yml"
-  ],
-  "files_modified": [],
-  "requires_previous_aggregate": "apex.stage3b312_decision_time_linkage_runtime_evidence.v1",
-  "writes": "aggregate report in caller-selected output outside protected /data",
-  "production_databases_accessed": false,
-  "automatic_runtime_attestation": false
-=======
-  "candidate": "APEX Stage 3B.3.14 — Existing Historical Evidence Source Metadata Inventory",
-  "authority": "BLOCKED_RESEARCH_ONLY",
-  "production_effect": "none",
-  "purpose": "discover existing historical producer/runtime/provider evidence sources by metadata only",
-  "tests": "17 offline synthetic unittest cases",
-  "paths": [
-    "scripts/apex_stage3b314_evidence_source_inventory.py",
-    "tests/test_apex_stage3b314_evidence_source_inventory.py",
-    ".github/workflows/apex-stage3b314-evidence-inventory-tests.yml",
-    "APEX_STAGE3B314_BUILD_REPORT.md"
-  ]
->>>>>>> Stashed changes
-=======
   "stage": "APEX Stage 3B.3.15.1",
+  "title": "Historical Gamma Receipt & Decision Provenance Schema Compatibility Fix",
   "purpose": "Narrow observed_at/ticker compatibility of Stage 3B.3.15 stored receipt correlation",
-  "replace": [
-    "scripts/apex_stage3b315_gamma_receipt_provenance_correlation.py",
-    "tests/test_apex_stage3b315_gamma_receipt_provenance_correlation.py"
-  ],
-  "add": [
-    ".github/workflows/apex-stage3b3151-schema-compatibility-tests.yml"
-  ],
-  "unit_tests_passed": 24,
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "production_database_writes": false
->>>>>>> Stashed changes
+  "production_source_changes": false,
+  "production_database_writes": false,
+  "synthetic_tests": 24,
+  "files": [
+    "scripts/apex_stage3b315_gamma_receipt_provenance_correlation.py",
+    "tests/test_apex_stage3b315_gamma_receipt_provenance_correlation.py",
+    ".github/workflows/apex-stage3b315-gamma-receipt-tests.yml",
+    ".github/workflows/apex-stage3b3151-schema-compatibility-tests.yml",
+    "APEX_STAGE3B315_BUILD_REPORT.md",
+    "APEX_STAGE3B3151_BUILD_REPORT.md"
+  ]
 }
