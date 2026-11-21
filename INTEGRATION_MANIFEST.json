@@ -1,21 +1,13 @@
 {
-  "stage": "APEX Stage 3B.3.10",
-  "title": "Historical Record-Origin Attestation & Gamma Population Coverage Audit",
-  "type": "ADDITIVE_READ_ONLY_CANDIDATE",
-  "new_files": [
-    "scripts/apex_stage3b310_origin_population_audit.py",
-    "tests/test_apex_stage3b310_origin_population_audit.py",
-    "APEX_STAGE3B310_BUILD_REPORT.md",
-    "INTEGRATION_MANIFEST.json"
+  "stage": "3B.3.11",
+  "title": "Isolated Historical Gamma Semantic Behavior & Decision-Time Replay Validation",
+  "candidate_only": true,
+  "additive_files": [
+    "scripts/apex_stage3b311_semantic_replay.py",
+    "tests/test_apex_stage3b311_semantic_replay.py"
   ],
-  "unchanged_existing_dependency": "scripts/apex_stage3b39_runtime_decision_gamma_audit.py",
-  "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "tests": {"new_passed": 9, "prior_regression_passed": 10, "failed": 0},
-  "production_execution_completed": false,
-  "notes": [
-    "Integrate the new script and tests without replacing prior-stage implementation.",
-    "Review local production DB schema and run full repository CI before deploying.",
-    "Population coverage refers only to complete scan of visible decisions table, never historical population attestation.",
-    "No source availability, runtime feature activation, policy effective date, or record origin is attested."
-  ]
+  "historical_candidate_commit": "6f15e854b21b6406a570c100d955ccbbb0debe59",
+  "historical_parent_commit": "6d8df89bda76765be4efeb5bbbdc5cb94f3518ab",
+  "production_execution_of_historical_code": false,
+  "migration_authority": "BLOCKED_RESEARCH_ONLY"
 }
