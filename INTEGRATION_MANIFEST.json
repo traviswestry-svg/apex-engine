@@ -1,30 +1,25 @@
 {
-  "stage": "APEX Stage 3B.3.8",
-  "title": "Historical Render Deployment Recovery & Gamma Runtime Activation Evidence Audit",
-  "kind": "ADDITIVE_READ_ONLY_CANDIDATE",
+  "schema": "apex.stage3b39_candidate_manifest.v1",
+  "build": "APEX Stage 3B.3.9 — Historical Gamma Runtime Activation & Decision-Time Evidence Correlation",
+  "candidate_only": true,
+  "new_files": [
+    "scripts/apex_stage3b39_runtime_decision_gamma_audit.py",
+    "tests/test_apex_stage3b39_runtime_decision_gamma_audit.py"
+  ],
+  "existing_files_modified": [],
+  "tested": {"selected_tests_passed": 86, "selected_tests_skipped": 1, "full_repository_ci": "NOT_RUN", "production_audit": "NOT_RUN"},
+  "requires_existing_files_on_render": [
+    "/data/apex_audit_evidence/stage3b38-deployment-history.json",
+    "/data/apex_audit_evidence/stage3b38-render-native-evidence.json",
+    "/data/apex_evidence_pipeline.db",
+    "/data/apex_tracking.db"
+  ],
   "migration_authority": "BLOCKED_RESEARCH_ONLY",
-  "files": [
-    "APEX_STAGE3B38_BUILD_REPORT.md",
-    "INTEGRATION_MANIFEST.json",
-    "scripts/apex_stage3b332_render_evidence_collector.py",
-    "scripts/apex_stage3b35_git_boundary_audit.py",
-    "scripts/apex_stage3b36_gamma_origin_discovery.py",
-    "scripts/apex_stage3b37_semantic_deployment_bracketing.py",
-    "scripts/apex_stage3b38_historical_render_runtime_audit.py",
-    "tests/test_apex_stage3b332_render_evidence_collector.py",
-    "tests/test_apex_stage3b35_git_boundary_audit.py",
-    "tests/test_apex_stage3b36_gamma_origin_discovery.py",
-    "tests/test_apex_stage3b37_semantic_deployment_bracketing.py",
-    "tests/test_apex_stage3b38_historical_render_runtime_audit.py"
-  ],
-  "dependencies": [
-    "apex_stage3b332_render_evidence_collector.py",
-    "apex_stage3b35_git_boundary_audit.py",
-    "apex_stage3b36_gamma_origin_discovery.py",
-    "apex_stage3b37_semantic_deployment_bracketing.py"
-  ],
-  "tested": "64 passed, 1 skipped selected tests",
-  "production_tested": false,
-  "provider_attested": false,
-  "runtime_activation_verified": false
+  "evidence_limits": [
+    "read-only bounded sampling only, never population verification",
+    "offline Render lifecycle not provider-signed or runtime activation attestation",
+    "gamma observation time ordering does not prove historical availability",
+    "no record origin attestation; no effective-date assignment",
+    "no backfill, no SQLite writes, no trading"
+  ]
 }
