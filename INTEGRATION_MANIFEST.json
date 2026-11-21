@@ -1,5 +1,6 @@
 {
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
   "stage": "APEX Stage 3B.3.13",
   "title": "Historical Producer-Origin & Runtime Activation Evidence Audit",
   "candidate_only": true,
@@ -27,5 +28,19 @@
     ".github/workflows/apex-stage3b314-evidence-inventory-tests.yml",
     "APEX_STAGE3B314_BUILD_REPORT.md"
   ]
+>>>>>>> Stashed changes
+=======
+  "stage": "APEX Stage 3B.3.15.1",
+  "purpose": "Narrow observed_at/ticker compatibility of Stage 3B.3.15 stored receipt correlation",
+  "replace": [
+    "scripts/apex_stage3b315_gamma_receipt_provenance_correlation.py",
+    "tests/test_apex_stage3b315_gamma_receipt_provenance_correlation.py"
+  ],
+  "add": [
+    ".github/workflows/apex-stage3b3151-schema-compatibility-tests.yml"
+  ],
+  "unit_tests_passed": 24,
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "production_database_writes": false
 >>>>>>> Stashed changes
 }
