@@ -1,13 +1,14 @@
 {
-  "stage": "3B.3.11",
-  "title": "Isolated Historical Gamma Semantic Behavior & Decision-Time Replay Validation",
-  "candidate_only": true,
-  "additive_files": [
-    "scripts/apex_stage3b311_semantic_replay.py",
-    "tests/test_apex_stage3b311_semantic_replay.py"
+  "build": "APEX Stage 3B.3.12 CANDIDATE",
+  "status": "CANDIDATE_NOT_PRODUCTION_VALIDATED",
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "dependencies": [
+    "scripts/apex_stage3b310_origin_population_audit.py",
+    "scripts/apex_stage3b39_runtime_decision_gamma_audit.py"
   ],
-  "historical_candidate_commit": "6f15e854b21b6406a570c100d955ccbbb0debe59",
-  "historical_parent_commit": "6d8df89bda76765be4efeb5bbbdc5cb94f3518ab",
-  "production_execution_of_historical_code": false,
-  "migration_authority": "BLOCKED_RESEARCH_ONLY"
+  "research_boundary": "2026-09-18T13:45:00.256463Z",
+  "unit_tests": "8 passed (synthetic only)",
+  "production_files_modified": false,
+  "data_sensitivity": "No DB artifacts bundled; includes user-supplied synthetic verification JSON",
+  "scope": "bounded live read-only aggregate linkage and provenance reconciliation, NOT runtime activation attestation"
 }
