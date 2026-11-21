@@ -1,0 +1,82 @@
+
+name: APEX Stage 3B.3.11 - Historical Gamma Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  historical-gamma-validation:
+    name: Isolated historical gamma replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout full Git history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect historical source bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/apex_stage3b311_semantic_replay.py \
+            --mode collect \
+            --git-repository "$GITHUB_WORKSPACE/.git" \
+            --output "$RUNNER_TEMP/apex-stage3b311-historical-source-bundle.zip"
+
+      - name: Pull isolated Python image
+        run: docker pull python:3.12-slim
+
+      - name: Run isolated historical validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/apex-stage3b311-results"
+
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --memory 512m \
+            --pids-limit 64 \
+            --tmpfs /tmp:rw,nosuid,size=64m \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/scripts/apex_stage3b311_semantic_replay.py,target=/input/replay.py,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/apex-stage3b311-historical-source-bundle.zip,target=/input/historical.zip,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/apex-stage3b311-results,target=/output" \
+            --workdir /tmp \
+            python:3.12-slim \
+            python /input/replay.py \
+              --mode validate \
+              --bundle /input/historical.zip \
+              --output /output/apex-stage3b311-validation.json
+
+      - name: Display validation summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/apex-stage3b311-results/apex-stage3b311-validation.json" ]; then
+            python -m json.tool \
+              "$RUNNER_TEMP/apex-stage3b311-results/apex-stage3b311-validation.json"
+          else
+            echo "Validation report not generated."
+          fi
+
+      - name: Upload validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: APEX-Stage3B311-Historical-Gamma-Validation
+          path: ${{ runner.temp }}/apex-stage3b311-results/apex-stage3b311-validation.json
+          if-no-files-found: warn
+          retention-days: 30
