@@ -24,7 +24,9 @@ PREV_SCHEMA = 'apex.stage3b314_evidence_source_inventory.v1'
 DECISION_TABLE = 'decisions'
 GAMMA_TABLE = 'gamma_observational_snapshots'
 REFERENCE = '2026-09-18T13:45:00.256463Z'  # historical reference, NOT effective policy date
-DECISION_TIME_COLUMNS = ('decision_time', 'created_at', 'timestamp')
+# `observed_at` is present in the deployed decisions schema. Treat it as a
+# stored timestamp claim, NOT independently proven decision execution time.
+DECISION_TIME_COLUMNS = ('decision_time', 'created_at', 'timestamp', 'observed_at')
 GAMMA_KEY = 'canonical_gamma_snapshot_id'
 SYMBOL_COLUMNS = ('symbol', 'underlying_symbol', 'ticker')
 DB_SUFFIXES = ('.db', '.sqlite', '.sqlite3')
@@ -160,7 +162,8 @@ def base_report():
         'SQLite files are read independently without a shared point-in-time transaction.',
         'Exact-ID correlation is not evidence of which producer executed the runtime gamma feature.',
         'Decision provenance snapshot_id is not assumed to be the canonical gamma snapshot ID.',
-        'Schema availability does not establish historical row presence or independent source authenticity.'
+        'Schema availability does not establish historical row presence or independent source authenticity.',
+        'decisions.observed_at is a stored observation timestamp claim; its equivalence to live decision execution time is UNVERIFIED.'
       ]}
 
 
@@ -195,7 +198,14 @@ def audit(args):
         if not has_index(gg,GAMMA_TABLE,GAMMA_KEY):
             r['status']='GAMMA_EXACT_ID_UNINDEXED_FAIL_CLOSED';return r
         r['gates']['schema_compatible']='PASS'
+        # Do not silently promote an observed_at value to independently attested
+        # decision execution time. The audit only compares stored time claims.
+        r['gates']['decision_timestamp_semantics']='UNVERIFIED'
         r['schema_capabilities']={
+          'decision_timestamp_source': dtime,
+          'decision_timestamp_is_attested_execution_time': False,
+          'decision_symbol_source': dsymbol,
+          'gamma_symbol_source': gsymbol,
           'decision_symbol_column_available':bool(dsymbol),
           'gamma_symbol_column_available':bool(gsymbol),
           'symbol_comparison_supported':bool(dsymbol and gsymbol),

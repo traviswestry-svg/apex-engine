@@ -129,3 +129,47 @@ class Tests(unittest.TestCase):
         self.assertIsNotNone(m.timestamp('2026-09-21T12:00:00+00:00'))
 
 if __name__=='__main__':unittest.main()
+
+class RenderSchemaCompatibilityTests(unittest.TestCase):
+    run_audit = Tests.run_audit
+    """Exact table/column spelling reported from the Render schema diagnostic."""
+
+    def setUp(self):
+        Tests.setUp(self)
+        with sqlite3.connect(self.db1) as d:
+            d.execute('ALTER TABLE decisions RENAME COLUMN decision_time TO observed_at')
+            d.execute('ALTER TABLE decisions RENAME COLUMN symbol TO ticker')
+        with sqlite3.connect(self.db2) as d:
+            d.execute('ALTER TABLE gamma_observational_snapshots RENAME COLUMN symbol TO ticker')
+
+    def test_live_column_names_are_supported(self):
+        x=self.run_audit()
+        self.assertEqual(x['status'],'BOUNDED_RECEIPT_CORRELATION_COMPLETED_NOT_ATTESTED')
+        self.assertEqual(x['gates']['schema_compatible'],'PASS')
+        self.assertEqual(x['schema_capabilities']['decision_timestamp_source'],'observed_at')
+        self.assertEqual(x['schema_capabilities']['decision_symbol_source'],'ticker')
+        self.assertEqual(x['schema_capabilities']['gamma_symbol_source'],'ticker')
+        self.assertEqual(x['counts']['receipt_and_persistence_predecision_claim_matches'],1)
+        self.assertEqual(x['counts']['symbol_correlated'],1)
+        self.assertEqual(x['gates']['decision_timestamp_semantics'],'UNVERIFIED')
+        self.assertFalse(x['schema_capabilities']['decision_timestamp_is_attested_execution_time'])
+
+    def test_live_column_names_detect_symbol_conflict(self):
+        with sqlite3.connect(self.db2) as d:
+            d.execute("UPDATE gamma_observational_snapshots SET ticker='QQQ'")
+        x=self.run_audit()
+        self.assertEqual(x['counts']['symbol_mismatch'],1)
+        self.assertNotIn('receipt_and_persistence_predecision_claim_matches',x['counts'])
+
+    def test_live_column_names_still_reject_naive_time(self):
+        with sqlite3.connect(self.db1) as d:
+            d.execute("UPDATE decisions SET observed_at='2026-09-21 12:00:00'")
+        x=self.run_audit()
+        self.assertEqual(x['counts']['decision_time_invalid'],1)
+        self.assertNotIn('exact_id_correlated',x['counts'])
+
+    def test_no_raw_data_from_live_schema(self):
+        output=json.dumps(self.run_audit())
+        self.assertNotIn('decision-unique-secret', output)
+        self.assertNotIn('gamma-unique-secret', output)
+        self.assertNotIn('2026-09-21T', output)
