@@ -29,3 +29,17 @@
   ]
 >>>>>>> Stashed changes
 }
+=======
+  "stage": "APEX 3B.3.15",
+  "title": "Historical Gamma Receipt & Decision Provenance Correlation",
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "production_source_changes": false,
+  "synthetic_tests": 20,
+  "files": [
+    "scripts/apex_stage3b315_gamma_receipt_provenance_correlation.py",
+    "tests/test_apex_stage3b315_gamma_receipt_provenance_correlation.py",
+    ".github/workflows/apex-stage3b315-gamma-receipt-tests.yml",
+    "APEX_STAGE3B315_BUILD_REPORT.md"
+  ]
+}
+>>>>>>> Stashed changes
