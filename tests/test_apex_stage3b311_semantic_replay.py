@@ -74,5 +74,9 @@ class SemanticReplayTest(unittest.TestCase):
  def test_reject_directory(self):
   with tempfile.TemporaryDirectory() as t:
    with self.assertRaises(ValueError):m.collect(pathlib.Path(t)/'missing',pathlib.Path(t)/'out.zip')
+ def test_workflow_runs_container_as_bundle_owner(self):
+  workflow=(SCRIPT.parents[1]/'.github/workflows/apex-stage3b311-validation.yml').read_text()
+  self.assertIn('--user "$(id -u):$(id -g)"',workflow)
+  self.assertIn('--cap-drop ALL',workflow)
 
 if __name__=='__main__':unittest.main()
