@@ -1,0 +1,384 @@
+{
+  "coverage": {
+    "decision_time_lookup_executed": false,
+    "eligibility_function_executed": true,
+    "historical_population_replay_verified": false,
+    "isolation_attested": false,
+    "persistence_tested": false,
+    "production_runtime_activation_verified": false,
+    "snapshot_freeze_function_executed": true
+  },
+  "fixture_count": 15,
+  "fixture_failed": [],
+  "fixture_passed": 15,
+  "fixtures": [
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "changed": false,
+      "fixture": "valid_contemporaneous",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "GAMMA_INTEGRITY_FRESHNESS_UNKNOWN"
+        ],
+        "state": "INELIGIBLE",
+        "weight_factor": 0.0
+      },
+      "changed": true,
+      "fixture": "unknown_freshness",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "STALE_CANONICAL_GAMMA_EVIDENCE"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": true,
+      "fixture": "stale",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "AGING_CANONICAL_GAMMA_EVIDENCE"
+        ],
+        "state": "DISCOUNTED",
+        "weight_factor": 0.75
+      },
+      "changed": true,
+      "fixture": "aging",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "NON_CONTEMPORANEOUS_GAMMA_PROVENANCE"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": true,
+      "fixture": "reconstructed",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "NON_CONTEMPORANEOUS_GAMMA_PROVENANCE"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": true,
+      "fixture": "replayed",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "NON_CONTEMPORANEOUS_GAMMA_PROVENANCE"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": true,
+      "fixture": "backfilled",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "GAPPED_GAMMA_OBSERVATION_SEQUENCE"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": true,
+      "fixture": "gapped",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "GAMMA_CONTINUITY_UNKNOWN"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": true,
+      "fixture": "unknown_continuity",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "GAMMA_INTEGRITY_FRESHNESS_UNKNOWN"
+        ],
+        "state": "INELIGIBLE",
+        "weight_factor": 0.0
+      },
+      "changed": true,
+      "fixture": "unknown_id_without_freshness",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "changed": false,
+      "fixture": "no_identity_legacy",
+      "parent": {
+        "deterministic": true,
+        "reasons": [],
+        "state": "FULL",
+        "weight_factor": 1.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "LOW_GAMMA_STRUCTURE_DURABILITY"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": false,
+      "fixture": "low_durability",
+      "parent": {
+        "deterministic": true,
+        "reasons": [
+          "LOW_GAMMA_STRUCTURE_DURABILITY"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "WEAK_GAMMA_STABILIZATION_CAPACITY"
+        ],
+        "state": "DISCOUNTED",
+        "weight_factor": 0.6
+      },
+      "changed": false,
+      "fixture": "weak_capacity",
+      "parent": {
+        "deterministic": true,
+        "reasons": [
+          "WEAK_GAMMA_STABILIZATION_CAPACITY"
+        ],
+        "state": "DISCOUNTED",
+        "weight_factor": 0.6
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "EVENT_RELEASE_BOUNDARY"
+        ],
+        "state": "WATCH_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": false,
+      "fixture": "watch_only_event",
+      "parent": {
+        "deterministic": true,
+        "reasons": [
+          "EVENT_RELEASE_BOUNDARY"
+        ],
+        "state": "WATCH_ONLY",
+        "weight_factor": 0.0
+      },
+      "pass": true
+    },
+    {
+      "candidate": {
+        "deterministic": true,
+        "reasons": [
+          "STALE_EVIDENCE"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "changed": false,
+      "fixture": "stale_opinion",
+      "parent": {
+        "deterministic": true,
+        "reasons": [
+          "STALE_EVIDENCE"
+        ],
+        "state": "CONTEXT_ONLY",
+        "weight_factor": 0.0
+      },
+      "pass": true
+    }
+  ],
+  "guardrails": {
+    "no_backfill": true,
+    "no_git_mutations": true,
+    "no_production_db_access": true,
+    "no_reader_cutover": true,
+    "no_trade_execution": true
+  },
+  "limitations": [
+    "Selected function extraction is not full historical module execution",
+    "Python subprocess/VM separation must be independently enforced; this is not a security sandbox",
+    "No historical gamma database or real historical decision records were used",
+    "Snapshot freeze function tested only against a synthetic exact-ID gamma lookup; real provider availability and lookup implementation untested",
+    "Git source SHA256 is transfer integrity, not independent source attestation"
+  ],
+  "migration_authority": "BLOCKED_RESEARCH_ONLY",
+  "mode": "OFFLINE_DISPOSABLE_SELECTED_FUNCTION_REPLAY",
+  "schema": "apex.stage3b311_semantic_replay.v1",
+  "snapshot_freeze_selected_execution": {
+    "passed": 6,
+    "state": "SELECTED_FUNCTION_EXECUTED",
+    "tests": [
+      {
+        "details": {
+          "linkage_status": "LEGACY_OR_UNKNOWN",
+          "lookup_calls": 0
+        },
+        "fixture": "legacy_no_latest_substitution",
+        "pass": true
+      },
+      {
+        "details": {
+          "result_id": "A"
+        },
+        "fixture": "exact_id_only",
+        "pass": true
+      },
+      {
+        "details": {
+          "linkage_status": "LINKAGE_LOOKUP_ERROR"
+        },
+        "fixture": "missing_id_lookup_error_no_fallback",
+        "pass": true
+      },
+      {
+        "details": {
+          "capacity_present": false
+        },
+        "fixture": "mismatched_dynamic_id_does_not_steal_capacity",
+        "pass": true
+      },
+      {
+        "details": {
+          "capacity_ratio": 2
+        },
+        "fixture": "matching_dynamic_id_copies_capacity",
+        "pass": true
+      },
+      {
+        "details": {
+          "equal": true
+        },
+        "fixture": "replay_deterministic",
+        "pass": true
+      }
+    ]
+  },
+  "snapshot_freeze_static_indicators": {
+    "candidate": {
+      "freeze_function_present": true,
+      "has_legacy_unknown": true,
+      "has_no_later_substitution_indicator": true
+    },
+    "parent": {
+      "freeze_function_present": false,
+      "has_legacy_unknown": true,
+      "has_no_later_substitution_indicator": false
+    }
+  },
+  "status": "SELECTED_SEMANTIC_FIXTURES_PASSED_OTHER_GATES_UNVERIFIED"
+}
