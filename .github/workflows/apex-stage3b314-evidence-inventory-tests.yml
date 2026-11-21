@@ -1,0 +1,23 @@
+name: APEX Stage 3B.3.14 - Evidence Inventory Synthetic Tests
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/apex_stage3b314_evidence_source_inventory.py'
+      - 'tests/test_apex_stage3b314_evidence_source_inventory.py'
+      - '.github/workflows/apex-stage3b314-evidence-inventory-tests.yml'
+permissions:
+  contents: read
+jobs:
+  inventory-tests:
+    name: Metadata inventory offline tests only
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p 'test_apex_stage3b314_evidence_source_inventory.py' -v

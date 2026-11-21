@@ -1,4 +1,5 @@
 {
+<<<<<<< Updated upstream
   "stage": "APEX Stage 3B.3.13",
   "title": "Historical Producer-Origin & Runtime Activation Evidence Audit",
   "candidate_only": true,
@@ -14,4 +15,17 @@
   "writes": "aggregate report in caller-selected output outside protected /data",
   "production_databases_accessed": false,
   "automatic_runtime_attestation": false
+=======
+  "candidate": "APEX Stage 3B.3.14 — Existing Historical Evidence Source Metadata Inventory",
+  "authority": "BLOCKED_RESEARCH_ONLY",
+  "production_effect": "none",
+  "purpose": "discover existing historical producer/runtime/provider evidence sources by metadata only",
+  "tests": "17 offline synthetic unittest cases",
+  "paths": [
+    "scripts/apex_stage3b314_evidence_source_inventory.py",
+    "tests/test_apex_stage3b314_evidence_source_inventory.py",
+    ".github/workflows/apex-stage3b314-evidence-inventory-tests.yml",
+    "APEX_STAGE3B314_BUILD_REPORT.md"
+  ]
+>>>>>>> Stashed changes
 }
