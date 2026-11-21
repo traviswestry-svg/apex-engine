@@ -14,14 +14,9 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class SemanticReplayTest(unittest.TestCase):
  @classmethod
  def setUpClass(cls):
-  root=pathlib.Path(__file__).resolve().parents[2]
-  if (root/'engine/evidence_eligibility.py').exists():
-   cls.source=(root/'engine/evidence_eligibility.py').read_text()
-   cls.hist=(root/'engine/historical_evidence_lifecycle.py').read_text()
-  else:
-   z=zipfile.ZipFile('/mnt/data/apex-engine-main(20261112-221036).zip')
-   cls.source=z.read('apex-engine-main/engine/evidence_eligibility.py').decode()
-   cls.hist=z.read('apex-engine-main/engine/historical_evidence_lifecycle.py').decode()
+  root=pathlib.Path(__file__).resolve().parents[1]
+  cls.source=(root/'engine/evidence_eligibility.py').read_text()
+  cls.hist=(root/'engine/historical_evidence_lifecycle.py').read_text()
  def test_candidate_fixture_behavior(self):
   n=m.eligibility_namespace(self.source)
   f=n['evaluate_evidence_eligibility']
