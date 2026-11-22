@@ -85,6 +85,11 @@ _REGISTRY_DATA.extend([
  {'name':'APEX_SCAN_COVERAGE_PATH','category':'SCANNER','classification':'OPTIONAL','required_when':None,'default':'/data/apex_scan_coverage.jsonl','expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'JSONL output path for scanner coverage diagnostics.','safety_critical':False,'used_in_code':True},
 ])
 
+_REGISTRY_DATA.extend([
+ {'name':'APEX_FORWARD_PROVENANCE_ENABLED','category':'FEATURE_FLAGS','classification':'OPTIONAL','required_when':None,'default':'false','expected_type':'boolean','allowed_values':['true','false'],'secret':False,'deprecated':False,'replacement':None,'description':'Enable forward provenance receipt recording.','safety_critical':False,'used_in_code':True},
+ {'name':'APEX_GIT_SHA','category':'DEPLOYMENT','classification':'OPTIONAL','required_when':None,'default':None,'expected_type':'string','allowed_values':None,'secret':False,'deprecated':False,'replacement':None,'description':'Fallback unverified Git SHA claim for forward provenance receipts.','safety_critical':False,'used_in_code':True},
+])
+
 # Access-control layer (engine/auth.py) + registry drift closure: every env var
 # referenced by os.getenv/os.environ.get in app.py and engine/ must be declared
 # here (guarded by tests/test_pre23_hardening.py::test_registry_has_no_production_env_drift).
