@@ -83,6 +83,21 @@ def test_deprecated_and_unknown_variables_reported_safely():
     assert "legacy-secret-value" not in payload
 
 
+def test_forward_provenance_configuration_is_governed():
+    settings = {
+        "APEX_FORWARD_PROVENANCE_ENABLED": ("0", "boolean", "1"),
+        "APEX_FORWARD_PROVENANCE_DB": (None, "string", "/tmp/receipts.db"),
+        "APEX_GIT_SHA": (None, "string", "abc123"),
+    }
+    for name, (default, expected_type, _) in settings.items():
+        definition = cg.REGISTRY[name]
+        assert definition.default == default
+        assert definition.expected_type == expected_type
+        assert definition.used_in_code is True
+    issues = cg.diagnostics({name: value for name, (_, _, value) in settings.items()})["issues"]
+    assert not [issue for issue in issues if issue.get("variable") in settings]
+
+
 def test_configuration_endpoints_and_existing_health_and_mission_control_render():
     import app as apex_app
     c=apex_app.app.test_client()
