@@ -37,6 +37,12 @@ def load(path):
         return (data,'LOADED') if isinstance(data,dict) else (None,'INVALID_SCHEMA')
     except (OSError,ValueError,UnicodeError):return None,'INVALID_JSON'
 
+def git_command(repo,*args):
+    repo_path=Path(repo)
+    if (repo_path/'HEAD').is_file() and (repo_path/'objects').is_dir():
+        return ['git','--git-dir',str(repo_path),'--no-pager',*args]
+    return ['git','-C',str(repo_path),'--no-pager',*args]
+
 def git(repo,*args,limit=262144):
     # Never use network, hooks, pagers, replace refs, external diff or optional locks.
     env=os.environ.copy()
@@ -44,7 +50,7 @@ def git(repo,*args,limit=262144):
                 'GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':os.devnull,'GIT_PAGER':'cat',
                 'GIT_NO_LAZY_FETCH':'1'})
     try:
-        cmd=['git','-C',str(repo),'--no-pager',*args]
+        cmd=git_command(repo,*args)
         cp=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=3,env=env,check=False)
         if cp.returncode:return None,'OBJECT_UNAVAILABLE_OR_COMMAND_FAILED'
         if len(cp.stdout)>limit:return None,'GIT_OUTPUT_OVERSIZE'
