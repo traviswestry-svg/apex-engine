@@ -2,9 +2,15 @@ import json
 import subprocess
 import sys
 import unittest
+from engine.forward_provenance_external_authority import create_staging_bundle
 from scripts.apex_forward_phase3c_staging import rehearse
 
 class Phase3CTests(unittest.TestCase):
+    def test_authority_refuses_production_context(self):
+        with self.assertRaisesRegex(ValueError, 'production signing is not supported'):
+            create_staging_bundle(audit_copy='unused', observed_facts={'environment': 'PRODUCTION'},
+                                  operator_private_key=None, observed_at='')
+
     def test_isolated_off_host_rehearsal(self):
         result=rehearse()
         self.assertTrue(result['ok'])
