@@ -2888,6 +2888,13 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
         gamma = build_gamma_from_quantdata_response(data, qd_ticker)
         if observe_gamma_transition is not None and not has_request_context():
             try:
+                from engine.forward_provenance import enabled, new_execution_id, record_calculation
+                if enabled():
+                    execution_id = new_execution_id()
+                    receipt = record_calculation(execution_id, ticker=qd_ticker,
+                        path_version=(gamma.get("gamma_path") or {}).get("path_version"))
+                    if receipt.get("status") == "RECORDED":
+                        gamma["_forward_gamma_execution_id"] = execution_id
                 gamma["gamma_transition"] = observe_gamma_transition(gamma, ticker=qd_ticker, source="QUANTDATA_EXPOSURE_BY_STRIKE")
             except Exception as exc:
                 gamma["gamma_transition"] = {"status": "UNAVAILABLE", "transition_state": "UNAVAILABLE", "error": type(exc).__name__,
