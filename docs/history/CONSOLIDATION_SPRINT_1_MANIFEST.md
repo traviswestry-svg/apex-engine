@@ -169,3 +169,5 @@ Full suite 1,518 passed / 0 failed.
 - `engine.flow_learning_deadline_audit` provides read-only diagnostics of
   scanner-owned learning admission; it does not schedule work, change
   admission, or participate in runtime execution.
+- `engine.forward_provenance_verifier` is an operator-invoked offline verifier;
+  it does not participate in application or scanner runtime execution.

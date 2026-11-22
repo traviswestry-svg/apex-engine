@@ -43,6 +43,7 @@ TEST_ONLY_ALLOWLIST = {
     "engine.execution.paper_lifecycle_validation",
     "engine.flow_learning_deadline_audit",
     "engine.flow_learning_checkpoint",
+    "engine.forward_provenance_verifier",
     "engine.learning_resource_admission",
     "engine.morning_forecast_integrity",
     "engine.morning_forecast_shadow_calibration",

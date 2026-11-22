@@ -33,7 +33,7 @@ def git(repo,*args,max_bytes=1024*1024,timeout=12):
       'GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':os.devnull,'GIT_NO_LAZY_FETCH':'1',
       'GIT_PAGER':'cat','GIT_PROTOCOL_FROM_USER':'0'})
     try:
-        p=subprocess.run(['git','-C',str(repo),'--no-pager',*args],stdout=subprocess.PIPE,
+        p=subprocess.run(B35.git_command(repo,*args),stdout=subprocess.PIPE,
           stderr=subprocess.DEVNULL,check=False,timeout=timeout,env=env)
     except (OSError,subprocess.TimeoutExpired):return None,'GIT_UNAVAILABLE_OR_TIMEOUT'
     if len(p.stdout)>max_bytes:return None,'GIT_OUTPUT_OVERSIZE'
@@ -88,7 +88,7 @@ def is_ancestor(repo,older,newer):
       'GIT_NO_LAZY_FETCH':'1','GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':os.devnull,
       'GIT_TERMINAL_PROMPT':'0'})
     try:
-        p=subprocess.run(['git','-C',str(repo),'merge-base','--is-ancestor',older,newer],
+        p=subprocess.run(B35.git_command(repo,'merge-base','--is-ancestor',older,newer),
           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5,env=env)
     except (OSError,subprocess.TimeoutExpired):return 'UNVERIFIED'
     return 'ANCESTOR' if p.returncode==0 else 'NOT_ANCESTOR' if p.returncode==1 else 'UNVERIFIED'
