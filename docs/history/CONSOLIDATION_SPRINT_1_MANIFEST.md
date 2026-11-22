@@ -171,3 +171,6 @@ Full suite 1,518 passed / 0 failed.
   admission, or participate in runtime execution.
 - `engine.forward_provenance_verifier` is an operator-invoked offline verifier;
   it does not participate in application or scanner runtime execution.
+- `engine.forward_provenance_external_authority` supports an offline,
+  synthetic staging rehearsal; it must not run in application or scanner
+  processes or confer production attestation authority.
