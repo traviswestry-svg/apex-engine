@@ -177,3 +177,6 @@ Full suite 1,518 passed / 0 failed.
 - `engine.forward_provenance_operational` supports an operator-invoked,
   read-only staging report on audit copies; it does not participate in
   application or scanner runtime execution or confer promotion authority.
+- `engine.forward_provenance_readiness` supports an operator-invoked, read-only
+  research readiness assessment; it does not participate in application or
+  scanner runtime execution or authorize production activation.
