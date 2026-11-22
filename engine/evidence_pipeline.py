@@ -122,6 +122,12 @@ def record_snapshot(snapshot: Mapping[str,Any], path: str|Path=DEFAULT_DB)->bool
    capture_context(c,did,observed_at,s)
   except Exception:
    pass
+  if inserted:
+   try:
+    from .forward_provenance import record_decision
+    record_decision(did, s.get('canonical_gamma_snapshot_id'), inserted=True, observed_at=observed_at)
+   except Exception:
+    pass  # Evidence receipt must never change decision or execution authority.
   return inserted
 def record_price(ticker:str, price:Any, observed_at:str|None=None,path: str|Path=DEFAULT_DB)->bool:
  try: p=float(price)

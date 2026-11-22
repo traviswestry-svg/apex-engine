@@ -887,7 +887,19 @@ def observe_gamma_transition(
             _RUNTIME["gamma_out_of_order_events"] += 1
     # If deduplicated, surface persisted truth rather than newly derived sequence metadata.
     persisted = get_snapshot_by_id(snap["canonical_gamma_snapshot_id"], db_path=path) or snap
+    forward_receipt = {"status": "DISABLED", "authentication": "UNVERIFIED"}
+    try:
+        from .forward_provenance import record_gamma
+        forward_receipt = record_gamma(
+            snap["canonical_gamma_snapshot_id"],
+            gamma.get("_forward_gamma_execution_id"),
+            inserted=created,
+            source_timestamp_provenance=snap.get("source_timestamp_provenance"),
+        )
+    except Exception:
+        forward_receipt = {"status": "RECEIPT_WRITE_FAILED", "authentication": "UNVERIFIED"}
     integrity = {
+        "forward_provenance_receipt": forward_receipt,
         "canonical_gamma_snapshot_id": persisted.get("canonical_gamma_snapshot_id"),
         "gamma_observation_timestamp": persisted.get("observed_at"),
         "gamma_received_at": persisted.get("received_at"),
