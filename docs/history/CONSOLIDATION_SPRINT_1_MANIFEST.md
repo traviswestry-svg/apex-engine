@@ -174,3 +174,6 @@ Full suite 1,518 passed / 0 failed.
 - `engine.forward_provenance_external_authority` supports an offline,
   synthetic staging rehearsal; it must not run in application or scanner
   processes or confer production attestation authority.
+- `engine.forward_provenance_operational` supports an operator-invoked,
+  read-only staging report on audit copies; it does not participate in
+  application or scanner runtime execution or confer promotion authority.
