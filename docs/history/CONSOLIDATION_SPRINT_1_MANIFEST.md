@@ -185,3 +185,9 @@ Full suite 1,518 passed / 0 failed.
 - `engine.forward_provenance_render_observer` supports a read-only Render
   deployment observation; it does not participate in application or scanner
   runtime execution or establish production activation authority.
+
+## Phase 4B test-only allowance (2026-11-23)
+- `engine.forward_provenance_signer` is limited to isolated-staging
+  deployment-observation attestations using caller-provided keys; it has no
+  application or scanner runtime integration and grants no production signing
+  or promotion authority.
