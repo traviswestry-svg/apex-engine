@@ -1,0 +1,9 @@
+{
+  "service": {"id":"srv-example123","type":"web_service"},
+  "pages": [
+    [
+      {"deploy":{"id":"dep-test001","status":"deactivated","commit":{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"createdAt":"2026-11-20T15:00:00Z","finishedAt":"2026-11-20T15:03:00Z"},"cursor":"next-test001"},
+      {"deploy":{"id":"dep-test002","status":"live","commit":{"id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"createdAt":"2026-11-21T15:00:00Z","finishedAt":"2026-11-21T15:03:00Z"},"cursor":"next-test002"}
+    ]
+  ]
+}
