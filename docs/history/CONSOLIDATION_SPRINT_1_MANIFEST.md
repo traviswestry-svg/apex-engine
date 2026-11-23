@@ -202,3 +202,8 @@ Full suite 1,518 passed / 0 failed.
 - `engine.forward_provenance_realworld_verifier` supports an operator-invoked,
   read-only staging evidence verifier; it has no application or scanner runtime
   integration and grants no production activation or promotion authority.
+
+## Phase 4E test-only allowance (2026-11-23)
+- `engine.forward_provenance_phase4e` supports a read-only research review of
+  external infrastructure evidence; it has no application or scanner runtime
+  integration and cannot authorize production activation.

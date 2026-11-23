@@ -45,6 +45,7 @@ TEST_ONLY_ALLOWLIST = {
     "engine.flow_learning_checkpoint",
     "engine.forward_provenance_external_authority",
     "engine.forward_provenance_operational",
+    "engine.forward_provenance_phase4e",
     "engine.forward_provenance_readiness",
     "engine.forward_provenance_realworld_verifier",
     "engine.forward_provenance_render_observer",
