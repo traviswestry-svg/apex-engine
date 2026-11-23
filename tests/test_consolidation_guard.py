@@ -50,6 +50,7 @@ TEST_ONLY_ALLOWLIST = {
     "engine.forward_provenance_realworld_verifier",
     "engine.forward_provenance_render_observer",
     "engine.forward_provenance_checkpoint_store",
+    "engine.forward_provenance_phase4e",
     "engine.forward_provenance_signer",
     "engine.forward_provenance_verifier",
     "engine.learning_resource_admission",
