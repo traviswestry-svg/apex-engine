@@ -197,3 +197,8 @@ Full suite 1,518 passed / 0 failed.
   checkpoint algorithm against disposable local SQLite staging state; it is
   not integrated into application or scanner runtime execution and does not
   establish off-host storage or production activation authority.
+
+## Phase 4D test-only allowance (2026-11-23)
+- `engine.forward_provenance_realworld_verifier` supports an operator-invoked,
+  read-only staging evidence verifier; it has no application or scanner runtime
+  integration and grants no production activation or promotion authority.
