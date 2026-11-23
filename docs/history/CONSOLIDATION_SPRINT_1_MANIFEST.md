@@ -185,3 +185,9 @@ Full suite 1,518 passed / 0 failed.
 - `engine.forward_provenance_render_observer` supports a read-only Render
   deployment observation; it does not participate in application or scanner
   runtime execution or establish production activation authority.
+
+## Phase 4C test-only allowance (2026-11-23)
+- `engine.forward_provenance_checkpoint_store` exercises the Phase 4C
+  checkpoint algorithm against disposable local SQLite staging state; it is
+  not integrated into application or scanner runtime execution and does not
+  establish off-host storage or production activation authority.
