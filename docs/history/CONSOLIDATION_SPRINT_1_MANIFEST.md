@@ -191,3 +191,9 @@ Full suite 1,518 passed / 0 failed.
   deployment-observation attestations using caller-provided keys; it has no
   application or scanner runtime integration and grants no production signing
   or promotion authority.
+
+## Phase 4C test-only allowance (2026-11-23)
+- `engine.forward_provenance_checkpoint_store` exercises the Phase 4C
+  checkpoint algorithm against disposable local SQLite staging state; it is
+  not integrated into application or scanner runtime execution and does not
+  establish off-host storage or production activation authority.
