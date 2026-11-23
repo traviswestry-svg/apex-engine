@@ -14,7 +14,7 @@ import re
 from typing import Any, Callable, Mapping
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
-from .forward_provenance_render_observer import canonical, utc_time
+from .forward_provenance_render_observer import ObservationError, canonical, utc_time as observer_utc_time
 
 COLLECTOR_DOMAIN = 'APEX_PHASE4B_COLLECTOR_OBSERVATION_V1'
 SIGNER_DOMAIN = 'APEX_PHASE4B_DEPLOYMENT_ATTESTATION_V1'
@@ -23,6 +23,13 @@ KEY_ID = re.compile(r'^[a-zA-Z0-9_.-]{3,80}$')
 
 class SignerRefusal(ValueError):
     pass
+
+
+def utc_time(value: Any) -> str:
+    try:
+        return observer_utc_time(value)
+    except ObservationError as exc:
+        raise SignerRefusal(str(exc)) from None
 
 
 def _refuse(reason: str):

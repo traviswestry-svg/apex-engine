@@ -46,6 +46,8 @@ TEST_ONLY_ALLOWLIST = {
     "engine.forward_provenance_external_authority",
     "engine.forward_provenance_operational",
     "engine.forward_provenance_readiness",
+    "engine.forward_provenance_render_observer",
+    "engine.forward_provenance_signer",
     "engine.forward_provenance_verifier",
     "engine.learning_resource_admission",
     "engine.morning_forecast_integrity",

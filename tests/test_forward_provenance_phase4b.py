@@ -105,5 +105,15 @@ class Phase4BTests(unittest.TestCase):
     def test_missing_replay_callback_refused(self):
         with self.assertRaisesRegex(SignerRefusal,'REPLAY_OR_NO_ATOMIC'):
             self.issue(reserve_nonce=None)
+    def test_invalid_timestamps_fail_closed(self):
+        with self.assertRaisesRegex(SignerRefusal,'INVALID_TIMESTAMP'):
+            self.issue(as_of='invalid')
+        self.assertEqual(
+            verify_staging_attestation(envelope=self.envelope,attestation={},policy=self.policy,as_of='invalid')['reason'],
+            'INVALID_TIMESTAMP',
+        )
+        self.policy['keys']['collector-1']['valid_from']='invalid'
+        with self.assertRaisesRegex(SignerRefusal,'INVALID_TIMESTAMP'):
+            self.issue()
 
 if __name__ == '__main__': unittest.main()

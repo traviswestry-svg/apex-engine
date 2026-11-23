@@ -5,7 +5,7 @@
 ## Source additions
 
 - `engine/forward_provenance_signer.py` — two domain-separated Ed25519 signatures (collector envelope + signer attestation); pinned public-key policy; identity and freshness checks; explicit refusal for fixture observations, unverified process claims, invalid/different signing key, revoked keys, expired keys, and replay collisions.
-- `tests/test_forward_provenance_phase4b.py` — 15 synthetic edge-case and tamper tests.
+- `tests/test_forward_provenance_phase4b.py` — 16 synthetic edge-case and tamper tests.
 - `scripts/apex_forward_phase4b_staging.py` — disposable in-memory test rehearsal; no environment credentials or production files.
 
 ## Supported assurance
@@ -29,7 +29,7 @@ PYTHONPATH=. python -m unittest discover -s tests \
   -p 'test_apex_stage3b315_gamma_receipt_provenance_correlation.py' -q
 ```
 
-Expected Phase 4B JSON: `checks_passed=15`, `checks_total=15`, `environment=DISPOSABLE_SYNTHETIC_ONLY`, `verdict=NO_GO`, `production_activation_authorized=false`.
+Expected Phase 4B JSON: `checks_passed=16`, `checks_total=16`, `environment=DISPOSABLE_SYNTHETIC_ONLY`, `verdict=NO_GO`, `production_activation_authorized=false`.
 
 The patch is cumulative with Phase 4A and is overlaid on the complete November 21 APEX source tree; it is not a standalone replacement application. Existing test warnings regarding unclosed SQLite connections remain from pre-existing test code.
 
