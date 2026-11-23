@@ -105,7 +105,6 @@ class Phase4BTests(unittest.TestCase):
     def test_missing_replay_callback_refused(self):
         with self.assertRaisesRegex(SignerRefusal,'REPLAY_OR_NO_ATOMIC'):
             self.issue(reserve_nonce=None)
-<<<<<<< Updated upstream
     def test_invalid_timestamps_fail_closed(self):
         with self.assertRaisesRegex(SignerRefusal,'INVALID_TIMESTAMP'):
             self.issue(as_of='invalid')
@@ -116,7 +115,5 @@ class Phase4BTests(unittest.TestCase):
         self.policy['keys']['collector-1']['valid_from']='invalid'
         with self.assertRaisesRegex(SignerRefusal,'INVALID_TIMESTAMP'):
             self.issue()
-=======
->>>>>>> Stashed changes
 
 if __name__ == '__main__': unittest.main()
