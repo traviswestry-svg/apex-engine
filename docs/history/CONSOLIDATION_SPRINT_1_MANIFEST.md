@@ -180,3 +180,7 @@ Full suite 1,518 passed / 0 failed.
 - `engine.forward_provenance_readiness` supports an operator-invoked, read-only
   research readiness assessment; it does not participate in application or
   scanner runtime execution or authorize production activation.
+- `engine.forward_provenance_signer` is limited to isolated-staging
+  deployment-observation attestations using caller-provided keys; it has no
+  application or scanner runtime integration and grants no production signing
+  or promotion authority.
