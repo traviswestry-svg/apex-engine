@@ -180,3 +180,8 @@ Full suite 1,518 passed / 0 failed.
 - `engine.forward_provenance_readiness` supports an operator-invoked, read-only
   research readiness assessment; it does not participate in application or
   scanner runtime execution or authorize production activation.
+
+## Phase 4A test-only allowance (2026-11-23)
+- `engine.forward_provenance_render_observer` supports a read-only Render
+  deployment observation; it does not participate in application or scanner
+  runtime execution or establish production activation authority.
