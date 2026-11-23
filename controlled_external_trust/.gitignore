@@ -1,0 +1,9 @@
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform/worker.zip
+__pycache__/
+*.pem
+*.key
+*.env
