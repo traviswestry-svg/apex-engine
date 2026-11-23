@@ -182,5 +182,7 @@ Full suite 1,518 passed / 0 failed.
   scanner runtime execution or authorize production activation.
 - `engine.forward_provenance_render_observer` supports a read-only external
   deployment observer; it does not authenticate a process or authorize promotion.
-- `engine.forward_provenance_signer` supports an isolated staging rehearsal
-  only; it does not provide production key custody or promotion authority.
+- `engine.forward_provenance_signer` is limited to isolated-staging
+  deployment-observation attestations using caller-provided keys; it has no
+  application or scanner runtime integration and grants no production signing
+  or promotion authority.
