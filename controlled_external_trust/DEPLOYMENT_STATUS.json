@@ -1,0 +1,19 @@
+{
+  "project": "APEX Controlled External Trust Infrastructure",
+  "target": "independently administered AWS account",
+  "observed_render_service_id": "srv-d7p3u2navr4c73d2q0jg",
+  "stage": "BUILD_READY_NOT_DEPLOYED",
+  "deployment_attempted": false,
+  "local_tests_passed": 16,
+  "local_tests_failed": 0,
+  "terraform_validated_with_cli": false,
+  "real_external_collector": "NOT_DEPLOYED",
+  "protected_kms_signer": "NOT_DEPLOYED",
+  "s3_object_lock": "DESIGNED_NOT_PROVISIONED",
+  "actual_external_checkpoint_chain": "NOT_IMPLEMENTED",
+  "independent_process_origin": "NOT_ESTABLISHED",
+  "production_activation_authorized": false,
+  "historical_3569_population": "EXCLUDED",
+  "overall_verdict": "NO_GO",
+  "promotion_authority": "BLOCKED_RESEARCH_ONLY"
+}
