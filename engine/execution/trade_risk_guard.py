@@ -92,12 +92,15 @@ def _hhmm_to_min(s: str) -> int:
         return 0
 
 
-def _now_et_minutes(now: Optional[dt.datetime] = None) -> int:
+def _as_et(now: Optional[dt.datetime] = None) -> dt.datetime:
     n = now or dt.datetime.now(EASTERN)
     if n.tzinfo is None:
-        n = n.replace(tzinfo=EASTERN)
-    else:
-        n = n.astimezone(EASTERN)
+        return n.replace(tzinfo=EASTERN)
+    return n.astimezone(EASTERN)
+
+
+def _now_et_minutes(now: Optional[dt.datetime] = None) -> int:
+    n = _as_et(now)
     return n.hour * 60 + n.minute
 
 
@@ -224,7 +227,7 @@ def validate_entry(
 
     # Execution-authoritative calendar check. Never rely on the client session
     # label or a prior preview. An unavailable calendar fails closed.
-    if not rth_open(now or dt.datetime.now(EASTERN)):
+    if not rth_open(_as_et(now)):
         reasons.append("Exchange calendar denies new SPX entries at this time.")
     # time window
     if session_state != "MARKET_OPEN":
@@ -371,7 +374,7 @@ def validate_complex_entry(*, intent: Any, economics: Dict[str, Any],
                 reasons.append(f"Strategy risk ${float(max_loss):,.0f} exceeds max ${limits.max_risk_per_trade:,.0f}.")
         except Exception:
             reasons.append("Strategy maximum loss is invalid.")
-    if not rth_open(now or dt.datetime.now(EASTERN)):
+    if not rth_open(_as_et(now)):
         reasons.append("Exchange calendar denies new SPX strategy entries at this time.")
     if session_state != "MARKET_OPEN":
         reasons.append("Market is not in RTH — no new strategy entries.")

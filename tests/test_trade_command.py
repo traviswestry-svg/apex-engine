@@ -155,12 +155,13 @@ def test_entry_rejects_risk_over_max():
 def test_entry_ok_when_clean():
     d = guard.validate_entry(contract=_call(expiration="2026-07-06"), quantity=1,
                              entry_premium=4.2, stop_premium=3.5,
-                             now=dt.datetime(2026, 7, 6, 10, 0))
+                             session_state="MARKET_OPEN", now=dt.datetime(2026, 7, 6, 10, 0))
     assert d.allow, d.reasons
 
 
 def test_entry_rejects_after_cutoff():
-    d = guard.validate_entry(contract=_call(), quantity=1, entry_premium=4.2, stop_premium=3.8,
+    d = guard.validate_entry(contract=_call(expiration="2026-07-06"), quantity=1,
+                             entry_premium=4.2, stop_premium=3.8, session_state="MARKET_OPEN",
                              now=dt.datetime(2026, 7, 6, 12, 0))  # past 11:30
     assert not d.allow and any("cutoff" in r.lower() for r in d.reasons)
 

@@ -63,6 +63,35 @@ class TestSessionAuthorityHardening(unittest.TestCase):
         self.assertFalse(d.allow)
         self.assertIn('Exchange calendar', ' '.join(d.reasons))
 
+    def test_entry_calendar_uses_eastern_for_naive_times(self):
+        from types import SimpleNamespace
+
+        leg = SimpleNamespace(osi_key='SPXW', bid=2.0, ask=2.1)
+        intent = SimpleNamespace(symbol='SPX', quantity=1, legs=(leg, leg))
+        params = dict(contract={'symbol':'SPX','side':'CALL','bid':2.0,'ask':2.1},
+                      quantity=1, entry_premium=2.0, stop_premium=1.0,
+                      session_state='MARKET_OPEN')
+        for naive, calendar_open in (
+            (dt.datetime(2026, 7, 6, 9, 29), False),
+            (dt.datetime(2026, 7, 6, 9, 30), True),
+            (dt.datetime(2026, 7, 6, 10, 0), True),
+            (dt.datetime(2026, 7, 3, 10, 0), False),
+            (dt.datetime(2026, 11, 27, 13, 0), False),
+        ):
+            for now in (naive, naive.replace(tzinfo=ET),
+                        naive.replace(tzinfo=ET).astimezone(dt.timezone.utc)):
+                with self.subTest(now=now):
+                    single = validate_entry(**params, now=now)
+                    complex_entry = validate_complex_entry(
+                        intent=intent, economics={'max_loss':100},
+                        session_state='MARKET_OPEN', now=now)
+                    for decision in (single, complex_entry):
+                        self.assertEqual(
+                            any('Exchange calendar' in r for r in decision.reasons),
+                            not calendar_open)
+                        if calendar_open:
+                            self.assertTrue(decision.allow, decision.reasons)
+
     def test_app_session_classifier_uses_actual_early_close(self):
         import ast
         from pathlib import Path
