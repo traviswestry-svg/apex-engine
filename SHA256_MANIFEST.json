@@ -1,0 +1,9 @@
+{
+  "app.py": "adffa91033611e99885c8159502f3119862cfa266c33a0bc85f77313c1439156",
+  "apex_engines.py": "0d40d50d2e6c133fb3d10e4ab502c60f3d51e974e3127b89fcfa02c12dc639e6",
+  "engine/canonical_market_calendar.py": "f0b61a2ea75fdc0b038058bfb51930af3968d986fde98af55fb7c9fd7adc4588",
+  "engine/live_operations.py": "f3971395791a70828f7a9fd17f6bfc8bc4138919fcf5887e96e8f7ec85e64ea4",
+  "engine/execution/trade_risk_guard.py": "05ddb7ab37f59c3bec8e954102fcaef79ea5e4d10a7d8f303f50ecebeb5234e5",
+  "engine/execution/trade_routes.py": "89998d52f75f6820157ad3307a954561e7bb87f064f98f37e18b2921930b16a3",
+  "tests/test_apex_session_authority_hardening.py": "851e32fd649c22c0ce31cae2692bd8f1526dcf06f03686c79e49c6499099118c"
+}

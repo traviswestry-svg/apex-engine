@@ -1998,12 +1998,17 @@ def session_status() -> str:
     if wd == 6:
         return "OVERNIGHT" if minutes >= 18 * 60 else "CLOSED"
 
-    # Weekdays
-    if 9 * 60 + 30 <= minutes < 16 * 60:
+    # SPX session is decided by canonical exchange calendar, not fixed 16:00.
+    from engine.canonical_market_calendar import session_schedule, rth_open
+    schedule = session_schedule(n)
+    if not schedule["calendar_supported"]:
+        return "CLOSED"
+    if rth_open(n):
         return "MARKET_OPEN"
     if 4 * 60 <= minutes < 9 * 60 + 30:
         return "PREMARKET"
-    if 16 * 60 <= minutes < 18 * 60:
+    close_h, close_m = map(int, (schedule["close_et"] or "00:00").split(":"))
+    if schedule["trading_day"] and close_h * 60 + close_m <= minutes < 18 * 60:
         return "AFTER_HOURS"
     # 18:00 ET through midnight / 00:00–04:00 ET next day
     return "OVERNIGHT"
@@ -2888,13 +2893,6 @@ def quantdata_gex_layer(ticker: str) -> Dict[str, Any]:
         gamma = build_gamma_from_quantdata_response(data, qd_ticker)
         if observe_gamma_transition is not None and not has_request_context():
             try:
-                from engine.forward_provenance import enabled, new_execution_id, record_calculation
-                if enabled():
-                    execution_id = new_execution_id()
-                    receipt = record_calculation(execution_id, ticker=qd_ticker,
-                        path_version=(gamma.get("gamma_path") or {}).get("path_version"))
-                    if receipt.get("status") == "RECORDED":
-                        gamma["_forward_gamma_execution_id"] = execution_id
                 gamma["gamma_transition"] = observe_gamma_transition(gamma, ticker=qd_ticker, source="QUANTDATA_EXPOSURE_BY_STRIKE")
             except Exception as exc:
                 gamma["gamma_transition"] = {"status": "UNAVAILABLE", "transition_state": "UNAVAILABLE", "error": type(exc).__name__,

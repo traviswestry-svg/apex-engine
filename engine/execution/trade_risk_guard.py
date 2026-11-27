@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 from engine.options.spxo_contract_lifecycle import execution_blockers
+from engine.canonical_market_calendar import rth_open, session_schedule
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -91,12 +92,15 @@ def _hhmm_to_min(s: str) -> int:
         return 0
 
 
-def _now_et_minutes(now: Optional[dt.datetime] = None) -> int:
+def _as_et(now: Optional[dt.datetime] = None) -> dt.datetime:
     n = now or dt.datetime.now(EASTERN)
     if n.tzinfo is None:
-        n = n.replace(tzinfo=EASTERN)
-    else:
-        n = n.astimezone(EASTERN)
+        return n.replace(tzinfo=EASTERN)
+    return n.astimezone(EASTERN)
+
+
+def _now_et_minutes(now: Optional[dt.datetime] = None) -> int:
+    n = _as_et(now)
     return n.hour * 60 + n.minute
 
 
@@ -131,7 +135,8 @@ def entry_window_policy_snapshot(*, now: Optional[dt.datetime] = None,
     cutoff_passed = (_now_et_minutes(local_now) >= cutoff_minutes) if cutoff_parse_ok else None
     market_session = str(session_state or "UNKNOWN").upper()
     session_authorized = market_session in {"MARKET_OPEN", "RTH", "REGULAR"}
-    entry_window_authorized = bool(session_authorized and cutoff_passed is False)
+    calendar_authorized = rth_open(local_now)
+    entry_window_authorized = bool(session_authorized and calendar_authorized and cutoff_passed is False)
     return {
         "schema_version": "apex.entry_window_policy_snapshot.v1",
         "source_module": "engine.execution.trade_risk_guard",
@@ -142,6 +147,7 @@ def entry_window_policy_snapshot(*, now: Optional[dt.datetime] = None,
         "cutoff_passed": cutoff_passed,
         "market_session": market_session,
         "market_session_authorized": session_authorized,
+        "calendar_authorized": calendar_authorized,
         "entry_window_authorized": entry_window_authorized,
         "observed_at_et": local_now.isoformat(),
         "production_effect": "NONE",
@@ -158,7 +164,7 @@ def validate_entry(
     entry_premium: float,
     stop_premium: float,
     limits: Optional[RiskLimits] = None,
-    session_state: str = "MARKET_OPEN",
+    session_state: str = "UNKNOWN",
     now: Optional[dt.datetime] = None,
     last_order_epoch: Optional[float] = None,
     now_epoch: Optional[float] = None,
@@ -219,6 +225,10 @@ def validate_entry(
     else:
         reasons.append("Entry and stop premium required to size risk.")
 
+    # Execution-authoritative calendar check. Never rely on the client session
+    # label or a prior preview. An unavailable calendar fails closed.
+    if not rth_open(_as_et(now)):
+        reasons.append("Exchange calendar denies new SPX entries at this time.")
     # time window
     if session_state != "MARKET_OPEN":
         reasons.append("Market is not in RTH — no new entries.")
@@ -327,7 +337,7 @@ def validate_exit_quantity(exit_qty: int, position_qty: int) -> RiskDecision:
 # ── Complex strategy entry validation ────────────────────────────────────────
 def validate_complex_entry(*, intent: Any, economics: Dict[str, Any],
                            limits: Optional[RiskLimits] = None,
-                           session_state: str = "MARKET_OPEN",
+                           session_state: str = "UNKNOWN",
                            now: Optional[dt.datetime] = None,
                            last_order_epoch: Optional[float] = None,
                            now_epoch: Optional[float] = None,
@@ -364,6 +374,8 @@ def validate_complex_entry(*, intent: Any, economics: Dict[str, Any],
                 reasons.append(f"Strategy risk ${float(max_loss):,.0f} exceeds max ${limits.max_risk_per_trade:,.0f}.")
         except Exception:
             reasons.append("Strategy maximum loss is invalid.")
+    if not rth_open(_as_et(now)):
+        reasons.append("Exchange calendar denies new SPX strategy entries at this time.")
     if session_state != "MARKET_OPEN":
         reasons.append("Market is not in RTH — no new strategy entries.")
     else:

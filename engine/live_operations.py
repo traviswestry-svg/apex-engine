@@ -48,7 +48,17 @@ def _parse(v):
     except Exception:return None
 
 def session_state(at:Any=None, holiday=False, early_close=False):
-    x=_parse(at) or _now_dt(); x=x.astimezone(dt.timezone(dt.timedelta(hours=-4)))
+    x=_parse(at) or _now_dt(); from zoneinfo import ZoneInfo
+    from engine.canonical_market_calendar import session_schedule
+    x=x.astimezone(ZoneInfo("America/New_York"))
+    # Consume the canonical early-close date, not an untrusted false default.
+    try:
+        sch=session_schedule(x)
+        if not sch["calendar_supported"] or not sch["trading_day"]:
+            return "MARKET_CLOSED"
+        early_close=bool(sch["early_close"])
+    except Exception:
+        return "MARKET_CLOSED"
     if holiday:return 'HOLIDAY'
     if x.weekday()>=5:return 'MARKET_CLOSED'
     m=x.hour*60+x.minute
@@ -57,6 +67,7 @@ def session_state(at:Any=None, holiday=False, early_close=False):
     if m<585:return 'OPENING_AUCTION'
     if m<630:return 'ACTIVE_RTH'
     if m<690:return 'LATE_MORNING'
+    if early_close and m>=780:return 'AFTER_HOURS'
     if m<810:return 'MIDDAY'
     close=780 if early_close else 960
     if m<close-60:return 'ACTIVE_RTH'
