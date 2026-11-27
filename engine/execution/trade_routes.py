@@ -27,6 +27,15 @@ from engine.execution import trade_risk_guard as guard
 from engine.execution.trade_audit import audit, read_audit
 from engine.execution.canonical_execution import get_execution_boundary
 from engine.execution import canonical_governance as _gov
+from engine.canonical_market_calendar import rth_open
+from zoneinfo import ZoneInfo
+
+def _server_spx_session() -> str:
+    """Server-authoritative entry state. Fail closed on calendar errors."""
+    try:
+        return "MARKET_OPEN" if rth_open(dt.datetime.now(ZoneInfo("America/New_York"))) else "CLOSED"
+    except Exception:
+        return "CLOSED"
 
 # Module state (single trader, single active plan in V1).
 _ADAPTER: Optional[ETradeAdapter] = None
@@ -438,7 +447,7 @@ def register_trade_routes(
         stop = body.get("stop_premium")
         decision = guard.validate_entry(
             contract=contract, quantity=qty, entry_premium=entry, stop_premium=stop,
-            session_state=body.get("session_state", "MARKET_OPEN"),
+            session_state=_server_spx_session(),
             last_order_epoch=_LAST_ORDER_EPOCH.get("SPX"), now_epoch=time.time(),
         )
         audit("PREVIEW_REQUEST", {"contract": contract.get("osi_key"), "qty": qty,
@@ -455,7 +464,7 @@ def register_trade_routes(
         if r.ok and preview_id:
             get_execution_boundary().register_preview(
                 preview_id, contract=contract, quantity=qty, entry_premium=entry,
-                stop_premium=stop, session_state=body.get("session_state", "MARKET_OPEN"),
+                stop_premium=stop, session_state=_server_spx_session(),
                 intent=intent, governance=_governance_snapshot(),
             )
         audit("PREVIEW_RESPONSE", {"ok": r.ok, "preview_id": preview_id})
@@ -480,7 +489,7 @@ def register_trade_routes(
         r = get_execution_boundary().execute_single_leg(
             adapter=_adapter(), preview_id=preview_id, intent=intent, contract=contract,
             quantity=qty, entry_premium=entry, stop_premium=body.get("stop_premium"),
-            session_state=body.get("session_state", "MARKET_OPEN"),
+            session_state=_server_spx_session(),
             last_order_epoch=_LAST_ORDER_EPOCH.get("SPX"),
         )
         if r.ok:
@@ -546,12 +555,20 @@ def register_trade_routes(
             audit("COMPLEX_PREVIEW_REJECTED", {"errors": errors})
             return jsonify(envelope(False, {"state": "ARMED_EXECUTION_BLOCKED"}, errors=errors))
         intent = _complex_intent(body)
+        # Preview is not an execution authorization. Still validate RTH before
+        # any broker-facing complex preview. Placement repeats this validation.
+        precheck = guard.validate_complex_entry(
+            intent=intent, economics=body.get("economics") or {},
+            session_state=_server_spx_session())
+        if not precheck.allow:
+            return jsonify(envelope(False, {"risk": precheck.to_dict()},
+                                    errors=precheck.reasons))
         r = _adapter().preview_complex_order(intent)
         preview_id = (r.data or {}).get("preview_id")
         if r.ok and preview_id:
             get_execution_boundary().register_complex_preview(
                 str(preview_id), intent=intent, economics=body.get("economics") or {},
-                session_state=body.get("session_state", "MARKET_OPEN"),
+                session_state=_server_spx_session(),
                 governance=_governance_snapshot())
         data = {"state": "PREVIEWED" if r.ok else "ARMED_EXECUTION_BLOCKED",
                 "intent": intent.to_dict(), "broker": r.data,
@@ -576,7 +593,7 @@ def register_trade_routes(
         r = get_execution_boundary().execute_complex(
             adapter=_adapter(), preview_id=str(body.get("preview_id")), intent=intent,
             economics=body.get("economics") or {},
-            session_state=body.get("session_state", "MARKET_OPEN"),
+            session_state=_server_spx_session(),
             last_order_epoch=_LAST_ORDER_EPOCH.get("SPX"))
         if r.ok:
             _LAST_ORDER_EPOCH["SPX"] = time.time()

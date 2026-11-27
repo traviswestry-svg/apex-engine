@@ -2729,13 +2729,16 @@ def build_institutional_decision(
     # Derive session_state string for adaptive weighting
     _now = _now_et()
     _market_open_start = _now.replace(hour=9, minute=30, second=0, microsecond=0)
-    _market_close = _now.replace(hour=16, minute=0, second=0, microsecond=0)
+    from engine.canonical_market_calendar import rth_open, session_schedule
+    _schedule = session_schedule(_now)
+    _close_h, _close_m = map(int, (_schedule["close_et"] or "00:00").split(":"))
+    _market_close = _now.replace(hour=_close_h, minute=_close_m, second=0, microsecond=0)
     _premarket_start = _now.replace(hour=4, minute=0, second=0, microsecond=0)
-    if _market_open_start <= _now < _market_close and _now.weekday() < 5:
+    if rth_open(_now):
         _session_state = "MARKET_OPEN"
-    elif _premarket_start <= _now < _market_open_start and _now.weekday() < 5:
+    elif _schedule["trading_day"] and _premarket_start <= _now < _market_open_start:
         _session_state = "PREMARKET"
-    elif _market_close <= _now and _now.weekday() < 5:
+    elif _schedule["trading_day"] and _market_close <= _now:
         _session_state = "AFTER_HOURS"
     else:
         _session_state = "CLOSED"
